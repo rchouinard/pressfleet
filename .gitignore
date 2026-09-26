@@ -30,3 +30,6 @@ go.work.sum
 !.vscode/extensions.json
 *.swp
 .DS_Store
+
+# Claude Code agent worktrees
+/.claude/worktrees/
