@@ -117,6 +117,15 @@ func TestFakeWPCLIAndFaults(t *testing.T) {
 	if _, err := f.ExecWPCLI(ctx, "a", []string{"fail"}); !errors.As(err, &execErr) || execErr.ExitCode != 1 {
 		t.Errorf("ExecWPCLI(fail) err = %v, want *ExecError", err)
 	}
+	if err := f.StopSite(ctx, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.ExecWPCLI(ctx, "a", []string{"core", "version"}); !errors.Is(err, provisioner.ErrSiteNotRunning) {
+		t.Errorf("ExecWPCLI on a stopped site err = %v, want ErrSiteNotRunning", err)
+	}
+	if err := f.StartSite(ctx, "a"); err != nil {
+		t.Fatal(err)
+	}
 
 	injected := errors.New("injected")
 	f.Err = func(op, _ string) error {

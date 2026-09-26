@@ -30,8 +30,9 @@ type Site struct {
 // Fake is an in-memory Driver that follows the interfaces' idempotency and
 // not-found contract. It is safe for concurrent use.
 type Fake struct {
-	// WPCLI, if set, handles ExecWPCLI calls for existing sites. By default
-	// they succeed with empty output.
+	// WPCLI, if set, handles ExecWPCLI calls for running sites. By default
+	// they succeed with empty output; on a site that isn't running they
+	// return provisioner.ErrSiteNotRunning.
 	WPCLI func(siteID string, args []string) (string, error)
 	// RunTaskFunc, if set, handles RunTask calls for existing sites. By
 	// default tasks succeed with empty output.
@@ -225,9 +226,14 @@ func (f *Fake) ExecWPCLI(_ context.Context, siteID string, args []string) (strin
 		f.mu.Unlock()
 		return "", err
 	}
-	if _, err := f.lookup(siteID); err != nil {
+	s, err := f.lookup(siteID)
+	if err != nil {
 		f.mu.Unlock()
 		return "", err
+	}
+	if s.Phase != provisioner.SiteRunning {
+		f.mu.Unlock()
+		return "", provisioner.ErrSiteNotRunning
 	}
 	handler := f.WPCLI
 	f.mu.Unlock()

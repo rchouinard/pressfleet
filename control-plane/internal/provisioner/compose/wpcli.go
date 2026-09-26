@@ -36,8 +36,9 @@ const (
 )
 
 // ErrSiteNotRunning is returned by ExecWPCLI when the site's php container
-// exists but is not running.
-var ErrSiteNotRunning = errors.New("compose: site is not running")
+// exists but is not running. It is provisioner.ErrSiteNotRunning, so
+// driver-agnostic callers can test for it.
+var ErrSiteNotRunning = provisioner.ErrSiteNotRunning
 
 // ErrOutputTruncated is returned by ExecWPCLI, together with the output that
 // was kept, when the command wrote more than the configured maximum.

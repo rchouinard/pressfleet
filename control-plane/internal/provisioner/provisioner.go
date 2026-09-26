@@ -16,6 +16,11 @@ import (
 // has no runtime resources for.
 var ErrSiteNotFound = errors.New("provisioner: site not found")
 
+// ErrSiteNotRunning is returned by [Provisioner.ExecWPCLI] when the site
+// exists but isn't running, so callers such as the WP-Cron job can tell a
+// stopped site from a failed command without importing a driver.
+var ErrSiteNotRunning = errors.New("provisioner: site is not running")
+
 // Default per-site resource settings (§4.1 Capacity Target).
 const (
 	DefaultCPU                 = "1.0"
@@ -179,7 +184,8 @@ type Provisioner interface {
 	SetMaintenance(ctx context.Context, siteID string, enabled bool) error
 	// ExecWPCLI runs WP-CLI in the site's PHP container as the site's user
 	// and returns its stdout. args are passed as argv, never through a shell.
-	// A non-zero exit yields an *ExecError.
+	// A non-zero exit yields an *ExecError; a site that exists but isn't
+	// running yields ErrSiteNotRunning.
 	ExecWPCLI(ctx context.Context, siteID string, args []string) (string, error)
 	// PurgeCache purges the site's page cache and object cache.
 	PurgeCache(ctx context.Context, siteID string) error
