@@ -191,6 +191,10 @@ func jsonObject(raw json.RawMessage) (string, error) {
 	return string(raw), nil
 }
 
+// jobIDs keeps jobs enqueued in the same millisecond in order, so List's
+// newest-first order (by ID) matches the order they were enqueued.
+var jobIDs id.Monotonic
+
 // Enqueue inserts j as a queued job, filling in its ID, state, sequence
 // number, and timestamps. RunAfter defaults to now and MaxAttempts to
 // DefaultMaxAttempts. Run it inside DB.InTx to enqueue atomically with
@@ -204,7 +208,7 @@ func (r Jobs) Enqueue(ctx context.Context, j *Job) error {
 		return fmt.Errorf("enqueue job: payload %w", err)
 	}
 	e := *j
-	e.ID = id.New()
+	e.ID = jobIDs.NewAt(time.Now())
 	e.State = JobQueued
 	e.Payload, e.Data, e.Result = json.RawMessage(payload), json.RawMessage("{}"), json.RawMessage("{}")
 	e.Error, e.Attempts, e.LeaseOwner, e.LeaseExpiresAt = "", 0, "", time.Time{}
