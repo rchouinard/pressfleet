@@ -34,7 +34,7 @@ type problem struct {
 }
 
 // fakeAuth records calls and rejects requests without the magic header.
-// Accepted requests carry principal, if set.
+// Accepted requests carry principal, or an admin session if it is nil.
 type fakeAuth struct {
 	calls     []string
 	principal *auth.Principal
@@ -45,10 +45,11 @@ func (f *fakeAuth) Authenticate(r *http.Request) (context.Context, error) {
 	if r.Header.Get("X-Test-Auth") != "ok" {
 		return nil, api.ErrUnauthenticated
 	}
+	p := auth.Principal{UserID: "01j9zq3v6t8k4m2n5p7r9s1x3y", Role: store.RoleAdmin, Method: auth.MethodSession, SessionID: "test"}
 	if f.principal != nil {
-		return auth.WithPrincipal(r.Context(), *f.principal), nil
+		p = *f.principal
 	}
-	return r.Context(), nil
+	return auth.WithPrincipal(r.Context(), p), nil
 }
 
 func newHandler(t *testing.T, opts api.Options) http.Handler {

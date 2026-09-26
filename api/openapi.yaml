@@ -62,6 +62,15 @@ info:
     Each user has one platform-wide role: `admin`, `operator`, or `viewer`
     (design doc §4.6). A token's effective permissions are the intersection of
     its scope and its owner's current role. Denied requests get `403`.
+
+    * Every role may read sites, client groups, and jobs, and manage its own
+      password and API tokens.
+    * Operators and Admins may also create and change sites and client groups.
+    * Only Admins may delete sites and client groups and manage users.
+    * `read-only` tokens may only read, whatever the owner's role.
+
+    Role changes apply to the user's existing sessions and tokens at once. The
+    last enabled Admin can't be demoted, disabled, or deleted (`409`).
   license:
     name: MIT
     identifier: MIT
@@ -201,6 +210,8 @@ paths:
                 $ref: "#/components/schemas/CurrentUser"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         default:
           $ref: "#/components/responses/Error"
 
@@ -267,6 +278,11 @@ paths:
       description: |
         The response contains the plaintext token. It is shown only once and
         cannot be retrieved again; only a hash is stored.
+
+        When the request itself is authenticated with an API token, the new
+        token can't be broader than it: a read-only token can't create tokens
+        at all, and a token with an expiry can only create tokens that expire
+        no later. Violations return `403`.
       requestBody:
         required: true
         content:

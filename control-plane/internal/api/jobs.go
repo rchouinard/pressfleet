@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
+	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/id"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
@@ -19,7 +20,13 @@ import (
 // ListJobs lists jobs, newest first. The cursor is the ID of the last job
 // on the previous page.
 func (h *Handlers) ListJobs(ctx context.Context, req gen.ListJobsRequestObject) (gen.ListJobsResponseObject, error) {
-	// TODO(#103): h.authorize(ctx, <read jobs>, nil) goes here, before anything else.
+	target := authz.Platform()
+	if tt, tid := req.Params.TargetType, req.Params.TargetID; tt != nil && tid != nil {
+		target = authz.Target{Type: authz.TargetType(*tt), ID: *tid}
+	}
+	if _, err := h.authorize(ctx, authz.ViewJobs, target); err != nil {
+		return nil, err
+	}
 	if h.db == nil {
 		return nil, errNoDatabase
 	}
@@ -70,7 +77,9 @@ func (h *Handlers) ListJobs(ctx context.Context, req gen.ListJobsRequestObject) 
 
 // GetJob returns a job with its steps and step log.
 func (h *Handlers) GetJob(ctx context.Context, req gen.GetJobRequestObject) (gen.GetJobResponseObject, error) {
-	// TODO(#103): h.authorize(ctx, <read job>, req.JobID) goes here, before anything else.
+	if _, err := h.authorize(ctx, authz.ViewJobs, authz.Job(req.JobID)); err != nil {
+		return nil, err
+	}
 	if h.db == nil {
 		return nil, errNoDatabase
 	}

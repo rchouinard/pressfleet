@@ -197,6 +197,37 @@ func (r Users) Update(ctx context.Context, u *User, at time.Time) error {
 	return nil
 }
 
+// LockActiveAdmins returns the IDs of the enabled admins. Inside a
+// transaction on PostgreSQL it locks their rows (SELECT ... FOR UPDATE)
+// until the transaction ends, so two transactions that each remove a
+// different admin can't both see the other one and leave none: the second
+// waits, then sees the first one's change. SQLite needs no row locks,
+// because the store's transactions take the database write lock when they
+// begin, so they already run one at a time.
+func (r Users) LockActiveAdmins(ctx context.Context) ([]string, error) {
+	query := "SELECT id FROM users WHERE role = ? AND disabled_at IS NULL ORDER BY id"
+	if r.q.Dialect() == Postgres {
+		query += " FOR UPDATE"
+	}
+	rows, err := r.q.QueryContext(ctx, query, string(RoleAdmin))
+	if err != nil {
+		return nil, fmt.Errorf("lock admins: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("lock admins: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("lock admins: %w", err)
+	}
+	return ids, nil
+}
+
 // SetLastLogin records a successful login. It doesn't change UpdatedAt,
 // which tracks changes to the user's settings.
 func (r Users) SetLastLogin(ctx context.Context, userID string, at time.Time) error {

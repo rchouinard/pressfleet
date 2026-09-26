@@ -13,19 +13,24 @@
 //  3. request validation against the OpenAPI document;
 //  4. JSON decoding (generated), then the handler.
 //
-// Handlers find the caller with auth.PrincipalFromContext (or h.principal).
-//
 // # Writing a handler
 //
 // Handlers implement gen.StrictServerInterface. Adding or implementing an
-// endpoint never touches the router: edit the spec, run `make generate`, and
-// fill in the method. Every handler must start with the single authorization
-// check (design doc §4.6), before reading or changing anything. #103 adds it
-// where handlers are marked TODO(#103); the intended shape is:
+// endpoint never touches the router: edit the spec, run `make generate`,
+// declare the operation's authorization action in operationActions, and
+// fill in the method. Every protected handler must start with the single
+// authorization check (design doc §4.6, package authz), before reading or
+// changing anything:
 //
-//	if err := h.authorize(ctx, action, target); err != nil {
-//		return nil, err // wraps ErrForbidden -> 403
+//	p, err := h.authorize(ctx, authz.UpdateSite, authz.Site(req.SiteID))
+//	if err != nil {
+//		return nil, err // ErrForbidden -> 403
 //	}
+//
+// It returns the caller. NewHandler fails if a protected operation has no
+// declared action, authorize fails if the handler checks a different action
+// than the declared one, and a test calls every operation as a caller with
+// no permissions and expects 403.
 //
 // Handlers report failures by returning errors that wrap the sentinels in
 // errors.go (or a *httpserver.Problem, or a *ValidationError). They are
@@ -41,6 +46,7 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
+	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
@@ -86,6 +92,7 @@ type Handlers struct {
 	readiness     *httpserver.Readiness
 	db            *store.DB
 	auth          *auth.Service
+	resolver      authz.Resolver
 	secureCookies bool
 }
 
@@ -106,6 +113,9 @@ func NewHandler(opts Options) (http.Handler, error) {
 		return nil, err
 	}
 	ops := newOperationTable(doc)
+	if err := ops.checkActions(); err != nil {
+		return nil, err
+	}
 	if opts.Authenticator == nil {
 		opts.Authenticator = rejectAll{}
 		opts.Logger.Warn("API authentication is not configured; protected operations are rejected")
@@ -115,6 +125,9 @@ func NewHandler(opts Options) (http.Handler, error) {
 	}
 
 	h := &Handlers{log: opts.Logger, readiness: opts.Readiness, db: opts.DB, auth: opts.Auth, secureCookies: opts.SecureCookies}
+	if opts.DB != nil {
+		h.resolver = authz.NewResolver(opts.DB)
+	}
 	strict := gen.NewStrictHandlerWithOptions(h, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  requestErrorHandler(opts.Logger),
 		ResponseErrorHandlerFunc: responseErrorHandler(opts.Logger),

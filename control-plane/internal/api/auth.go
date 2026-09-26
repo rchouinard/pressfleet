@@ -11,6 +11,7 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
+	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
@@ -49,12 +50,10 @@ func (h *Handlers) Login(ctx context.Context, req gen.LoginRequestObject) (gen.L
 
 // Logout ends the current session and clears the cookie.
 func (h *Handlers) Logout(ctx context.Context, _ gen.LogoutRequestObject) (gen.LogoutResponseObject, error) {
-	p, err := h.principal(ctx)
+	p, err := h.authorizeAuth(ctx, authz.Logout, self(ctx))
 	if err != nil {
 		return nil, err
 	}
-	// Logging out is always allowed for one's own session; no authorization
-	// check (#103) is needed.
 	if p.Method == auth.MethodSession {
 		if err := h.auth.Logout(ctx, p.SessionID); err != nil {
 			return nil, err
@@ -67,11 +66,10 @@ func (h *Handlers) Logout(ctx context.Context, _ gen.LogoutRequestObject) (gen.L
 // GetCurrentUser returns the authenticated user and, for sessions, the CSRF
 // token.
 func (h *Handlers) GetCurrentUser(ctx context.Context, _ gen.GetCurrentUserRequestObject) (gen.GetCurrentUserResponseObject, error) {
-	p, err := h.principal(ctx)
+	p, err := h.authorizeAuth(ctx, authz.ViewSelf, self(ctx))
 	if err != nil {
 		return nil, err
 	}
-	// Reading oneself is always allowed; no authorization check (#103).
 	u, err := h.auth.GetUser(ctx, p.UserID)
 	if errors.Is(err, auth.ErrUserNotFound) {
 		return nil, ErrUnauthenticated
@@ -91,11 +89,10 @@ func (h *Handlers) GetCurrentUser(ctx context.Context, _ gen.GetCurrentUserReque
 
 // ChangePassword changes the caller's own password.
 func (h *Handlers) ChangePassword(ctx context.Context, req gen.ChangePasswordRequestObject) (gen.ChangePasswordResponseObject, error) {
-	p, err := h.principal(ctx)
+	p, err := h.authorizeAuth(ctx, authz.ChangeOwnPassword, self(ctx))
 	if err != nil {
 		return nil, err
 	}
-	// TODO(#103): h.authorize(ctx, <manage own password>, p.UserID) before acting.
 	err = h.auth.ChangePassword(ctx, p,
 		redact.Secret(deref(req.Body.CurrentPassword)), redact.Secret(deref(req.Body.NewPassword)))
 	switch {
@@ -109,11 +106,10 @@ func (h *Handlers) ChangePassword(ctx context.Context, req gen.ChangePasswordReq
 
 // ListAPITokens lists the current user's API tokens.
 func (h *Handlers) ListAPITokens(ctx context.Context, req gen.ListAPITokensRequestObject) (gen.ListAPITokensResponseObject, error) {
-	p, err := h.principal(ctx)
+	p, err := h.authorizeAuth(ctx, authz.ViewOwnTokens, self(ctx))
 	if err != nil {
 		return nil, err
 	}
-	// TODO(#103): h.authorize(ctx, <view own API tokens>, p.UserID) before acting.
 	limit := pageLimit(req.Params.Limit)
 	tokens, err := h.auth.ListAPITokens(ctx, p.UserID, deref(req.Params.Cursor), limit+1)
 	if err != nil {
@@ -129,16 +125,19 @@ func (h *Handlers) ListAPITokens(ctx context.Context, req gen.ListAPITokensReque
 
 // CreateAPIToken creates an API token and returns its plaintext once.
 func (h *Handlers) CreateAPIToken(ctx context.Context, req gen.CreateAPITokenRequestObject) (gen.CreateAPITokenResponseObject, error) {
-	p, err := h.principal(ctx)
+	p, err := h.authorizeAuth(ctx, authz.CreateOwnToken, self(ctx))
 	if err != nil {
 		return nil, err
 	}
-	// TODO(#103): h.authorize(ctx, <manage own API tokens>, p.UserID) before
-	// acting. A token must not be able to mint one that can do more than
+	scope := store.TokenScope(req.Body.Scope)
+	// A token must not mint one that can do more, or last longer, than
 	// itself.
+	if err := authz.CheckNewToken(p, scope, req.Body.ExpiresAt); err != nil {
+		return nil, forbidden(err)
+	}
 	tok, plain, err := h.auth.CreateAPIToken(ctx, p.UserID, auth.NewAPIToken{
 		Name:      req.Body.Name,
-		Scope:     store.TokenScope(req.Body.Scope),
+		Scope:     scope,
 		ExpiresAt: req.Body.ExpiresAt,
 	})
 	if err != nil {
@@ -158,27 +157,24 @@ func (h *Handlers) CreateAPIToken(ctx context.Context, req gen.CreateAPITokenReq
 
 // RevokeAPIToken revokes one of the current user's API tokens.
 func (h *Handlers) RevokeAPIToken(ctx context.Context, req gen.RevokeAPITokenRequestObject) (gen.RevokeAPITokenResponseObject, error) {
-	p, err := h.principal(ctx)
+	p, err := h.authorizeAuth(ctx, authz.RevokeOwnToken, authz.APIToken(req.TokenID))
 	if err != nil {
 		return nil, err
 	}
-	// TODO(#103): h.authorize(ctx, <manage own API tokens>, p.UserID) before acting.
 	if err := h.auth.RevokeAPIToken(ctx, p.UserID, req.TokenID); err != nil {
 		return nil, authError(err, "")
 	}
 	return gen.RevokeAPIToken204Response{}, nil
 }
 
-// principal returns the authenticated caller. The authentication middleware
-// guarantees one for protected operations; checking again keeps a handler
-// from ever running anonymously if that changes.
-func (h *Handlers) principal(ctx context.Context) (auth.Principal, error) {
+// authorizeAuth is authorize for handlers that need the auth service.
+func (h *Handlers) authorizeAuth(ctx context.Context, action authz.Action, target authz.Target) (auth.Principal, error) {
+	p, err := h.authorize(ctx, action, target)
+	if err != nil {
+		return auth.Principal{}, err
+	}
 	if h.auth == nil {
 		return auth.Principal{}, errAuthNotConfigured
-	}
-	p, ok := auth.PrincipalFromContext(ctx)
-	if !ok {
-		return auth.Principal{}, ErrUnauthenticated
 	}
 	return p, nil
 }
@@ -189,7 +185,7 @@ func authError(err error, passwordField string) error {
 	switch {
 	case errors.Is(err, auth.ErrUserNotFound), errors.Is(err, auth.ErrTokenNotFound):
 		return fmt.Errorf("%w: %w", ErrNotFound, err)
-	case errors.Is(err, auth.ErrEmailTaken):
+	case errors.Is(err, auth.ErrEmailTaken), errors.Is(err, auth.ErrLastAdmin):
 		return fmt.Errorf("%w: %w", ErrConflict, err)
 	case errors.Is(err, auth.ErrUnauthenticated):
 		return ErrUnauthenticated

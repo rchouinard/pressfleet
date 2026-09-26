@@ -242,7 +242,7 @@ func TestRevocationOnPasswordChangeAndDisable(t *testing.T) {
 	ctx := context.Background()
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
 		svc, _ := newService(t, db)
-		u := mustCreate(t, svc, "a@example.com", store.RoleAdmin)
+		u := mustCreate(t, svc, "a@example.com", store.RoleOperator) // not the last admin, so it can be disabled
 		current := login(t, svc, "a@example.com")
 		other := login(t, svc, "a@example.com")
 		_, token, err := svc.CreateAPIToken(ctx, u.ID, auth.NewAPIToken{Name: "ci", Scope: store.ScopeFull})
@@ -320,7 +320,7 @@ func TestUserValidation(t *testing.T) {
 	ctx := context.Background()
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
 		svc, _ := newService(t, db)
-		u := mustCreate(t, svc, "a@example.com", store.RoleAdmin)
+		u := mustCreate(t, svc, "a@example.com", store.RoleOperator)
 		for _, c := range []struct {
 			nu   auth.NewUser
 			want error

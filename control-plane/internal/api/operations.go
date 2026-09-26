@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -10,6 +11,7 @@ import (
 	"github.com/getkin/kin-openapi/routers"
 
 	apispec "github.com/rchouinard/pressfleet/api"
+	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
 )
 
 // Operation describes one operation in the OpenAPI document.
@@ -23,6 +25,9 @@ type Operation struct {
 	// (login and the health probes). Every other operation requires an
 	// authenticated caller.
 	Public bool
+	// Action is the authorization action the operation's handler checks
+	// (package authz), or empty for public operations.
+	Action authz.Action
 
 	route *routers.Route
 }
@@ -59,12 +64,39 @@ func newOperationTable(doc *openapi3.T) operationTable {
 				Method: method,
 				Path:   path,
 				Public: len(security) == 0,
+				Action: operationActions[op.OperationID],
 				route:  &routers.Route{Spec: doc, Path: path, PathItem: item, Method: method, Operation: op},
 			}
 			ops[o.Pattern()] = o
 		}
 	}
 	return ops
+}
+
+// checkActions reports protected operations without a known authorization
+// action, and declared actions for operations that don't exist or are
+// public: the API must not serve an operation nobody decided who may call.
+func (t operationTable) checkActions() error {
+	var errs []error
+	declared := map[string]bool{}
+	for _, o := range t {
+		declared[o.ID] = true
+		switch {
+		case o.Public && o.Action != "":
+			errs = append(errs, fmt.Errorf("public operation %s must not declare an authorization action", o.ID))
+		case !o.Public && !o.Action.Known():
+			errs = append(errs, fmt.Errorf("operation %s has no known authorization action; add it to operationActions", o.ID))
+		}
+	}
+	for id := range operationActions {
+		if !declared[id] {
+			errs = append(errs, fmt.Errorf("operationActions declares %s, which isn't in the OpenAPI document", id))
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		return fmt.Errorf("api: %w", err)
+	}
+	return nil
 }
 
 // forRequest returns the operation the router matched r to. It relies on

@@ -57,6 +57,8 @@ var (
 	ErrUserNotFound = errors.New("user not found")
 	// ErrTokenNotFound means the user has no such active API token.
 	ErrTokenNotFound = errors.New("API token not found")
+	// ErrLastAdmin means a change would leave no enabled Admin (§4.6).
+	ErrLastAdmin = errors.New("the last enabled admin can't be demoted, disabled, or deleted")
 )
 
 // maxTokenNameLen matches the API's limit.
@@ -302,7 +304,10 @@ func (s *Service) AuthenticateToken(ctx context.Context, token redact.Secret) (P
 			s.log.Warn("updating API token last used failed", "token_id", tok.ID, "error", err)
 		}
 	}
-	return Principal{UserID: user.ID, Email: user.Email, Role: user.Role, Method: MethodToken, TokenID: tok.ID, Scope: tok.Scope}, nil
+	return Principal{
+		UserID: user.ID, Email: user.Email, Role: user.Role,
+		Method: MethodToken, TokenID: tok.ID, Scope: tok.Scope, TokenExpiresAt: tok.ExpiresAt,
+	}, nil
 }
 
 // activeUser returns the user, or ErrUnauthenticated if they have been
@@ -453,7 +458,8 @@ type UserChanges struct {
 
 // UpdateUser applies changes to a user. Setting a password or disabling the
 // user signs them out everywhere and revokes their API tokens. Role changes
-// need no revocation: every request reads the current role.
+// need no revocation: every request reads the current role. Demoting or
+// disabling the last enabled admin returns ErrLastAdmin.
 func (s *Service) UpdateUser(ctx context.Context, userID string, c UserChanges) (store.User, error) {
 	var email string
 	if c.Email != nil {
@@ -480,10 +486,21 @@ func (s *Service) UpdateUser(ctx context.Context, userID string, c UserChanges) 
 	var user store.User
 	err := s.db.InTx(ctx, func(q store.Querier) error {
 		users := store.NewUsers(q)
+		// A role or disabled change may remove an admin: lock the admins
+		// before reading the user, so concurrent changes can't each see
+		// another admin and together remove the last one.
+		var admins []string
+		if c.Role != nil || c.Disabled != nil {
+			var err error
+			if admins, err = users.LockActiveAdmins(ctx); err != nil {
+				return err
+			}
+		}
 		var err error
 		if user, err = users.Get(ctx, userID); err != nil {
 			return err
 		}
+		wasAdmin := user.Role == store.RoleAdmin && !user.Disabled()
 		revoke := false
 		if c.Email != nil {
 			user.Email = email
@@ -502,6 +519,9 @@ func (s *Service) UpdateUser(ctx context.Context, userID string, c UserChanges) 
 				user.DisabledAt = nil
 			}
 		}
+		if wasAdmin && (user.Role != store.RoleAdmin || user.Disabled()) && !otherAdmin(admins, user.ID) {
+			return ErrLastAdmin
+		}
 		if err := users.Update(ctx, &user, now); err != nil {
 			return err
 		}
@@ -515,6 +535,8 @@ func (s *Service) UpdateUser(ctx context.Context, userID string, c UserChanges) 
 		return store.User{}, ErrUserNotFound
 	case errors.Is(err, store.ErrConflict):
 		return store.User{}, ErrEmailTaken
+	case errors.Is(err, ErrLastAdmin):
+		return store.User{}, ErrLastAdmin
 	case err != nil:
 		return store.User{}, fmt.Errorf("update user: %w", err)
 	}
@@ -533,16 +555,44 @@ func (s *Service) ResetPassword(ctx context.Context, email string, pw redact.Sec
 	return s.UpdateUser(ctx, u.ID, UserChanges{Password: &pw})
 }
 
-// DeleteUser deletes a user; their sessions and tokens go with them.
+// DeleteUser deletes a user; their sessions and tokens go with them. It
+// returns ErrLastAdmin for the last enabled admin.
 func (s *Service) DeleteUser(ctx context.Context, userID string) error {
-	err := store.NewUsers(s.db).Delete(ctx, userID)
-	if errors.Is(err, store.ErrNotFound) {
+	err := s.db.InTx(ctx, func(q store.Querier) error {
+		users := store.NewUsers(q)
+		admins, err := users.LockActiveAdmins(ctx)
+		if err != nil {
+			return err
+		}
+		user, err := users.Get(ctx, userID)
+		if err != nil {
+			return err
+		}
+		if user.Role == store.RoleAdmin && !user.Disabled() && !otherAdmin(admins, user.ID) {
+			return ErrLastAdmin
+		}
+		return users.Delete(ctx, userID)
+	})
+	switch {
+	case errors.Is(err, store.ErrNotFound):
 		return ErrUserNotFound
-	} else if err != nil {
-		return err
+	case errors.Is(err, ErrLastAdmin):
+		return ErrLastAdmin
+	case err != nil:
+		return fmt.Errorf("delete user: %w", err)
 	}
 	s.log.Info("user deleted", "user_id", userID)
 	return nil
+}
+
+// otherAdmin reports whether admins holds an ID other than userID.
+func otherAdmin(admins []string, userID string) bool {
+	for _, id := range admins {
+		if id != userID {
+			return true
+		}
+	}
+	return false
 }
 
 // NewAPIToken describes an API token to create.

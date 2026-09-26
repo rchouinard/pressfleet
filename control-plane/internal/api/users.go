@@ -5,19 +5,20 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
+	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
 
-// User management (#13). Only Admins may manage users (§4.6); that check,
-// and last-Admin protection, are #103.
+// User management (#13). Only Admins may manage users (§4.6), and the last
+// enabled Admin can't be demoted, disabled, or deleted (auth.ErrLastAdmin,
+// a 409).
 
 // ListUsers lists users.
 func (h *Handlers) ListUsers(ctx context.Context, req gen.ListUsersRequestObject) (gen.ListUsersResponseObject, error) {
-	if _, err := h.principal(ctx); err != nil {
+	if _, err := h.authorizeAuth(ctx, authz.ViewUsers, authz.Platform()); err != nil {
 		return nil, err
 	}
-	// TODO(#103): h.authorize(ctx, <manage users>, nil) before acting.
 	limit := pageLimit(req.Params.Limit)
 	users, err := h.auth.ListUsers(ctx, store.UserFilter{
 		Role:  store.Role(deref(req.Params.Role)),
@@ -37,10 +38,9 @@ func (h *Handlers) ListUsers(ctx context.Context, req gen.ListUsersRequestObject
 
 // CreateUser creates a user.
 func (h *Handlers) CreateUser(ctx context.Context, req gen.CreateUserRequestObject) (gen.CreateUserResponseObject, error) {
-	if _, err := h.principal(ctx); err != nil {
+	if _, err := h.authorizeAuth(ctx, authz.CreateUser, authz.Platform()); err != nil {
 		return nil, err
 	}
-	// TODO(#103): h.authorize(ctx, <manage users>, nil) before acting.
 	u, err := h.auth.CreateUser(ctx, auth.NewUser{
 		Email:    string(req.Body.Email),
 		Password: redact.Secret(deref(req.Body.Password)),
@@ -55,10 +55,9 @@ func (h *Handlers) CreateUser(ctx context.Context, req gen.CreateUserRequestObje
 
 // GetUser returns a user.
 func (h *Handlers) GetUser(ctx context.Context, req gen.GetUserRequestObject) (gen.GetUserResponseObject, error) {
-	if _, err := h.principal(ctx); err != nil {
+	if _, err := h.authorizeAuth(ctx, authz.ViewUsers, authz.User(req.UserID)); err != nil {
 		return nil, err
 	}
-	// TODO(#103): h.authorize(ctx, <manage users>, req.UserID) before acting.
 	u, err := h.auth.GetUser(ctx, req.UserID)
 	if err != nil {
 		return nil, authError(err, "")
@@ -68,13 +67,11 @@ func (h *Handlers) GetUser(ctx context.Context, req gen.GetUserRequestObject) (g
 
 // UpdateUser changes a user's email, password, role, or disabled flag.
 // Setting a password or disabling the user revokes their sessions and
-// tokens.
+// tokens. Role changes apply to the user's next request.
 func (h *Handlers) UpdateUser(ctx context.Context, req gen.UpdateUserRequestObject) (gen.UpdateUserResponseObject, error) {
-	if _, err := h.principal(ctx); err != nil {
+	if _, err := h.authorizeAuth(ctx, authz.UpdateUser, authz.User(req.UserID)); err != nil {
 		return nil, err
 	}
-	// TODO(#103): h.authorize(ctx, <manage users>, req.UserID) before acting,
-	// then refuse to demote or disable the last Admin (409).
 	var c auth.UserChanges
 	if e := req.Body.Email; e != nil {
 		s := string(*e)
@@ -98,11 +95,9 @@ func (h *Handlers) UpdateUser(ctx context.Context, req gen.UpdateUserRequestObje
 
 // DeleteUser deletes a user and, with them, their sessions and tokens.
 func (h *Handlers) DeleteUser(ctx context.Context, req gen.DeleteUserRequestObject) (gen.DeleteUserResponseObject, error) {
-	if _, err := h.principal(ctx); err != nil {
+	if _, err := h.authorizeAuth(ctx, authz.DeleteUser, authz.User(req.UserID)); err != nil {
 		return nil, err
 	}
-	// TODO(#103): h.authorize(ctx, <manage users>, req.UserID) before acting,
-	// then refuse to delete the last Admin (409).
 	if err := h.auth.DeleteUser(ctx, req.UserID); err != nil {
 		return nil, authError(err, "")
 	}

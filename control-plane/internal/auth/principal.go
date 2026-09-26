@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
@@ -17,8 +18,8 @@ const (
 	MethodToken Method = "token"
 )
 
-// Principal is an authenticated caller. It is what authorization (#103)
-// decides on: the user's current role, and for API tokens, the token's
+// Principal is an authenticated caller. It is what authorization (package
+// authz) decides on: the user's current role, and for API tokens, the token's
 // scope. The role is read from the database on every request, so role
 // changes apply immediately to existing sessions and tokens (§4.6).
 type Principal struct {
@@ -32,6 +33,9 @@ type Principal struct {
 	// they may do everything the user's role allows.
 	TokenID string
 	Scope   store.TokenScope
+	// TokenExpiresAt is the token's expiry, if it has one. Authorization
+	// uses it so a token can't mint a token that outlives it.
+	TokenExpiresAt *time.Time
 }
 
 type principalKey struct{}

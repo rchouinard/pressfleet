@@ -20,7 +20,7 @@ var (
 	// ErrUnauthenticated: the caller isn't authenticated (401).
 	ErrUnauthenticated = errors.New("authentication required")
 	// ErrForbidden: the caller's role or token scope doesn't allow the
-	// action (403). The authorization check (#103) returns it.
+	// action (403). The authorization check (authorize) returns it.
 	ErrForbidden = errors.New("forbidden")
 	// ErrNotFound: the target doesn't exist (404).
 	ErrNotFound = errors.New("not found")
