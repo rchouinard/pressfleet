@@ -114,3 +114,50 @@ func TestValidate(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadHostSettingsFromEnv(t *testing.T) {
+	cfg, err := config.Load("", env(noDefaultFile(t, map[string]string{
+		"PRESSFLEET_DASHBOARD_DOMAIN":    "fleet.example.com",
+		"PRESSFLEET_PREVIEW_BASE_DOMAIN": "preview.example.com",
+		"PRESSFLEET_PUBLIC_IP":           "203.0.113.7",
+	})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DashboardDomain != "fleet.example.com" || cfg.PreviewBaseDomain != "preview.example.com" || cfg.PublicIP != "203.0.113.7" {
+		t.Errorf("Load() = %+v", cfg)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v", err)
+	}
+}
+
+func TestValidateHostSettings(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*config.Config)
+		wantErr string
+	}{
+		{"unset is fine", func(*config.Config) {}, ""},
+		{"domain with trailing dot", func(c *config.Config) { c.DashboardDomain = "fleet.example.com." }, ""},
+		{"IPv6 public IP", func(c *config.Config) { c.PublicIP = "2001:db8::1" }, ""},
+		{"URL as domain", func(c *config.Config) { c.DashboardDomain = "https://fleet.example.com" }, "dashboard_domain"},
+		{"single label", func(c *config.Config) { c.DashboardDomain = "localhost" }, "dashboard_domain"},
+		{"wildcard", func(c *config.Config) { c.PreviewBaseDomain = "*.preview.example.com" }, "preview_base_domain"},
+		{"leading hyphen", func(c *config.Config) { c.PreviewBaseDomain = "-bad.example.com" }, "preview_base_domain"},
+		{"bad IP", func(c *config.Config) { c.PublicIP = "203.0.113" }, "public_ip"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.Default()
+			tt.mutate(&cfg)
+			err := cfg.Validate()
+			switch {
+			case tt.wantErr == "" && err != nil:
+				t.Errorf("Validate() = %v, want nil", err)
+			case tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)):
+				t.Errorf("Validate() = %v, want error mentioning %s", err, tt.wantErr)
+			}
+		})
+	}
+}

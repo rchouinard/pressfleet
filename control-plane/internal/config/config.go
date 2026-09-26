@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.yaml.in/yaml/v3"
 
@@ -34,6 +36,15 @@ type Config struct {
 	Listen string `yaml:"listen"`
 	// Log configures logging.
 	Log LogConfig `yaml:"log"`
+	// DashboardDomain is where the dashboard and API are served (§4.1).
+	DashboardDomain string `yaml:"dashboard_domain"`
+	// PreviewBaseDomain has a wildcard DNS record pointing at this host;
+	// previews are served from its subdomains (§4.1).
+	PreviewBaseDomain string `yaml:"preview_base_domain"`
+	// PublicIP is this host's public address. It is optional and only used
+	// by preflight DNS checks on hosts behind NAT, where no network
+	// interface carries the public address.
+	PublicIP string `yaml:"public_ip"`
 }
 
 // LogConfig configures logging.
@@ -60,6 +71,9 @@ var envVars = []struct {
 	{"PRESSFLEET_LISTEN", func(c *Config) *string { return &c.Listen }},
 	{"PRESSFLEET_LOG_LEVEL", func(c *Config) *string { return &c.Log.Level }},
 	{"PRESSFLEET_LOG_FORMAT", func(c *Config) *string { return &c.Log.Format }},
+	{"PRESSFLEET_DASHBOARD_DOMAIN", func(c *Config) *string { return &c.DashboardDomain }},
+	{"PRESSFLEET_PREVIEW_BASE_DOMAIN", func(c *Config) *string { return &c.PreviewBaseDomain }},
+	{"PRESSFLEET_PUBLIC_IP", func(c *Config) *string { return &c.PublicIP }},
 }
 
 // LookupEnv looks up an environment variable, like os.LookupEnv.
@@ -127,7 +141,45 @@ func (c Config) Validate() error {
 	if c.Log.Format != logging.FormatText && c.Log.Format != logging.FormatJSON {
 		errs = append(errs, fmt.Errorf("log.format must be %q or %q, got %q", logging.FormatText, logging.FormatJSON, c.Log.Format))
 	}
+	for _, d := range []struct{ key, value string }{
+		{"dashboard_domain", c.DashboardDomain},
+		{"preview_base_domain", c.PreviewBaseDomain},
+	} {
+		if d.value != "" && !validDomain(d.value) {
+			errs = append(errs, fmt.Errorf("%s must be a domain name like fleet.example.com, got %q", d.key, d.value))
+		}
+	}
+	if c.PublicIP != "" {
+		if _, err := netip.ParseAddr(c.PublicIP); err != nil {
+			errs = append(errs, fmt.Errorf("public_ip must be an IP address, got %q", c.PublicIP))
+		}
+	}
 	return errors.Join(errs...)
+}
+
+// validDomain reports whether s is a domain name with at least two labels.
+// It rejects schemes, ports, paths, and wildcards, which are easy mistakes
+// when pasting a URL or a DNS record.
+func validDomain(s string) bool {
+	s = strings.TrimSuffix(s, ".")
+	if len(s) > 253 {
+		return false
+	}
+	labels := strings.Split(s, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	for _, l := range labels {
+		if l == "" || len(l) > 63 || l[0] == '-' || l[len(l)-1] == '-' {
+			return false
+		}
+		for _, r := range l {
+			if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // Layout returns the data directory layout.

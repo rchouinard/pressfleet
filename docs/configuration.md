@@ -25,6 +25,9 @@ listen: ":8080"
 log:
   level: info    # debug, info, warn, error
   format: text   # text, json
+dashboard_domain: fleet.agency.example
+preview_base_domain: preview.agency.example
+public_ip: 203.0.113.7   # optional
 ```
 
 ## Settings
@@ -35,6 +38,26 @@ log:
 | `listen` | `PRESSFLEET_LISTEN` | `--listen` (`serve` only) | `:8080` | HTTP listen address for the API and dashboard. |
 | `log.level` | `PRESSFLEET_LOG_LEVEL` | `--log-level` | `info` | `debug`, `info`, `warn`, or `error`. |
 | `log.format` | `PRESSFLEET_LOG_FORMAT` | `--log-format` | `text` | `text` or `json`. Logs go to stderr. |
+| `dashboard_domain` | `PRESSFLEET_DASHBOARD_DOMAIN` | | (unset) | Domain serving the dashboard and API, e.g. `fleet.agency.example`. |
+| `preview_base_domain` | `PRESSFLEET_PREVIEW_BASE_DOMAIN` | | (unset) | Domain whose wildcard record points at this host; previews use its subdomains. Give the base (`preview.agency.example`), not `*.preview.agency.example`. |
+| `public_ip` | `PRESSFLEET_PUBLIC_IP` | | (unset) | Optional. This host's public IP address, used only to verify DNS records when the host is behind NAT (see [Preflight checks](#preflight-checks)). |
+
+## Preflight checks
+
+`pressfleet doctor` checks the host against the requirements in design doc §4.1 and prints a fix for every problem. `--json` prints the same report as JSON. The exit status is:
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | Every check passed or was skipped. |
+| 1 | At least one required check failed. |
+| 2 | No required check failed, but a recommended check failed or some check warned. |
+
+`pressfleet serve` runs the subset of checks that apply to a running control plane (Docker, Compose, cgroup v2, address pools, disk, memory) and refuses to start if a required one fails. Checks that only make sense before installation (ports 80/443, DNS, log rotation in the host's `daemon.json`) run only in `doctor`. On a development machine, `serve --skip-preflight` starts anyway and logs a warning.
+
+The DNS checks are skipped until `dashboard_domain` and `preview_base_domain` are set. For the wildcard, doctor resolves a random name under the preview base domain. A record that doesn't resolve, or resolves only to loopback, fails. Otherwise:
+
+- With `public_ip` set, the check passes if the record includes that address and fails if it doesn't.
+- Without it, the check passes if the record includes an address of one of the host's network interfaces. If not, it warns rather than fails: cloud hosts behind NAT only have private interface addresses, so doctor can't tell a correct record from a wrong one. Set `public_ip` to make the check conclusive.
 
 ## Data directory layout
 

@@ -3,6 +3,9 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/cli"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
+	"github.com/rchouinard/pressfleet/control-plane/internal/doctor/doctortest"
 )
 
 // syncBuffer is a bytes.Buffer safe for concurrent use.
@@ -38,8 +42,16 @@ type result struct {
 }
 
 // run invokes the CLI with an isolated environment: PRESSFLEET_CONFIG points
-// at an empty file so no real config is read.
+// at an empty file so no real config is read, and preflight checks see a
+// healthy fake host instead of the real host and Docker.
 func run(t *testing.T, ctx context.Context, args []string, env map[string]string) result {
+	t.Helper()
+	return runWith(t, ctx, args, env, doctortest.Healthy(), doctortest.HealthyDocker())
+}
+
+func runWith(t *testing.T, ctx context.Context, args []string, env map[string]string,
+	host *doctortest.Host, docker *doctortest.Docker,
+) result {
 	t.Helper()
 	emptyConfig := filepath.Join(t.TempDir(), "pressfleet.yaml")
 	if err := os.WriteFile(emptyConfig, nil, 0o600); err != nil {
@@ -58,6 +70,8 @@ func run(t *testing.T, ctx context.Context, args []string, env map[string]string
 			v, ok := vars[k]
 			return v, ok
 		},
+		HostProbe:   host,
+		DockerProbe: docker,
 	})
 	return result{code, stdout.String(), stderr.String()}
 }
@@ -127,11 +141,109 @@ func TestInvalidConfig(t *testing.T) {
 }
 
 func TestNotImplemented(t *testing.T) {
-	for _, cmd := range []string{"init", "doctor"} {
+	for _, cmd := range []string{"init"} {
 		r := run(t, context.Background(), []string{cmd, "--data-dir", t.TempDir()}, nil)
 		if r.code != 1 || !strings.Contains(r.stderr, "not implemented yet") {
 			t.Errorf("%s: exit %d, stderr: %s", cmd, r.code, r.stderr)
 		}
+	}
+}
+
+func TestDoctorExitCodes(t *testing.T) {
+	tests := []struct {
+		name     string
+		breakIt  func(*doctortest.Host, *doctortest.Docker)
+		wantCode int
+		wantOut  []string
+	}{
+		{"healthy", func(*doctortest.Host, *doctortest.Docker) {}, 0,
+			[]string{"PASS  Linux on amd64", "0 failed, 0 warned"}},
+		{"required failure", func(_ *doctortest.Host, d *doctortest.Docker) { d.Info.DefaultAddressPools = nil }, 1,
+			[]string{"FAIL  Docker address pools", `fix: Add this to /etc/docker/daemon.json`, `"default-address-pools"`}},
+		{"recommended warning", func(h *doctortest.Host, _ *doctortest.Docker) { h.Mem = 4 << 30 }, 2,
+			[]string{"WARN  Host memory*", "fix: Use a host with at least 8 GiB"}},
+		{"failure beats warning", func(h *doctortest.Host, _ *doctortest.Docker) {
+			h.Mem = 4 << 30
+			h.Ports = map[int]bool{443: true}
+		}, 1, []string{"FAIL  Ports 80 and 443 free", "WARN  Host memory*"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			host, docker := doctortest.Healthy(), doctortest.HealthyDocker()
+			tt.breakIt(host, docker)
+			r := runWith(t, context.Background(), []string{"doctor", "--data-dir", t.TempDir()}, nil, host, docker)
+			if r.code != tt.wantCode {
+				t.Errorf("exit %d, want %d; stdout:\n%s\nstderr: %s", r.code, tt.wantCode, r.stdout, r.stderr)
+			}
+			for _, want := range tt.wantOut {
+				if !strings.Contains(r.stdout, want) {
+					t.Errorf("stdout missing %q:\n%s", want, r.stdout)
+				}
+			}
+			if r.stderr != "" {
+				t.Errorf("stderr = %q, want empty", r.stderr)
+			}
+		})
+	}
+}
+
+func TestDoctorJSON(t *testing.T) {
+	host := doctortest.Healthy()
+	host.DNS["fleet.example.com"] = []netip.Addr{netip.MustParseAddr("203.0.113.10")}
+	r := runWith(t, context.Background(), []string{"doctor", "--json"},
+		map[string]string{"PRESSFLEET_DASHBOARD_DOMAIN": "fleet.example.com"}, host, doctortest.HealthyDocker())
+	if r.code != 0 {
+		t.Fatalf("exit %d, stdout:\n%s\nstderr: %s", r.code, r.stdout, r.stderr)
+	}
+	var got struct {
+		Outcome string `json:"outcome"`
+		Results []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(r.stdout), &got); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, r.stdout)
+	}
+	status := map[string]string{}
+	for _, res := range got.Results {
+		status[res.ID] = res.Status
+	}
+	if got.Outcome != "ok" || status["dns-dashboard"] != "pass" || status["dns-preview"] != "skip" {
+		t.Errorf("outcome %q, statuses %v", got.Outcome, status)
+	}
+}
+
+func TestServeRefusesOnPreflightFailure(t *testing.T) {
+	docker := doctortest.HealthyDocker()
+	docker.Info.CgroupVersion = "1"
+	host := doctortest.Healthy()
+	host.Ports = map[int]bool{80: true} // install scope only: must not block serve
+	r := runWith(t, context.Background(), []string{"serve", "--data-dir", t.TempDir(), "--log-format", "json"}, nil, host, docker)
+	if r.code != 1 {
+		t.Fatalf("exit %d, stderr: %s", r.code, r.stderr)
+	}
+	for _, want := range []string{`"level":"ERROR","msg":"preflight check","check":"cgroup"`, "required preflight checks failed: cgroup (", "--skip-preflight"} {
+		if !strings.Contains(r.stderr, want) {
+			t.Errorf("stderr missing %s:\n%s", want, r.stderr)
+		}
+	}
+	if strings.Contains(r.stderr, "pressfleet starting") || strings.Contains(r.stderr, `"check":"ports"`) {
+		t.Errorf("unexpected output:\n%s", r.stderr)
+	}
+}
+
+func TestServeSkipPreflight(t *testing.T) {
+	docker := doctortest.HealthyDocker()
+	docker.InfoErr = errors.New("docker must not be called")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // serve returns immediately after starting
+	r := runWith(t, ctx, []string{"serve", "--skip-preflight", "--data-dir", t.TempDir()}, nil, doctortest.Healthy(), docker)
+	if r.code != 0 {
+		t.Fatalf("exit %d, stderr: %s", r.code, r.stderr)
+	}
+	if !strings.Contains(r.stderr, "PREFLIGHT CHECKS SKIPPED") || docker.EngineCalls != 0 {
+		t.Errorf("engine calls %d, stderr:\n%s", docker.EngineCalls, r.stderr)
 	}
 }
 

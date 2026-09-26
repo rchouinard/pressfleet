@@ -3,6 +3,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
+	"github.com/rchouinard/pressfleet/control-plane/internal/doctor"
 	"github.com/rchouinard/pressfleet/control-plane/internal/logging"
 )
 
@@ -21,6 +23,10 @@ type Options struct {
 	Stderr  io.Writer
 	// Env looks up environment variables; nil means os.LookupEnv.
 	Env config.LookupEnv
+	// HostProbe and DockerProbe feed preflight checks; nil means the real
+	// host and Docker. Tests inject fakes.
+	HostProbe   doctor.HostProbe
+	DockerProbe doctor.DockerProbe
 }
 
 // skipConfig marks commands that must work without a valid configuration.
@@ -46,11 +52,33 @@ func Run(ctx context.Context, args []string, opts Options) int {
 	root.SetOut(opts.Stdout)
 	root.SetErr(opts.Stderr)
 	if err := root.ExecuteContext(ctx); err != nil {
-		fmt.Fprintf(opts.Stderr, "Error: %v\n", err)
+		var ee *exitError
+		if !errors.As(err, &ee) || ee.err != nil {
+			fmt.Fprintf(opts.Stderr, "Error: %v\n", err)
+		}
+		if ee != nil {
+			return ee.code
+		}
 		return 1
 	}
 	return 0
 }
+
+// exitError makes Run exit with a specific code. With a nil err nothing is
+// printed, for commands that have already reported the problem.
+type exitError struct {
+	code int
+	err  error
+}
+
+func (e *exitError) Error() string {
+	if e.err == nil {
+		return fmt.Sprintf("exit status %d", e.code)
+	}
+	return e.err.Error()
+}
+
+func (e *exitError) Unwrap() error { return e.err }
 
 func (a *app) rootCommand() *cobra.Command {
 	root := &cobra.Command{

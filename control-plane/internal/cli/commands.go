@@ -9,11 +9,15 @@ import (
 )
 
 func (a *app) serveCommand() *cobra.Command {
+	var skipPreflight bool
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Run the control plane (API, workers, dashboard)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := a.preflight(cmd.Context(), skipPreflight); err != nil {
+				return err
+			}
 			layout := a.cfg.Layout()
 			if err := layout.Ensure(); err != nil {
 				return err
@@ -29,6 +33,7 @@ func (a *app) serveCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().String("listen", "", "HTTP listen address (overrides config)")
+	cmd.Flags().BoolVar(&skipPreflight, "skip-preflight", false, "start even if required host checks fail (development only)")
 	return cmd
 }
 
@@ -39,17 +44,6 @@ func (a *app) initCommand() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			return notImplemented(8)
-		},
-	}
-}
-
-func (a *app) doctorCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "doctor",
-		Short: "Check that this host meets PressFleet's requirements",
-		Args:  cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
-			return notImplemented(9)
 		},
 	}
 }
