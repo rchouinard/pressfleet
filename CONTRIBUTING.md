@@ -23,6 +23,17 @@ make generate   # run code generators
 make help       # list all targets
 ```
 
+## Running locally
+
+The default data directory (`/var/lib/pressfleet`) usually needs root, so point it somewhere writable. `/data/` is gitignored:
+
+```sh
+make build
+./bin/pressfleet serve --data-dir "$PWD/data" --log-level debug
+```
+
+See [docs/configuration.md](docs/configuration.md) for all settings.
+
 ## Workflow
 
 - Work is tracked on the [project board](https://github.com/users/rchouinard/projects/3). The plan is summarized in [docs/roadmap.md](docs/roadmap.md).

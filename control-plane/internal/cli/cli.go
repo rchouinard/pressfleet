@@ -1,0 +1,109 @@
+// Package cli implements the pressfleet command tree.
+package cli
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+
+	"github.com/spf13/cobra"
+
+	"github.com/rchouinard/pressfleet/control-plane/internal/config"
+	"github.com/rchouinard/pressfleet/control-plane/internal/logging"
+)
+
+// Options configures a CLI invocation.
+type Options struct {
+	Version string
+	Stdout  io.Writer
+	Stderr  io.Writer
+	// Env looks up environment variables; nil means os.LookupEnv.
+	Env config.LookupEnv
+}
+
+// skipConfig marks commands that must work without a valid configuration.
+const skipConfig = "pressfleet/skip-config"
+
+// app holds state shared by all commands during one invocation.
+type app struct {
+	opts       Options
+	configPath string
+	cfg        config.Config
+	log        *slog.Logger
+}
+
+// Run executes the CLI with args (excluding the program name) and returns
+// the process exit code.
+func Run(ctx context.Context, args []string, opts Options) int {
+	if opts.Env == nil {
+		opts.Env = os.LookupEnv
+	}
+	a := &app{opts: opts}
+	root := a.rootCommand()
+	root.SetArgs(args)
+	root.SetOut(opts.Stdout)
+	root.SetErr(opts.Stderr)
+	if err := root.ExecuteContext(ctx); err != nil {
+		fmt.Fprintf(opts.Stderr, "Error: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func (a *app) rootCommand() *cobra.Command {
+	root := &cobra.Command{
+		Use:               "pressfleet",
+		Short:             "Self-hostable WordPress application platform",
+		SilenceUsage:      true,
+		SilenceErrors:     true,
+		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
+		PersistentPreRunE: a.loadConfig,
+	}
+	pf := root.PersistentFlags()
+	pf.StringVar(&a.configPath, "config", "", fmt.Sprintf("config file (default $%s or %s)", config.EnvConfigPath, config.DefaultPath))
+	pf.String("data-dir", "", "data directory (overrides config)")
+	pf.String("log-level", "", "log level: debug, info, warn, error (overrides config)")
+	pf.String("log-format", "", "log format: text, json (overrides config)")
+
+	root.AddCommand(a.serveCommand(), a.initCommand(), a.doctorCommand(), a.versionCommand())
+	return root
+}
+
+// flagOverrides maps flags to the config fields they override.
+var flagOverrides = []struct {
+	flag  string
+	field func(*config.Config) *string
+}{
+	{"data-dir", func(c *config.Config) *string { return &c.DataDir }},
+	{"log-level", func(c *config.Config) *string { return &c.Log.Level }},
+	{"log-format", func(c *config.Config) *string { return &c.Log.Format }},
+	{"listen", func(c *config.Config) *string { return &c.Listen }},
+}
+
+// loadConfig loads and validates configuration, applies flag overrides, and
+// builds the logger.
+func (a *app) loadConfig(cmd *cobra.Command, _ []string) error {
+	if cmd.Annotations[skipConfig] != "" {
+		return nil
+	}
+	cfg, err := config.Load(a.configPath, a.opts.Env)
+	if err != nil {
+		return err
+	}
+	for _, o := range flagOverrides {
+		if f := cmd.Flags().Lookup(o.flag); f != nil && f.Changed {
+			*o.field(&cfg) = f.Value.String()
+		}
+	}
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("invalid configuration:\n%w", err)
+	}
+	log, err := logging.New(a.opts.Stderr, cfg.Log.Level, cfg.Log.Format)
+	if err != nil {
+		return err
+	}
+	a.cfg, a.log = cfg, log
+	return nil
+}
