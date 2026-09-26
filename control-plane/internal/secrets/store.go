@@ -29,6 +29,7 @@ const (
 	KindResticRepoKey     Kind = "restic-repository-key"
 	KindDNSCredentials    Kind = "dns-provider-credentials" //nolint:gosec // G101: a kind name, not a credential
 	KindS3Credentials     Kind = "s3-credentials"
+	KindSiteWPSalts       Kind = "site-wp-salts" // wpconfig.MarshalSalts
 )
 
 // Kinds are validated by shape rather than against the list above, so a new
