@@ -113,7 +113,10 @@ func TestServeStartsAndStops(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("exit %d, stderr: %s", r.code, r.stderr)
 	}
-	for _, want := range []string{`"msg":"pressfleet starting"`, `"listen":":0"`, `"msg":"pressfleet stopped"`} {
+	if _, err := os.Stat(filepath.Join(dataDir, "state", "pressfleet.db")); err != nil {
+		t.Errorf("state database not created: %v", err)
+	}
+	for _, want := range []string{`"msg":"pressfleet starting"`, `"listen":":0"`, `"msg":"state database ready"`, `"msg":"pressfleet stopped"`} {
 		if !strings.Contains(r.stderr, want) {
 			t.Errorf("log output missing %s:\n%s", want, r.stderr)
 		}

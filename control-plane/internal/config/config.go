@@ -19,6 +19,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/logging"
+	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 )
 
 // DefaultPath is where the config file is read from when no path is given.
@@ -45,6 +46,8 @@ type Config struct {
 	// by preflight DNS checks on hosts behind NAT, where no network
 	// interface carries the public address.
 	PublicIP string `yaml:"public_ip"`
+	// Database configures the control plane state database.
+	Database DatabaseConfig `yaml:"database"`
 }
 
 // LogConfig configures logging.
@@ -53,12 +56,29 @@ type LogConfig struct {
 	Format string `yaml:"format"` // text, json
 }
 
+// Database drivers.
+const (
+	DriverSQLite   = "sqlite"
+	DriverPostgres = "postgres"
+)
+
+// DatabaseConfig configures the control plane state database.
+type DatabaseConfig struct {
+	Driver string `yaml:"driver"` // sqlite, postgres
+	// SQLitePath is the SQLite database file; empty means
+	// <data_dir>/state/pressfleet.db.
+	SQLitePath string `yaml:"sqlite_path"`
+	// PostgresDSN is the PostgreSQL connection string (URL or key=value).
+	PostgresDSN redact.Secret `yaml:"postgres_dsn"`
+}
+
 // Default returns the built-in defaults.
 func Default() Config {
 	return Config{
-		DataDir: "/var/lib/pressfleet",
-		Listen:  ":8080",
-		Log:     LogConfig{Level: "info", Format: logging.FormatText},
+		DataDir:  "/var/lib/pressfleet",
+		Listen:   ":8080",
+		Log:      LogConfig{Level: "info", Format: logging.FormatText},
+		Database: DatabaseConfig{Driver: DriverSQLite},
 	}
 }
 
@@ -74,6 +94,9 @@ var envVars = []struct {
 	{"PRESSFLEET_DASHBOARD_DOMAIN", func(c *Config) *string { return &c.DashboardDomain }},
 	{"PRESSFLEET_PREVIEW_BASE_DOMAIN", func(c *Config) *string { return &c.PreviewBaseDomain }},
 	{"PRESSFLEET_PUBLIC_IP", func(c *Config) *string { return &c.PublicIP }},
+	{"PRESSFLEET_DATABASE_DRIVER", func(c *Config) *string { return &c.Database.Driver }},
+	{"PRESSFLEET_DATABASE_SQLITE_PATH", func(c *Config) *string { return &c.Database.SQLitePath }},
+	{"PRESSFLEET_DATABASE_POSTGRES_DSN", func(c *Config) *string { return (*string)(&c.Database.PostgresDSN) }},
 }
 
 // LookupEnv looks up an environment variable, like os.LookupEnv.
@@ -154,6 +177,18 @@ func (c Config) Validate() error {
 			errs = append(errs, fmt.Errorf("public_ip must be an IP address, got %q", c.PublicIP))
 		}
 	}
+	switch c.Database.Driver {
+	case DriverSQLite:
+		if c.Database.SQLitePath != "" && !filepath.IsAbs(c.Database.SQLitePath) {
+			errs = append(errs, fmt.Errorf("database.sqlite_path must be an absolute path, got %q", c.Database.SQLitePath))
+		}
+	case DriverPostgres:
+		if c.Database.PostgresDSN == "" {
+			errs = append(errs, errors.New("database.postgres_dsn is required when database.driver is postgres"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("database.driver must be %q or %q, got %q", DriverSQLite, DriverPostgres, c.Database.Driver))
+	}
 	return errors.Join(errs...)
 }
 
@@ -180,6 +215,14 @@ func validDomain(s string) bool {
 		}
 	}
 	return true
+}
+
+// SQLitePath returns the SQLite database file, applying the default.
+func (c Config) SQLitePath() string {
+	if c.Database.SQLitePath != "" {
+		return c.Database.SQLitePath
+	}
+	return filepath.Join(c.Layout().StateDir(), "pressfleet.db")
 }
 
 // Layout returns the data directory layout.

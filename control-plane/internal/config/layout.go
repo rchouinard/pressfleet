@@ -10,6 +10,7 @@ import (
 //
 //	<root>/
 //	  state/              control plane database (SQLite)
+//	    backups/          pre-migration and pre-restore database backups
 //	  platform/           rendered platform services Compose project
 //	  sites/<site-id>/    rendered per-site Compose project and wp-config.php
 //	  tmp/                scratch space, e.g. database dumps during backups
@@ -19,6 +20,10 @@ type Layout struct {
 
 // StateDir holds the control plane database.
 func (l Layout) StateDir() string { return filepath.Join(l.Root, "state") }
+
+// StateBackupsDir holds state database backups taken before migrations and
+// restores.
+func (l Layout) StateBackupsDir() string { return filepath.Join(l.StateDir(), "backups") }
 
 // PlatformDir holds the rendered platform services Compose project.
 func (l Layout) PlatformDir() string { return filepath.Join(l.Root, "platform") }

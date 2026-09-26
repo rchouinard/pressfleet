@@ -28,6 +28,10 @@ log:
 dashboard_domain: fleet.agency.example
 preview_base_domain: preview.agency.example
 public_ip: 203.0.113.7   # optional
+database:
+  driver: sqlite # sqlite, postgres
+  # sqlite_path: /var/lib/pressfleet/state/pressfleet.db
+  # postgres_dsn: postgres://pressfleet:secret@db.example:5432/pressfleet
 ```
 
 ## Settings
@@ -41,6 +45,9 @@ public_ip: 203.0.113.7   # optional
 | `dashboard_domain` | `PRESSFLEET_DASHBOARD_DOMAIN` | | (unset) | Domain serving the dashboard and API, e.g. `fleet.agency.example`. |
 | `preview_base_domain` | `PRESSFLEET_PREVIEW_BASE_DOMAIN` | | (unset) | Domain whose wildcard record points at this host; previews use its subdomains. Give the base (`preview.agency.example`), not `*.preview.agency.example`. |
 | `public_ip` | `PRESSFLEET_PUBLIC_IP` | | (unset) | Optional. This host's public IP address, used only to verify DNS records when the host is behind NAT (see [Preflight checks](#preflight-checks)). |
+| `database.driver` | `PRESSFLEET_DATABASE_DRIVER` | | `sqlite` | State database: `sqlite` or `postgres`. See [State database](#state-database). |
+| `database.sqlite_path` | `PRESSFLEET_DATABASE_SQLITE_PATH` | | `<data_dir>/state/pressfleet.db` | SQLite database file. Must be an absolute path. |
+| `database.postgres_dsn` | `PRESSFLEET_DATABASE_POSTGRES_DSN` | | | PostgreSQL connection string (URL or `key=value`). Required when the driver is `postgres`. Treated as a secret: it is never logged. |
 
 ## Preflight checks
 
@@ -66,6 +73,7 @@ The DNS checks are skipped until `dashboard_domain` and `preview_base_domain` ar
 ```
 <data_dir>/
   state/              control plane database (SQLite)
+    backups/          state database backups taken before migrations and restores
   platform/           rendered platform services Compose project
   sites/<site-id>/    rendered per-site Compose project and wp-config.php
   tmp/                scratch space, e.g. database dumps during backups
@@ -74,3 +82,19 @@ The DNS checks are skipped until `dashboard_domain` and `preview_base_domain` ar
 Operators may inspect rendered files here, but shouldn't edit them. The control plane regenerates them from its database.
 
 The platform master key is deliberately **not** stored in the data directory. Keep it separate from the host and its backups (see the master key warning in the design doc, §4.1).
+
+## State database
+
+`pressfleet serve` applies pending schema migrations when it starts. Migrations only go forward. If the database was migrated by a newer PressFleet release, `serve` refuses to start and says so; run a release that supports the schema, or restore a backup.
+
+**SQLite** (the default) needs no extra services. Before applying any migration to a database that already holds data, the control plane writes a consistent copy of it to `<data_dir>/state/backups/pressfleet-<timestamp>-schema<NNNN>.db`. Backups are not pruned automatically.
+
+To put a backup back, stop the control plane and run, inside the control plane container:
+
+```sh
+pressfleet state restore <backup>
+```
+
+`<backup>` is a path, or a file name in the backups directory. The restore refuses backups from a newer schema than the binary supports, so run it with the PressFleet version that made the backup. The database being replaced is saved to the backups directory first (`...-pre-restore.db`), so a restore can be undone the same way.
+
+**PostgreSQL** is supported for larger installs. PressFleet does not back up or restore PostgreSQL itself; that is the operator's responsibility. Take a backup (`pg_dump`, a managed snapshot, or point-in-time recovery) before upgrading PressFleet, because the control plane migrates the schema on startup and only logs a warning. Dumping from inside the control plane would mean shipping PostgreSQL client tools matched to your server's major version, and PostgreSQL operators usually already have better tools for this. `pressfleet state restore` only supports SQLite.

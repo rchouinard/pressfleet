@@ -1,0 +1,108 @@
+package store
+
+import (
+	"context"
+	"log/slog"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestRebindDollar(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"SELECT 1", "SELECT 1"},
+		{"SELECT * FROM t WHERE a = ? AND b = ?", "SELECT * FROM t WHERE a = $1 AND b = $2"},
+		{"INSERT INTO t VALUES (?, '?', \"?\", ?)", "INSERT INTO t VALUES ($1, '?', \"?\", $2)"},
+		{"SELECT 'it''s ?' , ?", "SELECT 'it''s ?' , $1"},
+		{"SELECT ? -- what?\nFROM t WHERE x = ?", "SELECT $1 -- what?\nFROM t WHERE x = $2"},
+		{"SELECT ? -- trailing?", "SELECT $1 -- trailing?"},
+		{"SELECT 'unterminated ?", "SELECT 'unterminated ?"},
+		{"SELECT a - ? FROM t", "SELECT a - $1 FROM t"},
+	}
+	for _, tt := range tests {
+		if got := rebindDollar(tt.in); got != tt.want {
+			t.Errorf("rebindDollar(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestNormalizeArgs(t *testing.T) {
+	ts := time.Date(2026, 9, 26, 8, 0, 0, 123456789, time.FixedZone("EDT", -4*3600))
+	in := []any{ts, &ts, "x"}
+	out := normalizeArgs(in)
+	want := time.Date(2026, 9, 26, 12, 0, 0, 123456000, time.UTC)
+	for i := range 2 {
+		got, ok := out[i].(time.Time)
+		if !ok || got != want {
+			t.Errorf("out[%d] = %#v, want %v", i, out[i], want)
+		}
+	}
+	if in[0] != ts {
+		t.Error("normalizeArgs modified the caller's slice")
+	}
+}
+
+// TestBackupBeforeUpgrade migrates a database with data from one schema
+// version to the next and checks that the backup holds the old state.
+func TestBackupBeforeUpgrade(t *testing.T) {
+	ctx := context.Background()
+	all, err := Migrations(SQLite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := Migration{Version: len(all) + 1, Name: "test_next", sql: "CREATE TABLE test_next (x INTEGER)"}
+
+	dir := t.TempDir()
+	cfg := Config{Driver: SQLite, SQLitePath: filepath.Join(dir, "pressfleet.db")}
+	db, err := Open(ctx, cfg, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	backups := filepath.Join(dir, "backups")
+
+	res, err := db.migrate(ctx, backups, all)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.BackupPath != "" {
+		t.Errorf("backed up an empty database: %s", res.BackupPath)
+	}
+	g := &ClientGroup{Name: "Acme"}
+	if err := NewClientGroups(db).Create(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err = db.migrate(ctx, backups, append(all, next))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.From != len(all) || res.To != next.Version {
+		t.Errorf("result = %+v", res)
+	}
+	if !strings.HasPrefix(res.BackupPath, backups+string(filepath.Separator)) ||
+		!strings.HasSuffix(res.BackupPath, "-schema0001.db") {
+		t.Fatalf("BackupPath = %q", res.BackupPath)
+	}
+
+	version, err := checkBackup(ctx, res.BackupPath)
+	if err != nil || version != len(all) {
+		t.Fatalf("checkBackup = %d, %v; want %d", version, err, len(all))
+	}
+	bdb, err := openSQLite(res.BackupPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = bdb.Close() }()
+	bq := querier{ex: bdb, dialect: SQLite}
+	if got, err := NewClientGroups(bq).Get(ctx, g.ID); err != nil || got.Name != "Acme" {
+		t.Errorf("backup missing client group: %+v, %v", got, err)
+	}
+	if exists, err := tableExists(ctx, bq, "test_next"); err != nil || exists {
+		t.Errorf("backup contains the new migration's table (exists=%v, err=%v)", exists, err)
+	}
+	if exists, err := tableExists(ctx, db.querier, "test_next"); err != nil || !exists {
+		t.Errorf("migration not applied (exists=%v, err=%v)", exists, err)
+	}
+}

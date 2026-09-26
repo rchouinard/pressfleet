@@ -37,6 +37,12 @@ func (a *app) serveCommand() *cobra.Command {
 			a.log.Info("pressfleet starting",
 				"version", a.opts.Version, "listen", a.cfg.Listen, "data_dir", layout.Root)
 
+			db, err := a.openStateDB(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer func() { _ = db.Close() }()
+
 			// The API server (#12) and job workers (#14) will run here.
 			<-cmd.Context().Done()
 

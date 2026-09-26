@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -61,9 +62,10 @@ func TestLoadPrecedence(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := config.Config{
-		DataDir: "/srv/file",                                      // file overrides default
-		Listen:  ":9999",                                          // env overrides file
-		Log:     config.LogConfig{Level: "debug", Format: "json"}, // file and env
+		DataDir:  "/srv/file",                                      // file overrides default
+		Listen:   ":9999",                                          // env overrides file
+		Log:      config.LogConfig{Level: "debug", Format: "json"}, // file and env
+		Database: config.DatabaseConfig{Driver: "sqlite"},          // default
 	}
 	if cfg != want {
 		t.Errorf("Load() = %+v, want %+v", cfg, want)
@@ -108,7 +110,7 @@ func TestValidate(t *testing.T) {
 	if err == nil {
 		t.Fatal("Validate() = nil")
 	}
-	for _, want := range []string{"data_dir", "listen", "log.level", "log.format"} {
+	for _, want := range []string{"data_dir", "listen", "log.level", "log.format", "database.driver"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %s", err, want)
 		}
@@ -159,5 +161,58 @@ func TestValidateHostSettings(t *testing.T) {
 				t.Errorf("Validate() = %v, want error mentioning %s", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestValidateDatabase(t *testing.T) {
+	tests := []struct {
+		name string
+		db   config.DatabaseConfig
+		want string // substring of the error; empty for valid
+	}{
+		{"sqlite default path", config.DatabaseConfig{Driver: "sqlite"}, ""},
+		{"sqlite absolute path", config.DatabaseConfig{Driver: "sqlite", SQLitePath: "/srv/state.db"}, ""},
+		{"sqlite relative path", config.DatabaseConfig{Driver: "sqlite", SQLitePath: "state.db"}, "database.sqlite_path"},
+		{"postgres", config.DatabaseConfig{Driver: "postgres", PostgresDSN: "postgres://db/pressfleet"}, ""},
+		{"postgres without DSN", config.DatabaseConfig{Driver: "postgres"}, "database.postgres_dsn"},
+		{"unknown driver", config.DatabaseConfig{Driver: "mysql"}, "database.driver"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Database = tt.db
+			err := cfg.Validate()
+			if tt.want == "" && err != nil {
+				t.Errorf("Validate() = %v", err)
+			}
+			if tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)) {
+				t.Errorf("Validate() = %v, want error mentioning %s", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestDatabaseSettings(t *testing.T) {
+	path := writeFile(t, "data_dir: /srv/pf\ndatabase:\n  driver: postgres\n  postgres_dsn: postgres://u:from-file@db/pf\n")
+	cfg, err := config.Load(path, env(map[string]string{
+		"PRESSFLEET_DATABASE_POSTGRES_DSN": "postgres://u:from-env@db/pf",
+		"PRESSFLEET_DATABASE_SQLITE_PATH":  "/srv/other.db",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Database.Driver != "postgres" || cfg.Database.PostgresDSN.Reveal() != "postgres://u:from-env@db/pf" {
+		t.Errorf("Database = %+v", cfg.Database)
+	}
+	if cfg.SQLitePath() != "/srv/other.db" {
+		t.Errorf("SQLitePath() = %q", cfg.SQLitePath())
+	}
+	if got := fmt.Sprintf("%v", cfg); strings.Contains(got, "from-env") {
+		t.Errorf("formatted config reveals the DSN: %s", got)
+	}
+
+	cfg.Database.SQLitePath = ""
+	if got := cfg.SQLitePath(); got != "/srv/pf/state/pressfleet.db" {
+		t.Errorf("default SQLitePath() = %q", got)
 	}
 }
