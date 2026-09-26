@@ -266,8 +266,12 @@ func TestScheduleUpsertAndDelete(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if third.ID != first.ID || third.NextRunAt.Equal(first.NextRunAt) {
-			t.Errorf("interval change kept the next run: %+v", third)
+		// The next run must sit on the new interval's grid. It can still
+		// equal the old one when the hourly slot happens to fall within the
+		// next five minutes, so don't compare against first.
+		onGrid := third.NextRunAfter(third.NextRunAt.Add(-time.Second)).Equal(third.NextRunAt)
+		if third.ID != first.ID || !onGrid || time.Until(third.NextRunAt) > time.Hour {
+			t.Errorf("interval change didn't reschedule the next run: %+v", third)
 		}
 
 		for _, bad := range []jobs.ScheduleSpec{
