@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -61,6 +62,22 @@ type Config struct {
 	// HTTP configures how the API sees requests that come through the
 	// reverse proxy.
 	HTTP HTTPConfig `yaml:"http"`
+	// MariaDB is the admin connection to the shared MariaDB server that
+	// holds site databases.
+	MariaDB MariaDBConfig `yaml:"mariadb"`
+}
+
+// MariaDBConfig configures the control plane's admin connection to the
+// shared MariaDB server.
+type MariaDBConfig struct {
+	// Address is the server's host:port as seen from the control plane.
+	Address string `yaml:"address"`
+	// AdminUser is the account that creates site databases and users.
+	AdminUser string `yaml:"admin_user"`
+	// AdminPasswordFile holds the admin user's password. The platform
+	// mounts the MariaDB root password there as a Compose secret; the
+	// password itself is never part of the configuration.
+	AdminPasswordFile string `yaml:"admin_password_file"`
 }
 
 // Values of http.secure_cookies.
@@ -140,6 +157,11 @@ func Default() Config {
 		Log:      LogConfig{Level: "info", Format: logging.FormatText},
 		Database: DatabaseConfig{Driver: DriverSQLite},
 		Jobs:     JobsConfig{Concurrency: 4},
+		MariaDB: MariaDBConfig{ //nolint:gosec // G101: the path of the password file, not a credential
+			Address:           "mariadb:3306",
+			AdminUser:         "root",
+			AdminPasswordFile: "/run/secrets/mariadb_root_password",
+		},
 	}
 }
 
@@ -161,6 +183,9 @@ var envVars = []struct {
 	{"PRESSFLEET_MASTER_KEY_FILE", func(c *Config) *string { return &c.MasterKeyFile }},
 	{"PRESSFLEET_MASTER_KEY", func(c *Config) *string { return (*string)(&c.MasterKey) }},
 	{"PRESSFLEET_HTTP_SECURE_COOKIES", func(c *Config) *string { return &c.HTTP.SecureCookies }},
+	{"PRESSFLEET_MARIADB_ADDRESS", func(c *Config) *string { return &c.MariaDB.Address }},
+	{"PRESSFLEET_MARIADB_ADMIN_USER", func(c *Config) *string { return &c.MariaDB.AdminUser }},
+	{"PRESSFLEET_MARIADB_ADMIN_PASSWORD_FILE", func(c *Config) *string { return &c.MariaDB.AdminPasswordFile }},
 }
 
 // envTrustedProxies sets http.trusted_proxies as a comma-separated list.
@@ -283,7 +308,22 @@ func (c Config) Validate() error {
 	if c.Jobs.Concurrency < 1 || c.Jobs.Concurrency > MaxJobsConcurrency {
 		errs = append(errs, fmt.Errorf("jobs.concurrency must be between 1 and %d, got %d", MaxJobsConcurrency, c.Jobs.Concurrency))
 	}
+	if host, port, err := net.SplitHostPort(c.MariaDB.Address); err != nil || host == "" || !validPort(port) {
+		errs = append(errs, fmt.Errorf("mariadb.address must be host:port, like mariadb:3306, got %q", c.MariaDB.Address))
+	}
+	if c.MariaDB.AdminUser == "" || strings.ContainsAny(c.MariaDB.AdminUser, " \t\r\n") {
+		errs = append(errs, fmt.Errorf("mariadb.admin_user must be a user name without spaces, got %q", c.MariaDB.AdminUser))
+	}
+	if !filepath.IsAbs(c.MariaDB.AdminPasswordFile) {
+		errs = append(errs, fmt.Errorf("mariadb.admin_password_file must be an absolute path, got %q", c.MariaDB.AdminPasswordFile))
+	}
 	return errors.Join(errs...)
+}
+
+// validPort reports whether s is a TCP port number.
+func validPort(s string) bool {
+	n, err := strconv.Atoi(s)
+	return err == nil && n > 0 && n <= 65535 && strconv.Itoa(n) == s
 }
 
 // validDomain reports whether s is a domain name with at least two labels.

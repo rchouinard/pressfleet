@@ -68,6 +68,7 @@ func TestLoadPrecedence(t *testing.T) {
 		Log:      config.LogConfig{Level: "debug", Format: "json"}, // file and env
 		Database: config.DatabaseConfig{Driver: "sqlite"},          // default
 		Jobs:     config.JobsConfig{Concurrency: 4},                // default
+		MariaDB:  config.Default().MariaDB,                         // default
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("Load() = %+v, want %+v", cfg, want)
@@ -268,5 +269,52 @@ func TestMasterKeySettings(t *testing.T) {
 	// The key itself can't be put in the config file.
 	if _, err := config.Load(writeFile(t, "master_key: pfmk1:in-file\n"), env(nil)); err == nil {
 		t.Error("master_key in the config file was accepted")
+	}
+}
+
+func TestMariaDBSettings(t *testing.T) {
+	path := writeFile(t, "mariadb:\n  address: db.internal:3307\n  admin_user: admin\n")
+	cfg, err := config.Load(path, env(map[string]string{"PRESSFLEET_MARIADB_ADMIN_PASSWORD_FILE": "/run/secrets/other"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := config.MariaDBConfig{Address: "db.internal:3307", AdminUser: "admin", AdminPasswordFile: "/run/secrets/other"}
+	if cfg.MariaDB != want {
+		t.Errorf("MariaDB = %+v, want %+v", cfg.MariaDB, want)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v", err)
+	}
+	cfg, err = config.Load(path, env(map[string]string{"PRESSFLEET_MARIADB_ADDRESS": "[::1]:3306"}))
+	if err != nil || cfg.MariaDB.Address != "[::1]:3306" {
+		t.Fatalf("Load = %+v, %v", cfg.MariaDB, err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() with IPv6 address = %v", err)
+	}
+}
+
+func TestValidateMariaDB(t *testing.T) {
+	tests := []struct {
+		name   string
+		modify func(*config.MariaDBConfig)
+		want   string
+	}{
+		{"no port", func(m *config.MariaDBConfig) { m.Address = "mariadb" }, "mariadb.address"},
+		{"no host", func(m *config.MariaDBConfig) { m.Address = ":3306" }, "mariadb.address"},
+		{"bad port", func(m *config.MariaDBConfig) { m.Address = "mariadb:99999" }, "mariadb.address"},
+		{"named port", func(m *config.MariaDBConfig) { m.Address = "mariadb:mysql" }, "mariadb.address"},
+		{"empty user", func(m *config.MariaDBConfig) { m.AdminUser = "" }, "mariadb.admin_user"},
+		{"user with space", func(m *config.MariaDBConfig) { m.AdminUser = "ro ot" }, "mariadb.admin_user"},
+		{"relative password file", func(m *config.MariaDBConfig) { m.AdminPasswordFile = "secrets/pw" }, "mariadb.admin_password_file"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.Default()
+			tt.modify(&cfg.MariaDB)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("Validate() = %v, want error mentioning %s", err, tt.want)
+			}
+		})
 	}
 }

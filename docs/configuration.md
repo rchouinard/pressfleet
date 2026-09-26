@@ -38,6 +38,10 @@ jobs:
 http:
   secure_cookies: auto   # auto, always
   # trusted_proxies: [172.18.0.0/16]   # default: loopback and private networks
+mariadb:
+  address: mariadb:3306
+  admin_user: root
+  admin_password_file: /run/secrets/mariadb_root_password
 ```
 
 ## Settings
@@ -59,6 +63,9 @@ http:
 | `jobs.concurrency` | `PRESSFLEET_JOBS_CONCURRENCY` | | `4` | How many background jobs (provisioning, backups, WP-Cron runs) run at once, from 1 to 64. Jobs that change the same site always run one at a time. |
 | `http.secure_cookies` | `PRESSFLEET_HTTP_SECURE_COOKIES` | | `auto` | `auto` marks the session cookie `Secure` when the request arrived over HTTPS; `always` marks it `Secure` on every response. See [Sessions and HTTPS](#sessions-and-https). |
 | `http.trusted_proxies` | `PRESSFLEET_HTTP_TRUSTED_PROXIES` (comma-separated) | | loopback and private networks | IP addresses or CIDR networks whose `X-Forwarded-For` and `X-Forwarded-Proto` headers are believed. |
+| `mariadb.address` | `PRESSFLEET_MARIADB_ADDRESS` | | `mariadb:3306` | `host:port` of the shared MariaDB server that holds site databases, as seen from the control plane. See [Site databases](#site-databases). |
+| `mariadb.admin_user` | `PRESSFLEET_MARIADB_ADMIN_USER` | | `root` | MariaDB account that creates and drops site databases and users. |
+| `mariadb.admin_password_file` | `PRESSFLEET_MARIADB_ADMIN_PASSWORD_FILE` | | `/run/secrets/mariadb_root_password` | File holding the admin password; a trailing newline is ignored. Must be an absolute path. The default is where the platform Compose project mounts the MariaDB root password secret. |
 
 ## Sessions and HTTPS
 
@@ -149,3 +156,9 @@ pressfleet state restore <backup>
 `<backup>` is a path, or a file name in the backups directory. The restore refuses backups from a newer schema than the binary supports, so run it with the PressFleet version that made the backup. The database being replaced is saved to the backups directory first (`...-pre-restore.db`), so a restore can be undone the same way.
 
 **PostgreSQL** is supported for larger installs. PressFleet does not back up or restore PostgreSQL itself; that is the operator's responsibility. Take a backup (`pg_dump`, a managed snapshot, or point-in-time recovery) before upgrading PressFleet, because the control plane migrates the schema on startup and only logs a warning. Dumping from inside the control plane would mean shipping PostgreSQL client tools matched to your server's major version, and PostgreSQL operators usually already have better tools for this. `pressfleet state restore` only supports SQLite.
+
+## Site databases
+
+Each site's database lives on the platform's shared MariaDB server. The control plane connects as `mariadb.admin_user` to create a database and a user for each site, both named `pf_<site-id>`. Each site user has a random password, stored encrypted in the state database, and privileges on its own database only. It is also limited to 20 simultaneous connections (`MAX_USER_CONNECTIONS`), so one site can't use up the server's 150 connections. With PHP-FPM's `ondemand` mode, idle sites hold no connections.
+
+The defaults match the platform Compose project, so installs made with `pressfleet init` need no MariaDB settings. The control plane connects only when it needs to, so `serve` starts even while MariaDB is down, and it re-reads the password file for every new connection.
