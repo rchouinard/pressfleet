@@ -8,16 +8,21 @@ import (
 	"io/fs"
 )
 
-// files holds every embedded template tree. Per-site templates
-// (templates/compose, #24) join the embed pattern once they exist.
+// files holds every embedded template tree.
 //
-//go:embed platform
+//go:embed platform compose/*.tmpl
 var files embed.FS
 
 // Platform returns the platform services definition: the Compose templates
 // and the pinned image list (images.yaml).
 func Platform() fs.FS {
 	return mustSub("platform")
+}
+
+// Compose returns the per-site Compose templates (site.yaml.tmpl), rendered
+// by the Compose driver into one project per site.
+func Compose() fs.FS {
+	return mustSub("compose")
 }
 
 func mustSub(dir string) fs.FS {

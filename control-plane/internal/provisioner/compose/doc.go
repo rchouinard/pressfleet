@@ -8,4 +8,7 @@
 // The Compose v2 CLI plugin is used instead of the Compose Go SDK so the
 // control plane behaves exactly like an operator running `docker compose` in
 // the same directory.
+//
+// [RenderSite] renders a site's project (compose.yaml and wp-config.php)
+// from templates/compose/site.yaml.tmpl.
 package compose
