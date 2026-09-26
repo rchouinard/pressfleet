@@ -162,6 +162,12 @@ func openPostgres(dsn redact.Secret) (*sql.DB, error) {
 	})), nil
 }
 
+// Ping checks that the database is reachable. It is used as a readiness
+// check.
+func (db *DB) Ping(ctx context.Context) error {
+	return db.db.PingContext(ctx)
+}
+
 // Close closes the database and releases the SQLite lock.
 func (db *DB) Close() error {
 	return errors.Join(db.db.Close(), db.unlock())

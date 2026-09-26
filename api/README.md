@@ -10,6 +10,8 @@ The OpenAPI 3.1 spec (`openapi.yaml`) lives here and is the source of truth for 
 
 CI runs `make generate` and fails if the generated code differs from what's committed.
 
+The server loads the embedded spec at startup (`spec.go`). It validates every request against the spec, so handlers only receive requests that match the schema, and it uses each operation's `security` to decide which operations require authentication. Only login and the `/healthz` and `/readyz` probes are public.
+
 ## Conventions
 
 - All API endpoints live under `/api/v1`. The health probes (`/healthz`, `/readyz`) are the only exceptions.
@@ -33,6 +35,6 @@ We evaluated these generators in September 2026:
 | ogen v1.24.0 | Partial (3.1 `null` types since v1.23.0) | Typed interface, but with its own router and JSON encoder (`go-faster/jx`) | Generated code pulls in OpenTelemetry, `go-faster/*`, and other dependencies. Doesn't use `net/http` routing, so our middleware and 404/405 handling would have to adapt to it. |
 | Hand-written types plus `net/http` | n/a | n/a | No generator dependency, but the spec and the code would drift apart, which defeats spec-first (§4.5). |
 
-oapi-codegen was chosen because it produces exactly what we need (a typed `StrictServerInterface` with standard-library routing) and keeps the runtime dependency footprint small.
+oapi-codegen was chosen because it produces exactly what we need (a typed `StrictServerInterface` with standard-library routing) and keeps the runtime dependency footprint small. Its companion library, kin-openapi, also validates requests against the spec at runtime.
 
 To upgrade it, run `go get -tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@<version>`, then `make generate`, and review the diff.

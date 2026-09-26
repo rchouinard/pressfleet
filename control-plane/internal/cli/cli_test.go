@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
+	"net/http"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -49,8 +52,23 @@ func run(t *testing.T, ctx context.Context, args []string, env map[string]string
 	return runWith(t, ctx, args, env, doctortest.Healthy(), doctortest.HealthyDocker())
 }
 
+// runWithStderr is like run but writes stderr to a caller-supplied buffer,
+// so a test can watch the output of a long-running command.
+func runWithStderr(t *testing.T, ctx context.Context, args []string, env map[string]string, stderr *syncBuffer) result {
+	t.Helper()
+	return runFull(t, ctx, args, env, doctortest.Healthy(), doctortest.HealthyDocker(), stderr)
+}
+
+// runWith is like run but with caller-supplied preflight fakes.
 func runWith(t *testing.T, ctx context.Context, args []string, env map[string]string,
 	host *doctortest.Host, docker *doctortest.Docker,
+) result {
+	t.Helper()
+	return runFull(t, ctx, args, env, host, docker, &syncBuffer{})
+}
+
+func runFull(t *testing.T, ctx context.Context, args []string, env map[string]string,
+	host *doctortest.Host, docker *doctortest.Docker, stderr *syncBuffer,
 ) result {
 	t.Helper()
 	emptyConfig := filepath.Join(t.TempDir(), "pressfleet.yaml")
@@ -61,11 +79,11 @@ func runWith(t *testing.T, ctx context.Context, args []string, env map[string]st
 	for k, v := range env {
 		vars[k] = v
 	}
-	var stdout, stderr syncBuffer
+	var stdout syncBuffer
 	code := cli.Run(ctx, args, cli.Options{
 		Version: "v1.2.3-test",
 		Stdout:  &stdout,
-		Stderr:  &stderr,
+		Stderr:  stderr,
 		Env: func(k string) (string, bool) {
 			v, ok := vars[k]
 			return v, ok
@@ -90,22 +108,43 @@ func TestVersion(t *testing.T) {
 func TestServeStartsAndStops(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "data")
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var stderr syncBuffer
 	done := make(chan result, 1)
 	go func() {
-		done <- run(t, ctx, []string{"serve", "--data-dir", dataDir, "--log-format", "json", "--listen", ":0"}, nil)
+		done <- runWithStderr(t, ctx, []string{"serve", "--data-dir", dataDir, "--log-format", "json", "--listen", "127.0.0.1:0"}, nil, &stderr)
 	}()
 
-	// serve creates the data directory layout before logging that it started.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, err := os.Stat(filepath.Join(dataDir, "sites")); err == nil {
+	// Wait for the server to log the address it bound.
+	addrRE := regexp.MustCompile(`"msg":"http server listening","addr":"([^"]+)"`)
+	var addr string
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		if m := addrRE.FindStringSubmatch(stderr.String()); m != nil {
+			addr = m[1]
 			break
 		}
 		if time.Now().After(deadline) {
 			cancel()
-			t.Fatalf("serve did not create the data directory; result: %+v", <-done)
+			t.Fatalf("server did not start; result: %+v", <-done)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "sites")); err != nil {
+		t.Errorf("data directory layout not created: %v", err)
+	}
+
+	for path, want := range map[string]int{"/healthz": http.StatusOK, "/readyz": http.StatusOK, "/nope": http.StatusNotFound} {
+		resp, err := http.Get("http://" + addr + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Errorf("GET %s = %d, want %d", path, resp.StatusCode, want)
+		}
+		if want == http.StatusNotFound && resp.Header.Get("Content-Type") != "application/problem+json" {
+			t.Errorf("GET %s Content-Type = %q", path, resp.Header.Get("Content-Type"))
+		}
 	}
 	cancel()
 
@@ -116,17 +155,29 @@ func TestServeStartsAndStops(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dataDir, "state", "pressfleet.db")); err != nil {
 		t.Errorf("state database not created: %v", err)
 	}
-	for _, want := range []string{`"msg":"pressfleet starting"`, `"listen":":0"`, `"msg":"state database ready"`, `"msg":"pressfleet stopped"`} {
+	for _, want := range []string{`"msg":"pressfleet starting"`, `"listen":"127.0.0.1:0"`, `"msg":"state database ready"`, `"msg":"http server stopped"`, `"msg":"pressfleet stopped"`} {
 		if !strings.Contains(r.stderr, want) {
 			t.Errorf("log output missing %s:\n%s", want, r.stderr)
 		}
 	}
 }
 
+func TestServeFailsWhenListenFails(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	r := run(t, context.Background(), []string{"serve", "--data-dir", t.TempDir(), "--listen", ln.Addr().String()}, nil)
+	if r.code != 1 || !strings.Contains(r.stderr, "listening on") {
+		t.Errorf("exit %d, stderr: %s", r.code, r.stderr)
+	}
+}
+
 func TestFlagsOverrideEnv(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // serve returns immediately
-	r := run(t, ctx, []string{"serve", "--data-dir", t.TempDir(), "--log-format", "text"},
+	r := run(t, ctx, []string{"serve", "--data-dir", t.TempDir(), "--log-format", "text", "--listen", "127.0.0.1:0"},
 		map[string]string{"PRESSFLEET_LOG_FORMAT": "json", "PRESSFLEET_DATA_DIR": "relative/is/invalid"})
 	if r.code != 0 {
 		t.Fatalf("exit %d, stderr: %s", r.code, r.stderr)

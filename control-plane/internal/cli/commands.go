@@ -7,6 +7,9 @@ import (
 	"strconv"
 
 	"github.com/spf13/cobra"
+
+	"github.com/rchouinard/pressfleet/control-plane/internal/api"
+	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 )
 
 // envSkipPreflight is the environment equivalent of serve's --skip-preflight
@@ -43,8 +46,18 @@ func (a *app) serveCommand() *cobra.Command {
 			}
 			defer func() { _ = db.Close() }()
 
-			// The API server (#12) and job workers (#14) will run here.
-			<-cmd.Context().Done()
+			// Components register readiness checks here; job workers (#14)
+			// will start alongside the server.
+			readiness := &httpserver.Readiness{}
+			readiness.Register("state_database", db.Ping)
+			handler, err := api.NewHandler(api.Options{Logger: a.log, Readiness: readiness})
+			if err != nil {
+				return err
+			}
+			srv := httpserver.New(httpserver.Options{Addr: a.cfg.Listen, Handler: handler, Logger: a.log})
+			if err := srv.Run(cmd.Context()); err != nil {
+				return err
+			}
 
 			a.log.Info("pressfleet stopped")
 			return nil
