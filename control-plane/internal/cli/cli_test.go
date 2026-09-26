@@ -199,15 +199,6 @@ func TestInvalidConfig(t *testing.T) {
 	}
 }
 
-func TestNotImplemented(t *testing.T) {
-	for _, cmd := range []string{"init"} {
-		r := run(t, context.Background(), []string{cmd, "--data-dir", t.TempDir()}, nil)
-		if r.code != 1 || !strings.Contains(r.stderr, "not implemented yet") {
-			t.Errorf("%s: exit %d, stderr: %s", cmd, r.code, r.stderr)
-		}
-	}
-}
-
 func TestDoctorExitCodes(t *testing.T) {
 	tests := []struct {
 		name     string

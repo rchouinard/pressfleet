@@ -220,15 +220,28 @@ func Load(path string, env LookupEnv) (Config, error) {
 		return Config{}, err
 	}
 
+	if err := ApplyEnv(&cfg, env); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+// ApplyEnv overrides cfg with PRESSFLEET_* environment variables. Load
+// calls it; `pressfleet init` uses it on its own because it runs before a
+// config file exists.
+func ApplyEnv(cfg *Config, env LookupEnv) error {
+	if env == nil {
+		env = os.LookupEnv
+	}
 	for _, v := range envVars {
 		if val, ok := env(v.name); ok {
-			*v.field(&cfg) = val
+			*v.field(cfg) = val
 		}
 	}
 	if val, ok := env("PRESSFLEET_JOBS_CONCURRENCY"); ok {
 		n, err := strconv.Atoi(val)
 		if err != nil {
-			return Config{}, fmt.Errorf("PRESSFLEET_JOBS_CONCURRENCY must be a whole number, got %q", val)
+			return fmt.Errorf("PRESSFLEET_JOBS_CONCURRENCY must be a whole number, got %q", val)
 		}
 		cfg.Jobs.Concurrency = n
 	}
@@ -240,7 +253,7 @@ func Load(path string, env LookupEnv) (Config, error) {
 			}
 		}
 	}
-	return cfg, nil
+	return nil
 }
 
 func loadFile(cfg *Config, path string) error {
@@ -275,7 +288,7 @@ func (c Config) Validate() error {
 		{"dashboard_domain", c.DashboardDomain},
 		{"preview_base_domain", c.PreviewBaseDomain},
 	} {
-		if d.value != "" && !validDomain(d.value) {
+		if d.value != "" && !ValidDomain(d.value) {
 			errs = append(errs, fmt.Errorf("%s must be a domain name like fleet.example.com, got %q", d.key, d.value))
 		}
 	}
@@ -326,10 +339,10 @@ func validPort(s string) bool {
 	return err == nil && n > 0 && n <= 65535 && strconv.Itoa(n) == s
 }
 
-// validDomain reports whether s is a domain name with at least two labels.
+// ValidDomain reports whether s is a domain name with at least two labels.
 // It rejects schemes, ports, paths, and wildcards, which are easy mistakes
 // when pasting a URL or a DNS record.
-func validDomain(s string) bool {
+func ValidDomain(s string) bool {
 	s = strings.TrimSuffix(s, ".")
 	if len(s) > 253 {
 		return false

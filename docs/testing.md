@@ -44,6 +44,8 @@ The tests work with Docker Engine on Linux and with Docker Desktop. If a run is 
 docker compose -p pfe2e-<random> down --volumes
 ```
 
+`TestInit` doesn't use `e2e.Start`: it runs `pressfleet init --non-interactive --skip-preflight` into a temporary root under the project name `pfinit-<random>`, then logs in as the admin init created. `e2e.Adopt` gives it the same teardown, and `e2e.WriteOverride` publishes the control plane port.
+
 ### Writing a test
 
 ```go

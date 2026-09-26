@@ -3,7 +3,6 @@ package cli
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -114,8 +113,7 @@ func (a *app) withAuth(ctx context.Context, fn func(*auth.Service) error) error 
 // newPassword reads a password from stdin or generates one.
 func (a *app) newPassword(fromStdin bool) (pw redact.Secret, generated bool, err error) {
 	if !fromStdin {
-		// 26 base32 characters: 130 bits.
-		return redact.Secret(strings.ToLower(rand.Text())), true, nil
+		return generatePassword(), true, nil
 	}
 	line, err := bufio.NewReader(a.opts.Stdin).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {

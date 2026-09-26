@@ -115,21 +115,6 @@ func (a *app) serveCommand() *cobra.Command {
 	return cmd
 }
 
-func (a *app) initCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "init",
-		Short: "Install and configure PressFleet on this host",
-		Args:  cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
-			return notImplemented(8)
-		},
-	}
-}
-
-func notImplemented(issue int) error {
-	return fmt.Errorf("not implemented yet (see https://github.com/rchouinard/pressfleet/issues/%d)", issue)
-}
-
 func (a *app) versionCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:         "version",

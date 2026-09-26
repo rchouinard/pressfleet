@@ -73,7 +73,7 @@ type Platform struct {
 	// BaseURL is the control plane's URL on the host, e.g. http://127.0.0.1:49153.
 	BaseURL string
 	// AdminEmail and AdminPassword are the credentials of the admin user
-	// Start created.
+	// Start created; empty for adopted projects.
 	AdminEmail    string
 	AdminPassword redact.Secret
 	// Client is logged in as the admin with a session cookie, and sends the
@@ -90,13 +90,7 @@ type Platform struct {
 // Start skips the test unless the environment enables Docker tests.
 func Start(t *testing.T) *Platform {
 	t.Helper()
-	if os.Getenv(EnvDockerTests) != "1" {
-		t.Skip("set " + EnvDockerTests + "=1 to run tests against Docker")
-	}
-	image := os.Getenv(EnvControlPlaneImage)
-	if image == "" {
-		t.Skip("set " + EnvControlPlaneImage + " to a locally built control plane image (see make test-e2e)")
-	}
+	image := Image(t)
 
 	// Pre-create the layout so the control plane (root in its container)
 	// doesn't create root-owned directories the test can't remove.
@@ -127,19 +121,10 @@ func Start(t *testing.T) *Platform {
 	if err := platform.Render(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "compose.override.yaml"), []byte(overrideFile), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	WriteOverride(t, dir)
 
-	p := &Platform{
-		Project:       compose.Project{Name: cfg.ProjectName, Dir: dir},
-		DataDir:       layout.Root,
-		AdminEmail:    "admin@e2e.test",
-		AdminPassword: redact.Secret(randomToken(26)),
-	}
-	// Registered after t.TempDir, so it runs before the directories are
-	// removed.
-	t.Cleanup(func() { p.teardown(t) })
+	p := Adopt(t, compose.Project{Name: cfg.ProjectName, Dir: dir}, layout.Root)
+	p.AdminEmail, p.AdminPassword = "admin@e2e.test", redact.Secret(randomToken(26))
 
 	ctx, cancel := context.WithTimeout(t.Context(), bootTimeout)
 	defer cancel()
@@ -149,15 +134,60 @@ func Start(t *testing.T) *Platform {
 	if err := p.Project.Up(ctx, compose.UpOptions{Wait: true, WaitTimeout: bootTimeout - 30*time.Second}); err != nil {
 		t.Fatalf("starting platform: %v", err)
 	}
+	p.Connect(ctx, t)
+	p.createAdmin(ctx, t)
+	p.Client = p.Login(t, p.AdminEmail, p.AdminPassword)
+	return p
+}
+
+// Image returns the control plane image to test, skipping the test unless
+// the environment enables Docker tests.
+func Image(t *testing.T) string {
+	t.Helper()
+	if os.Getenv(EnvDockerTests) != "1" {
+		t.Skip("set " + EnvDockerTests + "=1 to run tests against Docker")
+	}
+	image := os.Getenv(EnvControlPlaneImage)
+	if image == "" {
+		t.Skip("set " + EnvControlPlaneImage + " to a locally built control plane image (see make test-e2e)")
+	}
+	return image
+}
+
+// WriteOverride writes the compose.override.yaml that publishes the control
+// plane API on the host into a platform project directory.
+func WriteOverride(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "compose.override.yaml"), []byte(overrideFile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Adopt tears down a platform project like Start does when the test ends,
+// for projects something else brings up, such as `pressfleet init` in its
+// own end-to-end test. Call it after creating dataDir with t.TempDir, so
+// the teardown runs before the directory is removed, and before starting
+// the project, so a failed start is cleaned up too.
+func Adopt(t *testing.T, project compose.Project, dataDir string) *Platform {
+	t.Helper()
+	p := &Platform{Project: project, DataDir: dataDir}
+	t.Cleanup(func() { p.teardown(t) })
+	return p
+}
+
+// Connect finds the control plane's published port (see WriteOverride) and
+// waits until it reports ready.
+func (p *Platform) Connect(ctx context.Context, t *testing.T) {
+	t.Helper()
 	addr, err := p.Project.Port(ctx, Service, controlPlanePort)
 	if err != nil {
 		t.Fatal(err)
 	}
 	p.BaseURL = "http://" + addr
 	p.waitReady(ctx, t)
-	p.createAdmin(ctx, t)
-	p.Client = p.Login(t, p.AdminEmail, p.AdminPassword)
-	return p
 }
 
 // NewClient returns an unauthenticated client for the control plane. Its

@@ -121,8 +121,9 @@ func NormalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
-// validEmail accepts a bare address such as a@example.com (no display name).
-func validEmail(email string) bool {
+// ValidEmail reports whether email is a bare address such as a@example.com
+// (no display name). Normalize it with NormalizeEmail first.
+func ValidEmail(email string) bool {
 	if email == "" || len(email) > 254 {
 		return false
 	}
@@ -392,7 +393,7 @@ type NewUser struct {
 // CreateUser validates and creates a user.
 func (s *Service) CreateUser(ctx context.Context, nu NewUser) (store.User, error) {
 	email := NormalizeEmail(nu.Email)
-	if !validEmail(email) {
+	if !ValidEmail(email) {
 		return store.User{}, ErrInvalidEmail
 	}
 	if !nu.Role.Valid() {
@@ -457,7 +458,7 @@ func (s *Service) UpdateUser(ctx context.Context, userID string, c UserChanges) 
 	var email string
 	if c.Email != nil {
 		email = NormalizeEmail(*c.Email)
-		if !validEmail(email) {
+		if !ValidEmail(email) {
 			return store.User{}, ErrInvalidEmail
 		}
 	}

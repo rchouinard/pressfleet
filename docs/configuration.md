@@ -7,7 +7,7 @@ The `pressfleet` binary reads its settings from four sources. Later sources over
 3. `PRESSFLEET_*` environment variables
 4. Command-line flags
 
-`pressfleet version` ignores configuration, so it works even when the config is invalid.
+`pressfleet version` ignores configuration, so it works even when the config is invalid. `pressfleet init` writes the config file during installation; see [Installation](installation.md).
 
 ## Config file
 

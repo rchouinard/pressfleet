@@ -30,6 +30,13 @@ type Options struct {
 	// host and Docker. Tests inject fakes.
 	HostProbe   doctor.HostProbe
 	DockerProbe doctor.DockerProbe
+	// PlatformProject returns the platform Compose project `pressfleet init`
+	// starts; nil means the real one on the local Docker daemon. Tests
+	// inject fakes.
+	PlatformProject func(name, dir string) PlatformProject
+	// PlatformProjectName overrides the platform's Compose project name, so
+	// tests against real Docker don't touch an actual installation.
+	PlatformProjectName string
 }
 
 // skipConfig marks commands that must work without a valid configuration.
