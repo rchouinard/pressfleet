@@ -65,7 +65,7 @@ func (a *app) serveCommand() *cobra.Command {
 				return err
 			}
 
-			// Job workers run alongside the server and
+			// Job workers and the scheduler run alongside the server and
 			// stop with it; the pool gives running steps a grace period.
 			// Job handlers are registered on the pool as workflows land.
 			pool := jobs.NewPool(db, jobs.Options{
@@ -73,10 +73,12 @@ func (a *app) serveCommand() *cobra.Command {
 				Logger:      a.log.With("component", "jobs"),
 				Secrets:     secrets.NewStore(db, keys),
 			})
+			scheduler := jobs.NewScheduler(db, jobs.SchedulerOptions{Logger: a.log.With("component", "scheduler")})
 			workersCtx, stopWorkers := context.WithCancel(cmd.Context())
 			defer stopWorkers()
 			var workers sync.WaitGroup
 			workers.Go(func() { _ = pool.Run(workersCtx) })
+			workers.Go(func() { _ = scheduler.Run(workersCtx) })
 
 			srv := httpserver.New(httpserver.Options{Addr: a.cfg.Listen, Handler: handler, Logger: a.log})
 			srvErr := srv.Run(cmd.Context())

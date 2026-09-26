@@ -95,4 +95,16 @@
 // attempt. If a step is still running when the grace period ends, its
 // context is canceled; if the process dies instead, the job's lease expires
 // and it is taken over then.
+//
+// # Schedules
+//
+// A [Scheduler] enqueues jobs from the recurring schedules in the database
+// (store.Schedule): an interval with a per-schedule stagger derived from the
+// schedule's name, so fifty sites' WP-Cron schedules don't fire in the same
+// second, and a missed-run policy for slots that passed while no control
+// plane was running. Claiming a due slot is a conditional UPDATE in the same
+// transaction as the enqueue, so each slot fires once even with several
+// control plane processes on one PostgreSQL database. Fixed intervals cover
+// the MVP's schedules (WP-Cron every few minutes, daily backups, weekly
+// prune, per-minute uptime checks) without a cron-expression dependency.
 package jobs
