@@ -1,0 +1,303 @@
+name: Images
+
+# Builds the control plane and site images (linux/amd64 only, design doc §3.1)
+# and publishes them to ghcr.io/rchouinard/pressfleet/...
+#
+#   pull requests       build without pushing; site images only when images/**
+#                       or this workflow changed, plus the site smoke test for
+#                       the newest and oldest PHP branch on the latest WordPress
+#   push to main        push control-plane:sha-<short>; push the site matrix
+#                       when images/** or this workflow changed
+#   push of a v* tag    push control-plane:<tag> and the site matrix
+#   weekly schedule     rebuild (without cache) and push the site matrix, to
+#                       pick up base image and Debian security patches
+#   manual (on main)    push control-plane:sha-<short> and the site matrix
+#
+# The site matrix comes from images/manifest.json via images/matrix.sh.
+# Site tags follow the runtime contract in images/README.md.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  schedule:
+    - cron: "23 4 * * 1" # Mondays 04:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Pull requests: newest commit wins. Everything else runs once per event and
+  # commit, so no push to main is dropped while another run is pending.
+  group: images-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      push: ${{ steps.plan.outputs.push }}
+      sites: ${{ steps.plan.outputs.sites }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      registry: ${{ steps.plan.outputs.registry }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # to diff against the previous commit of a push
+      - id: plan
+        name: Decide what to build
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          PUBLISH: ${{ github.repository == 'rchouinard/pressfleet' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+        run: |
+          # Site images are rebuilt when their sources or this workflow change.
+          site_paths='^(images/|\.github/workflows/images\.yml$)'
+          case "$EVENT" in
+          pull_request)
+            # HEAD is the merge commit; its first parent is the base branch.
+            changed="$(git diff --name-only HEAD^1 HEAD)" ;;
+          push)
+            if [[ "$GITHUB_REF" == refs/tags/* ]] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              changed="images/"  # tag, new branch, or force push: build everything
+            else
+              changed="$(git diff --name-only "$BEFORE" HEAD)"
+            fi ;;
+          *)
+            changed="images/" ;;  # schedule, workflow_dispatch
+          esac
+          if grep -Eq "$site_paths" <<<"$changed"; then sites=true; else sites=false; fi
+
+          # The control plane image is tagged with the version its binary
+          # embeds (main.version), which is what the host CLI looks for.
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="$GITHUB_REF_NAME"
+          else
+            version="sha-${GITHUB_SHA::7}"
+          fi
+
+          {
+            echo "push=$PUBLISH"
+            echo "sites=$sites"
+            echo "matrix=$(images/matrix.sh github)"
+            echo "registry=$(images/matrix.sh registry)"
+            echo "version=$version"
+          } >>"$GITHUB_OUTPUT"
+          {
+            echo "### Image plan"
+            echo "- publish: \`$PUBLISH\`, site images: \`$sites\`, control plane version: \`$version\`"
+            echo "- PHP: $(images/matrix.sh php | xargs), WordPress: $(images/matrix.sh wp | xargs)"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  # --- Control plane ---------------------------------------------------------
+
+  control-plane:
+    name: Control plane (build)
+    needs: plan
+    if: needs.plan.outputs.push != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: control-plane/Dockerfile
+          platforms: linux/amd64
+          build-args: VERSION=${{ needs.plan.outputs.version }}
+          tags: ${{ needs.plan.outputs.registry }}/control-plane:${{ needs.plan.outputs.version }}
+          cache-from: type=gha,scope=control-plane
+
+  control-plane-publish:
+    name: Control plane (publish)
+    needs: plan
+    if: needs.plan.outputs.push == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: control-plane/Dockerfile
+          platforms: linux/amd64
+          build-args: VERSION=${{ needs.plan.outputs.version }}
+          tags: ${{ needs.plan.outputs.registry }}/control-plane:${{ needs.plan.outputs.version }}
+          labels: |
+            org.opencontainers.image.title=pressfleet control-plane
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.plan.outputs.version }}
+            org.opencontainers.image.licenses=MIT
+          # A single linux/amd64 manifest, so the tag's digest is the image's.
+          provenance: false
+          push: true
+          cache-from: type=gha,scope=control-plane
+          cache-to: type=gha,mode=max,scope=control-plane
+
+  # --- Site images -----------------------------------------------------------
+
+  site-nginx:
+    name: site-nginx wp${{ matrix.wp }} (build)
+    needs: plan
+    if: needs.plan.outputs.sites == 'true' && needs.plan.outputs.push != 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix).nginx }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: images
+          file: images/site-nginx/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            WP_VERSION=${{ matrix.wp }}
+            WP_SHA1=${{ matrix.sha1 }}
+          tags: ${{ needs.plan.outputs.registry }}/site-nginx:wp${{ matrix.wp }}
+          cache-from: type=gha,scope=site-nginx
+
+  site-php:
+    name: site-php php${{ matrix.php }}-wp${{ matrix.wp }} (build${{ matrix.smoke && ', smoke test' || '' }})
+    needs: plan
+    if: needs.plan.outputs.sites == 'true' && needs.plan.outputs.push != 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix).php }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: images
+          file: images/site-php/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            PHP_VERSION=${{ matrix.php }}
+            WP_VERSION=${{ matrix.wp }}
+            WP_SHA1=${{ matrix.sha1 }}
+          tags: ${{ needs.plan.outputs.registry }}/site-php:php${{ matrix.php }}-wp${{ matrix.wp }}
+          load: ${{ matrix.smoke }}
+          cache-from: type=gha,scope=site-php-${{ matrix.php }}
+      # The smoke test needs the matching nginx image in the local daemon.
+      - if: matrix.smoke
+        uses: docker/build-push-action@v7
+        with:
+          context: images
+          file: images/site-nginx/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            WP_VERSION=${{ matrix.wp }}
+            WP_SHA1=${{ matrix.sha1 }}
+          tags: ${{ needs.plan.outputs.registry }}/site-nginx:wp${{ matrix.wp }}
+          load: true
+          cache-from: type=gha,scope=site-nginx
+      - if: matrix.smoke
+        name: Smoke test
+        env:
+          SKIP_BUILD: "1"
+          WP_VERSION: ${{ matrix.wp }}
+          IMAGE_REPO: ${{ needs.plan.outputs.registry }}
+          PHP: ${{ matrix.php }}
+          VERBOSE: "1"
+        run: images/test.sh "$PHP"
+
+  site-nginx-publish:
+    name: site-nginx wp${{ matrix.wp }} (publish)
+    needs: plan
+    if: needs.plan.outputs.sites == 'true' && needs.plan.outputs.push == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix).nginx }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: images
+          file: images/site-nginx/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            WP_VERSION=${{ matrix.wp }}
+            WP_SHA1=${{ matrix.sha1 }}
+          tags: ${{ needs.plan.outputs.registry }}/site-nginx:wp${{ matrix.wp }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=wp${{ matrix.wp }}
+          provenance: false
+          pull: true
+          # The weekly rebuild skips the cache so apt and base image patches
+          # are always picked up.
+          no-cache: ${{ github.event_name == 'schedule' }}
+          push: true
+          cache-from: type=gha,scope=site-nginx
+          cache-to: type=gha,mode=max,scope=site-nginx
+
+  site-php-publish:
+    name: site-php php${{ matrix.php }}-wp${{ matrix.wp }} (publish)
+    needs: plan
+    if: needs.plan.outputs.sites == 'true' && needs.plan.outputs.push == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix).php }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: images
+          file: images/site-php/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            PHP_VERSION=${{ matrix.php }}
+            WP_VERSION=${{ matrix.wp }}
+            WP_SHA1=${{ matrix.sha1 }}
+          tags: ${{ needs.plan.outputs.registry }}/site-php:php${{ matrix.php }}-wp${{ matrix.wp }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=php${{ matrix.php }}-wp${{ matrix.wp }}
+          provenance: false
+          pull: true
+          no-cache: ${{ github.event_name == 'schedule' }}
+          push: true
+          cache-from: type=gha,scope=site-php-${{ matrix.php }}
+          cache-to: type=gha,mode=max,scope=site-php-${{ matrix.php }}
