@@ -6,7 +6,11 @@ package sitedb
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+
+	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 )
 
 // ErrDatabaseNotFound is returned when an operation targets a site that has
@@ -32,4 +36,43 @@ type Manager interface {
 	// Import replaces the site's database contents with the dump at srcPath.
 	// Returns ErrDatabaseNotFound if the site has no database.
 	Import(ctx context.Context, siteID string, srcPath string) error
+}
+
+// Credentials are a site's database connection details. The secret that
+// CreateDatabase's secretRef points to holds them, encoded with
+// MarshalCredentials. The database host is platform configuration, not part
+// of the credentials.
+type Credentials struct {
+	Database string        `json:"database"`
+	Username string        `json:"username"`
+	Password redact.Secret `json:"-"`
+}
+
+// credentialsJSON is the stored form; Password is revealed only here.
+type credentialsJSON struct {
+	Database string `json:"database"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// MarshalCredentials encodes credentials for storage as a secret.
+func MarshalCredentials(c Credentials) (redact.Secret, error) {
+	b, err := json.Marshal(credentialsJSON{Database: c.Database, Username: c.Username, Password: c.Password.Reveal()})
+	if err != nil {
+		return "", fmt.Errorf("encoding database credentials: %w", err)
+	}
+	return redact.Secret(b), nil
+}
+
+// UnmarshalCredentials decodes credentials stored by MarshalCredentials.
+func UnmarshalCredentials(s redact.Secret) (Credentials, error) {
+	var c credentialsJSON
+	if err := json.Unmarshal([]byte(s.Reveal()), &c); err != nil {
+		// Don't wrap: json errors can quote the input.
+		return Credentials{}, errors.New("decoding database credentials: invalid format")
+	}
+	if c.Database == "" || c.Username == "" || c.Password == "" {
+		return Credentials{}, errors.New("decoding database credentials: missing field")
+	}
+	return Credentials{Database: c.Database, Username: c.Username, Password: redact.Secret(c.Password)}, nil
 }
