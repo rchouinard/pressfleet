@@ -18,8 +18,11 @@ type ClientGroup struct {
 	// BackupRepository references the group's Restic repository; empty until
 	// the repository is initialized.
 	BackupRepository string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// SiteCount is the number of sites in the group. Get and List fill it
+	// in; Create and Update leave it as it is.
+	SiteCount int
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // ClientGroups reads and writes client groups. It is the example repository:
@@ -33,8 +36,13 @@ func NewClientGroups(q Querier) ClientGroups {
 	return ClientGroups{q: q}
 }
 
-// clientGroupColumns lists columns in the order scanClientGroup expects.
+// clientGroupColumns lists the stored columns, in the order of the INSERT.
 const clientGroupColumns = "id, name, notes, backup_repository, created_at, updated_at"
+
+// clientGroupSelect selects what scanClientGroup expects: the stored columns
+// and the site count.
+const clientGroupSelect = "SELECT " + clientGroupColumns +
+	", (SELECT COUNT(*) FROM sites WHERE sites.client_group_id = client_groups.id) FROM client_groups"
 
 type scanner interface {
 	Scan(dest ...any) error
@@ -42,7 +50,7 @@ type scanner interface {
 
 func scanClientGroup(s scanner) (ClientGroup, error) {
 	var g ClientGroup
-	err := s.Scan(&g.ID, &g.Name, &g.Notes, &g.BackupRepository, &g.CreatedAt, &g.UpdatedAt)
+	err := s.Scan(&g.ID, &g.Name, &g.Notes, &g.BackupRepository, &g.CreatedAt, &g.UpdatedAt, &g.SiteCount)
 	return g, err
 }
 
@@ -68,17 +76,36 @@ func (r ClientGroups) Create(ctx context.Context, g *ClientGroup) error {
 
 // Get returns the client group with the given ID, or ErrNotFound.
 func (r ClientGroups) Get(ctx context.Context, groupID string) (ClientGroup, error) {
-	g, err := scanClientGroup(r.q.QueryRowContext(ctx,
-		"SELECT "+clientGroupColumns+" FROM client_groups WHERE id = ?", groupID))
+	g, err := scanClientGroup(r.q.QueryRowContext(ctx, clientGroupSelect+" WHERE id = ?", groupID))
 	if err != nil {
 		return ClientGroup{}, fmt.Errorf("get client group %s: %w", groupID, err)
 	}
 	return g, nil
 }
 
-// List returns all client groups ordered by name.
-func (r ClientGroups) List(ctx context.Context) ([]ClientGroup, error) {
-	rows, err := r.q.QueryContext(ctx, "SELECT "+clientGroupColumns+" FROM client_groups ORDER BY name, id")
+// ClientGroupFilter pages through client groups in List's order.
+type ClientGroupFilter struct {
+	// AfterName and AfterID, if AfterID is set, only return groups that sort
+	// after the group with this name and ID: the pagination cursor. The name
+	// is part of the cursor so a page still works if that group was deleted.
+	AfterName, AfterID string
+	// Limit caps the number of groups returned; zero means no limit.
+	Limit int
+}
+
+// List returns client groups ordered by name, then ID.
+func (r ClientGroups) List(ctx context.Context, f ClientGroupFilter) ([]ClientGroup, error) {
+	query, args := clientGroupSelect, []any{}
+	if f.AfterID != "" {
+		query += " WHERE name > ? OR (name = ? AND id > ?)"
+		args = append(args, f.AfterName, f.AfterName, f.AfterID)
+	}
+	query += " ORDER BY name, id"
+	if f.Limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, f.Limit)
+	}
+	rows, err := r.q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list client groups: %w", err)
 	}

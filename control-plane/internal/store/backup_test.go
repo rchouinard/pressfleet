@@ -14,7 +14,7 @@ import (
 
 func groupNames(t *testing.T, db *store.DB) []string {
 	t.Helper()
-	list, err := store.NewClientGroups(db).List(context.Background())
+	list, err := store.NewClientGroups(db).List(context.Background(), store.ClientGroupFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}

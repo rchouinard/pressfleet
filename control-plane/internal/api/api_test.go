@@ -229,7 +229,8 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 				if w.Code != http.StatusUnauthorized {
 					t.Errorf("status = %d, want 401; body: %s", w.Code, w.Body)
 				}
-			case strings.HasPrefix(op.Path, "/api/v1/auth/") || strings.HasPrefix(op.Path, "/api/v1/users"):
+			case strings.HasPrefix(op.Path, "/api/v1/auth/") || strings.HasPrefix(op.Path, "/api/v1/users") ||
+				strings.HasPrefix(op.Path, "/api/v1/client-groups"):
 				if w.Code == http.StatusUnauthorized || w.Code >= 500 {
 					t.Errorf("status = %d; body: %s", w.Code, w.Body)
 				}

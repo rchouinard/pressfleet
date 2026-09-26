@@ -77,13 +77,15 @@ func (e *authEnv) mustLoginAs(email string) session {
 }
 
 // allowed reports whether the authorization check let the request through:
-// stub handlers answer 501 after it.
+// anything a handler answers after it, such as 501 from a stub or 409 from a
+// duplicate, means it did.
 func allowed(t *testing.T, w interface{ Result() *http.Response }, what string) bool {
 	t.Helper()
 	switch code := w.Result().StatusCode; code {
 	case http.StatusForbidden:
 		return false
-	case http.StatusOK, http.StatusCreated, http.StatusNoContent, http.StatusNotImplemented, http.StatusNotFound:
+	case http.StatusOK, http.StatusCreated, http.StatusAccepted, http.StatusNoContent, http.StatusNotImplemented,
+		http.StatusNotFound, http.StatusConflict, http.StatusGone, http.StatusUnprocessableEntity:
 		return true
 	default:
 		t.Fatalf("%s: unexpected status %d", what, code)

@@ -16,7 +16,7 @@ func TestClientGroups(t *testing.T) {
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
 		groups := store.NewClientGroups(db)
 
-		if list, err := groups.List(ctx); err != nil || len(list) != 0 {
+		if list, err := groups.List(ctx, store.ClientGroupFilter{}); err != nil || len(list) != 0 {
 			t.Fatalf("List on empty database = %v, %v", list, err)
 		}
 
@@ -41,7 +41,7 @@ func TestClientGroups(t *testing.T) {
 			t.Errorf("Get = %+v, want %+v", got, *acme)
 		}
 
-		list, err := groups.List(ctx)
+		list, err := groups.List(ctx, store.ClientGroupFilter{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -101,6 +101,80 @@ func TestClientGroups(t *testing.T) {
 		}
 		if _, err := groups.Get(ctx, acme.ID); !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("Get after Delete: err = %v, want ErrNotFound", err)
+		}
+	})
+}
+
+func TestClientGroupsPagingAndSiteCounts(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		groups := store.NewClientGroups(db)
+		// Created out of order, with two names that differ only in case, so
+		// the order is by name and then ID.
+		for _, name := range []string{"delta", "Alpha", "charlie", "bravo", "alpha"} {
+			if err := groups.Create(ctx, &store.ClientGroup{Name: name}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		all, err := groups.List(ctx, store.ClientGroupFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(all) != 5 {
+			t.Fatalf("List = %+v", all)
+		}
+
+		var paged []string
+		f := store.ClientGroupFilter{Limit: 2}
+		for range 5 {
+			page, err := groups.List(ctx, f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, g := range page {
+				paged = append(paged, g.ID)
+			}
+			if len(page) < f.Limit {
+				break
+			}
+			last := page[len(page)-1]
+			f.AfterName, f.AfterID = last.Name, last.ID
+		}
+		if len(paged) != len(all) {
+			t.Fatalf("paged %d groups, want %d", len(paged), len(all))
+		}
+		for i := range all {
+			if paged[i] != all[i].ID {
+				t.Errorf("page order %v differs from List order at %d", paged, i)
+			}
+		}
+
+		// A cursor still works after its group is deleted.
+		if err := groups.Delete(ctx, all[1].ID); err != nil {
+			t.Fatal(err)
+		}
+		rest, err := groups.List(ctx, store.ClientGroupFilter{AfterName: all[1].Name, AfterID: all[1].ID})
+		if err != nil || len(rest) != 3 || rest[0].ID != all[2].ID {
+			t.Errorf("List after deleted cursor = %+v, %v", rest, err)
+		}
+
+		// Site counts.
+		g := all[0]
+		now := time.Now()
+		for i, slug := range []string{"one", "two"} {
+			if _, err := db.ExecContext(ctx, `INSERT INTO sites
+				(id, client_group_id, name, slug, status, preview_domain, php_version, wp_core_version, uid, created_at, updated_at)
+				VALUES (?, ?, 'Site', ?, 'running', ?, '8.4', '6.9.1', ?, ?, ?)`,
+				id.New(), g.ID, slug, slug+".preview.example", 20000+i, now, now); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got, err := groups.Get(ctx, g.ID); err != nil || got.SiteCount != 2 {
+			t.Errorf("Get site count = %d, %v; want 2", got.SiteCount, err)
+		}
+		list, err := groups.List(ctx, store.ClientGroupFilter{Limit: 2})
+		if err != nil || len(list) != 2 || list[0].SiteCount != 2 || list[1].SiteCount != 0 {
+			t.Errorf("List site counts = %+v, %v", list, err)
 		}
 	})
 }

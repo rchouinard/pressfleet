@@ -163,7 +163,7 @@ func TestInTx(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		groups, err := store.NewClientGroups(db).List(ctx)
+		groups, err := store.NewClientGroups(db).List(ctx, store.ClientGroupFilter{})
 		if err != nil {
 			t.Fatal(err)
 		}
