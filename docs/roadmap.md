@@ -163,13 +163,14 @@ Done when: 50 sites on an 8 GiB host stay healthy under light traffic (§4.1), a
 
 | # | Issue | Priority | Size | Depends on |
 | --- | --- | --- | --- | --- |
-| [#94](https://github.com/rchouinard/pressfleet/issues/94) | Decision: platform upgrade process | P0 | S | — |
-| [#95](https://github.com/rchouinard/pressfleet/issues/95) | Platform upgrade command and procedure | P0 | L | #94, #8 |
+| [#94](https://github.com/rchouinard/pressfleet/issues/94) | ~~Decision: platform upgrade process~~ Resolved | P0 | S | — |
+| [#95](https://github.com/rchouinard/pressfleet/issues/95) | Platform upgrade command and procedure | P0 | L | #94, #8, #106, #58 |
 | [#96](https://github.com/rchouinard/pressfleet/issues/96) | Disaster recovery: restore control plane state on a new host | P1 | M | #52, #94 |
 | [#97](https://github.com/rchouinard/pressfleet/issues/97) | Security review: tenant isolation and secrets | P0 | M | #79 |
 | [#98](https://github.com/rchouinard/pressfleet/issues/98) | Capacity test: 50 sites on an 8 GiB host | P0 | L | #79 |
 | [#99](https://github.com/rchouinard/pressfleet/issues/99) | Installation and operator documentation | P0 | M | #95 |
 | [#100](https://github.com/rchouinard/pressfleet/issues/100) | Release pipeline: versioned binaries and images | P0 | M | #19, #80 |
+| [#106](https://github.com/rchouinard/pressfleet/issues/106) | Host CLI ↔ control plane admin interface and version skew enforcement | P0 | M | #12 |
 
 ### Post-MVP: Staging Clones
 
@@ -189,7 +190,7 @@ KubernetesProvisioner using client-go (§4.2, §8). Do not implement before MVP 
 
 ## Open decisions
 
-These must be resolved before the work they block. Settle the platform upgrade process early, even though its implementation lands later, because it shapes migration design from M1 onward.
+These must be resolved before the work they block.
 
 | # | Decision | Milestone | Priority |
 | --- | --- | --- | --- |
@@ -204,7 +205,7 @@ These must be resolved before the work they block. Settle the platform upgrade p
 | [#64](https://github.com/rchouinard/pressfleet/issues/64) | confirm VictoriaMetrics + built-in collector | M4: Monitoring & Alerting | P0 |
 | [#65](https://github.com/rchouinard/pressfleet/issues/65) | metrics retention period | M4: Monitoring & Alerting | P1 |
 | [#92](https://github.com/rchouinard/pressfleet/issues/92) | plugin/theme update visibility | M5: Dashboard | P2 |
-| [#94](https://github.com/rchouinard/pressfleet/issues/94) | platform upgrade process | MVP Release Gate | P0 |
+| [#94](https://github.com/rchouinard/pressfleet/issues/94) | ~~platform upgrade process~~ **Resolved:** forward-only migrations, CLI upgrades control plane to its own version, kubectl-style version skew (design doc §4.7) | MVP Release Gate | P0 |
 
 ## Gaps in the design document
 

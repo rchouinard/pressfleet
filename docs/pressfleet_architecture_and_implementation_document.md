@@ -45,6 +45,7 @@ PressFleet aims to simplify WordPress management for agencies by delivering:
 | **Preview Domain** | A platform-assigned subdomain (e.g. `acme-blog.preview.agency.example`) that makes a site reachable before its production DNS is switched. |
 | **Primary Domain** | The production domain a site serves after go-live. |
 | **Control Plane** | The Go API server, background workers, metrics collector, and embedded dashboard UI. |
+| **Host CLI** | The `pressfleet` binary run on the host for `init`, `doctor`, and `upgrade`. The same binary runs as the control plane inside a container (§4.7). |
 | **Platform Services** | Shared infrastructure run once per install: Traefik, MariaDB, Redis, metrics storage, control plane. |
 | **Site Stack** | The set of containers and volumes making up one site (one Compose project per site). |
 | **Job** | An asynchronous unit of work (provision, go-live, backup, restore, delete) tracked by the control plane. |
@@ -123,7 +124,7 @@ PressFleet aims to simplify WordPress management for agencies by delivering:
 
 ### 4.1. Docker Compose (MVP / Default)
 
-* **Platform Services** (Traefik, control plane, MariaDB, Redis, VictoriaMetrics) run as a single Compose project installed once per host.
+* **Platform Services** (Traefik, control plane, MariaDB, Redis, VictoriaMetrics) run as a single Compose project installed once per host. The host CLI renders it from templates embedded in the binary, with every image pinned by digest for that release (§4.7). It is never edited by hand.
 * **Each site** is its own Compose project (e.g. `pf-<site-id>`) rendered by the control plane from templates in `/templates/compose` and applied with `docker compose -p pf-<site-id> up -d`.
 * Rendered site Compose files are stored on disk under the control plane's data directory so operators can inspect them.
 * Traefik discovers sites via the Docker provider and container labels.
@@ -307,10 +308,41 @@ Each user has one platform-wide role. The roles are fixed in the MVP; there are 
 * **Single check point:** Every API handler calls one authorization check with the caller, the action, and the target before doing anything. The UI hides actions the user can't take, but the server is authoritative.
 * **Tokens:** A token's effective permissions are the intersection of its scope and its owner's *current* role. MVP scopes are `full` (everything the owner's role allows) and `read-only`. Future site-scoped tokens (§4.2) plug into the same check.
 * **Immediate effect:** Role changes apply immediately to the user's existing sessions and tokens.
-* **At least one Admin:** The last Admin can't be demoted, disabled, or deleted. `pressfleet init` creates the first user as an Admin, and `pressfleet user create --role` exists for recovery.
+* **At least one Admin:** The last Admin can't be demoted, disabled, or deleted. `pressfleet init` creates the first user as an Admin, and `pressfleet user create --role` (run inside the control plane container, §4.7) exists for recovery.
 * **Client groups:** The check resolves every target (site, backup, job, alert) to its client group. Client-group-scoped access (post-MVP) only needs a user↔group membership table on top of this.
 
 **Audit log:** Every authenticated state-changing request and every authorization denial is recorded as an `AuditEvent`. Each event holds the actor (user and token), action, target, result, source IP, and timestamp, and never includes secrets. Admins can view and filter the audit log in the dashboard. Retention is configurable.
+
+
+### 4.7. Versioning, Upgrades & Version Skew
+
+PressFleet uses semantic versioning. Each release bundles the control plane image, the host CLI, and the platform definition: the platform Compose templates plus the exact image digests of every platform service.
+
+**Responsibilities:**
+* The **control plane** owns its state database: migrations, pre-migration backups, and restoring those backups.
+* The **host CLI** owns the platform definition and renders the platform Compose project from templates embedded in its binary. It never reads or writes the state database directly. Commands that operate on state (e.g. `pressfleet user create`) run inside the control plane container (`docker compose exec control-plane pressfleet …`), so their version always matches the database schema.
+
+**Migrations:**
+* Migrations are forward-only; there are no down migrations.
+* The control plane applies pending migrations automatically at startup, after backing up the state database.
+* The control plane refuses to start if the database schema is newer than the versions it supports.
+* One-off data migrations must be safe to run more than once.
+
+**Upgrades (`pressfleet upgrade`):**
+* The host CLI upgrades the control plane to the CLI's own version. To upgrade, install the new CLI and run `pressfleet upgrade`.
+* Upgrading directly from any older version is supported, provided it is at or above the minimum version that release supports upgrading from.
+* Steps: run preflight checks; record the current platform definition and image digests; render the new platform Compose project; pull images; recreate only the services that changed; wait for the control plane (which migrates at startup) and platform services to report healthy.
+* If health checks fail, the upgrade rolls back automatically. It restores the recorded platform definition and images, then restores the pre-migration state backup using the previous control plane version. `pressfleet upgrade --rollback` does the same by hand.
+* Rollback is for failed or immediately regretted upgrades. Anything recorded in the state database after the upgrade (e.g. new sites) is lost on rollback.
+* Upgrading only the control plane doesn't interrupt site traffic. Recreating Traefik, MariaDB, or Redis briefly interrupts every site.
+* MariaDB major version upgrades are one-way. They only ship in major PressFleet releases, after a backup of every site database.
+* When site Compose templates change, sites are re-rendered and recreated one at a time with health checks, using the image rollout mechanism (§5.5).
+
+**Version skew between the host CLI and the control plane:**
+* Patch versions within the same minor version are always compatible.
+* From 1.0, the host CLI's minor version must be within one of the control plane's (n−1, n, or n+1, where n is the control plane's minor version). Before 1.0, the minor versions must match.
+* Before every command, the CLI checks the control plane's version. Outside the policy it refuses to run and explains how to fix it; there is no override. `pressfleet version` and `pressfleet upgrade` are exempt.
+* The host CLI talks to the control plane only through a small, versioned admin interface. From 1.0, changes to that interface must stay backward compatible for at least one minor release, and CI tests the CLI against control planes at n−1, n, and n+1.
 
 ---
 
@@ -459,7 +491,7 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
   * Repository scaffolding, MIT license, and GitHub Actions CI (lint, test, image builds to GHCR).
   * `pressfleet init` (including master key generation and warning) and `pressfleet doctor` preflight checks.
   * Initial OpenAPI spec with code generation for the Go server.
-  * Establish the Go control plane API, job queue, and SQLite/PostgreSQL schema with migrations (users, client groups, sites, jobs).
+  * Establish the Go control plane API, job queue, and SQLite/PostgreSQL schema with forward-only migrations (users, client groups, sites, jobs; §4.7).
   * Implement `ComposeProvisioner` (per-site networks, two-container site stack, resource reservations/limits) and `MariaDBManager`.
   * Build the `site-nginx` and `site-php` images for each supported PHP version, with a generated, read-only `wp-config.php`.
   * API authentication (sessions and scoped tokens), role-based authorization, and the audit log (§4.6).
@@ -487,6 +519,7 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
   * **Done when:** every Phase 1–4 operation can be performed from the UI.
 * **MVP Release Gate**
   * Capacity test: 50 sites on an 8 GiB host stay healthy under light traffic (§4.1).
+  * `pressfleet upgrade` with automatic rollback, and enforcement of the version skew policy between the host CLI and the control plane (§4.7).
 * **Post-MVP (High Priority): Staging Clones**
   * Clone a production site to a linked staging site (on a preview domain), and push staging changes back to production.
 * **Post-MVP: Kubernetes Driver**
@@ -507,7 +540,7 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
 8. **Developer code deployment:** How do agency developers get custom themes/plugins onto a site: SFTP, git push, a CI deploy API endpoint, WP-CLI/SSH access? Currently only an optional SFTP/file browser is planned (Phase 3).
 9. **Importing existing sites:** Is an import workflow (upload an archive + DB dump, or pull from a remote host) part of the MVP?
 10. **Database access:** Should agencies get a database UI (e.g. Adminer started on demand), WP-CLI only, or neither?
-11. **Platform upgrades:** How does an existing install upgrade to a new PressFleet release (control plane migrations, platform service upgrades, rollback)?
+11. ~~**Platform upgrades:** How does an existing install upgrade to a new PressFleet release (control plane migrations, platform service upgrades, rollback)?~~ **Resolved (2026-09-26):** forward-only migrations applied at startup after a state backup; the host CLI upgrades the control plane to its own version, with automatic rollback; kubectl-style version skew policy between the host CLI and the control plane. See §4.7.
 
 ---
 
