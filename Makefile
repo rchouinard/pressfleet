@@ -48,6 +48,22 @@ fmt: ## Format Go code
 tidy: ## Tidy go.mod/go.sum
 	go mod tidy
 
+IMAGE_REPO ?= ghcr.io/rchouinard/pressfleet
+
+.PHONY: images
+images: ## Build the site images (versions from images/versions.env)
+	@set -e; . images/versions.env; \
+	docker build -f images/site-nginx/Dockerfile -t $(IMAGE_REPO)/site-nginx:wp$$WP_VERSION \
+		--build-arg WP_VERSION=$$WP_VERSION --build-arg WP_SHA1=$$WP_SHA1 images; \
+	for v in $$PHP_VERSIONS; do \
+		docker build -f images/site-php/Dockerfile -t $(IMAGE_REPO)/site-php:php$$v-wp$$WP_VERSION \
+			--build-arg PHP_VERSION=$$v --build-arg WP_VERSION=$$WP_VERSION --build-arg WP_SHA1=$$WP_SHA1 images; \
+	done
+
+.PHONY: images-test
+images-test: ## Build the site images and run their smoke test (needs Docker)
+	images/test.sh
+
 .PHONY: clean
 clean: ## Remove build artifacts
 	rm -rf bin/ dist/ coverage.out

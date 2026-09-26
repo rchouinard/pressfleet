@@ -1,0 +1,198 @@
+# nginx configuration for a PressFleet site (site-nginx image).
+#
+# Rendered at container start by pressfleet-entrypoint into
+# /tmp/nginx/nginx.conf: ${NGINX_*} and ${PHP_FPM_*} placeholders are replaced
+# from the environment, and the files included from /tmp/nginx/ are generated
+# from list-valued variables. See images/README.md for the runtime contract.
+#
+# Extension points for later milestones (empty in this image; a glob that
+# matches nothing is fine):
+#   /etc/nginx/pressfleet/http.d/*.conf    http context   (M2: fastcgi_cache_path, cache maps)
+#   /etc/nginx/pressfleet/server.d/*.conf  site server    (M2: cache bypass rules)
+#   /etc/nginx/pressfleet/php.d/*.conf     PHP location   (M2: fastcgi_cache directives)
+
+# No `user` directive: the master runs as the site UID, not root.
+worker_processes ${NGINX_WORKER_PROCESSES};
+pid /tmp/nginx/nginx.pid;
+error_log stderr warn;
+
+events {
+    worker_connections ${NGINX_WORKER_CONNECTIONS};
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    # The root filesystem may be read-only; everything nginx writes goes to /tmp.
+    client_body_temp_path /tmp/nginx/client_body;
+    fastcgi_temp_path     /tmp/nginx/fastcgi;
+    proxy_temp_path       /tmp/nginx/proxy;
+    uwsgi_temp_path       /tmp/nginx/uwsgi;
+    scgi_temp_path        /tmp/nginx/scgi;
+
+    server_tokens off;
+    sendfile on;
+    tcp_nopush on;
+    keepalive_timeout 65s;
+    client_max_body_size ${NGINX_CLIENT_MAX_BODY_SIZE};
+    # php is on the same Docker network; a slow connect means it is gone.
+    fastcgi_connect_timeout 5s;
+    fastcgi_read_timeout ${NGINX_FASTCGI_READ_TIMEOUT};
+
+    # Clients reach nginx through Traefik on port 8080; redirects must stay
+    # relative so neither the internal port nor scheme leaks.
+    absolute_redirect off;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 5;
+    gzip_min_length 256;
+    gzip_types application/javascript application/json application/rss+xml application/atom+xml
+               application/xml image/svg+xml text/css text/javascript text/plain text/xml;
+
+    # Real client IP: X-Forwarded-For is trusted only from NGINX_TRUSTED_PROXIES.
+    include /tmp/nginx/realip.conf;
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
+
+    # $pressfleet_trusted_proxy is 1 when the TCP peer is a trusted proxy.
+    geo $realip_remote_addr $pressfleet_trusted_proxy {
+        default 0;
+        include /tmp/nginx/trusted-proxies.geo;
+    }
+
+    # X-Forwarded-Proto from a trusted proxy decides the scheme PHP sees; from
+    # anyone else it is ignored.
+    map "$pressfleet_trusted_proxy:$http_x_forwarded_proto" $pressfleet_scheme {
+        default          $scheme;
+        "~*^1:https$"    https;
+        "~*^1:http$"     http;
+    }
+    map $pressfleet_scheme $pressfleet_https {
+        https   on;
+        default "";
+    }
+    map $pressfleet_scheme $pressfleet_port {
+        https   443;
+        default 80;
+    }
+
+    # One JSON object per line on stdout (design doc §7.1, §7.4).
+    # upstream_cache_status is empty until the FastCGI cache is enabled (M2).
+    log_format pressfleet escape=json
+        '{"time":"$time_iso8601",'
+        '"remote_addr":"$remote_addr",'
+        '"host":"$host",'
+        '"method":"$request_method",'
+        '"uri":"$request_uri",'
+        '"protocol":"$server_protocol",'
+        '"status":$status,'
+        '"body_bytes_sent":$body_bytes_sent,'
+        '"request_time":$request_time,'
+        '"upstream_response_time":"$upstream_response_time",'
+        '"upstream_cache_status":"$upstream_cache_status",'
+        '"referer":"$http_referer",'
+        '"user_agent":"$http_user_agent"}';
+    access_log /dev/stdout pressfleet;
+
+    # PHP-FPM in the site's php container. `resolve` re-resolves the name
+    # through Docker's DNS, so nginx follows the php container when it is
+    # recreated (e.g. on a PHP version change) and can start before it.
+    resolver ${NGINX_RESOLVER} valid=10s ipv6=off;
+    upstream php {
+        zone php 64k;
+        server ${PHP_FPM_HOST}:${PHP_FPM_PORT} resolve;
+    }
+
+    include /etc/nginx/pressfleet/http.d/*.conf;
+
+    # --- Site (Traefik routes here) -------------------------------------
+    server {
+        listen 8080 default_server;
+        server_name _;
+
+        root /var/www/wordpress;
+        index index.php index.html;
+
+        add_header X-Content-Type-Options nosniff always;
+
+        include /etc/nginx/pressfleet/snippets/security.conf;
+        include /etc/nginx/pressfleet/server.d/*.conf;
+
+        location = /xmlrpc.php {
+            include /tmp/nginx/xmlrpc.conf;
+        }
+
+        # Platform mu-plugin assets (WPMU_PLUGIN_URL). Static files only.
+        location ^~ /_pressfleet/mu-plugins/ {
+            alias /opt/pressfleet/mu-plugins/;
+            location ~ \.(?:php[0-9]?|phtml|phar)$ {
+                return 403;
+            }
+        }
+
+        location = /favicon.ico {
+            access_log off;
+            log_not_found off;
+            try_files $uri /index.php?$args;
+        }
+
+        location = /robots.txt {
+            access_log off;
+            log_not_found off;
+            try_files $uri /index.php?$args;
+        }
+
+        location / {
+            try_files $uri $uri/ /index.php?$args;
+        }
+
+        location ~ \.php$ {
+            include /etc/nginx/pressfleet/snippets/fastcgi-php.conf;
+            include /etc/nginx/pressfleet/php.d/*.conf;
+            fastcgi_pass php;
+        }
+
+        # Static assets are served straight from disk: core from this image,
+        # wp-content from the read-only volume. Types WordPress may generate
+        # dynamically (xml sitemaps, txt, json) fall through to `location /`.
+        location ~* \.(?:css|js|mjs|map|ico|gif|jpe?g|png|webp|avif|svg|svgz|bmp|tiff?|mp3|m4a|ogg|wav|mp4|m4v|webm|mov|pdf|woff2?|ttf|otf|eot)$ {
+            expires 30d;
+            access_log off;
+            log_not_found off;
+            try_files $uri =404;
+        }
+    }
+
+    # --- Internal status (not routed by Traefik) ------------------------
+    server {
+        listen 8081;
+        server_name _;
+        access_log off;
+
+        include /tmp/nginx/status-allow.conf;
+
+        location = /healthz {
+            default_type text/plain;
+            return 200 "ok\n";
+        }
+
+        location = /nginx-status {
+            stub_status;
+        }
+
+        # PHP-FPM status (?json, ?full) and ping, proxied to the php container.
+        location ~ ^/fpm-(?:status|ping)$ {
+            include /etc/nginx/fastcgi_params;
+            fastcgi_param SCRIPT_NAME $uri;
+            fastcgi_param SCRIPT_FILENAME $uri;
+            fastcgi_pass php;
+        }
+
+        location / {
+            return 404;
+        }
+    }
+}
