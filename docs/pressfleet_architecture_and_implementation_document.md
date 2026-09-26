@@ -2,7 +2,7 @@
 
 **Project Codename:** PressFleet  
 **Status:** Draft  
-**Last Updated:** 2026-09-25  
+**Last Updated:** 2026-09-26  
 **Target Audience:** Agencies specializing in WordPress development and management  
 **Core Vision:** A self-hostable, containerized application server for WordPress—a smaller-scale, open-source alternative to WP Engine featuring one-click deployments, automatic TLS, page/object caching, built-in monitoring, file management, and automated backup/restore routines.
 
@@ -23,6 +23,7 @@ PressFleet aims to simplify WordPress management for agencies by delivering:
 ### 1.1. Non-Goals (MVP)
 
 * **Multi-agency / PaaS hosting.** One install serves one agency. A multi-agency PaaS may be considered in the future.
+* **Client-group-scoped user access.** MVP roles apply platform-wide; restricting users to specific client groups is a future consideration that §4.6 keeps possible.
 * **Client access to the platform.** Only agency staff use the dashboard and API. Exposing platform features to clients (e.g. via WordPress plugins that call the platform API) is a future consideration (§4.2).
 * **Staging clones.** Post-MVP, but the **highest-priority** follow-up (§8). The MVP data model and restore pipeline should anticipate it.
 * **Kubernetes deployment.** Planned for a later release; the MVP only has to keep the door open (§4.2).
@@ -38,6 +39,7 @@ PressFleet aims to simplify WordPress management for agencies by delivering:
 | :--- | :--- |
 | **Agency** | The single organization that owns and operates a PressFleet install. Implicit; not a database entity in the MVP. |
 | **User** | An agency staff member with access to the dashboard and API. |
+| **Role** | A user's platform-wide permission level: Admin, Operator, or Viewer (§4.6). |
 | **Client Group** | A named grouping of sites belonging to one agency client. Also the unit of backup repository separation. |
 | **Site** | A single WordPress installation and its dedicated containers, volumes, database, and credentials. Belongs to exactly one client group. |
 | **Preview Domain** | A platform-assigned subdomain (e.g. `acme-blog.preview.agency.example`) that makes a site reachable before its production DNS is switched. |
@@ -181,19 +183,21 @@ Kubernetes and client-facing integrations are out of scope for the MVP. To keep 
 * Site configuration is expressed as data (`SiteConfig`), never as Compose-specific fields.
 * Control plane state must work on PostgreSQL, not just SQLite.
 * Site containers must be stateless apart from declared volumes (`wp-content`) so they can later run as Pods with PVCs.
-* API tokens carry a scope (initially always "full access") so that site-scoped tokens for future client-facing WordPress plugins can be added without redesigning authentication.
+* API tokens carry a scope so that site-scoped tokens for future client-facing WordPress plugins can be added without redesigning authentication. A token can never do more than its owner's role allows (§4.6).
+* Authorization checks resolve every target to its client group, so client-group-scoped user access can be added later without redesigning authorization (§4.6).
 * The site model supports a parent/child relationship between sites so a staging clone can later be linked to its production site.
 
 ### 4.3. Domain Model (MVP)
 
 | Entity | Key Fields / Relationships |
 | :--- | :--- |
-| **User** | Email, password hash, API tokens. All users have full access in the MVP. |
+| **User** | Email, password hash, role (Admin, Operator, or Viewer; §4.6), API tokens. |
 | **ClientGroup** | Name, notes, backup repository reference. Has many Sites. |
 | **Site** | Client group, slug, preview domain, primary domain (nullable until go-live), aliases, PHP version, WordPress core version and pin/rollout setting, resource limits, status, parent site (nullable, reserved for staging). |
 | **Job** | Type, target, state, step log, timestamps. |
 | **BackupRecord** | Site, snapshot ID, WordPress core version at backup time, size, status, timestamp. |
 | **AlertRule / Alert** | Condition, target, channel; firing and resolved events. |
+| **AuditEvent** | Actor (user and token), action, target, result, source IP, timestamp (§4.6). |
 
 ### 4.4. Adapter Contracts
 
@@ -281,6 +285,32 @@ type BackupEngine interface {
 * **Versioned paths:** All endpoints live under `/api/v1/`. Breaking changes require a new version prefix; additive changes do not.
 * **Conventions:** JSON request/response bodies, standard HTTP status codes, `202 Accepted` + job ID for long-running operations, and a consistent error body (RFC 9457 Problem Details).
 * **Authentication:** Session cookies for the embedded UI; bearer API tokens (with scopes, §4.2) for automation.
+* **Authorization:** Role-based, enforced by the server on every endpoint (§4.6). `403 Forbidden` responses use the standard Problem Details body.
+
+### 4.6. Authorization & Roles
+
+Each user has one platform-wide role. The roles are fixed in the MVP; there are no custom roles.
+
+| Action | Admin | Operator | Viewer |
+| :--- | :---: | :---: | :---: |
+| View sites, client groups, jobs, backups, metrics, logs, and alerts | ✓ | ✓ | ✓ |
+| Create sites; change site settings (PHP version, core pin, resources); go-live and domains; start/stop; maintenance mode; cache purge | ✓ | ✓ | |
+| Take backups, restore, and approve core updates | ✓ | ✓ | |
+| Create and edit client groups; manage alert rules | ✓ | ✓ | |
+| Delete sites | ✓ | | |
+| Delete or offboard client groups (export or delete the backup repository and its key) | ✓ | | |
+| Manage users, roles, and other users' API tokens; view the audit log | ✓ | | |
+| Change platform settings (DNS and S3 credentials, SMTP, alert channels, backup location, retention) | ✓ | | |
+| Manage their own password and API tokens | ✓ | ✓ | ✓ |
+
+**Rules:**
+* **Single check point:** Every API handler calls one authorization check with the caller, the action, and the target before doing anything. The UI hides actions the user can't take, but the server is authoritative.
+* **Tokens:** A token's effective permissions are the intersection of its scope and its owner's *current* role. MVP scopes are `full` (everything the owner's role allows) and `read-only`. Future site-scoped tokens (§4.2) plug into the same check.
+* **Immediate effect:** Role changes apply immediately to the user's existing sessions and tokens.
+* **At least one Admin:** The last Admin can't be demoted, disabled, or deleted. `pressfleet init` creates the first user as an Admin, and `pressfleet user create --role` exists for recovery.
+* **Client groups:** The check resolves every target (site, backup, job, alert) to its client group. Client-group-scoped access (post-MVP) only needs a user↔group membership table on top of this.
+
+**Audit log:** Every authenticated state-changing request and every authorization denial is recorded as an `AuditEvent`. Each event holds the actor (user and token), action, target, result, source IP, and timestamp, and never includes secrets. Admins can view and filter the audit log in the dashboard. Retention is configurable.
 
 ---
 
@@ -376,7 +406,7 @@ All long-running operations run as **Jobs**. API endpoints that start them retur
 * **Backups:** Each client group's Restic repository has its own encryption key.
 * **Secrets:** Database passwords, Redis ACL passwords, Restic repository keys, DNS provider credentials, and S3 credentials are stored encrypted at rest in the control plane database using the platform master key, supplied via environment variable or file. Plaintext secrets are never logged. Losing the master key makes all backups unrecoverable; see the warning in §4.1.
 * **Docker socket:** Access to the Docker socket is equivalent to root on the host. Traefik uses a read-only socket proxy, and only the control plane has write access.
-* **Control plane access:** All API endpoints require authentication (session for the UI, API tokens for automation).
+* **Control plane access:** All API endpoints require authentication (session for the UI, API tokens for automation) and role-based authorization (§4.6). State-changing actions and authorization denials are written to the audit log.
 
 ---
 
@@ -432,7 +462,7 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
   * Establish the Go control plane API, job queue, and SQLite/PostgreSQL schema with migrations (users, client groups, sites, jobs).
   * Implement `ComposeProvisioner` (per-site networks, two-container site stack, resource reservations/limits) and `MariaDBManager`.
   * Build the `site-nginx` and `site-php` images for each supported PHP version, with a generated, read-only `wp-config.php`.
-  * API authentication (sessions and scoped tokens).
+  * API authentication (sessions and scoped tokens), role-based authorization, and the audit log (§4.6).
   * **Done when:** a site can be created in a client group via the API, reached over HTTP on the host, and deleted with no leftover containers, networks, volumes, or database, and two sites cannot reach each other over the network.
 * **Phase 2: Ingress, Caching & Domain Management**
   * Integrate Traefik with the Docker provider via a socket proxy.
@@ -452,7 +482,7 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
   * Metrics and log query API endpoints for the dashboard.
   * **Done when:** every metric in §7.1–7.2 is collected and queryable via the API, and each default alert rule fires and resolves correctly in integration tests.
 * **Phase 5: Dashboard**
-  * Build the Nuxt management UI for client groups, provisioning, go-live, site status, job progress, backups, metrics charts, logs, and alerts.
+  * Build the Nuxt management UI for client groups, provisioning, go-live, site status, job progress, backups, metrics charts, logs, alerts, users and roles, and the audit log.
   * Embed the static UI build into the Go binary.
   * **Done when:** every Phase 1–4 operation can be performed from the UI.
 * **MVP Release Gate**
@@ -470,7 +500,7 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
 1. **Security plugins:** Which plugins make up the default "agency security" set, if any?
 2. **Plugin/theme update visibility:** WordPress handles plugin and theme updates, but should the dashboard *report* pending updates across all sites (via WP-CLI), and should it take a backup before updates run?
 3. **Core rollout policy:** Confirm the proposed default in §5.5 (security/minor releases rolled out automatically, major releases approved per site or client group).
-4. **User roles:** Do agency staff need roles beyond full access (e.g. read-only, or access limited to certain client groups)?
+4. ~~**User roles:** Do agency staff need roles beyond full access (e.g. read-only, or access limited to certain client groups)?~~ **Resolved (2026-09-26):** fixed platform-wide Admin, Operator, and Viewer roles, only Admins can delete sites, and an audit log ships in the MVP. Client-group scoping is deferred. See §4.6.
 5. **Preview domain protection:** Is `noindex` sufficient, or should preview domains optionally require HTTP basic auth?
 6. **Monitoring stack:** Confirm the proposed VictoriaMetrics + built-in collector approach (§3, §7).
 7. **Metrics retention:** How long should metrics be retained (e.g. 30 or 90 days)?

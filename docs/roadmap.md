@@ -1,7 +1,7 @@
 # PressFleet MVP Roadmap
 
 This roadmap breaks the design in [pressfleet_architecture_and_implementation_document.md](pressfleet_architecture_and_implementation_document.md) into milestones and issues.
-Live status is tracked in the [PressFleet MVP project](https://github.com/users/rchouinard/projects/3); GitHub is the source of truth, and this file is a snapshot of the original plan (2026-09-26).
+Live status is tracked in the [PressFleet MVP project](https://github.com/users/rchouinard/projects/3); GitHub is the source of truth, and this file is a snapshot of the original plan (2026-09-26), updated when decisions add or change issues.
 
 ## Conventions
 
@@ -31,13 +31,13 @@ Done when: a site can be created in a client group via the API, reached over HTT
 | [#7](https://github.com/rchouinard/pressfleet/issues/7) | Platform services Compose project | P0 | M | #4 |
 | [#8](https://github.com/rchouinard/pressfleet/issues/8) | `pressfleet init`: install configuration and master key generation | P0 | M | #6, #7 |
 | [#9](https://github.com/rchouinard/pressfleet/issues/9) | `pressfleet doctor` host preflight checks | P0 | M | #4 |
-| [#10](https://github.com/rchouinard/pressfleet/issues/10) | Decision: user roles beyond full access? | P1 | S | — |
+| [#10](https://github.com/rchouinard/pressfleet/issues/10) | ~~Decision: user roles beyond full access?~~ Resolved | P1 | S | — |
 | [#11](https://github.com/rchouinard/pressfleet/issues/11) | Initial OpenAPI 3.1 spec and Go server code generation | P0 | M | #1, #2 |
 | [#12](https://github.com/rchouinard/pressfleet/issues/12) | HTTP API server foundation | P0 | M | #11, #4 |
 | [#13](https://github.com/rchouinard/pressfleet/issues/13) | Authentication: users, sessions, and scoped API tokens | P0 | L | #5, #12, #10 |
 | [#14](https://github.com/rchouinard/pressfleet/issues/14) | Database-backed job queue and worker pool | P0 | L | #5, #12 |
 | [#15](https://github.com/rchouinard/pressfleet/issues/15) | Recurring task scheduler | P1 | M | #14 |
-| [#16](https://github.com/rchouinard/pressfleet/issues/16) | Client groups API (CRUD) | P0 | S | #13 |
+| [#16](https://github.com/rchouinard/pressfleet/issues/16) | Client groups API (CRUD) | P0 | S | #13, #103 |
 | [#17](https://github.com/rchouinard/pressfleet/issues/17) | Build `site-php` image (PHP-FPM + WordPress core) | P0 | L | #1 |
 | [#18](https://github.com/rchouinard/pressfleet/issues/18) | Build `site-nginx` image | P0 | M | #17 |
 | [#19](https://github.com/rchouinard/pressfleet/issues/19) | CI pipeline to build and push images to GHCR | P1 | S | #2, #18 |
@@ -54,6 +54,8 @@ Done when: a site can be created in a client group via the API, reached over HTT
 | [#30](https://github.com/rchouinard/pressfleet/issues/30) | Control-plane-driven WP-Cron | P1 | S | #15, #26 |
 | [#31](https://github.com/rchouinard/pressfleet/issues/31) | Integration test harness (Docker-in-Docker) | P0 | M | #2, #25 |
 | [#32](https://github.com/rchouinard/pressfleet/issues/32) | Integration tests: M1 acceptance criteria | P0 | M | #31, #29, #28 |
+| [#103](https://github.com/rchouinard/pressfleet/issues/103) | Authorization: roles and permission checks | P0 | M | #13 |
+| [#104](https://github.com/rchouinard/pressfleet/issues/104) | Audit log for state-changing actions | P1 | M | #103, #14 |
 
 ### M2: Ingress, Caching & Domains
 
@@ -151,6 +153,7 @@ Done when: every Phase 1–4 operation can be performed from the UI. (Design doc
 | [#91](https://github.com/rchouinard/pressfleet/issues/91) | UI: platform overview and capacity warnings | P1 | M | #81, #9, #72 |
 | [#92](https://github.com/rchouinard/pressfleet/issues/92) | Decision: plugin/theme update visibility | P2 | S | — |
 | [#93](https://github.com/rchouinard/pressfleet/issues/93) | UI end-to-end tests (Playwright) | P1 | L | #82, #85, #86, #87, #88, #89, #90, #91 |
+| [#105](https://github.com/rchouinard/pressfleet/issues/105) | UI: audit log viewer | P1 | S | #81, #104 |
 
 ### MVP Release Gate
 
@@ -186,12 +189,11 @@ KubernetesProvisioner using client-go (§4.2, §8). Do not implement before MVP 
 
 ## Open decisions
 
-These must be resolved before the work they block. Settle two of them early, even though their implementation lands later:
-user roles (it shapes the auth schema) and the platform upgrade process (it shapes migration design from M1 onward).
+These must be resolved before the work they block. Settle the platform upgrade process early, even though its implementation lands later, because it shapes migration design from M1 onward.
 
 | # | Decision | Milestone | Priority |
 | --- | --- | --- | --- |
-| [#10](https://github.com/rchouinard/pressfleet/issues/10) | user roles beyond full access? | M1: Core Engine & Compose Driver | P1 |
+| [#10](https://github.com/rchouinard/pressfleet/issues/10) | ~~user roles beyond full access?~~ **Resolved:** fixed Admin/Operator/Viewer roles, audit log in MVP (design doc §4.6) | M1: Core Engine & Compose Driver | P1 |
 | [#22](https://github.com/rchouinard/pressfleet/issues/22) | Design: driver interface extensions for logs, stats, and volume access | M1: Core Engine & Compose Driver | P1 |
 | [#35](https://github.com/rchouinard/pressfleet/issues/35) | preview domain protection | M2: Ingress, Caching & Domains | P2 |
 | [#42](https://github.com/rchouinard/pressfleet/issues/42) | default agency security plugin set | M2: Ingress, Caching & Domains | P1 |
