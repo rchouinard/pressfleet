@@ -36,8 +36,13 @@ func (c *testClock) add(d time.Duration) {
 // code is tested on both dialects in packages store and auth.)
 func newAuthService(t *testing.T) (*auth.Service, *testClock) {
 	t.Helper()
+	return newAuthServiceOn(storetest.Open(t, store.SQLite))
+}
+
+// newAuthServiceOn is newAuthService on db.
+func newAuthServiceOn(db *store.DB) (*auth.Service, *testClock) {
 	clk := &testClock{t: time.Now()}
-	svc := auth.NewService(storetest.Open(t, store.SQLite), auth.Options{
+	svc := auth.NewService(db, auth.Options{
 		Logger:         storetest.Logger(),
 		Now:            clk.now,
 		PasswordParams: auth.Params{Memory: 64, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32},
@@ -49,20 +54,26 @@ func newAuthService(t *testing.T) (*auth.Service, *testClock) {
 type authEnv struct {
 	t     *testing.T
 	h     http.Handler
+	db    *store.DB
 	svc   *auth.Service
 	clock *testClock
 	user  store.User
 }
 
+// newAuthEnv builds the environment on opts.DB, or a fresh SQLite database
+// if it is nil.
 func newAuthEnv(t *testing.T, opts api.Options) *authEnv {
 	t.Helper()
-	svc, clk := newAuthService(t)
+	if opts.DB == nil {
+		opts.DB = storetest.Open(t, store.SQLite)
+	}
+	svc, clk := newAuthServiceOn(opts.DB)
 	u, err := svc.CreateUser(context.Background(), auth.NewUser{Email: "admin@example.com", Password: testPassword, Role: store.RoleAdmin})
 	if err != nil {
 		t.Fatal(err)
 	}
 	opts.Auth, opts.Authenticator = svc, api.NewAuthenticator(svc)
-	return &authEnv{t: t, h: newHandler(t, opts), svc: svc, clock: clk, user: u}
+	return &authEnv{t: t, h: newHandler(t, opts), db: opts.DB, svc: svc, clock: clk, user: u}
 }
 
 // creds says how to authenticate a request.

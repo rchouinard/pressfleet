@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 )
@@ -69,6 +70,7 @@ func TestLoadPrecedence(t *testing.T) {
 		Database: config.DatabaseConfig{Driver: "sqlite"},          // default
 		Jobs:     config.JobsConfig{Concurrency: 4},                // default
 		MariaDB:  config.Default().MariaDB,                         // default
+		Audit:    config.AuditConfig{RetentionDays: 365},           // default
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("Load() = %+v, want %+v", cfg, want)
@@ -238,6 +240,31 @@ func TestJobsSettings(t *testing.T) {
 		cfg.Jobs.Concurrency = n
 		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "jobs.concurrency") {
 			t.Errorf("concurrency %d: Validate() = %v", n, err)
+		}
+	}
+}
+
+func TestAuditSettings(t *testing.T) {
+	if got := config.Default().Audit; got.RetentionDays != 365 || got.Retention() != 365*24*time.Hour {
+		t.Errorf("default audit config = %+v", got)
+	}
+	path := writeFile(t, "audit:\n  retention_days: 90\n")
+	cfg, err := config.Load(path, env(nil))
+	if err != nil || cfg.Audit.RetentionDays != 90 {
+		t.Fatalf("from file: %d, %v", cfg.Audit.RetentionDays, err)
+	}
+	cfg, err = config.Load(path, env(map[string]string{"PRESSFLEET_AUDIT_RETENTION_DAYS": "30"}))
+	if err != nil || cfg.Audit.RetentionDays != 30 {
+		t.Fatalf("from env: %d, %v", cfg.Audit.RetentionDays, err)
+	}
+	if _, err := config.Load(path, env(map[string]string{"PRESSFLEET_AUDIT_RETENTION_DAYS": "forever"})); err == nil {
+		t.Error("non-numeric PRESSFLEET_AUDIT_RETENTION_DAYS accepted")
+	}
+	for _, n := range []int{0, -1, config.MaxAuditRetentionDays + 1} {
+		cfg := config.Default()
+		cfg.Audit.RetentionDays = n
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "audit.retention_days") {
+			t.Errorf("retention %d: Validate() = %v", n, err)
 		}
 	}
 }

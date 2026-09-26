@@ -42,6 +42,8 @@ mariadb:
   address: mariadb:3306
   admin_user: root
   admin_password_file: /run/secrets/mariadb_root_password
+audit:
+  retention_days: 365
 ```
 
 ## Settings
@@ -66,6 +68,7 @@ mariadb:
 | `mariadb.address` | `PRESSFLEET_MARIADB_ADDRESS` | | `mariadb:3306` | `host:port` of the shared MariaDB server that holds site databases, as seen from the control plane. See [Site databases](#site-databases). |
 | `mariadb.admin_user` | `PRESSFLEET_MARIADB_ADMIN_USER` | | `root` | MariaDB account that creates and drops site databases and users. |
 | `mariadb.admin_password_file` | `PRESSFLEET_MARIADB_ADMIN_PASSWORD_FILE` | | `/run/secrets/mariadb_root_password` | File holding the admin password; a trailing newline is ignored. Must be an absolute path. The default is where the platform Compose project mounts the MariaDB root password secret. |
+| `audit.retention_days` | `PRESSFLEET_AUDIT_RETENTION_DAYS` | | `365` | How many days audit log events are kept, from 1 to 3660. A daily job deletes older events. See [Audit log](#audit-log). |
 
 ## Sessions and HTTPS
 
@@ -87,6 +90,12 @@ docker compose exec control-plane pressfleet user reset-password --email admin@e
 Each user has one role (design doc §4.6): `viewer` can see everything except users and the audit log, `operator` can also create and change sites and client groups, and `admin` can also delete sites and client groups, manage users, and change platform settings. Role changes apply at once to the user's existing sessions and API tokens, and a `read-only` API token can only read, whatever its owner's role. The last enabled admin can't be demoted, disabled, or deleted.
 
 The default role is `admin`. Both commands generate a random password and print it once. To choose the password instead, pipe it in with `--password-stdin` (and `docker compose exec -T`). Passwords must be 12 to 256 characters. `reset-password` signs the user out everywhere and revokes their API tokens.
+
+## Audit log
+
+The control plane records every authenticated request that changes state, every request refused by authorization, and every login (successful or not) and logout. Each event holds the user and API token that made the request, the action (such as `site.delete` or `user.update`), the target, the result (`success`, `failure`, or `denied`), the client address (from `X-Forwarded-For` when the request came through a trusted proxy), and the time. Request bodies, passwords, and tokens are never recorded. Reads that succeed aren't recorded.
+
+Admins can list and filter the log with `GET /api/v1/audit-events`. A daily job deletes events older than `audit.retention_days`; a changed retention applies from the next run after the control plane restarts. Events outlive the users and tokens they name, so an event can refer to a user who has since been deleted.
 
 ## Master key
 

@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 
@@ -65,7 +66,24 @@ type Config struct {
 	// MariaDB is the admin connection to the shared MariaDB server that
 	// holds site databases.
 	MariaDB MariaDBConfig `yaml:"mariadb"`
+	// Audit configures the audit log (§4.6).
+	Audit AuditConfig `yaml:"audit"`
 }
+
+// AuditConfig configures the audit log.
+type AuditConfig struct {
+	// RetentionDays is how long audit events are kept; a daily job deletes
+	// older ones.
+	RetentionDays int `yaml:"retention_days"`
+}
+
+// Retention returns RetentionDays as a duration.
+func (a AuditConfig) Retention() time.Duration {
+	return time.Duration(a.RetentionDays) * 24 * time.Hour
+}
+
+// MaxAuditRetentionDays bounds audit.retention_days at about ten years.
+const MaxAuditRetentionDays = 3660
 
 // MariaDBConfig configures the control plane's admin connection to the
 // shared MariaDB server.
@@ -157,6 +175,7 @@ func Default() Config {
 		Log:      LogConfig{Level: "info", Format: logging.FormatText},
 		Database: DatabaseConfig{Driver: DriverSQLite},
 		Jobs:     JobsConfig{Concurrency: 4},
+		Audit:    AuditConfig{RetentionDays: 365},
 		MariaDB: MariaDBConfig{ //nolint:gosec // G101: the path of the password file, not a credential
 			Address:           "mariadb:3306",
 			AdminUser:         "root",
@@ -245,6 +264,13 @@ func ApplyEnv(cfg *Config, env LookupEnv) error {
 		}
 		cfg.Jobs.Concurrency = n
 	}
+	if val, ok := env("PRESSFLEET_AUDIT_RETENTION_DAYS"); ok {
+		n, err := strconv.Atoi(val)
+		if err != nil {
+			return fmt.Errorf("PRESSFLEET_AUDIT_RETENTION_DAYS must be a whole number, got %q", val)
+		}
+		cfg.Audit.RetentionDays = n
+	}
 	if val, ok := env(envTrustedProxies); ok {
 		cfg.HTTP.TrustedProxies = nil
 		for p := range strings.SplitSeq(val, ",") {
@@ -320,6 +346,9 @@ func (c Config) Validate() error {
 	}
 	if c.Jobs.Concurrency < 1 || c.Jobs.Concurrency > MaxJobsConcurrency {
 		errs = append(errs, fmt.Errorf("jobs.concurrency must be between 1 and %d, got %d", MaxJobsConcurrency, c.Jobs.Concurrency))
+	}
+	if c.Audit.RetentionDays < 1 || c.Audit.RetentionDays > MaxAuditRetentionDays {
+		errs = append(errs, fmt.Errorf("audit.retention_days must be between 1 and %d, got %d", MaxAuditRetentionDays, c.Audit.RetentionDays))
 	}
 	if host, port, err := net.SplitHostPort(c.MariaDB.Address); err != nil || host == "" || !validPort(port) {
 		errs = append(errs, fmt.Errorf("mariadb.address must be host:port, like mariadb:3306, got %q", c.MariaDB.Address))

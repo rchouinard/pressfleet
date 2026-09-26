@@ -95,6 +95,8 @@ tags:
     description: WordPress sites.
   - name: jobs
     description: Long-running operations.
+  - name: audit
+    description: The audit log (Admin only).
 
 paths:
   /healthz:
@@ -915,6 +917,68 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/audit-events:
+    get:
+      operationId: listAuditEvents
+      tags: [audit]
+      summary: List audit events (Admin only)
+      description: |
+        Newest first. Every authenticated state-changing request, every
+        authorization denial, and every login and logout is recorded with its
+        actor, action, target, result, and client address. Request bodies and
+        secrets are never recorded. Events older than the configured retention
+        (`audit.retention_days`) are deleted daily.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: actor_user_id
+          in: query
+          description: Only return events by this user.
+          schema:
+            $ref: "#/components/schemas/ID"
+        - name: action
+          in: query
+          description: Only return events for this action, e.g. `site.delete`.
+          schema:
+            type: string
+            maxLength: 100
+        - name: target_type
+          in: query
+          description: Only return events whose target has this type, e.g. `site`.
+          schema:
+            type: string
+            maxLength: 50
+        - name: target_id
+          in: query
+          description: Only return events for this target.
+          schema:
+            $ref: "#/components/schemas/ID"
+        - name: since
+          in: query
+          description: Only return events at or after this time.
+          schema:
+            $ref: "#/components/schemas/Timestamp"
+        - name: until
+          in: query
+          description: Only return events before this time.
+          schema:
+            $ref: "#/components/schemas/Timestamp"
+      responses:
+        "200":
+          description: A page of audit events.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEventList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
 components:
   securitySchemes:
     sessionCookie:
@@ -1644,7 +1708,8 @@ components:
 
     JobTargetType:
       type: string
-      enum: [site, client_group]
+      description: "`platform` is for maintenance jobs such as audit log cleanup."
+      enum: [site, client_group, platform]
 
     JobTarget:
       type: object
@@ -1765,6 +1830,66 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Job"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+
+    AuditResult:
+      type: string
+      description: |
+        * `success`: the request was allowed and succeeded.
+        * `failure`: the request failed, e.g. validation, a conflict, or wrong login credentials.
+        * `denied`: the caller's role or token scope doesn't allow the action.
+      enum: [success, failure, denied]
+
+    AuditEvent:
+      type: object
+      required: [id, occurred_at, actor_user_id, actor_token_id, action, target_type, target_id, result, source_ip]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        occurred_at:
+          $ref: "#/components/schemas/Timestamp"
+        actor_user_id:
+          description: The user who made the request. Null for a failed login. The user may since have been deleted.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        actor_token_id:
+          description: The API token used, or null for a session.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        action:
+          type: string
+          description: |
+            What was attempted: an authorization action such as `site.delete`,
+            `user.update`, or `self.tokens.create`, or `self.login`.
+          examples: ["site.delete"]
+        target_type:
+          description: The kind of target, e.g. `site`, `client_group`, `user`, or `api_token`. Null for actions on the platform or on collections.
+          oneOf:
+            - type: string
+            - type: "null"
+        target_id:
+          description: The target's ID. Null when target_type is null.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        result:
+          $ref: "#/components/schemas/AuditResult"
+        source_ip:
+          type: string
+          description: The client address, after trusted proxies.
+          examples: ["203.0.113.7"]
+
+    AuditEventList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
         next_cursor:
           $ref: "#/components/schemas/NextCursor"
 

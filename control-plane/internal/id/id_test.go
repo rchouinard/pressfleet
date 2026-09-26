@@ -57,6 +57,39 @@ func TestOrdering(t *testing.T) {
 	}
 }
 
+func TestMonotonic(t *testing.T) {
+	var m id.Monotonic
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	times := []time.Time{base, base, base.Add(500 * time.Microsecond), base.Add(-time.Second), base.Add(time.Millisecond), base.Add(time.Millisecond)}
+	var ids []string
+	for range 200 {
+		for _, ts := range times {
+			ids = append(ids, m.NewAt(ts))
+		}
+		base = base.Add(time.Millisecond)
+		for i := range times {
+			times[i] = times[i].Add(time.Millisecond)
+		}
+	}
+	seen := map[string]bool{}
+	for i, s := range ids {
+		if !id.Valid(s) || seen[s] {
+			t.Fatalf("ID %d = %q: invalid or duplicate", i, s)
+		}
+		seen[s] = true
+		if i > 0 && s <= ids[i-1] {
+			t.Fatalf("ID %d = %q doesn't sort after %q", i, s, ids[i-1])
+		}
+	}
+	// A clock step backwards keeps the previous timestamp.
+	var b id.Monotonic
+	first := b.NewAt(base)
+	back := b.NewAt(base.Add(-time.Hour))
+	if ts, _ := id.Time(back); !ts.Equal(base) || back <= first {
+		t.Errorf("after stepping back: %q (time %v) after %q", back, ts, first)
+	}
+}
+
 func TestValid(t *testing.T) {
 	tests := []struct {
 		in   string

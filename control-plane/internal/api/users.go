@@ -49,6 +49,7 @@ func (h *Handlers) CreateUser(ctx context.Context, req gen.CreateUserRequestObje
 	if err != nil {
 		return nil, authError(err, "/password")
 	}
+	setAuditTarget(ctx, authz.User(u.ID))
 	location := "/api/v1/users/" + u.ID
 	return gen.CreateUser201JSONResponse{Body: user(u), Headers: gen.CreateUser201ResponseHeaders{Location: &location}}, nil
 }

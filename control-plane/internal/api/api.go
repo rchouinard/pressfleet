@@ -10,8 +10,10 @@
 //  2. authentication, for every operation that isn't Public (see
 //     Authenticator and NewAuthenticator). Without an Authenticator every
 //     protected operation is rejected: the API fails closed;
-//  3. request validation against the OpenAPI document;
-//  4. JSON decoding (generated), then the handler.
+//  3. the audit log, which records the request once it is done if it
+//     changed state or was denied (see audit.go);
+//  4. request validation against the OpenAPI document;
+//  5. JSON decoding (generated), then the handler.
 //
 // # Writing a handler
 //
@@ -137,9 +139,11 @@ func NewHandler(opts Options) (http.Handler, error) {
 		BaseRouter: mux,
 		// The generated wrapper applies these in order, so the last one is
 		// the outermost: operation lookup and client details, the
-		// cross-origin check, authentication, then validation.
+		// cross-origin check, authentication, the audit log, then
+		// validation.
 		Middlewares: []gen.MiddlewareFunc{
 			validateRequests(opts.Logger),
+			auditRequests(opts.Logger, opts.DB),
 			authenticate(opts.Logger, opts.Authenticator),
 			crossOrigin(opts.Logger),
 			withClient(opts.TrustedProxies),

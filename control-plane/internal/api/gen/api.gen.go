@@ -18,6 +18,27 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for AuditResult.
+const (
+	Denied  AuditResult = "denied"
+	Failure AuditResult = "failure"
+	Success AuditResult = "success"
+)
+
+// Valid indicates whether the value is a known member of the AuditResult enum.
+func (e AuditResult) Valid() bool {
+	switch e {
+	case Denied:
+		return true
+	case Failure:
+		return true
+	case Success:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CurrentUserAuthMethod.
 const (
 	AuthMethodSession CurrentUserAuthMethod = "session"
@@ -135,6 +156,7 @@ func (e JobStepState) Valid() bool {
 // Defines values for JobTargetType.
 const (
 	JobTargetTypeClientGroup JobTargetType = "client_group"
+	JobTargetTypePlatform    JobTargetType = "platform"
 	JobTargetTypeSite        JobTargetType = "site"
 )
 
@@ -142,6 +164,8 @@ const (
 func (e JobTargetType) Valid() bool {
 	switch e {
 	case JobTargetTypeClientGroup:
+		return true
+	case JobTargetTypePlatform:
 		return true
 	case JobTargetTypeSite:
 		return true
@@ -341,6 +365,59 @@ type APITokenWithSecret struct {
 	// Token The plaintext token. Store it now; it can't be retrieved again.
 	Token string `json:"token"`
 }
+
+// AuditEvent defines model for AuditEvent.
+type AuditEvent struct {
+	// Action What was attempted: an authorization action such as `site.delete`,
+	// `user.update`, or `self.tokens.create`, or `self.login`.
+	//
+	//
+	// Examples: site.delete
+	Action string `json:"action"`
+
+	// ActorTokenID The API token used, or null for a session.
+	ActorTokenID *ID `json:"actor_token_id"`
+
+	// ActorUserID The user who made the request. Null for a failed login. The user may since have been deleted.
+	ActorUserID *ID `json:"actor_user_id"`
+
+	// ID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ID ID `json:"id"`
+
+	// OccurredAt Examples: 2026-09-26T17:25:00Z
+	OccurredAt Timestamp `json:"occurred_at"`
+
+	// Result * `success`: the request was allowed and succeeded.
+	// * `failure`: the request failed, e.g. validation, a conflict, or wrong login credentials.
+	// * `denied`: the caller's role or token scope doesn't allow the action.
+	Result AuditResult `json:"result"`
+
+	// SourceIP The client address, after trusted proxies.
+	//
+	// Examples: 203.0.113.7
+	SourceIP string `json:"source_ip"`
+
+	// TargetID The target's ID. Null when target_type is null.
+	TargetID *ID `json:"target_id"`
+
+	// TargetType The kind of target, e.g. `site`, `client_group`, `user`, or `api_token`. Null for actions on the platform or on collections.
+	TargetType *string `json:"target_type"`
+}
+
+// AuditEventList defines model for AuditEventList.
+type AuditEventList struct {
+	Items []AuditEvent `json:"items"`
+
+	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
+	NextCursor *NextCursor `json:"next_cursor"`
+}
+
+// AuditResult * `success`: the request was allowed and succeeded.
+// * `failure`: the request failed, e.g. validation, a conflict, or wrong login credentials.
+// * `denied`: the caller's role or token scope doesn't allow the action.
+type AuditResult string
 
 // BackupRepository defines model for BackupRepository.
 type BackupRepository struct {
@@ -563,11 +640,13 @@ type JobTarget struct {
 	// ID Opaque, server-assigned identifier.
 	//
 	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
-	ID   ID            `json:"id"`
+	ID ID `json:"id"`
+
+	// Type `platform` is for maintenance jobs such as audit log cleanup.
 	Type JobTargetType `json:"type"`
 }
 
-// JobTargetType defines model for JobTargetType.
+// JobTargetType `platform` is for maintenance jobs such as audit log cleanup.
 type JobTargetType string
 
 // LoginRequest defines model for LoginRequest.
@@ -929,6 +1008,33 @@ type Unauthorized = Problem
 // UnprocessableContent RFC 9457 Problem Details. Additional members may be added.
 type UnprocessableContent = Problem
 
+// ListAuditEventsParams defines parameters for ListAuditEvents.
+type ListAuditEventsParams struct {
+	// Limit Maximum number of items to return.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// ActorUserID Only return events by this user.
+	ActorUserID *ID `form:"actor_user_id,omitempty" json:"actor_user_id,omitempty"`
+
+	// Action Only return events for this action, e.g. `site.delete`.
+	Action *string `form:"action,omitempty" json:"action,omitempty"`
+
+	// TargetType Only return events whose target has this type, e.g. `site`.
+	TargetType *string `form:"target_type,omitempty" json:"target_type,omitempty"`
+
+	// TargetID Only return events for this target.
+	TargetID *ID `form:"target_id,omitempty" json:"target_id,omitempty"`
+
+	// Since Only return events at or after this time.
+	Since *Timestamp `form:"since,omitempty" json:"since,omitempty"`
+
+	// Until Only return events before this time.
+	Until *Timestamp `form:"until,omitempty" json:"until,omitempty"`
+}
+
 // ListAPITokensParams defines parameters for ListAPITokens.
 type ListAPITokensParams struct {
 	// Limit Maximum number of items to return.
@@ -1021,6 +1127,9 @@ type UpdateUserJSONRequestBody = UserUpdate
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// ListAuditEvents List audit events (Admin only)
+	// (GET /api/v1/audit-events)
+	ListAuditEvents(w http.ResponseWriter, r *http.Request, params ListAuditEventsParams)
 	// Login Log in and start a session
 	// (POST /api/v1/auth/login)
 	Login(w http.ResponseWriter, r *http.Request)
@@ -1118,6 +1227,130 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// ListAuditEvents operation middleware
+func (siw *ServerInterfaceWrapper) ListAuditEvents(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAuditEventsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "actor_user_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "actor_user_id", r.URL.Query(), &params.ActorUserID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "actor_user_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "actor_user_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "action" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "action", r.URL.Query(), &params.Action, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "action"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "action", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "target_type" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "target_type", r.URL.Query(), &params.TargetType, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "target_type"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "target_type", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "target_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "target_id", r.URL.Query(), &params.TargetID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "target_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "target_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "since" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "since", r.URL.Query(), &params.Since, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "since"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "since", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "until" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "until", r.URL.Query(), &params.Until, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "until"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "until", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAuditEvents(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // Login operation middleware
 func (siw *ServerInterfaceWrapper) Login(w http.ResponseWriter, r *http.Request) {
@@ -2080,6 +2313,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/admin-credentials", wrapper.RetrieveSiteAdminCredentials)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs", wrapper.ListJobs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs/{job_id}", wrapper.GetJob)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit-events", wrapper.ListAuditEvents)
 
 	return m
 }
@@ -2108,6 +2342,93 @@ type TooManyRequestsApplicationProblemPlusJSONResponse struct {
 type UnauthorizedApplicationProblemPlusJSONResponse Problem
 
 type UnprocessableContentApplicationProblemPlusJSONResponse Problem
+
+type ListAuditEventsRequestObject struct {
+	Params ListAuditEventsParams
+}
+
+type ListAuditEventsResponseObject interface {
+	VisitListAuditEventsResponse(w http.ResponseWriter) error
+}
+
+type ListAuditEvents200JSONResponse AuditEventList
+
+func (response ListAuditEvents200JSONResponse) VisitListAuditEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAuditEvents400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response ListAuditEvents400ApplicationProblemPlusJSONResponse) VisitListAuditEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAuditEvents401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ListAuditEvents401ApplicationProblemPlusJSONResponse) VisitListAuditEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAuditEvents403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ListAuditEvents403ApplicationProblemPlusJSONResponse) VisitListAuditEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAuditEventsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ListAuditEventsdefaultApplicationProblemPlusJSONResponse) VisitListAuditEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
 
 type LoginRequestObject struct {
 	Body *LoginJSONRequestBody
@@ -4985,6 +5306,9 @@ func (response GetReadiness503JSONResponse) VisitGetReadinessResponse(w http.Res
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// ListAuditEvents List audit events (Admin only)
+	// (GET /api/v1/audit-events)
+	ListAuditEvents(ctx context.Context, request ListAuditEventsRequestObject) (ListAuditEventsResponseObject, error)
 	// Login Log in and start a session
 	// (POST /api/v1/auth/login)
 	Login(ctx context.Context, request LoginRequestObject) (LoginResponseObject, error)
@@ -5111,6 +5435,32 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// ListAuditEvents operation middleware
+func (sh *strictHandler) ListAuditEvents(w http.ResponseWriter, r *http.Request, params ListAuditEventsParams) {
+	var request ListAuditEventsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListAuditEvents(ctx, request.(ListAuditEventsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListAuditEvents")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListAuditEventsResponseObject); ok {
+		if err := validResponse.VisitListAuditEventsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // Login operation middleware

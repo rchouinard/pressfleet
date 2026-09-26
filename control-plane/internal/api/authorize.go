@@ -45,6 +45,8 @@ var operationActions = map[string]authz.Action{
 
 	"listJobs": authz.ViewJobs,
 	"getJob":   authz.ViewJobs,
+
+	"listAuditEvents": authz.ViewAuditLog,
 }
 
 // errActionMismatch is a programming error: a handler checked a different
@@ -67,10 +69,22 @@ func (h *Handlers) authorize(ctx context.Context, action authz.Action, target au
 	if err != nil {
 		return auth.Principal{}, err
 	}
-	if err := authz.Check(p, action, target); err != nil {
+	err = authz.Check(p, action, target)
+	noteCheck(ctx, action, target, err != nil)
+	if err != nil {
 		return auth.Principal{}, forbidden(err)
 	}
 	return p, nil
+}
+
+// deny refuses a request after authorize allowed it, for checks that depend
+// on the request body (see authz.CheckNewToken). It is recorded in the
+// audit log as a denial, like one from authorize.
+func deny(ctx context.Context, err error) error {
+	if rec := auditFromContext(ctx); rec != nil {
+		rec.denied = true
+	}
+	return forbidden(err)
 }
 
 // self is the target of actions on the caller's own account.

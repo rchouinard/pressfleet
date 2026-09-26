@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
+	"github.com/rchouinard/pressfleet/control-plane/internal/audit"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
@@ -88,6 +89,14 @@ func (a *app) serveCommand() *cobra.Command {
 				Logger:      a.log.With("component", "jobs"),
 				Secrets:     secrets.NewStore(db, keys),
 			})
+			if err := pool.Register(audit.CleanupHandler(db, a.cfg.Audit.Retention(), nil)); err != nil {
+				return err
+			}
+			// A canceled context means serve is already stopping; the
+			// server below returns at once.
+			if err := audit.EnsureCleanupSchedule(cmd.Context(), db); err != nil && cmd.Context().Err() == nil {
+				return err
+			}
 			scheduler := jobs.NewScheduler(db, jobs.SchedulerOptions{Logger: a.log.With("component", "scheduler")})
 			workersCtx, stopWorkers := context.WithCancel(cmd.Context())
 			defer stopWorkers()

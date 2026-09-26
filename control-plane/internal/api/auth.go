@@ -36,10 +36,16 @@ func (h *Handlers) Login(ctx context.Context, req gen.LoginRequestObject) (gen.L
 		UserAgent: client.UserAgent,
 	})
 	if errors.Is(err, auth.ErrInvalidCredentials) {
+		// Failed logins are audited without an actor (the email may not
+		// belong to anyone, and isn't recorded). Throttled attempts cost
+		// the attacker nothing, so they aren't recorded, keeping an
+		// unauthenticated client from filling the audit log.
+		noteLogin(ctx, "")
 		return nil, httpserver.NewProblem(http.StatusUnauthorized, "Invalid email or password.")
 	} else if err != nil {
 		return nil, err
 	}
+	noteLogin(ctx, res.User.ID)
 	cookie := h.sessionCookie(ctx, res.Token.Reveal(), res.Session.ExpiresAt).String()
 	csrf := res.CSRFToken.Reveal()
 	return gen.Login200JSONResponse{
@@ -133,7 +139,7 @@ func (h *Handlers) CreateAPIToken(ctx context.Context, req gen.CreateAPITokenReq
 	// A token must not mint one that can do more, or last longer, than
 	// itself.
 	if err := authz.CheckNewToken(p, scope, req.Body.ExpiresAt); err != nil {
-		return nil, forbidden(err)
+		return nil, deny(ctx, err)
 	}
 	tok, plain, err := h.auth.CreateAPIToken(ctx, p.UserID, auth.NewAPIToken{
 		Name:      req.Body.Name,
@@ -143,6 +149,7 @@ func (h *Handlers) CreateAPIToken(ctx context.Context, req gen.CreateAPITokenReq
 	if err != nil {
 		return nil, authError(err, "")
 	}
+	setAuditTarget(ctx, authz.APIToken(tok.ID))
 	t := apiToken(tok)
 	location := "/api/v1/auth/tokens/" + tok.ID
 	return gen.CreateAPIToken201JSONResponse{

@@ -18,6 +18,27 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for AuditResult.
+const (
+	Denied  AuditResult = "denied"
+	Failure AuditResult = "failure"
+	Success AuditResult = "success"
+)
+
+// Valid indicates whether the value is a known member of the AuditResult enum.
+func (e AuditResult) Valid() bool {
+	switch e {
+	case Denied:
+		return true
+	case Failure:
+		return true
+	case Success:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CurrentUserAuthMethod.
 const (
 	AuthMethodSession CurrentUserAuthMethod = "session"
@@ -135,6 +156,7 @@ func (e JobStepState) Valid() bool {
 // Defines values for JobTargetType.
 const (
 	JobTargetTypeClientGroup JobTargetType = "client_group"
+	JobTargetTypePlatform    JobTargetType = "platform"
 	JobTargetTypeSite        JobTargetType = "site"
 )
 
@@ -142,6 +164,8 @@ const (
 func (e JobTargetType) Valid() bool {
 	switch e {
 	case JobTargetTypeClientGroup:
+		return true
+	case JobTargetTypePlatform:
 		return true
 	case JobTargetTypeSite:
 		return true
@@ -341,6 +365,59 @@ type APITokenWithSecret struct {
 	// Token The plaintext token. Store it now; it can't be retrieved again.
 	Token string `json:"token"`
 }
+
+// AuditEvent defines model for AuditEvent.
+type AuditEvent struct {
+	// Action What was attempted: an authorization action such as `site.delete`,
+	// `user.update`, or `self.tokens.create`, or `self.login`.
+	//
+	//
+	// Examples: site.delete
+	Action string `json:"action"`
+
+	// ActorTokenID The API token used, or null for a session.
+	ActorTokenID *ID `json:"actor_token_id"`
+
+	// ActorUserID The user who made the request. Null for a failed login. The user may since have been deleted.
+	ActorUserID *ID `json:"actor_user_id"`
+
+	// ID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ID ID `json:"id"`
+
+	// OccurredAt Examples: 2026-09-26T17:25:00Z
+	OccurredAt Timestamp `json:"occurred_at"`
+
+	// Result * `success`: the request was allowed and succeeded.
+	// * `failure`: the request failed, e.g. validation, a conflict, or wrong login credentials.
+	// * `denied`: the caller's role or token scope doesn't allow the action.
+	Result AuditResult `json:"result"`
+
+	// SourceIP The client address, after trusted proxies.
+	//
+	// Examples: 203.0.113.7
+	SourceIP string `json:"source_ip"`
+
+	// TargetID The target's ID. Null when target_type is null.
+	TargetID *ID `json:"target_id"`
+
+	// TargetType The kind of target, e.g. `site`, `client_group`, `user`, or `api_token`. Null for actions on the platform or on collections.
+	TargetType *string `json:"target_type"`
+}
+
+// AuditEventList defines model for AuditEventList.
+type AuditEventList struct {
+	Items []AuditEvent `json:"items"`
+
+	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
+	NextCursor *NextCursor `json:"next_cursor"`
+}
+
+// AuditResult * `success`: the request was allowed and succeeded.
+// * `failure`: the request failed, e.g. validation, a conflict, or wrong login credentials.
+// * `denied`: the caller's role or token scope doesn't allow the action.
+type AuditResult string
 
 // BackupRepository defines model for BackupRepository.
 type BackupRepository struct {
@@ -563,11 +640,13 @@ type JobTarget struct {
 	// ID Opaque, server-assigned identifier.
 	//
 	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
-	ID   ID            `json:"id"`
+	ID ID `json:"id"`
+
+	// Type `platform` is for maintenance jobs such as audit log cleanup.
 	Type JobTargetType `json:"type"`
 }
 
-// JobTargetType defines model for JobTargetType.
+// JobTargetType `platform` is for maintenance jobs such as audit log cleanup.
 type JobTargetType string
 
 // LoginRequest defines model for LoginRequest.
@@ -929,6 +1008,33 @@ type Unauthorized = Problem
 // UnprocessableContent RFC 9457 Problem Details. Additional members may be added.
 type UnprocessableContent = Problem
 
+// ListAuditEventsParams defines parameters for ListAuditEvents.
+type ListAuditEventsParams struct {
+	// Limit Maximum number of items to return.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// ActorUserID Only return events by this user.
+	ActorUserID *ID `form:"actor_user_id,omitempty" json:"actor_user_id,omitempty"`
+
+	// Action Only return events for this action, e.g. `site.delete`.
+	Action *string `form:"action,omitempty" json:"action,omitempty"`
+
+	// TargetType Only return events whose target has this type, e.g. `site`.
+	TargetType *string `form:"target_type,omitempty" json:"target_type,omitempty"`
+
+	// TargetID Only return events for this target.
+	TargetID *ID `form:"target_id,omitempty" json:"target_id,omitempty"`
+
+	// Since Only return events at or after this time.
+	Since *Timestamp `form:"since,omitempty" json:"since,omitempty"`
+
+	// Until Only return events before this time.
+	Until *Timestamp `form:"until,omitempty" json:"until,omitempty"`
+}
+
 // ListAPITokensParams defines parameters for ListAPITokens.
 type ListAPITokensParams struct {
 	// Limit Maximum number of items to return.
@@ -1093,6 +1199,17 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
+	// ListAuditEvents List audit events (Admin only)
+	//
+	// Newest first. Every authenticated state-changing request, every
+	// authorization denial, and every login and logout is recorded with its
+	// actor, action, target, result, and client address. Request bodies and
+	// secrets are never recorded. Events older than the configured retention
+	// (`audit.retention_days`) are deleted daily.
+	//
+	// Corresponds with GET /api/v1/audit-events (the `ListAuditEvents` operationId).
+	ListAuditEvents(ctx context.Context, params *ListAuditEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// LoginWithBody Log in and start a session
 	//
 	// Verifies the credentials and sets the session cookie. The response body
@@ -1165,6 +1282,11 @@ type ClientInterface interface {
 	// The response contains the plaintext token. It is shown only once and
 	// cannot be retrieved again; only a hash is stored.
 	//
+	// When the request itself is authenticated with an API token, the new
+	// token can't be broader than it: a read-only token can't create tokens
+	// at all, and a token with an expiry can only create tokens that expire
+	// no later. Violations return `403`.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v1/auth/tokens (the `CreateAPIToken` operationId).
@@ -1174,6 +1296,11 @@ type ClientInterface interface {
 	//
 	// The response contains the plaintext token. It is shown only once and
 	// cannot be retrieved again; only a hash is stored.
+	//
+	// When the request itself is authenticated with an API token, the new
+	// token can't be broader than it: a read-only token can't create tokens
+	// at all, and a token with an expiry can only create tokens that expire
+	// no later. Violations return `403`.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -1408,6 +1535,27 @@ type ClientInterface interface {
 	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
+// ListAuditEvents List audit events (Admin only)
+//
+// Newest first. Every authenticated state-changing request, every
+// authorization denial, and every login and logout is recorded with its
+// actor, action, target, result, and client address. Request bodies and
+// secrets are never recorded. Events older than the configured retention
+// (`audit.retention_days`) are deleted daily.
+//
+// Corresponds with GET /api/v1/audit-events (the `ListAuditEvents` operationId).
+func (c *Client) ListAuditEvents(ctx context.Context, params *ListAuditEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAuditEventsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // LoginWithBody Log in and start a session
 //
 // Verifies the credentials and sets the session cookie. The response body
@@ -1550,6 +1698,11 @@ func (c *Client) ListAPITokens(ctx context.Context, params *ListAPITokensParams,
 // The response contains the plaintext token. It is shown only once and
 // cannot be retrieved again; only a hash is stored.
 //
+// When the request itself is authenticated with an API token, the new
+// token can't be broader than it: a read-only token can't create tokens
+// at all, and a token with an expiry can only create tokens that expire
+// no later. Violations return `403`.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /api/v1/auth/tokens (the `CreateAPIToken` operationId).
@@ -1569,6 +1722,11 @@ func (c *Client) CreateAPITokenWithBody(ctx context.Context, contentType string,
 //
 // The response contains the plaintext token. It is shown only once and
 // cannot be retrieved again; only a hash is stored.
+//
+// When the request itself is authenticated with an API token, the new
+// token can't be broader than it: a read-only token can't create tokens
+// at all, and a token with an expiry can only create tokens that expire
+// no later. Violations return `403`.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -2100,6 +2258,144 @@ func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewListAuditEventsRequest constructs an http.Request for the ListAuditEvents method
+func NewListAuditEventsRequest(server string, params *ListAuditEventsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/audit-events")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ActorUserID != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "actor_user_id", *params.ActorUserID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Action != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "action", *params.Action, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.TargetType != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "target_type", *params.TargetType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.TargetID != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "target_id", *params.TargetID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Since != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "since", *params.Since, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Until != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "until", *params.Until, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
 }
 
 // NewLoginRequest calls the generic Login builder with application/json body
@@ -3411,6 +3707,19 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// ListAuditEventsWithResponse List audit events (Admin only)
+	//
+	// Newest first. Every authenticated state-changing request, every
+	// authorization denial, and every login and logout is recorded with its
+	// actor, action, target, result, and client address. Request bodies and
+	// secrets are never recorded. Events older than the configured retention
+	// (`audit.retention_days`) are deleted daily.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/audit-events (the `ListAuditEvents` operationId).
+	ListAuditEventsWithResponse(ctx context.Context, params *ListAuditEventsParams, reqEditors ...RequestEditorFn) (*ListAuditEventsResponse, error)
+
 	// LoginWithBodyWithResponse Log in and start a session
 	//
 	// Verifies the credentials and sets the session cookie. The response body
@@ -3489,6 +3798,11 @@ type ClientWithResponsesInterface interface {
 	// The response contains the plaintext token. It is shown only once and
 	// cannot be retrieved again; only a hash is stored.
 	//
+	// When the request itself is authenticated with an API token, the new
+	// token can't be broader than it: a read-only token can't create tokens
+	// at all, and a token with an expiry can only create tokens that expire
+	// no later. Violations return `403`.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v1/auth/tokens (the `CreateAPIToken` operationId).
@@ -3498,6 +3812,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// The response contains the plaintext token. It is shown only once and
 	// cannot be retrieved again; only a hash is stored.
+	//
+	// When the request itself is authenticated with an API token, the new
+	// token can't be broader than it: a read-only token can't create tokens
+	// at all, and a token with an expiry can only create tokens that expire
+	// no later. Violations return `403`.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -3766,6 +4085,75 @@ type ClientWithResponsesInterface interface {
 	GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error)
 }
 
+type ListAuditEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AuditEventList
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAuditEventsResponse) GetJSON200() *AuditEventList {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListAuditEventsResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListAuditEventsResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListAuditEventsResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAuditEventsResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAuditEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAuditEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAuditEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAuditEventsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // LoginResponse200Headers the declared response headers of an HTTP 200 response for Login
 type LoginResponse200Headers struct {
 	SetCookie *string
@@ -3932,6 +4320,8 @@ type GetCurrentUserResponse struct {
 	JSON200 *CurrentUser
 	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
 	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationProblemJSONDefault *Error
 }
@@ -3944,6 +4334,11 @@ func (r GetCurrentUserResponse) GetJSON200() *CurrentUser {
 // GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
 func (r GetCurrentUserResponse) GetApplicationProblemJSON401() *Unauthorized {
 	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetCurrentUserResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
 }
 
 // GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
@@ -5935,6 +6330,25 @@ func (r GetReadinessResponse) ContentType() string {
 	return ""
 }
 
+// ListAuditEventsWithResponse List audit events (Admin only)
+//
+// Newest first. Every authenticated state-changing request, every
+// authorization denial, and every login and logout is recorded with its
+// actor, action, target, result, and client address. Request bodies and
+// secrets are never recorded. Events older than the configured retention
+// (`audit.retention_days`) are deleted daily.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/audit-events (the `ListAuditEvents` operationId).
+func (c *ClientWithResponses) ListAuditEventsWithResponse(ctx context.Context, params *ListAuditEventsParams, reqEditors ...RequestEditorFn) (*ListAuditEventsResponse, error) {
+	rsp, err := c.ListAuditEvents(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAuditEventsResponse(rsp)
+}
+
 // LoginWithBodyWithResponse Log in and start a session
 //
 // Verifies the credentials and sets the session cookie. The response body
@@ -6055,6 +6469,11 @@ func (c *ClientWithResponses) ListAPITokensWithResponse(ctx context.Context, par
 // The response contains the plaintext token. It is shown only once and
 // cannot be retrieved again; only a hash is stored.
 //
+// When the request itself is authenticated with an API token, the new
+// token can't be broader than it: a read-only token can't create tokens
+// at all, and a token with an expiry can only create tokens that expire
+// no later. Violations return `403`.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v1/auth/tokens (the `CreateAPIToken` operationId).
@@ -6070,6 +6489,11 @@ func (c *ClientWithResponses) CreateAPITokenWithBodyWithResponse(ctx context.Con
 //
 // The response contains the plaintext token. It is shown only once and
 // cannot be retrieved again; only a hash is stored.
+//
+// When the request itself is authenticated with an API token, the new
+// token can't be broader than it: a read-only token can't create tokens
+// at all, and a token with an expiry can only create tokens that expire
+// no later. Violations return `403`.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -6517,6 +6941,60 @@ func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqE
 	return ParseGetReadinessResponse(rsp)
 }
 
+// ParseListAuditEventsResponse parses an HTTP response from a ListAuditEventsWithResponse call
+func ParseListAuditEventsResponse(rsp *http.Response) (*ListAuditEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAuditEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AuditEventList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseLoginResponse parses an HTTP response from a LoginWithResponse call
 func ParseLoginResponse(rsp *http.Response) (*LoginResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -6691,6 +7169,13 @@ func ParseGetCurrentUserResponse(rsp *http.Response) (*GetCurrentUserResponse, e
 			return nil, err
 		}
 		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Error
