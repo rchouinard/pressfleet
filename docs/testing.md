@@ -30,6 +30,10 @@ mise exec -- make test-e2e
 
 This builds the control plane image as `pressfleet-control-plane:e2e`, runs the tests against it with verbose output, and removes the image afterwards. The first run also pulls MariaDB.
 
+`TestSiteCreateDelete` provisions a real site, so it needs the site images for the default PHP version and the latest WordPress in [`images/manifest.json`](../images/manifest.json), e.g. `ghcr.io/rchouinard/pressfleet/site-php:php8.5-wp7.1.2` and `site-nginx:wp7.1.2`. The harness (`e2e.EnsureImages`) uses local images when they exist, so images built with `make images` are tested as they are, and otherwise pulls them from GHCR. If neither works, the test fails and says to run `make images` (see [images/README.md](../images/README.md)). After changing `images/`, run `make images` before `make test-e2e`, or the test runs against whatever images you already have.
+
+The test reaches the site from inside its containers (`docker compose exec`), not from the host: sites aren't routable from the host until Traefik is part of the platform. The preview base domain is `preview.e2e.test`, which nothing resolves.
+
 To run the tests against an image you already built, for example to rerun one test:
 
 ```sh

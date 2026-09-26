@@ -702,6 +702,7 @@ func (i *installer) startPlatform(ctx context.Context, a initAnswers) error {
 		MariaDBRootPassword: password,
 		MasterKeyFile:       a.MasterKeyFile,
 		SkipPreflight:       i.f.skipPreflight,
+		PreviewBaseDomain:   a.PreviewBaseDomain,
 	}); err != nil {
 		return err
 	}

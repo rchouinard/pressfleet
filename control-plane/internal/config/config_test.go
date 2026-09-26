@@ -71,6 +71,8 @@ func TestLoadPrecedence(t *testing.T) {
 		Jobs:     config.JobsConfig{Concurrency: 4},                // default
 		MariaDB:  config.Default().MariaDB,                         // default
 		Audit:    config.AuditConfig{RetentionDays: 365},           // default
+		// default
+		PlatformProject: "pressfleet",
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("Load() = %+v, want %+v", cfg, want)
@@ -318,6 +320,31 @@ func TestMariaDBSettings(t *testing.T) {
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("Validate() with IPv6 address = %v", err)
+	}
+}
+
+func TestPlatformProjectSetting(t *testing.T) {
+	if got := config.Default().PlatformProject; got != "pressfleet" {
+		t.Errorf("default platform_project = %q", got)
+	}
+	path := writeFile(t, "platform_project: pf-test\n")
+	cfg, err := config.Load(path, env(nil))
+	if err != nil || cfg.PlatformProject != "pf-test" {
+		t.Fatalf("Load = %q, %v", cfg.PlatformProject, err)
+	}
+	cfg, err = config.Load(path, env(map[string]string{"PRESSFLEET_PLATFORM_PROJECT": "pfe2e_1"}))
+	if err != nil || cfg.PlatformProject != "pfe2e_1" {
+		t.Fatalf("Load from env = %q, %v", cfg.PlatformProject, err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v", err)
+	}
+	for _, bad := range []string{"", "Upper", "-dash", "has space", "dot.ted"} {
+		cfg := config.Default()
+		cfg.PlatformProject = bad
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "platform_project") {
+			t.Errorf("Validate(%q) = %v, want a platform_project error", bad, err)
+		}
 	}
 }
 

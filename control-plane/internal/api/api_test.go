@@ -181,7 +181,8 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 		t.Fatal(err)
 	}
 	fa := &fakeAuth{principal: &auth.Principal{UserID: u.ID, Email: u.Email, Role: u.Role, Method: auth.MethodSession, SessionID: "none"}}
-	h := newHandler(t, api.Options{Authenticator: fa, Auth: svc, DB: storetest.Open(t, store.SQLite)})
+	db := storetest.Open(t, store.SQLite)
+	h := newHandler(t, api.Options{Authenticator: fa, Auth: svc, DB: db, Sites: newSiteEnv(t, db, testPreviewBase).svc})
 	for _, op := range ops {
 		t.Run(op.ID, func(t *testing.T) {
 			req := request{method: op.Method, target: samplePath(op.Path), body: sampleBodies[op.ID]}
@@ -230,7 +231,7 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 					t.Errorf("status = %d, want 401; body: %s", w.Code, w.Body)
 				}
 			case strings.HasPrefix(op.Path, "/api/v1/auth/") || strings.HasPrefix(op.Path, "/api/v1/users") ||
-				strings.HasPrefix(op.Path, "/api/v1/client-groups"):
+				strings.HasPrefix(op.Path, "/api/v1/client-groups") || implementedSiteOps[op.ID]:
 				if w.Code == http.StatusUnauthorized || w.Code >= 500 {
 					t.Errorf("status = %d; body: %s", w.Code, w.Body)
 				}
@@ -290,7 +291,7 @@ func TestRequestValidation(t *testing.T) {
 	}{
 		{
 			name:   "valid body reaches handler",
-			req:    request{method: http.MethodPost, target: "/api/v1/sites", body: sampleBodies["createSite"]},
+			req:    request{method: http.MethodPatch, target: "/api/v1/sites/abc123", body: sampleBodies["updateSite"]},
 			status: http.StatusNotImplemented,
 		},
 		{

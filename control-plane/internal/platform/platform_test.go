@@ -12,6 +12,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
 )
 
@@ -28,6 +29,7 @@ func testConfig() platform.Config {
 		},
 		MariaDBRootPassword: testPassword,
 		MasterKeyFile:       "/etc/pressfleet/master.key",
+		PreviewBaseDomain:   "preview.agency.example",
 	}
 }
 
@@ -251,6 +253,15 @@ func TestRenderedCompose(t *testing.T) {
 		cp.Environment["PRESSFLEET_MASTER_KEY_FILE"] != platform.MasterKeySecretPath {
 		t.Errorf("master key: secrets = %+v, env = %q", file.Secrets, cp.Environment["PRESSFLEET_MASTER_KEY_FILE"])
 	}
+	// The control plane learns the platform project name (to find the
+	// MariaDB container) and the preview base domain.
+	if cp.Environment["PRESSFLEET_PLATFORM_PROJECT"] != "pftest" ||
+		cp.Environment["PRESSFLEET_PREVIEW_BASE_DOMAIN"] != "preview.agency.example" {
+		t.Errorf("control plane environment = %v", cp.Environment)
+	}
+	if want := platform.MariaDBContainer("pftest"); want != "pftest-mariadb-1" {
+		t.Errorf("MariaDB container = %q", want)
+	}
 
 	cnf, err := os.ReadFile(filepath.Join(dir, platform.MariaDBConfigFile))
 	if err != nil {
@@ -273,6 +284,7 @@ func TestRenderInvalidConfig(t *testing.T) {
 		"no master key":     func(c *platform.Config) { c.MasterKeyFile = "" },
 		"relative key file": func(c *platform.Config) { c.MasterKeyFile = "master.key" },
 		"key in data dir":   func(c *platform.Config) { c.MasterKeyFile = "/var/lib/pressfleet/master.key" },
+		"bad preview base":  func(c *platform.Config) { c.PreviewBaseDomain = "*.preview.example" },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -308,6 +320,26 @@ func TestDefaultImages(t *testing.T) {
 	}
 	if _, err := platform.DefaultImages(""); !errors.Is(err, platform.ErrInvalidConfig) {
 		t.Errorf("empty version: err = %v", err)
+	}
+}
+
+func TestRenderWithoutPreviewBaseDomain(t *testing.T) {
+	cfg := testConfig()
+	cfg.PreviewBaseDomain = ""
+	raw, err := os.ReadFile(filepath.Join(render(t, cfg), platform.ComposeFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte("PRESSFLEET_PREVIEW_BASE_DOMAIN")) {
+		t.Errorf("empty preview base domain rendered:\n%s", raw)
+	}
+}
+
+// The control plane's default platform_project matches the project name
+// the host CLI installs the platform under.
+func TestDefaultPlatformProject(t *testing.T) {
+	if got := config.Default().PlatformProject; got != platform.ProjectName {
+		t.Errorf("config default platform_project = %q, want %q", got, platform.ProjectName)
 	}
 }
 

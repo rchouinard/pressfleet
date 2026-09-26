@@ -23,6 +23,12 @@ services:
       PRESSFLEET_DATA_DIR: {{ q .DataDir }}
       PRESSFLEET_LISTEN: {{ q .Listen }}
       PRESSFLEET_MASTER_KEY_FILE: {{ q .MasterKeySecretPath }}
+      # Names the platform containers the control plane connects to site
+      # networks, such as MariaDB.
+      PRESSFLEET_PLATFORM_PROJECT: {{ q .ProjectName }}
+{{- if .PreviewBaseDomain }}
+      PRESSFLEET_PREVIEW_BASE_DOMAIN: {{ q .PreviewBaseDomain }}
+{{- end }}
 {{- if .SkipPreflight }}
       # Development/CI only: start even if required host checks fail.
       PRESSFLEET_SKIP_PREFLIGHT: "true"

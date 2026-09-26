@@ -30,6 +30,9 @@ const (
 	KindDNSCredentials    Kind = "dns-provider-credentials" //nolint:gosec // G101: a kind name, not a credential
 	KindS3Credentials     Kind = "s3-credentials"
 	KindSiteWPSalts       Kind = "site-wp-salts" // wpconfig.MarshalSalts
+	// KindSiteWPAdminPassword is a site's generated WordPress admin
+	// password, kept until the API hands it out once.
+	KindSiteWPAdminPassword Kind = "site-wp-admin-password" //nolint:gosec // G101: a kind name, not a credential
 )
 
 // Kinds are validated by shape rather than against the list above, so a new

@@ -828,8 +828,10 @@ paths:
       summary: Retrieve the initial WordPress admin credentials (once)
       description: |
         Returns the WordPress admin credentials generated when the site was
-        created, then discards the stored password. Later calls return `410`.
-        This is a `POST` because it changes state.
+        created, then discards the stored password. Later calls return `410`,
+        as do calls for a site whose provisioning failed. While the site is
+        still being provisioned the credentials aren't usable yet, and the
+        call returns `409`. This is a `POST` because it changes state.
       responses:
         "200":
           description: The initial admin credentials. They can't be retrieved again.
@@ -849,6 +851,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "410":
           $ref: "#/components/responses/Gone"
         default:

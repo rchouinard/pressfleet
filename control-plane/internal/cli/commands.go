@@ -7,17 +7,52 @@ import (
 	"runtime/debug"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/audit"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
+	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
+	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
+	"github.com/rchouinard/pressfleet/control-plane/internal/sitecron"
+	"github.com/rchouinard/pressfleet/control-plane/internal/sitedb/mariadb"
+	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
+	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
+
+// reattachTimeout bounds reconnecting the platform services to site
+// networks at startup.
+const reattachTimeout = 5 * time.Minute
+
+// siteRuntime returns the Compose provisioner and the site database manager.
+func (a *app) siteRuntime(cat *catalog.Catalog, secretStore secrets.Store, db *store.DB) (*compose.Provisioner, *mariadb.Manager, error) {
+	prov, err := compose.NewProvisioner(compose.ProvisionerConfig{
+		Layout:           a.cfg.Layout(),
+		Secrets:          secretStore,
+		Images:           cat,
+		MariaDBContainer: platform.MariaDBContainer(a.cfg.PlatformProject),
+		Logger:           a.log.With("component", "provisioner"),
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	siteDBs, err := mariadb.New(mariadb.Config{
+		Addr:         a.cfg.MariaDB.Address,
+		User:         a.cfg.MariaDB.AdminUser,
+		PasswordFile: a.cfg.MariaDB.AdminPasswordFile,
+	}, db, secretStore, a.log.With("component", "sitedb"))
+	if err != nil {
+		return nil, nil, err
+	}
+	return prov, siteDBs, nil
+}
 
 // envSkipPreflight is the environment equivalent of serve's --skip-preflight
 // flag, for control plane containers on development machines and in CI.
@@ -68,12 +103,41 @@ func (a *app) serveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			secretStore := secrets.NewStore(db, keys)
+			// Neither the provisioner nor the MariaDB manager touches Docker
+			// or MariaDB until a job uses them, so serve starts (and passes
+			// /readyz) while either is down.
+			cat, err := catalog.Load()
+			if err != nil {
+				return err
+			}
+			prov, siteDBs, err := a.siteRuntime(cat, secretStore, db)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = siteDBs.Close() }()
+			siteSvc, err := sites.New(sites.Options{
+				DB:                db,
+				Secrets:           secretStore,
+				Catalog:           cat,
+				PreviewBaseDomain: a.cfg.PreviewBaseDomain,
+				Provisioner:       prov,
+				Databases:         siteDBs,
+				Logger:            a.log.With("component", "sites"),
+			})
+			if err != nil {
+				return err
+			}
+			if a.cfg.PreviewBaseDomain == "" {
+				a.log.Warn("preview_base_domain is not set; site creation is refused until it is")
+			}
 			handler, err := api.NewHandler(api.Options{
 				Logger:         a.log,
 				Readiness:      readiness,
 				DB:             db,
 				Auth:           authn,
 				Authenticator:  api.NewAuthenticator(authn),
+				Sites:          siteSvc,
 				TrustedProxies: proxies,
 				SecureCookies:  a.cfg.HTTP.SecureCookies == config.SecureCookiesAlways,
 			})
@@ -87,9 +151,17 @@ func (a *app) serveCommand() *cobra.Command {
 			pool := jobs.NewPool(db, jobs.Options{
 				Concurrency: a.cfg.Jobs.Concurrency,
 				Logger:      a.log.With("component", "jobs"),
-				Secrets:     secrets.NewStore(db, keys),
+				Secrets:     secretStore,
 			})
 			if err := pool.Register(audit.CleanupHandler(db, a.cfg.Audit.Retention(), nil)); err != nil {
+				return err
+			}
+			for _, h := range siteSvc.Handlers() {
+				if err := pool.Register(h); err != nil {
+					return err
+				}
+			}
+			if err := sitecron.Register(pool, db, prov); err != nil {
 				return err
 			}
 			// A canceled context means serve is already stopping; the
@@ -103,6 +175,13 @@ func (a *app) serveCommand() *cobra.Command {
 			var workers sync.WaitGroup
 			workers.Go(func() { _ = pool.Run(workersCtx) })
 			workers.Go(func() { _ = scheduler.Run(workersCtx) })
+			// Best effort and in the background: a platform upgrade may have
+			// recreated MariaDB, disconnecting it from every site network.
+			workers.Go(func() {
+				ctx, cancel := context.WithTimeout(workersCtx, reattachTimeout)
+				defer cancel()
+				siteSvc.ReattachSharedServices(ctx, prov)
+			})
 
 			srv := httpserver.New(httpserver.Options{Addr: a.cfg.Listen, Handler: handler, Logger: a.log})
 			srvErr := srv.Run(cmd.Context())

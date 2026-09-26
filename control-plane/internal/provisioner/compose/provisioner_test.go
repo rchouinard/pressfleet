@@ -416,6 +416,31 @@ func TestStartStopSite(t *testing.T) {
 	wantCommands(t, f.docker, "compose stop", connect, "compose start --wait --wait-timeout 180")
 }
 
+func TestAttachSharedServices(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if _, err := f.prov.CreateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	f.docker.calls = nil
+	// Already connected: nothing to do.
+	if err := f.prov.AttachSharedServices(ctx, testSiteID); err != nil {
+		t.Fatal(err)
+	}
+	wantCommands(t, f.docker)
+	// MariaDB was recreated and lost the site network.
+	delete(f.docker.mariaDBNetworks, network)
+	if err := f.prov.AttachSharedServices(ctx, testSiteID); err != nil {
+		t.Fatal(err)
+	}
+	wantCommands(t, f.docker, connect)
+	// MariaDB is gone altogether.
+	f.docker.mariaDBNetworks = nil
+	if err := f.prov.AttachSharedServices(ctx, testSiteID); !errors.Is(err, compose.ErrSharedServiceUnavailable) {
+		t.Errorf("err = %v, want ErrSharedServiceUnavailable", err)
+	}
+}
+
 func TestDeleteSite(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
@@ -452,6 +477,7 @@ func TestMissingSite(t *testing.T) {
 		"update": func() error { _, err := f.prov.UpdateSite(ctx, f.cfg); return err },
 		"start":  func() error { return f.prov.StartSite(ctx, testSiteID) },
 		"stop":   func() error { return f.prov.StopSite(ctx, testSiteID) },
+		"attach": func() error { return f.prov.AttachSharedServices(ctx, testSiteID) },
 	}
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {

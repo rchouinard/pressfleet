@@ -99,25 +99,3 @@ func TestAPI(t *testing.T) {
 		}
 	})
 }
-
-// TestSiteCreateDelete is the acceptance test of #31: create a site through
-// the API, wait for provisioning, then delete it and check that nothing is
-// left behind.
-func TestSiteCreateDelete(t *testing.T) {
-	t.Skip("needs #25/#27/#28: the provisioner lifecycle, provisioning job, and sites API")
-
-	// The intended flow, once those land:
-	//
-	//	p := e2e.Start(t)
-	//	group := p.Client.CreateClientGroupWithResponse(ctx, {Name: "e2e"})      // 201
-	//	site := p.Client.CreateSiteWithResponse(ctx, {ClientGroupID: group.ID,
-	//		Name: "e2e", AdminEmail: "wp@e2e.test"})                             // 202 + job
-	//	waitJob(p, site.Job.ID)          // poll GET /api/v1/jobs/{id} until succeeded
-	//	p.Client.GetSiteWithResponse     // status active
-	//	siteProject := compose.Project{Name: "pf-" + site.ID, Dir: <data>/sites/<id>}
-	//	siteProject.Ps                   // php and nginx running
-	//	del := p.Client.DeleteSiteWithResponse(ctx, site.ID)                     // 202 + job
-	//	waitJob(p, del.Job.ID)
-	//	p.Client.GetSiteWithResponse     // 404
-	//	siteProject.Resources            // Empty(): no containers, networks, volumes
-}

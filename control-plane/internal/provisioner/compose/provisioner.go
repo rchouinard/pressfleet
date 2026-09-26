@@ -358,6 +358,23 @@ func (p *Provisioner) StopSite(ctx context.Context, siteID string) error {
 	return nil
 }
 
+// AttachSharedServices connects the platform services (MariaDB) to an
+// existing site's network. Docker drops a container's connections to other
+// projects' networks when it recreates the container, so after the platform
+// MariaDB is recreated (e.g. by an upgrade) running sites can't reach their
+// database until this runs; the control plane calls it for every site at
+// startup. It returns provisioner.ErrSiteNotFound if the site has no
+// containers.
+func (p *Provisioner) AttachSharedServices(ctx context.Context, siteID string) error {
+	if _, err := p.existing(ctx, siteID); err != nil {
+		return fmt.Errorf("attach platform services: %w", err)
+	}
+	if err := p.attachShared(ctx, siteID); err != nil {
+		return fmt.Errorf("attach platform services to site %s: %w", siteID, err)
+	}
+	return nil
+}
+
 // DeleteSite removes the site's containers, network, and volumes, then its
 // rendered directory. Every step tolerates what an earlier attempt already
 // removed, so deleting a missing site succeeds.

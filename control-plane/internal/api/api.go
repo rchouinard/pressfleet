@@ -50,6 +50,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
 	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
+	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
 
@@ -82,6 +83,9 @@ type Options struct {
 	// X-Forwarded-Proto headers are believed. Nil means
 	// DefaultTrustedProxies; use an empty, non-nil slice to trust none.
 	TrustedProxies []netip.Prefix
+	// Sites runs the site workflows. If nil, the site operations fail with
+	// 500.
+	Sites *sites.Service
 	// SecureCookies forces the Secure flag on the session cookie. Otherwise
 	// it is set when the request arrived over HTTPS, directly or through a
 	// trusted proxy, so plain-HTTP development on localhost still works.
@@ -94,6 +98,7 @@ type Handlers struct {
 	readiness     *httpserver.Readiness
 	db            *store.DB
 	auth          *auth.Service
+	sites         *sites.Service
 	resolver      authz.Resolver
 	secureCookies bool
 }
@@ -126,7 +131,7 @@ func NewHandler(opts Options) (http.Handler, error) {
 		opts.TrustedProxies = DefaultTrustedProxies
 	}
 
-	h := &Handlers{log: opts.Logger, readiness: opts.Readiness, db: opts.DB, auth: opts.Auth, secureCookies: opts.SecureCookies}
+	h := &Handlers{log: opts.Logger, readiness: opts.Readiness, db: opts.DB, auth: opts.Auth, sites: opts.Sites, secureCookies: opts.SecureCookies}
 	if opts.DB != nil {
 		h.resolver = authz.NewResolver(opts.DB)
 	}

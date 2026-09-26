@@ -20,6 +20,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 	"github.com/rchouinard/pressfleet/templates"
@@ -95,6 +96,10 @@ type Config struct {
 	// SkipPreflight starts the control plane even if required host checks
 	// fail. Only for development machines and CI; never for real installs.
 	SkipPreflight bool
+	// PreviewBaseDomain is passed to the control plane, which derives each
+	// site's preview domain from it (config.Config.PreviewBaseDomain).
+	// Empty leaves it unset, and site creation is refused until it is set.
+	PreviewBaseDomain string
 }
 
 // withDefaults fills zero fields and validates the result.
@@ -130,6 +135,9 @@ func (c Config) withDefaults() (Config, error) {
 	} else if rel, err := filepath.Rel(c.DataDir, c.MasterKeyFile); err == nil && filepath.IsLocal(rel) {
 		errs = append(errs, fmt.Errorf("master key file %s must not be inside the data directory", c.MasterKeyFile))
 	}
+	if c.PreviewBaseDomain != "" && !config.ValidDomain(c.PreviewBaseDomain) {
+		errs = append(errs, fmt.Errorf("preview base domain must be a domain name like preview.example.com, got %q", c.PreviewBaseDomain))
+	}
 	if c.MariaDBRootPassword.Reveal() == "" {
 		errs = append(errs, errors.New("MariaDB root password is required"))
 	}
@@ -156,6 +164,7 @@ type templateData struct {
 	MasterKeyFile        string
 	MasterKeySecretPath  string
 	SkipPreflight        bool
+	PreviewBaseDomain    string
 }
 
 // output is one rendered file, relative to the project directory.
@@ -196,6 +205,7 @@ func Render(dir string, cfg Config) error {
 		MasterKeyFile:        cfg.MasterKeyFile,
 		MasterKeySecretPath:  MasterKeySecretPath,
 		SkipPreflight:        cfg.SkipPreflight,
+		PreviewBaseDomain:    cfg.PreviewBaseDomain,
 	}
 	tmpl, err := template.New("").Option("missingkey=error").Funcs(template.FuncMap{"q": quote}).
 		ParseFS(templates.Platform(), "*.tmpl")

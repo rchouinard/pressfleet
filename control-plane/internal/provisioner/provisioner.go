@@ -28,6 +28,15 @@ const (
 	DefaultMemoryLimitMB       = 512
 )
 
+// Minimum per-site resources. Below them a site's containers get too little
+// memory to run WordPress, or too little CPU to start in time. Drivers
+// refuse smaller limits, and the API rejects them before creating anything.
+const (
+	MinCPUMillis           = 250 // thousandths of a CPU
+	MinMemoryReservationMB = 32
+	MinMemoryLimitMB       = 256
+)
+
 // Site UIDs (§6: each site runs as its own non-root UID). Every site gets a
 // unique UID from this range, used as both UID and GID of its containers,
 // and never reused after the site is deleted (store.AllocateSiteUID). The

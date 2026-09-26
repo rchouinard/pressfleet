@@ -147,6 +147,33 @@ func TestValidatePHPVersion(t *testing.T) {
 	}
 }
 
+func TestDefaultPHPVersion(t *testing.T) {
+	c := mustParse(t)
+	for _, tt := range []struct {
+		now    string
+		want   string
+		wantOK bool
+	}{
+		{"2026-06-01T00:00:00Z", "8.10", true}, // newest and active
+		{"2031-06-01T00:00:00Z", "8.10", true}, // none active: newest available
+		{"2033-01-01T00:00:00Z", "", false},    // everything past end of life
+	} {
+		if got, ok := c.DefaultPHPVersion(date(tt.now)); got != tt.want || ok != tt.wantOK {
+			t.Errorf("DefaultPHPVersion(%s) = %q, %v; want %q, %v", tt.now, got, ok, tt.want, tt.wantOK)
+		}
+	}
+	// The embedded manifest always offers a default that validates.
+	embedded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	v, ok := embedded.DefaultPHPVersion(now)
+	if !ok || embedded.ValidatePHPVersion(v, now) != nil {
+		t.Errorf("embedded DefaultPHPVersion = %q, %v", v, ok)
+	}
+}
+
 func TestWordPress(t *testing.T) {
 	c := mustParse(t)
 	if got := c.LatestWordPress(); got.Version != "7.1.2" || got.SHA1 != "761b8101538f0631a0bfc4fba7bc4abeea92f81c" {

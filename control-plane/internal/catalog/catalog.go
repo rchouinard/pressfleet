@@ -214,6 +214,23 @@ func (c *Catalog) AvailablePHPVersions(now time.Time) []PHPVersion {
 	return out
 }
 
+// DefaultPHPVersion returns the PHP branch new sites get when none is
+// chosen: the newest branch in active support at now, so a new site starts
+// with the longest runway, or else the newest one images are still built
+// for. It returns false if every branch is past end of life.
+func (c *Catalog) DefaultPHPVersion(now time.Time) (string, bool) {
+	available := c.AvailablePHPVersions(now)
+	for _, p := range available {
+		if p.Status(now) == StatusActive {
+			return p.Version, true
+		}
+	}
+	if len(available) > 0 {
+		return available[0].Version, true
+	}
+	return "", false
+}
+
 // PHP looks up a PHP branch.
 func (c *Catalog) PHP(version string) (PHPVersion, bool) {
 	i := slices.IndexFunc(c.php, func(p PHPVersion) bool { return p.Version == version })

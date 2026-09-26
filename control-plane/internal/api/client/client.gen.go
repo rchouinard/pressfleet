@@ -1449,8 +1449,10 @@ type ClientInterface interface {
 	// RetrieveSiteAdminCredentials Retrieve the initial WordPress admin credentials (once)
 	//
 	// Returns the WordPress admin credentials generated when the site was
-	// created, then discards the stored password. Later calls return `410`.
-	// This is a `POST` because it changes state.
+	// created, then discards the stored password. Later calls return `410`,
+	// as do calls for a site whose provisioning failed. While the site is
+	// still being provisioned the credentials aren't usable yet, and the
+	// call returns `409`. This is a `POST` because it changes state.
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/admin-credentials (the `RetrieveSiteAdminCredentials` operationId).
 	RetrieveSiteAdminCredentials(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2055,8 +2057,10 @@ func (c *Client) UpdateSite(ctx context.Context, siteID SiteID, body UpdateSiteJ
 // RetrieveSiteAdminCredentials Retrieve the initial WordPress admin credentials (once)
 //
 // Returns the WordPress admin credentials generated when the site was
-// created, then discards the stored password. Later calls return `410`.
-// This is a `POST` because it changes state.
+// created, then discards the stored password. Later calls return `410`,
+// as do calls for a site whose provisioning failed. While the site is
+// still being provisioned the credentials aren't usable yet, and the
+// call returns `409`. This is a `POST` because it changes state.
 //
 // Corresponds with POST /api/v1/sites/{site_id}/admin-credentials (the `RetrieveSiteAdminCredentials` operationId).
 func (c *Client) RetrieveSiteAdminCredentials(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3983,8 +3987,10 @@ type ClientWithResponsesInterface interface {
 	// RetrieveSiteAdminCredentialsWithResponse Retrieve the initial WordPress admin credentials (once)
 	//
 	// Returns the WordPress admin credentials generated when the site was
-	// created, then discards the stored password. Later calls return `410`.
-	// This is a `POST` because it changes state.
+	// created, then discards the stored password. Later calls return `410`,
+	// as do calls for a site whose provisioning failed. While the site is
+	// still being provisioned the credentials aren't usable yet, and the
+	// call returns `409`. This is a `POST` because it changes state.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -5621,6 +5627,8 @@ type RetrieveSiteAdminCredentialsResponse struct {
 	ApplicationProblemJSON403 *Forbidden
 	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
 	// ApplicationProblemJSON410 the response for an HTTP 410 `application/problem+json` response
 	ApplicationProblemJSON410 *Gone
 	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
@@ -5647,6 +5655,11 @@ func (r RetrieveSiteAdminCredentialsResponse) GetApplicationProblemJSON403() *Fo
 // GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
 func (r RetrieveSiteAdminCredentialsResponse) GetApplicationProblemJSON404() *NotFound {
 	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RetrieveSiteAdminCredentialsResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
 }
 
 // GetApplicationProblemJSON410 returns the response for an HTTP 410 `application/problem+json` response
@@ -6768,8 +6781,10 @@ func (c *ClientWithResponses) UpdateSiteWithResponse(ctx context.Context, siteID
 // RetrieveSiteAdminCredentialsWithResponse Retrieve the initial WordPress admin credentials (once)
 //
 // Returns the WordPress admin credentials generated when the site was
-// created, then discards the stored password. Later calls return `410`.
-// This is a `POST` because it changes state.
+// created, then discards the stored password. Later calls return `410`,
+// as do calls for a site whose provisioning failed. While the site is
+// still being provisioned the credentials aren't usable yet, and the
+// call returns `409`. This is a `POST` because it changes state.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -8265,6 +8280,13 @@ func ParseRetrieveSiteAdminCredentialsResponse(rsp *http.Response) (*RetrieveSit
 			return nil, err
 		}
 		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
 		var dest Gone

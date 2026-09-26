@@ -41,6 +41,11 @@ const (
 // Service is the Compose service name of the control plane.
 const Service = "control-plane"
 
+// PreviewBaseDomain is the preview base domain of platforms Start boots.
+// Nothing resolves it: tests reach sites inside their containers, because
+// routing (Traefik) isn't part of the platform yet.
+const PreviewBaseDomain = "preview.e2e.test"
+
 // controlPlanePort is the container port of platform.DefaultListen.
 const controlPlanePort = 8080
 
@@ -49,6 +54,7 @@ const controlPlanePort = 8080
 const (
 	bootTimeout    = 5 * time.Minute
 	cleanupTimeout = 3 * time.Minute
+	pullTimeout    = 10 * time.Minute
 )
 
 // overrideFile publishes the control plane API on an ephemeral loopback port,
@@ -115,7 +121,8 @@ func Start(t *testing.T) *Platform {
 		MariaDBRootPassword: redact.Secret(randomToken(26)),
 		MasterKeyFile:       keyFile,
 		// Development machines and CI runners often lack Docker address pools.
-		SkipPreflight: true,
+		SkipPreflight:     true,
+		PreviewBaseDomain: PreviewBaseDomain,
 	}
 	dir := layout.PlatformDir()
 	if err := platform.Render(dir, cfg); err != nil {
@@ -315,6 +322,25 @@ func (p *Platform) teardown(t *testing.T) {
 		t.Errorf("listing leftover resources: %v", err)
 	case !res.Empty():
 		t.Errorf("project %s left resources behind: %+v", p.Project.Name, res)
+	}
+}
+
+// EnsureImages makes the images available to the local Docker daemon,
+// pulling any that are missing. Site images come from `make images` or the
+// registry; without them a site can't start, so the test fails with
+// instructions rather than timing out in a provisioning job.
+func EnsureImages(t *testing.T, images ...string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), pullTimeout)
+	defer cancel()
+	for _, image := range images {
+		pulled, err := compose.EnsureImage(ctx, nil, image)
+		if err != nil {
+			t.Fatalf("site image %s is not available locally and couldn't be pulled; build the site images with `make images` (see images/README.md): %v", image, err)
+		}
+		if pulled {
+			t.Logf("pulled %s", image)
+		}
 	}
 }
 

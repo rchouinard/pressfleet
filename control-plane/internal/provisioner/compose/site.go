@@ -37,12 +37,13 @@ const (
 	SiteWPConfigFile = "wp-config.php"
 )
 
-// Minimum site resources. Below them the split leaves php too little memory
-// to run WordPress, or the containers too little CPU to start in time.
+// Minimum site resources (the provisioner package's platform minimums).
+// Below them the split leaves php too little memory to run WordPress, or the
+// containers too little CPU to start in time.
 const (
-	MinSiteMemoryLimitMB       = 256
-	MinSiteMemoryReservationMB = 32
-	MinSiteCPUMillis           = 250
+	MinSiteMemoryLimitMB       = provisioner.MinMemoryLimitMB
+	MinSiteMemoryReservationMB = provisioner.MinMemoryReservationMB
+	MinSiteCPUMillis           = provisioner.MinCPUMillis
 )
 
 // ErrInvalidSite is returned by RenderSite for input it can't render.

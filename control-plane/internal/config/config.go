@@ -15,6 +15,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -68,6 +69,10 @@ type Config struct {
 	MariaDB MariaDBConfig `yaml:"mariadb"`
 	// Audit configures the audit log (§4.6).
 	Audit AuditConfig `yaml:"audit"`
+	// PlatformProject is the Compose project name of the platform services,
+	// which names their containers: the provisioner connects the
+	// platform's MariaDB container to each site network.
+	PlatformProject string `yaml:"platform_project"`
 }
 
 // AuditConfig configures the audit log.
@@ -176,6 +181,8 @@ func Default() Config {
 		Database: DatabaseConfig{Driver: DriverSQLite},
 		Jobs:     JobsConfig{Concurrency: 4},
 		Audit:    AuditConfig{RetentionDays: 365},
+		// platform.ProjectName; config can't import package platform.
+		PlatformProject: "pressfleet",
 		MariaDB: MariaDBConfig{ //nolint:gosec // G101: the path of the password file, not a credential
 			Address:           "mariadb:3306",
 			AdminUser:         "root",
@@ -205,6 +212,7 @@ var envVars = []struct {
 	{"PRESSFLEET_MARIADB_ADDRESS", func(c *Config) *string { return &c.MariaDB.Address }},
 	{"PRESSFLEET_MARIADB_ADMIN_USER", func(c *Config) *string { return &c.MariaDB.AdminUser }},
 	{"PRESSFLEET_MARIADB_ADMIN_PASSWORD_FILE", func(c *Config) *string { return &c.MariaDB.AdminPasswordFile }},
+	{"PRESSFLEET_PLATFORM_PROJECT", func(c *Config) *string { return &c.PlatformProject }},
 }
 
 // envTrustedProxies sets http.trusted_proxies as a comma-separated list.
@@ -359,8 +367,14 @@ func (c Config) Validate() error {
 	if !filepath.IsAbs(c.MariaDB.AdminPasswordFile) {
 		errs = append(errs, fmt.Errorf("mariadb.admin_password_file must be an absolute path, got %q", c.MariaDB.AdminPasswordFile))
 	}
+	if !composeProjectName.MatchString(c.PlatformProject) {
+		errs = append(errs, fmt.Errorf("platform_project must be a Compose project name (lowercase letters, digits, - and _), got %q", c.PlatformProject))
+	}
 	return errors.Join(errs...)
 }
+
+// composeProjectName matches the project names Docker Compose accepts.
+var composeProjectName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
 // validPort reports whether s is a TCP port number.
 func validPort(s string) bool {
