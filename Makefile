@@ -1,6 +1,7 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 BIN     := bin/pressfleet
+IMAGE   ?= ghcr.io/rchouinard/pressfleet/control-plane:$(VERSION)
 
 # PressFleet only supports linux/amd64 hosts (design doc §3.1).
 GOOS   ?= linux
@@ -10,7 +11,7 @@ GOARCH ?= amd64
 
 .PHONY: help
 help: ## Show available targets
-	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-10s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 .PHONY: build
 build: ## Build the pressfleet binary into bin/
@@ -19,6 +20,17 @@ build: ## Build the pressfleet binary into bin/
 .PHONY: test
 test: ## Run tests with the race detector
 	CGO_ENABLED=1 go test -race ./...
+
+.PHONY: image
+image: ## Build the control plane container image (tag: IMAGE=...)
+	docker build -f control-plane/Dockerfile --build-arg VERSION=$(VERSION) -t $(IMAGE) .
+
+.PHONY: test-platform
+test-platform: ## Bring up the platform project with a local image against real Docker, then tear it down
+	$(MAKE) image IMAGE=pressfleet-control-plane:platform-test
+	PRESSFLEET_DOCKER_TESTS=1 PRESSFLEET_TEST_CONTROL_PLANE_IMAGE=pressfleet-control-plane:platform-test \
+		go test -count=1 -v -run TestPlatformUp ./control-plane/internal/platform/; \
+		status=$$?; docker image rm pressfleet-control-plane:platform-test >/dev/null; exit $$status
 
 .PHONY: lint
 lint: ## Run golangci-lint

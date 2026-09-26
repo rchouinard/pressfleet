@@ -1,0 +1,10 @@
+# Build context is the repository root; only Go sources and templates matter.
+*
+!go.mod
+!go.sum
+!control-plane/
+!templates/
+!api/
+control-plane/Dockerfile*
+**/testdata/
+**/*_test.go

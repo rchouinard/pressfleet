@@ -1,0 +1,17 @@
+# Platform service images for this release (design doc §4.7).
+#
+# Every third-party image is pinned as <tag>@<digest>, where the digest is the
+# linux/amd64 image manifest (PressFleet only supports linux/amd64 hosts). The
+# tag is informational; Docker pulls by digest. To bump an image, update both,
+# e.g. with:
+#
+#   docker buildx imagetools inspect mariadb:<tag>   # use the linux/amd64 "Name"
+#
+# Traefik, Redis, and VictoriaMetrics join this list in later milestones.
+mariadb: docker.io/library/mariadb:12.3.3@sha256:2f4f46f80e7251990bfdc601ae3f7f2964ddb4dc1868f7deca699fc1ece8c35e
+
+# The control plane image is published by the same release as the host CLI,
+# so its digest can't be known when the CLI is built. It is referenced as
+# <repository>:<CLI version> instead; `pressfleet upgrade` records the digest
+# it actually pulled so it can roll back to exactly that image (§4.7).
+control-plane: ghcr.io/rchouinard/pressfleet/control-plane
