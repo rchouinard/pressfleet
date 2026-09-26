@@ -22,6 +22,10 @@ services:
     environment:
       PRESSFLEET_DATA_DIR: {{ q .DataDir }}
       PRESSFLEET_LISTEN: {{ q .Listen }}
+{{- if .SkipPreflight }}
+      # Development/CI only: start even if required host checks fail.
+      PRESSFLEET_SKIP_PREFLIGHT: "true"
+{{- end }}
     volumes:
       # The data directory is mounted at the same absolute path as on the host.
       # The control plane starts helper containers (backups, restores) that

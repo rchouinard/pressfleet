@@ -45,6 +45,8 @@ func TestPlatformUp(t *testing.T) {
 		DataDir:             layout.Root,
 		Images:              images,
 		MariaDBRootPassword: password,
+		// Development machines and CI runners often lack Docker address pools.
+		SkipPreflight: true,
 	}
 	dir := layout.PlatformDir()
 	if err := platform.Render(dir, cfg); err != nil {

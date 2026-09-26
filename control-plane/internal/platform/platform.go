@@ -87,6 +87,9 @@ type Config struct {
 	MariaDBMemoryMB      int
 	// MariaDBRootPassword is written to secrets/mariadb_root_password.
 	MariaDBRootPassword redact.Secret
+	// SkipPreflight starts the control plane even if required host checks
+	// fail. Only for development machines and CI; never for real installs.
+	SkipPreflight bool
 }
 
 // withDefaults fills zero fields and validates the result.
@@ -140,6 +143,7 @@ type templateData struct {
 	ControlPlaneMemoryMB int
 	MariaDBMemoryMB      int
 	MariaDBBufferPoolMB  int
+	SkipPreflight        bool
 }
 
 // output is one rendered file, relative to the project directory.
@@ -173,6 +177,7 @@ func Render(dir string, cfg Config) error {
 		ControlPlaneMemoryMB: cfg.ControlPlaneMemoryMB,
 		MariaDBMemoryMB:      cfg.MariaDBMemoryMB,
 		MariaDBBufferPoolMB:  bufferPoolMB(cfg.MariaDBMemoryMB),
+		SkipPreflight:        cfg.SkipPreflight,
 	}
 	tmpl, err := template.New("").Option("missingkey=error").Funcs(template.FuncMap{"q": quote}).
 		ParseFS(templates.Platform(), "*.tmpl")

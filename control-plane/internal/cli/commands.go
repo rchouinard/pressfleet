@@ -4,9 +4,14 @@ import (
 	"fmt"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 
 	"github.com/spf13/cobra"
 )
+
+// envSkipPreflight is the environment equivalent of serve's --skip-preflight
+// flag, for control plane containers on development machines and in CI.
+const envSkipPreflight = "PRESSFLEET_SKIP_PREFLIGHT"
 
 func (a *app) serveCommand() *cobra.Command {
 	var skipPreflight bool
@@ -15,6 +20,13 @@ func (a *app) serveCommand() *cobra.Command {
 		Short: "Run the control plane (API, workers, dashboard)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if v, ok := a.opts.Env(envSkipPreflight); ok && !cmd.Flags().Changed("skip-preflight") {
+				skip, err := strconv.ParseBool(v)
+				if err != nil {
+					return fmt.Errorf("%s: %w", envSkipPreflight, err)
+				}
+				skipPreflight = skip
+			}
 			if err := a.preflight(cmd.Context(), skipPreflight); err != nil {
 				return err
 			}
@@ -33,7 +45,8 @@ func (a *app) serveCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().String("listen", "", "HTTP listen address (overrides config)")
-	cmd.Flags().BoolVar(&skipPreflight, "skip-preflight", false, "start even if required host checks fail (development only)")
+	cmd.Flags().BoolVar(&skipPreflight, "skip-preflight", false,
+		"start even if required host checks fail (development only; also $"+envSkipPreflight+")")
 	return cmd
 }
 

@@ -247,6 +247,37 @@ func TestServeSkipPreflight(t *testing.T) {
 	}
 }
 
+func TestServeSkipPreflightEnv(t *testing.T) {
+	failing := func() *doctortest.Docker {
+		d := doctortest.HealthyDocker()
+		d.Info.CgroupVersion = "1"
+		return d
+	}
+	tests := []struct {
+		name     string
+		env      string
+		flags    []string
+		wantCode int
+		wantErr  string
+	}{
+		{name: "env skips", env: "true", wantCode: 0},
+		{name: "flag overrides env", env: "true", flags: []string{"--skip-preflight=false"}, wantCode: 1, wantErr: "required preflight checks failed"},
+		{name: "env false runs checks", env: "0", wantCode: 1, wantErr: "required preflight checks failed"},
+		{name: "invalid env", env: "maybe", wantCode: 1, wantErr: "PRESSFLEET_SKIP_PREFLIGHT"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel() // serve returns immediately if it starts
+			args := append([]string{"serve", "--data-dir", t.TempDir()}, tt.flags...)
+			r := runWith(t, ctx, args, map[string]string{"PRESSFLEET_SKIP_PREFLIGHT": tt.env}, doctortest.Healthy(), failing())
+			if r.code != tt.wantCode || !strings.Contains(r.stderr, tt.wantErr) {
+				t.Errorf("exit %d (want %d), stderr:\n%s", r.code, tt.wantCode, r.stderr)
+			}
+		})
+	}
+}
+
 func TestUnknownCommand(t *testing.T) {
 	r := run(t, context.Background(), []string{"frobnicate"}, nil)
 	if r.code != 1 || !strings.Contains(r.stderr, "unknown command") {
