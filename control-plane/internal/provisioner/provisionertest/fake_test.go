@@ -3,7 +3,10 @@ package provisionertest_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/provisionertest"
@@ -130,5 +133,70 @@ func TestFakeWPCLIAndFaults(t *testing.T) {
 	calls := f.Calls()
 	if last := calls[len(calls)-1]; last.Op != "PurgeCache" || last.SiteID != "a" {
 		t.Errorf("last call = %+v", last)
+	}
+}
+
+func TestFakeLogs(t *testing.T) {
+	ctx := context.Background()
+	f := provisionertest.New()
+	if _, err := f.CreateSite(ctx, config("a")); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	for i := range 4 {
+		f.AddLogs("a",
+			provisioner.LogEntry{Time: base.Add(time.Duration(i) * time.Minute), Component: provisioner.ComponentNginx, Line: fmt.Sprintf("nginx %d", i)},
+			provisioner.LogEntry{Time: base.Add(time.Duration(i) * time.Minute), Component: provisioner.ComponentPHP, Line: fmt.Sprintf("php %d", i)},
+		)
+	}
+	collect := func(opts provisioner.LogOptions) []string {
+		t.Helper()
+		var lines []string
+		for e, err := range f.Logs(ctx, "a", opts) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines = append(lines, e.Line)
+		}
+		return lines
+	}
+
+	if got := collect(provisioner.LogOptions{Components: []provisioner.Component{provisioner.ComponentPHP}, Tail: 2}); !slices.Equal(got, []string{"php 2", "php 3"}) {
+		t.Errorf("php tail 2 = %v", got)
+	}
+	if got := collect(provisioner.LogOptions{Since: base.Add(3 * time.Minute)}); !slices.Equal(got, []string{"nginx 3", "php 3"}) {
+		t.Errorf("since = %v", got)
+	}
+	for _, err := range f.Logs(ctx, "missing", provisioner.LogOptions{}) {
+		if !errors.Is(err, provisioner.ErrSiteNotFound) {
+			t.Errorf("Logs(missing) err = %v, want ErrSiteNotFound", err)
+		}
+	}
+}
+
+func TestFakeStatsAndTasks(t *testing.T) {
+	ctx := context.Background()
+	f := provisionertest.New()
+	if _, err := f.CreateSite(ctx, config("a")); err != nil {
+		t.Fatal(err)
+	}
+	f.SetStats("a", provisioner.ComponentStats{Component: provisioner.ComponentPHP, MemoryBytes: 64 << 20})
+	if st, err := f.Stats(ctx, "a"); err != nil || len(st) != 1 || st[0].MemoryBytes != 64<<20 {
+		t.Errorf("Stats = %+v, %v", st, err)
+	}
+
+	f.RunTaskFunc = func(_ string, task provisioner.Task) (*provisioner.TaskResult, error) {
+		return &provisioner.TaskResult{Stdout: task.Command[0]}, nil
+	}
+	task := provisioner.Task{Image: "tools", Command: []string{"restic"}, WPContent: provisioner.MountReadOnly}
+	if res, err := f.RunTask(ctx, "a", task); err != nil || res.Stdout != "restic" {
+		t.Errorf("RunTask = %+v, %v", res, err)
+	}
+	calls := f.Calls()
+	if last := calls[len(calls)-1]; last.Task == nil || last.Task.WPContent != provisioner.MountReadOnly {
+		t.Errorf("RunTask call not recorded with task: %+v", last)
+	}
+	if _, err := f.RunTask(ctx, "missing", task); !errors.Is(err, provisioner.ErrSiteNotFound) {
+		t.Errorf("RunTask(missing) err = %v", err)
 	}
 }

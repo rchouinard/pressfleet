@@ -117,8 +117,8 @@ type SiteStatus struct {
 	Message string
 }
 
-// ExecError is returned by [Provisioner.ExecWPCLI] when the command ran but
-// exited non-zero.
+// ExecError is returned by [Provisioner.ExecWPCLI] and [TaskRunner.RunTask]
+// when the command ran but exited non-zero.
 type ExecError struct {
 	ExitCode int
 	Stdout   string
@@ -126,7 +126,7 @@ type ExecError struct {
 }
 
 func (e *ExecError) Error() string {
-	return fmt.Sprintf("wp-cli exited with status %d: %s", e.ExitCode, e.Stderr)
+	return fmt.Sprintf("command exited with status %d: %s", e.ExitCode, e.Stderr)
 }
 
 // Provisioner manages site runtime resources (containers, volumes, routing).

@@ -1,9 +1,10 @@
-// Package provisionertest provides an in-memory [provisioner.Provisioner] for
-// unit tests.
+// Package provisionertest provides an in-memory [provisioner.Driver] for unit
+// tests.
 package provisionertest
 
 import (
 	"context"
+	"iter"
 	"slices"
 	"sync"
 
@@ -14,7 +15,8 @@ import (
 type Call struct {
 	Op     string // method name, e.g. "CreateSite"
 	SiteID string
-	Args   []string // ExecWPCLI arguments
+	Args   []string          // ExecWPCLI arguments
+	Task   *provisioner.Task // RunTask task
 }
 
 // Site is the fake's view of a site's runtime state.
@@ -25,26 +27,49 @@ type Site struct {
 	CachePurges int
 }
 
-// Fake is an in-memory Provisioner that follows the interface's idempotency
-// and not-found contract. It is safe for concurrent use.
+// Fake is an in-memory Driver that follows the interfaces' idempotency and
+// not-found contract. It is safe for concurrent use.
 type Fake struct {
 	// WPCLI, if set, handles ExecWPCLI calls for existing sites. By default
 	// they succeed with empty output.
 	WPCLI func(siteID string, args []string) (string, error)
+	// RunTaskFunc, if set, handles RunTask calls for existing sites. By
+	// default tasks succeed with empty output.
+	RunTaskFunc func(siteID string, task provisioner.Task) (*provisioner.TaskResult, error)
 	// Err, if set, is consulted at the start of every call; a non-nil result
 	// is returned without changing state. Use it to inject failures.
 	Err func(op, siteID string) error
 
 	mu    sync.Mutex
 	sites map[string]*Site
+	logs  map[string][]provisioner.LogEntry
+	stats map[string][]provisioner.ComponentStats
 	calls []Call
 }
 
-var _ provisioner.Provisioner = (*Fake)(nil)
+var _ provisioner.Driver = (*Fake)(nil)
 
 // New returns an empty Fake.
 func New() *Fake {
-	return &Fake{sites: make(map[string]*Site)}
+	return &Fake{
+		sites: make(map[string]*Site),
+		logs:  make(map[string][]provisioner.LogEntry),
+		stats: make(map[string][]provisioner.ComponentStats),
+	}
+}
+
+// AddLogs appends log entries returned by Logs for siteID.
+func (f *Fake) AddLogs(siteID string, entries ...provisioner.LogEntry) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.logs[siteID] = append(f.logs[siteID], entries...)
+}
+
+// SetStats sets the samples returned by Stats for siteID.
+func (f *Fake) SetStats(siteID string, stats ...provisioner.ComponentStats) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stats[siteID] = slices.Clone(stats)
 }
 
 // Site returns a copy of the site's state.
@@ -227,4 +252,83 @@ func (f *Fake) PurgeCache(_ context.Context, siteID string) error {
 	}
 	s.CachePurges++
 	return nil
+}
+
+// Logs implements provisioner.LogReader. It filters stored entries by
+// component, Since, and Tail; Follow is ignored.
+func (f *Fake) Logs(_ context.Context, siteID string, opts provisioner.LogOptions) iter.Seq2[provisioner.LogEntry, error] {
+	f.mu.Lock()
+	err := f.begin("Logs", siteID, nil)
+	if err == nil {
+		_, err = f.lookup(siteID)
+	}
+	var out []provisioner.LogEntry
+	if err == nil {
+		counts := map[provisioner.Component]int{}
+		stored := f.logs[siteID]
+		// Walk backwards so Tail keeps the newest lines per component.
+		for i := len(stored) - 1; i >= 0; i-- {
+			e := stored[i]
+			if len(opts.Components) > 0 && !slices.Contains(opts.Components, e.Component) {
+				continue
+			}
+			if !opts.Since.IsZero() && e.Time.Before(opts.Since) {
+				continue
+			}
+			if opts.Tail > 0 && counts[e.Component] >= opts.Tail {
+				continue
+			}
+			counts[e.Component]++
+			out = append(out, e)
+		}
+		slices.Reverse(out)
+	}
+	f.mu.Unlock()
+
+	return func(yield func(provisioner.LogEntry, error) bool) {
+		if err != nil {
+			yield(provisioner.LogEntry{}, err)
+			return
+		}
+		for _, e := range out {
+			if !yield(e, nil) {
+				return
+			}
+		}
+	}
+}
+
+// Stats implements provisioner.StatsReader.
+func (f *Fake) Stats(_ context.Context, siteID string) ([]provisioner.ComponentStats, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.begin("Stats", siteID, nil); err != nil {
+		return nil, err
+	}
+	if _, err := f.lookup(siteID); err != nil {
+		return nil, err
+	}
+	return slices.Clone(f.stats[siteID]), nil
+}
+
+// RunTask implements provisioner.TaskRunner.
+func (f *Fake) RunTask(_ context.Context, siteID string, task provisioner.Task) (*provisioner.TaskResult, error) {
+	f.mu.Lock()
+	if err := f.begin("RunTask", siteID, nil); err != nil {
+		f.mu.Unlock()
+		return nil, err
+	}
+	t := task
+	f.calls[len(f.calls)-1].Task = &t
+	if _, err := f.lookup(siteID); err != nil {
+		f.mu.Unlock()
+		return nil, err
+	}
+	handler := f.RunTaskFunc
+	f.mu.Unlock()
+
+	if handler == nil {
+		return &provisioner.TaskResult{}, nil
+	}
+	return handler(siteID, task)
 }

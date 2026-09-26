@@ -280,6 +280,39 @@ type BackupEngine interface {
 }
 ```
 
+#### Driver Extensions
+
+Log viewing (§7.4), resource metrics (§7.1), and backup/restore (§5.3–5.4) also need orchestrator access, and §4.2 forbids reaching Docker outside the driver. They are separate interfaces, so each consumer depends only on what it uses. A driver implements all of them (`provisioner.Driver`):
+
+```go
+// LogReader reads site container logs. Iteration ends when logs are exhausted
+// or, when following, when ctx is canceled.
+type LogReader interface {
+    Logs(ctx context.Context, siteID string, opts LogOptions) iter.Seq2[LogEntry, error]
+}
+
+// StatsReader samples per-component resource usage (cumulative CPU time,
+// memory working set and limit, restart count).
+type StatsReader interface {
+    Stats(ctx context.Context, siteID string) ([]ComponentStats, error)
+}
+
+// TaskRunner runs a short-lived command with access to a site's data: the
+// wp-content volume (read-only or read-write), a transfer directory shared
+// with the control plane, and the platform services the site can reach.
+type TaskRunner interface {
+    RunTask(ctx context.Context, siteID string, task Task) (*TaskResult, error)
+}
+```
+
+Site components are named by role (`nginx`, `php`), not by orchestrator object. Backups use `TaskRunner`: the control plane dumps the database into a transfer directory under its data directory, then runs `restic` in a task that mounts `wp-content` read-only plus the transfer directory. In the Compose driver, a task is a one-off container on the site's network. The data directory is mounted at the same path on the host and in the control plane container, so transfer directories can be bind-mounted into tasks.
+
+| Interface | Compose driver | Future Kubernetes driver |
+| :--- | :--- | :--- |
+| `LogReader` | Container logs | Pod logs API, per container |
+| `StatsReader` | Docker stats (cumulative CPU) and container restart count | Kubelet summary API (cumulative CPU) and Pod status restart counts |
+| `TaskRunner` | One-off container mounting the site volume and a bind-mounted transfer directory | Job whose Pod mounts the site PVC and a shared transfer volume |
+
 ### 4.5. API Design
 
 * **Spec-first:** The API is defined in an OpenAPI 3.1 document (`/api/openapi.yaml`), which is the source of truth. Go server interfaces and request/response types, and the TypeScript client used by the Nuxt UI, are generated from it. CI fails if generated code is out of date with the spec.

@@ -1,0 +1,152 @@
+package provisioner
+
+import (
+	"context"
+	"iter"
+	"time"
+
+	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
+)
+
+// Driver is everything an orchestrator driver implements. Consumers should
+// depend on the narrowest interface they need (Provisioner, LogReader,
+// StatsReader, or TaskRunner) rather than on Driver.
+type Driver interface {
+	Provisioner
+	LogReader
+	StatsReader
+	TaskRunner
+}
+
+// Component identifies one of a site's runtime components. Names describe
+// roles rather than orchestrator objects: in Compose each is a container; in
+// Kubernetes each maps to a container in the site's Pod.
+type Component string
+
+// Site components (§4.1 Site Stack Topology).
+const (
+	ComponentNginx Component = "nginx"
+	ComponentPHP   Component = "php"
+)
+
+// LogStream identifies the output stream a log line was written to.
+type LogStream string
+
+// Log streams.
+const (
+	Stdout LogStream = "stdout"
+	Stderr LogStream = "stderr"
+)
+
+// LogOptions selects which log lines to read.
+type LogOptions struct {
+	// Components to read; empty means all of the site's components.
+	Components []Component
+	// Since, if non-zero, skips lines written before it.
+	Since time.Time
+	// Tail, if positive, starts at the last Tail lines per component.
+	Tail int
+	// Follow keeps the stream open for new lines until ctx is canceled.
+	Follow bool
+}
+
+// LogEntry is one line of a site component's output.
+type LogEntry struct {
+	Time      time.Time
+	Component Component
+	Stream    LogStream
+	Line      string
+}
+
+// LogReader reads site container logs (§7.4).
+type LogReader interface {
+	// Logs yields log entries for the site. Iteration ends when the logs are
+	// exhausted (or, with Follow, when ctx is canceled); a non-nil error is
+	// yielded once and ends iteration. Returns ErrSiteNotFound via the error
+	// value if the site does not exist.
+	Logs(ctx context.Context, siteID string, opts LogOptions) iter.Seq2[LogEntry, error]
+}
+
+// ComponentStats is a resource usage sample for one site component.
+type ComponentStats struct {
+	Component Component
+	// CPUUsage is cumulative CPU time consumed since the component started;
+	// callers derive rates from successive samples.
+	CPUUsage time.Duration
+	// MemoryBytes is current memory usage (working set).
+	MemoryBytes uint64
+	// MemoryLimitBytes is the hard memory limit, or 0 if unlimited.
+	MemoryLimitBytes uint64
+	// Restarts counts restarts since the component was created.
+	Restarts int
+	// SampledAt is when the sample was taken.
+	SampledAt time.Time
+}
+
+// StatsReader samples site resource usage (§7.1 Resources).
+type StatsReader interface {
+	// Stats returns one sample per running component of the site. Returns
+	// ErrSiteNotFound if the site does not exist.
+	Stats(ctx context.Context, siteID string) ([]ComponentStats, error)
+}
+
+// MountMode controls how a task sees a site volume.
+type MountMode int
+
+// Mount modes.
+const (
+	MountNone MountMode = iota
+	MountReadOnly
+	MountReadWrite
+)
+
+// Task is a short-lived command run with access to a site's data, e.g.
+// backing up or restoring wp-content (§5.3, §5.4).
+//
+// Inside the task:
+//   - wp-content is at TaskWPContentPath (if WPContent is not MountNone)
+//   - TransferDir is at TaskTransferPath (if set)
+//   - the platform services the site can reach (MariaDB, Redis) are reachable
+//     the same way the site reaches them
+type Task struct {
+	// Image is the container image to run; typically the control plane's own
+	// image, which ships restic and the MariaDB client.
+	Image string
+	// Command is the argv to run; it is not passed through a shell.
+	Command []string
+	// Env holds non-secret environment variables.
+	Env map[string]string
+	// SecretEnv holds environment variables with secret values (repository
+	// passwords, storage credentials). Drivers must never log them.
+	SecretEnv map[string]redact.Secret
+	// WPContent controls access to the site's wp-content volume.
+	WPContent MountMode
+	// TransferDir, if set, is a directory under the control plane's data
+	// directory (config.Layout.TmpDir) shared read-write with the task. It is
+	// how files such as database dumps move between the control plane and the
+	// task. The Compose driver relies on the data directory being mounted at
+	// the same path on the host and in the control plane container.
+	TransferDir string
+	// Timeout bounds the task's run time; zero means no limit beyond ctx.
+	Timeout time.Duration
+}
+
+// Paths inside a task container.
+const (
+	TaskWPContentPath = "/site/wp-content"
+	TaskTransferPath  = "/transfer"
+)
+
+// TaskResult is the outcome of a task that ran to completion.
+type TaskResult struct {
+	Stdout string
+	Stderr string
+}
+
+// TaskRunner runs tasks against site data.
+type TaskRunner interface {
+	// RunTask runs task with access to the site's data and waits for it to
+	// finish. A non-zero exit yields an *ExecError. Returns ErrSiteNotFound if
+	// the site does not exist. The task's container is always removed.
+	RunTask(ctx context.Context, siteID string, task Task) (*TaskResult, error)
+}
