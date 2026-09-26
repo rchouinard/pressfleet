@@ -5,7 +5,7 @@ The OpenAPI 3.1 spec (`openapi.yaml`) lives here and is the source of truth for 
 ## Workflow
 
 1. Edit `openapi.yaml`.
-2. Run `make generate`. This regenerates `control-plane/internal/api/gen/api.gen.go`. Commit the result and never edit it by hand.
+2. Run `make generate`. This regenerates the server code in `control-plane/internal/api/gen/api.gen.go` and the Go client that the end-to-end tests use in `control-plane/internal/api/client/client.gen.go`. Commit the result and never edit it by hand.
 3. Implement or update the handler method in `control-plane/internal/api/` (one file per area). The router is generated, so adding an endpoint never means touching routing code.
 
 CI runs `make generate` and fails if the generated code differs from what's committed.
@@ -25,7 +25,7 @@ The server loads the embedded spec at startup (`spec.go`). It validates every re
 
 ## Generator choice
 
-The generator is [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen) v2.8.0, pinned as a `tool` directive in `go.mod` and run with `go tool oapi-codegen`. Its configuration is in `control-plane/internal/api/gen/oapi-codegen.yaml`.
+The generator is [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen) v2.8.0, pinned as a `tool` directive in `go.mod` and run with `go tool oapi-codegen`. Its configuration is in `control-plane/internal/api/gen/oapi-codegen.yaml` (server) and `control-plane/internal/api/client/oapi-codegen.yaml` (client).
 
 We evaluated these generators in September 2026:
 

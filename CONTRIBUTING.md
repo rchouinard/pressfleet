@@ -11,7 +11,7 @@ mise install
 
 If you don't use mise, install the Go and golangci-lint versions listed in `mise.toml` yourself.
 
-PressFleet targets **Linux on amd64** only (design doc §3.1). Integration tests will also need Docker Engine with Compose v2.
+PressFleet targets **Linux on amd64** only (design doc §3.1). Docker and end-to-end tests also need Docker Engine with Compose v2; see [docs/testing.md](docs/testing.md).
 
 ## Common tasks
 
@@ -20,6 +20,7 @@ make build      # build bin/pressfleet
 make test       # run tests with the race detector (needs a C compiler)
 make lint       # run golangci-lint
 make generate   # run code generators
+make test-e2e   # end-to-end tests against real Docker (docs/testing.md)
 make help       # list all targets
 ```
 

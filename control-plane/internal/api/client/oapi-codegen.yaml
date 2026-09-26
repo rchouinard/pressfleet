@@ -1,0 +1,9 @@
+# oapi-codegen configuration for the Go API client (see api/README.md). Run
+# `make generate` after editing api/openapi.yaml.
+package: client
+output: client.gen.go
+generate:
+  client: true
+  models: true
+output-options:
+  name-normalizer: ToCamelCaseWithInitialisms

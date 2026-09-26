@@ -42,14 +42,14 @@ func TestSiteUp(t *testing.T) {
 	defer cancel()
 	docker := func(args ...string) string {
 		t.Helper()
-		out, err := compose.DockerExec(ctx, args...)
+		out, err := compose.DockerExec(ctx, nil, args...)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return strings.TrimSpace(string(out))
 	}
 	for _, image := range []string{images.PHP, images.Nginx} {
-		if _, err := compose.DockerExec(ctx, "image", "inspect", image); err != nil {
+		if _, err := compose.DockerExec(ctx, nil, "image", "inspect", image); err != nil {
 			t.Skipf("site image %s not available locally (make images): %v", image, err)
 		}
 	}
@@ -107,13 +107,13 @@ func TestSiteUp(t *testing.T) {
 		defer cancel()
 		// The database must leave the site network before Compose can
 		// remove it.
-		if _, err := compose.DockerExec(ctx, "rm", "--force", "--volumes", dbName); err != nil {
+		if _, err := compose.DockerExec(ctx, nil, "rm", "--force", "--volumes", dbName); err != nil {
 			t.Errorf("removing database container: %v", err)
 		}
 		if err := p.Down(ctx, compose.DownOptions{Volumes: true}); err != nil {
 			t.Errorf("down: %v", err)
 		}
-		if _, err := compose.DockerExec(ctx, "network", "rm", dbNet); err != nil {
+		if _, err := compose.DockerExec(ctx, nil, "network", "rm", dbNet); err != nil {
 			t.Errorf("removing database network: %v", err)
 		}
 	})

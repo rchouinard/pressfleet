@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -22,6 +23,10 @@ var ErrInvalidProject = errors.New("compose: invalid project")
 // ErrCommandFailed wraps failures of the docker CLI. Use errors.As with
 // *CommandError for the exit details.
 var ErrCommandFailed = errors.New("compose: docker command failed")
+
+// ErrNotPublished is returned by Port when the container port has no
+// published host port.
+var ErrNotPublished = errors.New("compose: port not published")
 
 // CommandError describes a docker CLI invocation that failed.
 type CommandError struct {
@@ -41,17 +46,17 @@ func (e *CommandError) Error() string {
 // Unwrap lets errors.Is match both ErrCommandFailed and the underlying error.
 func (e *CommandError) Unwrap() []error { return []error{ErrCommandFailed, e.Err} }
 
-// ExecFunc runs the docker CLI with args and returns its standard output.
-// Failures are reported as *CommandError. Tests inject a fake to avoid
-// needing Docker.
-type ExecFunc func(ctx context.Context, args ...string) ([]byte, error)
+// ExecFunc runs the docker CLI with args, connecting stdin (nil for none) to
+// its standard input, and returns its standard output. Failures are reported
+// as *CommandError. Tests inject a fake to avoid needing Docker.
+type ExecFunc func(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error)
 
 // DockerExec runs the docker binary found on PATH.
-func DockerExec(ctx context.Context, args ...string) ([]byte, error) {
+func DockerExec(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
 	// Arguments are passed directly to docker, never through a shell.
 	cmd := exec.CommandContext(ctx, "docker", args...) //nolint:gosec // G204: running docker with caller-built arguments is the point
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, &stdout, &stderr
 	if err := cmd.Run(); err != nil {
 		return stdout.Bytes(), &CommandError{Args: args, Stderr: strings.TrimSpace(stderr.String()), Err: err}
 	}
@@ -93,7 +98,7 @@ func (p Project) Up(ctx context.Context, opts UpOptions) error {
 			args = append(args, "--wait-timeout", strconv.Itoa(int(opts.WaitTimeout.Round(time.Second).Seconds())))
 		}
 	}
-	_, err := p.run(ctx, args...)
+	_, err := p.run(ctx, nil, args...)
 	return err
 }
 
@@ -109,7 +114,7 @@ func (p Project) Down(ctx context.Context, opts DownOptions) error {
 	if opts.Volumes {
 		args = append(args, "--volumes")
 	}
-	_, err := p.run(ctx, args...)
+	_, err := p.run(ctx, nil, args...)
 	return err
 }
 
@@ -124,7 +129,7 @@ type Container struct {
 
 // Ps lists the project's containers, including stopped ones.
 func (p Project) Ps(ctx context.Context) ([]Container, error) {
-	out, err := p.run(ctx, "ps", "--all", "--format", "json")
+	out, err := p.run(ctx, nil, "ps", "--all", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -134,27 +139,105 @@ func (p Project) Ps(ctx context.Context) ([]Container, error) {
 // Exec runs a command in a running service container without a TTY and
 // returns its standard output. It is how the host CLI runs state commands
 // inside the control plane (§4.7). Arguments appear in error messages, so
-// never pass secrets as arguments; use stdin or a file instead.
+// never pass secrets as arguments; use ExecInput or a file instead.
 func (p Project) Exec(ctx context.Context, service string, command ...string) ([]byte, error) {
+	return p.ExecInput(ctx, nil, service, command...)
+}
+
+// ExecInput is Exec with stdin connected to the command's standard input,
+// which is how secrets such as passwords are handed to a command.
+func (p Project) ExecInput(ctx context.Context, stdin io.Reader, service string, command ...string) ([]byte, error) {
 	if service == "" || len(command) == 0 {
 		return nil, fmt.Errorf("%w: exec needs a service and a command", ErrInvalidProject)
 	}
-	return p.run(ctx, append([]string{"exec", "--no-TTY", service}, command...)...)
+	return p.run(ctx, stdin, append([]string{"exec", "--no-TTY", service}, command...)...)
 }
 
-func (p Project) run(ctx context.Context, args ...string) ([]byte, error) {
+// Logs returns the timestamped output of every container in the project.
+func (p Project) Logs(ctx context.Context) ([]byte, error) {
+	return p.run(ctx, nil, "logs", "--no-color", "--timestamps")
+}
+
+// Port returns the host address ("host:port") on which a service's
+// container port is published. It returns ErrNotPublished if there is none.
+func (p Project) Port(ctx context.Context, service string, containerPort int) (string, error) {
+	if service == "" || containerPort <= 0 {
+		return "", fmt.Errorf("%w: port needs a service and a container port", ErrInvalidProject)
+	}
+	out, err := p.run(ctx, nil, "port", service, strconv.Itoa(containerPort))
+	if err != nil {
+		return "", err
+	}
+	// One address per line if the port is published more than once.
+	addr, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+	if addr == "" || strings.HasSuffix(addr, ":0") {
+		return "", fmt.Errorf("%w: compose project %s: %s port %d", ErrNotPublished, p.Name, service, containerPort)
+	}
+	return addr, nil
+}
+
+// Resources are the Docker objects labelled as belonging to a project.
+type Resources struct {
+	Containers []string // names
+	Networks   []string // names
+	Volumes    []string // names
+}
+
+// Empty reports whether there are no resources.
+func (r Resources) Empty() bool {
+	return len(r.Containers) == 0 && len(r.Networks) == 0 && len(r.Volumes) == 0
+}
+
+// Resources lists the containers, networks, and volumes that carry the
+// project's Compose label. It asks the daemon rather than reading
+// compose.yaml, so it also finds objects the file no longer describes; after
+// Down with Volumes it is empty, which is how teardown is verified.
+func (p Project) Resources(ctx context.Context) (Resources, error) {
+	if err := p.validate(); err != nil {
+		return Resources{}, err
+	}
+	filter := "label=com.docker.compose.project=" + p.Name
+	var res Resources
+	for _, q := range []struct {
+		args []string
+		dst  *[]string
+	}{
+		{[]string{"container", "ls", "--all", "--filter", filter, "--format", "{{.Names}}"}, &res.Containers},
+		{[]string{"network", "ls", "--filter", filter, "--format", "{{.Name}}"}, &res.Networks},
+		{[]string{"volume", "ls", "--filter", filter, "--format", "{{.Name}}"}, &res.Volumes},
+	} {
+		out, err := p.docker()(ctx, nil, q.args...)
+		if err != nil {
+			return Resources{}, fmt.Errorf("compose project %s: %w", p.Name, err)
+		}
+		*q.dst = strings.Fields(string(out))
+	}
+	return res, nil
+}
+
+func (p Project) validate() error {
 	if !projectName.MatchString(p.Name) {
-		return nil, fmt.Errorf("%w: name %q must be lowercase letters, digits, '-' or '_'", ErrInvalidProject, p.Name)
+		return fmt.Errorf("%w: name %q must be lowercase letters, digits, '-' or '_'", ErrInvalidProject, p.Name)
 	}
 	if !filepath.IsAbs(p.Dir) {
-		return nil, fmt.Errorf("%w: directory %q must be absolute", ErrInvalidProject, p.Dir)
+		return fmt.Errorf("%w: directory %q must be absolute", ErrInvalidProject, p.Dir)
 	}
-	execFn := p.Docker
-	if execFn == nil {
-		execFn = DockerExec
+	return nil
+}
+
+func (p Project) docker() ExecFunc {
+	if p.Docker == nil {
+		return DockerExec
+	}
+	return p.Docker
+}
+
+func (p Project) run(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+	if err := p.validate(); err != nil {
+		return nil, err
 	}
 	full := append([]string{"compose", "--project-name", p.Name, "--project-directory", p.Dir}, args...)
-	out, err := execFn(ctx, full...)
+	out, err := p.docker()(ctx, stdin, full...)
 	if err != nil {
 		return out, fmt.Errorf("compose project %s: %w", p.Name, err)
 	}

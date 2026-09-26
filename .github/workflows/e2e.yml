@@ -1,0 +1,49 @@
+name: E2E
+
+# End-to-end tests (control-plane/internal/e2e, docs/testing.md): build the
+# control plane image, boot the platform with Docker Compose, and drive it
+# through the API.
+#
+#   push to main       always
+#   manual             always
+#   pull requests      only when labeled `e2e` (booting the platform costs
+#                      minutes; add the label to a PR that needs it)
+#
+# This is a separate workflow so that labeling a PR doesn't rerun CI.
+#
+# It uses the runner's own Docker Engine rather than a docker:dind service.
+# The control plane bind-mounts the data directory at the host's path and
+# drives the host daemon through its socket; with dind, those paths would
+# have to exist inside the dind container instead of on the runner, which
+# breaks that contract. The runner's daemon is already an isolated,
+# throwaway Docker host.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  e2e:
+    name: E2E
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v4
+      - uses: ./.github/actions/go-cache
+      - name: Show Docker versions
+        run: |
+          docker version
+          docker compose version
+      - run: make test-e2e
