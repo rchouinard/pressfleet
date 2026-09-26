@@ -1,0 +1,1622 @@
+openapi: 3.1.0
+info:
+  title: PressFleet API
+  version: 0.1.0
+  summary: Control plane API for the PressFleet WordPress application platform.
+  description: |
+    Spec-first API (design doc §4.5). This document is the source of truth;
+    the Go server interfaces and the dashboard's TypeScript client are
+    generated from it.
+
+    ## Conventions
+
+    * All API endpoints live under `/api/v1`. Breaking changes require a new
+      version prefix; additive changes (new fields, endpoints, or enum values)
+      do not, so clients must ignore unknown fields.
+    * Request and response bodies are JSON. Field names are `snake_case`.
+      Timestamps are RFC 3339 strings in UTC.
+    * Long-running operations return `202 Accepted` with the queued job in the
+      body and its URL in the `Location` header. Poll `GET /api/v1/jobs/{job_id}`
+      until the job reaches a terminal state (`succeeded` or `failed`).
+    * Every error response is an RFC 9457 Problem Details document
+      (`application/problem+json`) that carries the request ID.
+    * List endpoints use cursor pagination: pass `limit` and, for later pages,
+      the `next_cursor` from the previous response as `cursor`. Cursors are
+      opaque.
+
+    ## Authentication
+
+    Every operation requires authentication except login and the health
+    endpoints. The dashboard uses a session cookie obtained from
+    `POST /api/v1/auth/login`; automation uses bearer API tokens. Cookie-authenticated
+    state-changing requests also require CSRF protection (#13).
+
+    ## Authorization
+
+    Each user has one platform-wide role: `admin`, `operator`, or `viewer`
+    (design doc §4.6). A token's effective permissions are the intersection of
+    its scope and its owner's current role. Denied requests get `403`.
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: /
+    description: The control plane that serves this document.
+security:
+  - sessionCookie: []
+  - bearerToken: []
+tags:
+  - name: health
+    description: Liveness and readiness probes. Unauthenticated and outside `/api/v1`.
+  - name: auth
+    description: Sessions and the current user.
+  - name: tokens
+    description: The current user's API tokens.
+  - name: users
+    description: User management (Admin only).
+  - name: client-groups
+    description: Client groups own sites and a backup repository.
+  - name: sites
+    description: WordPress sites.
+  - name: jobs
+    description: Long-running operations.
+
+paths:
+  /healthz:
+    get:
+      operationId: getHealth
+      tags: [health]
+      summary: Liveness probe
+      description: Returns `200` while the process is running. Performs no dependency checks.
+      security: []
+      responses:
+        "200":
+          description: The process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /readyz:
+    get:
+      operationId: getReadiness
+      tags: [health]
+      summary: Readiness probe
+      description: Runs every registered readiness check (for example, the state database). Returns `503` if any check fails.
+      security: []
+      responses:
+        "200":
+          description: Every check passed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+        "503":
+          description: At least one check failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Log in and start a session
+      description: |
+        Verifies the credentials and sets the session cookie. The response body
+        is the logged-in user. Failed logins return `401` without revealing
+        whether the email exists.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Logged in.
+          headers:
+            Set-Cookie:
+              description: The session cookie (`HttpOnly`, `Secure`, `SameSite`).
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: End the current session
+      responses:
+        "204":
+          description: Logged out; the session cookie is cleared.
+          headers:
+            Set-Cookie:
+              description: Expires the session cookie.
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/auth/me:
+    get:
+      operationId: getCurrentUser
+      tags: [auth]
+      summary: Get the authenticated user
+      responses:
+        "200":
+          description: The authenticated user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/auth/tokens:
+    get:
+      operationId: listApiTokens
+      tags: [tokens]
+      summary: List the current user's API tokens
+      description: Token secrets are never returned after creation.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of tokens.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTokenList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createApiToken
+      tags: [tokens]
+      summary: Create an API token for the current user
+      description: |
+        The response contains the plaintext token. It is shown only once and
+        cannot be retrieved again; only a hash is stored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiTokenCreate"
+      responses:
+        "201":
+          description: Token created.
+          headers:
+            Location:
+              $ref: "#/components/headers/Location"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTokenWithSecret"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/auth/tokens/{token_id}:
+    parameters:
+      - $ref: "#/components/parameters/TokenID"
+    delete:
+      operationId: revokeApiToken
+      tags: [tokens]
+      summary: Revoke one of the current user's API tokens
+      description: Revocation takes effect immediately.
+      responses:
+        "204":
+          description: Token revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/users:
+    get:
+      operationId: listUsers
+      tags: [users]
+      summary: List users
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: role
+          in: query
+          description: Only return users with this role.
+          schema:
+            $ref: "#/components/schemas/Role"
+      responses:
+        "200":
+          description: A page of users.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createUser
+      tags: [users]
+      summary: Create a user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserCreate"
+      responses:
+        "201":
+          description: User created.
+          headers:
+            Location:
+              $ref: "#/components/headers/Location"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/users/{user_id}:
+    parameters:
+      - $ref: "#/components/parameters/UserID"
+    get:
+      operationId: getUser
+      tags: [users]
+      summary: Get a user
+      responses:
+        "200":
+          description: The user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateUser
+      tags: [users]
+      summary: Update a user
+      description: |
+        Changes apply immediately to the user's existing sessions and tokens.
+        Demoting or disabling the last Admin returns `409`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdate"
+      responses:
+        "200":
+          description: The updated user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteUser
+      tags: [users]
+      summary: Delete a user
+      description: Also revokes the user's sessions and tokens. Deleting the last Admin returns `409`.
+      responses:
+        "204":
+          description: User deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/client-groups:
+    get:
+      operationId: listClientGroups
+      tags: [client-groups]
+      summary: List client groups
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of client groups.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientGroupList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createClientGroup
+      tags: [client-groups]
+      summary: Create a client group
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClientGroupCreate"
+      responses:
+        "201":
+          description: Client group created.
+          headers:
+            Location:
+              $ref: "#/components/headers/Location"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientGroup"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/client-groups/{client_group_id}:
+    parameters:
+      - $ref: "#/components/parameters/ClientGroupID"
+    get:
+      operationId: getClientGroup
+      tags: [client-groups]
+      summary: Get a client group
+      responses:
+        "200":
+          description: The client group.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientGroup"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateClientGroup
+      tags: [client-groups]
+      summary: Update a client group
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClientGroupUpdate"
+      responses:
+        "200":
+          description: The updated client group.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientGroup"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteClientGroup
+      tags: [client-groups]
+      summary: Delete a client group
+      description: A client group that still has sites can't be deleted (`409`).
+      responses:
+        "204":
+          description: Client group deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/sites:
+    get:
+      operationId: listSites
+      tags: [sites]
+      summary: List sites
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: client_group_id
+          in: query
+          description: Only return sites in this client group.
+          schema:
+            $ref: "#/components/schemas/ID"
+        - name: status
+          in: query
+          description: Only return sites with this status.
+          schema:
+            $ref: "#/components/schemas/SiteStatus"
+      responses:
+        "200":
+          description: A page of sites.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createSite
+      tags: [sites]
+      summary: Create a site
+      description: |
+        Starts the one-click provisioning workflow (design doc §5.1). The site
+        record is created immediately with status `provisioning`; the job
+        creates the database and containers and installs WordPress.
+
+        The generated WordPress admin password is stored encrypted and can be
+        retrieved exactly once with
+        `POST /api/v1/sites/{site_id}/admin-credentials`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SiteCreate"
+      responses:
+        "202":
+          description: Provisioning job queued.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/sites/{site_id}:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    get:
+      operationId: getSite
+      tags: [sites]
+      summary: Get a site
+      responses:
+        "200":
+          description: The site, including its live runtime status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Site"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateSite
+      tags: [sites]
+      summary: Update a site's settings
+      description: |
+        Changes the PHP version or resource limits. The change is applied by a
+        job that recreates the affected containers (design doc §5.5); the
+        response contains the site with the requested settings and the job.
+        Only one mutating job runs per site at a time; a conflicting request
+        returns `409`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SiteUpdate"
+      responses:
+        "202":
+          description: Update job queued.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteSite
+      tags: [sites]
+      summary: Delete a site
+      description: |
+        Queues a job that removes the site's containers, network, volumes,
+        database, secrets, and rendered files. The site's status becomes
+        `deleting`; the site disappears when the job succeeds.
+      responses:
+        "202":
+          description: Deletion job queued.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/sites/{site_id}/start:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    post:
+      operationId: startSite
+      tags: [sites]
+      summary: Start a stopped site
+      responses:
+        "202":
+          description: Start job queued.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/sites/{site_id}/stop:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    post:
+      operationId: stopSite
+      tags: [sites]
+      summary: Stop a running site
+      responses:
+        "202":
+          description: Stop job queued.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/sites/{site_id}/admin-credentials:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    post:
+      operationId: retrieveSiteAdminCredentials
+      tags: [sites]
+      summary: Retrieve the initial WordPress admin credentials (once)
+      description: |
+        Returns the WordPress admin credentials generated when the site was
+        created, then discards the stored password. Later calls return `410`.
+        This is a `POST` because it changes state.
+      responses:
+        "200":
+          description: The initial admin credentials. They can't be retrieved again.
+          headers:
+            Cache-Control:
+              description: Always `no-store`.
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteAdminCredentials"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/Gone"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/jobs:
+    get:
+      operationId: listJobs
+      tags: [jobs]
+      summary: List jobs
+      description: Newest first.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: state
+          in: query
+          description: Only return jobs in this state.
+          schema:
+            $ref: "#/components/schemas/JobState"
+        - name: target_type
+          in: query
+          description: Only return jobs whose target has this type.
+          schema:
+            $ref: "#/components/schemas/JobTargetType"
+        - name: target_id
+          in: query
+          description: Only return jobs for this target.
+          schema:
+            $ref: "#/components/schemas/ID"
+      responses:
+        "200":
+          description: A page of jobs. Step logs are omitted; get a job to see them.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/jobs/{job_id}:
+    parameters:
+      - $ref: "#/components/parameters/JobID"
+    get:
+      operationId: getJob
+      tags: [jobs]
+      summary: Get a job, including its steps and step log
+      responses:
+        "200":
+          description: The job.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: pressfleet_session
+      description: Session cookie set by `POST /api/v1/auth/login`. Used by the dashboard.
+    bearerToken:
+      type: http
+      scheme: bearer
+      description: "An API token created with `POST /api/v1/auth/tokens`, sent as `Authorization: Bearer <token>`."
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      description: Maximum number of items to return.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from a previous page's `next_cursor`.
+      schema:
+        type: string
+        maxLength: 512
+    TokenID:
+      name: token_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/ID"
+    UserID:
+      name: user_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/ID"
+    ClientGroupID:
+      name: client_group_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/ID"
+    SiteID:
+      name: site_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/ID"
+    JobID:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/ID"
+
+  headers:
+    Location:
+      description: URL of the created resource.
+      schema:
+        type: string
+        format: uri-reference
+    JobLocation:
+      description: URL of the queued job (`/api/v1/jobs/{job_id}`).
+      schema:
+        type: string
+        format: uri-reference
+
+  responses:
+    BadRequest:
+      description: The request is malformed (invalid JSON, unknown parameter format, or body too large).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unauthorized:
+      description: Authentication is missing or invalid.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Forbidden:
+      description: The caller's role or token scope doesn't allow this action.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: The resource doesn't exist.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Conflict:
+      description: The request conflicts with the current state (for example, a duplicate name or a job already running for the target).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Gone:
+      description: The resource was available once and has been consumed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    UnprocessableContent:
+      description: The request is well-formed but fails validation. `errors` lists each invalid field.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Error:
+      description: Any other error, including `500` and `501 Not Implemented`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+
+  schemas:
+    ID:
+      type: string
+      description: Opaque, server-assigned identifier.
+      minLength: 1
+      maxLength: 64
+      pattern: "^[A-Za-z0-9_-]+$"
+      examples: ["01J9ZQ3V6T8K4M2N5P7R9S1X3Y"]
+
+    Timestamp:
+      type: string
+      format: date-time
+      examples: ["2026-09-26T17:25:00Z"]
+
+    Problem:
+      type: object
+      description: RFC 9457 Problem Details. Additional members may be added.
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          description: Identifies the problem type. `about:blank` means the HTTP status says it all.
+          default: about:blank
+          examples: ["about:blank"]
+        title:
+          type: string
+          description: Short, human-readable summary of the problem type.
+          examples: ["Not Found"]
+        status:
+          type: integer
+          minimum: 100
+          maximum: 599
+          description: The HTTP status code.
+          examples: [404]
+        detail:
+          type: string
+          description: Human-readable explanation of this occurrence.
+        instance:
+          type: string
+          format: uri-reference
+          description: The request path that produced the problem.
+        request_id:
+          type: string
+          description: The request ID (also in the `X-Request-ID` response header). Include it when reporting issues.
+        errors:
+          type: array
+          description: Validation errors, one per invalid field (`422` only).
+          items:
+            $ref: "#/components/schemas/FieldError"
+
+    FieldError:
+      type: object
+      required: [field, detail]
+      properties:
+        field:
+          type: string
+          description: JSON Pointer (RFC 6901) to the invalid member of the request body, or the parameter name.
+          examples: ["/php_version"]
+        detail:
+          type: string
+          examples: ["must be one of 8.2, 8.3, 8.4"]
+
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+
+    Readiness:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok, unavailable]
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReadinessCheck"
+
+    ReadinessCheck:
+      type: object
+      required: [name, status]
+      properties:
+        name:
+          type: string
+          examples: ["database"]
+        status:
+          type: string
+          enum: [ok, failed]
+        error:
+          type: string
+          description: Why the check failed.
+
+    Role:
+      type: string
+      description: Platform-wide role (design doc §4.6).
+      enum: [admin, operator, viewer]
+
+    Email:
+      type: string
+      format: email
+      maxLength: 254
+
+    Password:
+      type: string
+      format: password
+      writeOnly: true
+      minLength: 12
+      maxLength: 256
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email:
+          $ref: "#/components/schemas/Email"
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 1
+          maxLength: 256
+
+    User:
+      type: object
+      required: [id, email, role, disabled, created_at, updated_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        email:
+          $ref: "#/components/schemas/Email"
+        role:
+          $ref: "#/components/schemas/Role"
+        disabled:
+          type: boolean
+          description: Disabled users can't log in and their tokens are rejected.
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+        last_login_at:
+          description: Null if the user has never logged in.
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+
+    UserCreate:
+      type: object
+      required: [email, password, role]
+      additionalProperties: false
+      properties:
+        email:
+          $ref: "#/components/schemas/Email"
+        password:
+          $ref: "#/components/schemas/Password"
+        role:
+          $ref: "#/components/schemas/Role"
+
+    UserUpdate:
+      type: object
+      description: Only the fields present are changed.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        email:
+          $ref: "#/components/schemas/Email"
+        password:
+          $ref: "#/components/schemas/Password"
+        role:
+          $ref: "#/components/schemas/Role"
+        disabled:
+          type: boolean
+
+    UserList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/User"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+
+    TokenScope:
+      type: string
+      description: |
+        What the token may do, intersected with its owner's current role
+        (design doc §4.6). `full` allows everything the owner's role allows;
+        `read-only` allows only read actions.
+      enum: [full, read-only]
+
+    ApiToken:
+      type: object
+      required: [id, name, scope, prefix, created_at, expires_at, last_used_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        name:
+          type: string
+          description: A label to tell tokens apart.
+          examples: ["CI deploys"]
+        scope:
+          $ref: "#/components/schemas/TokenScope"
+        prefix:
+          type: string
+          description: The first characters of the token, so it can be recognized without revealing it.
+          examples: ["pft_3kq9"]
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        expires_at:
+          description: Null if the token never expires.
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        last_used_at:
+          description: Null if the token has never been used.
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+
+    ApiTokenWithSecret:
+      description: A newly created token, including its plaintext value. Returned only by `createApiToken`.
+      allOf:
+        - $ref: "#/components/schemas/ApiToken"
+        - type: object
+          required: [token]
+          properties:
+            token:
+              type: string
+              description: The plaintext token. Store it now; it can't be retrieved again.
+
+    ApiTokenCreate:
+      type: object
+      required: [name, scope]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        scope:
+          $ref: "#/components/schemas/TokenScope"
+        expires_at:
+          description: When the token stops working. Omit or send null for no expiry.
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+
+    ApiTokenList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiToken"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+
+    ClientGroup:
+      type: object
+      required: [id, name, notes, site_count, created_at, updated_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        name:
+          type: string
+          examples: ["Acme Corp"]
+        notes:
+          type: string
+          description: Free-form notes for the agency. Empty if unset.
+        site_count:
+          type: integer
+          minimum: 0
+          description: Number of sites in the group.
+        backup_repository:
+          description: |
+            The group's backup repository, managed by the platform. Null until
+            the repository has been initialized. Its encryption key is never
+            exposed through the API.
+          oneOf:
+            - $ref: "#/components/schemas/BackupRepository"
+            - type: "null"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    BackupRepository:
+      type: object
+      required: [location]
+      properties:
+        location:
+          type: string
+          description: Where the Restic repository lives (a local path or S3 URL), without credentials.
+          examples: ["s3:https://s3.example.com/pressfleet-backups/01J9ZQ3V6T8K4M2N5P7R9S1X3Y"]
+
+    ClientGroupCreate:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        notes:
+          type: string
+          maxLength: 10000
+
+    ClientGroupUpdate:
+      type: object
+      description: Only the fields present are changed.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        notes:
+          type: string
+          maxLength: 10000
+
+    ClientGroupList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClientGroup"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+
+    SiteStatus:
+      type: string
+      description: |
+        Lifecycle status of a site. `provisioning`, `updating`, and `deleting`
+        mean a job is working on the site; `failed` means the last job failed
+        or the runtime reports the site unhealthy (see `status_message`).
+      enum: [provisioning, running, stopped, updating, deleting, failed]
+
+    PHPVersion:
+      type: string
+      description: A PHP version the platform publishes site images for.
+      pattern: "^[0-9]+\\.[0-9]+$"
+      examples: ["8.4"]
+
+    ResourceLimits:
+      type: object
+      description: Limits for the site as a whole; the platform splits them between the site's containers.
+      required: [cpu, memory_reservation_mb, memory_limit_mb]
+      properties:
+        cpu:
+          type: string
+          description: CPU limit in cores.
+          pattern: "^[0-9]+(\\.[0-9]+)?$"
+          examples: ["1.0"]
+        memory_reservation_mb:
+          type: integer
+          minimum: 32
+          description: Guaranteed memory baseline in MiB.
+          examples: [128]
+        memory_limit_mb:
+          type: integer
+          minimum: 64
+          description: Hard memory limit in MiB, allowing bursts above the reservation. Must be at least `memory_reservation_mb`.
+          examples: [512]
+
+    ResourceLimitsUpdate:
+      type: object
+      description: Partial resource limits. Omitted fields keep their current value, or the platform default when creating a site.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        cpu:
+          type: string
+          pattern: "^[0-9]+(\\.[0-9]+)?$"
+        memory_reservation_mb:
+          type: integer
+          minimum: 32
+        memory_limit_mb:
+          type: integer
+          minimum: 64
+
+    Site:
+      type: object
+      required:
+        - id
+        - client_group_id
+        - name
+        - slug
+        - preview_domain
+        - primary_domain
+        - aliases
+        - php_version
+        - wp_core_version
+        - wp_core_pinned
+        - resources
+        - status
+        - parent_site_id
+        - admin_credentials_available
+        - created_at
+        - updated_at
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        client_group_id:
+          $ref: "#/components/schemas/ID"
+        name:
+          type: string
+          examples: ["Acme marketing site"]
+        slug:
+          type: string
+          description: Unique, URL-safe name assigned at creation. Forms the preview domain.
+          examples: ["acme-marketing"]
+        preview_domain:
+          type: string
+          description: "`<slug>.<preview-base-domain>`; always reachable over HTTPS."
+          examples: ["acme-marketing.preview.agency.example"]
+        primary_domain:
+          description: Null until the site goes live.
+          oneOf:
+            - type: string
+              examples: ["www.acme.example"]
+            - type: "null"
+        aliases:
+          type: array
+          description: Additional domains that redirect to the primary domain.
+          items:
+            type: string
+        php_version:
+          $ref: "#/components/schemas/PHPVersion"
+        wp_core_version:
+          type: string
+          description: WordPress core version of the site's images. Managed by the platform.
+          examples: ["6.9.1"]
+        wp_core_pinned:
+          type: boolean
+          description: Whether the site is pinned to its current core version and skipped by core rollouts.
+        resources:
+          $ref: "#/components/schemas/ResourceLimits"
+        status:
+          $ref: "#/components/schemas/SiteStatus"
+        status_message:
+          type: string
+          description: Details about the status, such as why the site failed.
+        url:
+          type: string
+          format: uri
+          description: The site's current public URL (primary domain if live, else preview domain).
+          examples: ["https://acme-marketing.preview.agency.example"]
+        parent_site_id:
+          description: Reserved for staging clones; always null in the MVP.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        admin_credentials_available:
+          type: boolean
+          description: Whether the initial WordPress admin credentials can still be retrieved.
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    SiteCreate:
+      type: object
+      required: [client_group_id, name, admin_email]
+      additionalProperties: false
+      properties:
+        client_group_id:
+          $ref: "#/components/schemas/ID"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Display name. The slug is derived from it.
+        admin_email:
+          $ref: "#/components/schemas/Email"
+        admin_username:
+          type: string
+          minLength: 1
+          maxLength: 60
+          pattern: "^[A-Za-z0-9_.@-]+$"
+          description: WordPress admin username. Defaults to a generated name.
+        php_version:
+          $ref: "#/components/schemas/PHPVersion"
+        resources:
+          $ref: "#/components/schemas/ResourceLimitsUpdate"
+
+    SiteUpdate:
+      type: object
+      description: Only the fields present are changed.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        php_version:
+          $ref: "#/components/schemas/PHPVersion"
+        resources:
+          $ref: "#/components/schemas/ResourceLimitsUpdate"
+
+    SiteAccepted:
+      type: object
+      required: [site, job]
+      properties:
+        site:
+          $ref: "#/components/schemas/Site"
+        job:
+          $ref: "#/components/schemas/Job"
+
+    SiteAdminCredentials:
+      type: object
+      required: [username, email, password, login_url]
+      properties:
+        username:
+          type: string
+        email:
+          $ref: "#/components/schemas/Email"
+        password:
+          type: string
+          format: password
+          description: The plaintext password. Shown only once.
+        login_url:
+          type: string
+          format: uri
+          examples: ["https://acme-marketing.preview.agency.example/wp-login.php"]
+
+    SiteList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Site"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+
+    JobState:
+      type: string
+      description: "`succeeded` and `failed` are terminal. A failed job has rolled back the resources it created."
+      enum: [queued, running, succeeded, failed]
+
+    JobTargetType:
+      type: string
+      enum: [site, client_group]
+
+    JobTarget:
+      type: object
+      required: [type, id]
+      properties:
+        type:
+          $ref: "#/components/schemas/JobTargetType"
+        id:
+          $ref: "#/components/schemas/ID"
+
+    JobStepState:
+      type: string
+      enum: [pending, running, succeeded, failed, rolled_back]
+
+    JobLogEntry:
+      type: object
+      required: [time, level, message]
+      properties:
+        time:
+          $ref: "#/components/schemas/Timestamp"
+        level:
+          type: string
+          enum: [info, warn, error]
+        message:
+          type: string
+
+    JobStep:
+      type: object
+      required: [name, state, attempts, started_at, finished_at]
+      properties:
+        name:
+          type: string
+          examples: ["create_database"]
+        state:
+          $ref: "#/components/schemas/JobStepState"
+        attempts:
+          type: integer
+          minimum: 0
+        started_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        finished_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        log:
+          type: array
+          description: Omitted from job lists.
+          items:
+            $ref: "#/components/schemas/JobLogEntry"
+
+    Job:
+      type: object
+      required: [id, type, target, state, steps, created_at, updated_at, started_at, finished_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        type:
+          type: string
+          description: What the job does. New types are added over time; treat unknown values as opaque.
+          examples: ["site.create", "site.update", "site.delete", "site.start", "site.stop"]
+        target:
+          $ref: "#/components/schemas/JobTarget"
+        state:
+          $ref: "#/components/schemas/JobState"
+        error:
+          type: string
+          description: Why the job failed. Present only when `state` is `failed`.
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/JobStep"
+        created_by:
+          description: The user who started the job; null for jobs started by the platform.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+        started_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        finished_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+
+    JobAccepted:
+      type: object
+      required: [job]
+      properties:
+        job:
+          $ref: "#/components/schemas/Job"
+
+    JobList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Job"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+
+    NextCursor:
+      description: Pass as `cursor` to get the next page. Null on the last page.
+      oneOf:
+        - type: string
+        - type: "null"

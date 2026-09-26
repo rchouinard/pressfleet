@@ -22,6 +22,11 @@ jobs:
       - uses: ./.github/actions/go-cache
       - name: Check go.mod is tidy
         run: go mod tidy -diff
+      - name: Check generated code is up to date
+        run: |
+          make generate
+          git diff --exit-code
+          test -z "$(git status --porcelain)" || { git status --porcelain; exit 1; }
       - run: make lint
 
   test:
