@@ -228,6 +228,14 @@ func Render(dir string, cfg Config) error {
 	return nil
 }
 
+// MariaDBContainer is the name of the MariaDB container of the platform
+// project called projectName (normally ProjectName). The Compose provisioner
+// connects this container to each site network (§4.1 Networking). Compose v2
+// names containers <project>-<service>-<index>, and MariaDB has one replica.
+func MariaDBContainer(projectName string) string {
+	return projectName + "-mariadb-1"
+}
+
 // Project returns the Compose project for a rendered platform directory.
 func Project(dir string) compose.Project {
 	return compose.Project{Name: ProjectName, Dir: dir}

@@ -56,6 +56,19 @@ func TestCommands(t *testing.T) {
 		{"up wait", func(p compose.Project) error {
 			return p.Up(context.Background(), compose.UpOptions{Wait: true, WaitTimeout: 90 * time.Second})
 		}, []string{"up", "--detach", "--remove-orphans", "--wait", "--wait-timeout", "90"}},
+		{"up force recreate service", func(p compose.Project) error {
+			return p.Up(context.Background(), compose.UpOptions{Wait: true, ForceRecreate: true, Services: []string{"php"}})
+		}, []string{"up", "--detach", "--remove-orphans", "--wait", "--force-recreate", "--", "php"}},
+		{"up no start", func(p compose.Project) error {
+			return p.Up(context.Background(), compose.UpOptions{NoStart: true, Wait: true})
+		}, []string{"up", "--no-start", "--remove-orphans"}},
+		{"start", func(p compose.Project) error { return p.Start(context.Background(), compose.StartOptions{}) },
+			[]string{"start"}},
+		{"start wait", func(p compose.Project) error {
+			return p.Start(context.Background(), compose.StartOptions{Wait: true, WaitTimeout: 100 * time.Millisecond})
+		}, []string{"start", "--wait", "--wait-timeout", "1"}},
+		{"stop", func(p compose.Project) error { return p.Stop(context.Background()) },
+			[]string{"stop"}},
 		{"down", func(p compose.Project) error { return p.Down(context.Background(), compose.DownOptions{}) },
 			[]string{"down", "--remove-orphans"}},
 		{"down volumes", func(p compose.Project) error {

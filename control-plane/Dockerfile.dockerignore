@@ -5,6 +5,9 @@
 !control-plane/
 !templates/
 !api/
+# The site image manifest, embedded for package catalog.
+!images/images.go
+!images/manifest.json
 control-plane/Dockerfile*
 **/testdata/
 **/*_test.go

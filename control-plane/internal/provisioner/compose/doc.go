@@ -10,5 +10,7 @@
 // the same directory.
 //
 // [RenderSite] renders a site's project (compose.yaml and wp-config.php)
-// from templates/compose/site.yaml.tmpl.
+// from templates/compose/site.yaml.tmpl, and [Provisioner] implements
+// provisioner.Provisioner on top of both: it renders and applies each site's
+// project and connects the platform services to the site's network.
 package compose

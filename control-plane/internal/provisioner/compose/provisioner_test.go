@@ -1,0 +1,511 @@
+package compose_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
+	"github.com/rchouinard/pressfleet/control-plane/internal/config"
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
+	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
+	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
+	"github.com/rchouinard/pressfleet/control-plane/internal/sitedb"
+	"github.com/rchouinard/pressfleet/control-plane/internal/store"
+	"github.com/rchouinard/pressfleet/control-plane/internal/wpconfig"
+)
+
+// memSecrets is an in-memory compose.SecretReader.
+type memSecrets map[secrets.Ref]redact.Secret
+
+func (m memSecrets) Get(_ context.Context, ref secrets.Ref) (redact.Secret, error) {
+	s, ok := m[ref]
+	if !ok {
+		return "", fmt.Errorf("get secret %s: %w", ref, store.ErrNotFound)
+	}
+	return s, nil
+}
+
+// imageMap is a compose.ImageResolver keyed by PHP version.
+type imageMap map[string]catalog.Images
+
+func (m imageMap) Images(php, _ string) (catalog.Images, error) {
+	img, ok := m[php]
+	if !ok {
+		return catalog.Images{}, fmt.Errorf("%w: PHP version %q", catalog.ErrInvalidVersion, php)
+	}
+	return img, nil
+}
+
+// siteSecrets stores a site's database credentials and salts in m and
+// returns their references.
+func siteSecrets(t *testing.T, m memSecrets, siteID string, creds sitedb.Credentials) (dbRef, saltsRef string) {
+	t.Helper()
+	db, err := sitedb.MarshalCredentials(creds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	salts, err := wpconfig.MarshalSalts(wpconfig.GenerateSalts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbRef, saltsRef = siteID+"-db", siteID+"-salts"
+	m[secrets.Ref(dbRef)], m[secrets.Ref(saltsRef)] = db, salts
+	return dbRef, saltsRef
+}
+
+const testMariaDB = "pressfleet-mariadb-1"
+
+// fakeDocker simulates the docker CLI calls the provisioner makes, for one
+// site, and records them.
+type fakeDocker struct {
+	t            *testing.T
+	calls        []string // "compose <subcommand> ..." without the project flags, or the plain docker args
+	containers   map[string]compose.Container
+	phpStartedAt time.Time
+	// mariaDBNetworks are the networks the MariaDB container is on; nil
+	// means the container doesn't exist.
+	mariaDBNetworks map[string]bool
+	// fail makes calls whose recorded form starts with the key fail.
+	fail map[string]error
+}
+
+func newFakeDocker(t *testing.T) *fakeDocker {
+	return &fakeDocker{
+		t:               t,
+		containers:      map[string]compose.Container{},
+		mariaDBNetworks: map[string]bool{"pressfleet_platform": true},
+	}
+}
+
+var errNoSuchContainer = &compose.CommandError{Stderr: "Error response from daemon: No such container: x", Err: errors.New("exit status 1")}
+
+func (f *fakeDocker) exec(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+	call := args
+	if args[0] == "compose" {
+		call = append([]string{"compose"}, args[5:]...)
+	}
+	rec := strings.Join(call, " ")
+	f.calls = append(f.calls, rec)
+	for prefix, err := range f.fail {
+		if strings.HasPrefix(rec, prefix) {
+			return nil, err
+		}
+	}
+	switch {
+	case args[0] == "compose":
+		return f.compose(call[1:])
+	case args[0] == "container" && args[1] == "inspect":
+		return f.inspect(args[len(args)-1])
+	case args[0] == "network" && args[1] == "connect":
+		f.mariaDBNetworks[args[len(args)-2]] = true
+		return nil, nil
+	case args[0] == "network" && args[1] == "disconnect":
+		delete(f.mariaDBNetworks, args[2])
+		return nil, nil
+	}
+	f.t.Fatalf("unexpected docker call: %q", args)
+	return nil, nil
+}
+
+func (f *fakeDocker) compose(args []string) ([]byte, error) {
+	set := func(state, health string) {
+		for _, svc := range []string{"php", "nginx"} {
+			f.containers[svc] = compose.Container{Name: "pf-site-" + svc + "-1", Service: svc, State: state, Health: health}
+		}
+	}
+	switch args[0] {
+	case "ps":
+		var out []byte
+		for _, svc := range []string{"php", "nginx"} {
+			if c, ok := f.containers[svc]; ok {
+				b, _ := json.Marshal(c)
+				out = append(append(out, b...), '\n')
+			}
+		}
+		return out, nil
+	case "up":
+		switch {
+		case slices.Contains(args, "--no-start"):
+			set("created", "")
+		case slices.Contains(args, "php") && slices.Contains(args, "--force-recreate"):
+			f.containers["php"] = compose.Container{Name: "pf-site-php-1", Service: "php", State: "running", Health: "healthy"}
+			f.phpStartedAt = time.Now()
+		default:
+			set("running", "healthy")
+			if f.phpStartedAt.IsZero() {
+				f.phpStartedAt = time.Now()
+			}
+		}
+	case "start":
+		set("running", "healthy")
+		f.phpStartedAt = time.Now()
+	case "stop":
+		set("exited", "")
+	case "down":
+		clear(f.containers)
+	default:
+		f.t.Fatalf("unexpected compose call: %q", args)
+	}
+	return nil, nil
+}
+
+func (f *fakeDocker) inspect(name string) ([]byte, error) {
+	var info map[string]any
+	switch {
+	case name == testMariaDB:
+		if f.mariaDBNetworks == nil {
+			return nil, errNoSuchContainer
+		}
+		nets := map[string]any{}
+		for n := range f.mariaDBNetworks {
+			nets[n] = map[string]any{}
+		}
+		info = map[string]any{"State": map[string]any{"Running": true}, "NetworkSettings": map[string]any{"Networks": nets}}
+	case strings.HasSuffix(name, "-php-1"):
+		c, ok := f.containers["php"]
+		if !ok {
+			return nil, errNoSuchContainer
+		}
+		info = map[string]any{
+			"Config": map[string]any{"User": "20042:20042"},
+			"State":  map[string]any{"Running": c.State == "running", "StartedAt": f.phpStartedAt.Format(time.RFC3339Nano)},
+		}
+	default:
+		return nil, errNoSuchContainer
+	}
+	return json.Marshal([]any{info})
+}
+
+// commands returns the recorded calls that change state, dropping reads.
+func (f *fakeDocker) commands() []string {
+	var out []string
+	for _, c := range f.calls {
+		if strings.HasPrefix(c, "compose ps") || strings.HasPrefix(c, "container inspect") {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+type fixture struct {
+	docker *fakeDocker
+	prov   *compose.Provisioner
+	layout config.Layout
+	cfg    *provisioner.SiteConfig
+}
+
+func newFixture(t *testing.T) *fixture {
+	t.Helper()
+	layout := config.Layout{Root: t.TempDir()}
+	if err := layout.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	sec := memSecrets{}
+	dbRef, saltsRef := siteSecrets(t, sec, testSiteID, sitedb.Credentials{Database: "site_db", Username: "site_user", Password: testDBSecret})
+	docker := newFakeDocker(t)
+	prov, err := compose.NewProvisioner(compose.ProvisionerConfig{
+		Layout:  layout,
+		Secrets: sec,
+		Images: imageMap{
+			"8.4": {PHP: "site-php:php8.4-wp7.1.2", Nginx: "site-nginx:wp7.1.2"},
+			"8.3": {PHP: "site-php:php8.3-wp7.1.2", Nginx: "site-nginx:wp7.1.2"},
+		},
+		MariaDBContainer: testMariaDB,
+		Docker:           docker.exec,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := testSiteRender().Site
+	cfg.DBSecretRef, cfg.WPSaltsSecretRef = dbRef, saltsRef
+	return &fixture{docker: docker, prov: prov, layout: layout, cfg: cfg}
+}
+
+func (f *fixture) siteDir(t *testing.T) string {
+	t.Helper()
+	dir, err := f.layout.SiteDir(testSiteID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+var (
+	network  = compose.SiteProjectName(testSiteID)
+	upWait   = "compose up --detach --remove-orphans --wait --wait-timeout 180"
+	connect  = "network connect --alias pf-mariadb " + network + " " + testMariaDB
+	recreate = "compose up --detach --remove-orphans --force-recreate -- php"
+)
+
+func wantCommands(t *testing.T, f *fakeDocker, want ...string) {
+	t.Helper()
+	if got := f.commands(); !slices.Equal(got, want) {
+		t.Errorf("docker commands:\n got %q\nwant %q", got, want)
+	}
+	f.calls = nil
+}
+
+func TestNewProvisionerValidates(t *testing.T) {
+	_, err := compose.NewProvisioner(compose.ProvisionerConfig{Layout: config.Layout{Root: "relative"}, WaitTimeout: -1})
+	if err == nil {
+		t.Fatal("NewProvisioner accepted an empty config")
+	}
+	for _, want := range []string{"absolute", "secret reader", "image resolver", "MariaDB container", "wait timeout"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+func TestCreateSite(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	st, err := f.prov.CreateSite(ctx, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.ID != testSiteID || st.Phase != provisioner.SiteRunning {
+		t.Errorf("status = %+v", st)
+	}
+	wantCommands(t, f.docker, upWait, connect)
+
+	// The resolved secrets and images were rendered.
+	dir := f.siteDir(t)
+	wpConfig, err := os.ReadFile(filepath.Join(dir, compose.SiteWPConfigFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(wpConfig), "'site_user'") || !strings.Contains(string(wpConfig), `db-$ecret\'pw`) {
+		t.Errorf("wp-config.php lacks the database credentials:\n%s", wpConfig)
+	}
+	composeFile, err := os.ReadFile(filepath.Join(dir, compose.SiteComposeFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(composeFile), `"site-php:php8.4-wp7.1.2"`) {
+		t.Errorf("compose.yaml lacks the php image:\n%s", composeFile)
+	}
+
+	// Creating again converges without recreating anything or reconnecting.
+	if _, err := f.prov.CreateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	wantCommands(t, f.docker, upWait)
+}
+
+func TestUpdateSiteRecreatesPHPWhenWPConfigChanges(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if _, err := f.prov.CreateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	f.docker.calls = nil
+
+	// A new image is Compose's to notice: a plain up.
+	f.cfg.PHPVersion = "8.3"
+	if _, err := f.prov.UpdateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	wantCommands(t, f.docker, upWait)
+
+	// A new database password changes only wp-config.php, which Compose
+	// can't see: php is recreated first.
+	sec := memSecrets{}
+	f.cfg.DBSecretRef, f.cfg.WPSaltsSecretRef = siteSecrets(t, sec, testSiteID,
+		sitedb.Credentials{Database: "site_db", Username: "site_user", Password: "new-password"})
+	f.prov = newProvisionerWith(t, f, sec)
+	if _, err := f.prov.UpdateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	wantCommands(t, f.docker, recreate, upWait)
+}
+
+// newProvisionerWith returns a provisioner for f that reads secrets from sec.
+func newProvisionerWith(t *testing.T, f *fixture, sec memSecrets) *compose.Provisioner {
+	t.Helper()
+	p, err := compose.NewProvisioner(compose.ProvisionerConfig{
+		Layout: f.layout, Secrets: sec, MariaDBContainer: testMariaDB, Docker: f.docker.exec,
+		Images: imageMap{"8.4": {PHP: "a", Nginx: "b"}, "8.3": {PHP: "c", Nginx: "d"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestConvergeRecreatesPHPAfterFailedAttempt(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if _, err := f.prov.CreateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	// An earlier attempt rendered a new wp-config.php but failed before
+	// recreating php: the file is newer than the running container.
+	f.docker.phpStartedAt = time.Now().Add(-time.Hour)
+	f.docker.calls = nil
+	if _, err := f.prov.UpdateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	wantCommands(t, f.docker, recreate, upWait)
+}
+
+func TestUpdateSiteKeepsStoppedSiteStopped(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if _, err := f.prov.CreateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.prov.StopSite(ctx, testSiteID); err != nil {
+		t.Fatal(err)
+	}
+	f.docker.calls = nil
+	f.cfg.PHPVersion = "8.3"
+	st, err := f.prov.UpdateSite(ctx, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Phase != provisioner.SiteStopped {
+		t.Errorf("phase = %s, want stopped", st.Phase)
+	}
+	wantCommands(t, f.docker, "compose up --no-start --remove-orphans")
+}
+
+func TestStartStopSite(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if _, err := f.prov.CreateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	f.docker.calls = nil
+	if err := f.prov.StopSite(ctx, testSiteID); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := f.prov.GetSite(ctx, testSiteID); err != nil || st.Phase != provisioner.SiteStopped {
+		t.Fatalf("after stop: %+v, %v", st, err)
+	}
+	// MariaDB was recreated meanwhile and lost the site network.
+	delete(f.docker.mariaDBNetworks, network)
+	if err := f.prov.StartSite(ctx, testSiteID); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := f.prov.GetSite(ctx, testSiteID); err != nil || st.Phase != provisioner.SiteRunning {
+		t.Fatalf("after start: %+v, %v", st, err)
+	}
+	wantCommands(t, f.docker, "compose stop", connect, "compose start --wait --wait-timeout 180")
+}
+
+func TestDeleteSite(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if _, err := f.prov.CreateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	f.docker.calls = nil
+	if err := f.prov.DeleteSite(ctx, testSiteID); err != nil {
+		t.Fatal(err)
+	}
+	wantCommands(t, f.docker, "network disconnect "+network+" "+testMariaDB, "compose down --remove-orphans --volumes")
+	if _, err := os.Stat(f.siteDir(t)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("site directory still exists: %v", err)
+	}
+
+	// Deleting again succeeds and doesn't try to disconnect.
+	if err := f.prov.DeleteSite(ctx, testSiteID); err != nil {
+		t.Fatal(err)
+	}
+	wantCommands(t, f.docker, "compose down --remove-orphans --volumes")
+
+	// So does deleting with MariaDB gone.
+	f.docker.mariaDBNetworks = nil
+	if err := f.prov.DeleteSite(ctx, testSiteID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMissingSite(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	calls := map[string]func() error{
+		"get":    func() error { _, err := f.prov.GetSite(ctx, testSiteID); return err },
+		"update": func() error { _, err := f.prov.UpdateSite(ctx, f.cfg); return err },
+		"start":  func() error { return f.prov.StartSite(ctx, testSiteID) },
+		"stop":   func() error { return f.prov.StopSite(ctx, testSiteID) },
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			if err := call(); !errors.Is(err, provisioner.ErrSiteNotFound) {
+				t.Errorf("err = %v, want ErrSiteNotFound", err)
+			}
+		})
+	}
+	if got := f.docker.commands(); len(got) != 0 {
+		t.Errorf("changed state for a missing site: %q", got)
+	}
+}
+
+func TestCreateSiteErrors(t *testing.T) {
+	tests := []struct {
+		name   string
+		modify func(*fixture)
+		want   error
+	}{
+		{"invalid site ID", func(f *fixture) { f.cfg.ID = "../x" }, compose.ErrInvalidSite},
+		{"invalid config", func(f *fixture) { f.cfg.UID = 0 }, compose.ErrInvalidSite},
+		{"unknown PHP version", func(f *fixture) { f.cfg.PHPVersion = "5.6" }, compose.ErrInvalidSite},
+		{"missing secret", func(f *fixture) { f.cfg.DBSecretRef = "gone" }, store.ErrNotFound},
+		{"salts ref points at credentials", func(f *fixture) { f.cfg.WPSaltsSecretRef = f.cfg.DBSecretRef }, nil},
+		{"MariaDB missing", func(f *fixture) { f.docker.mariaDBNetworks = nil }, compose.ErrSharedServiceUnavailable},
+		{"up fails", func(f *fixture) {
+			f.docker.fail = map[string]error{"compose up": &compose.CommandError{Err: errors.New("exit status 1")}}
+		}, compose.ErrCommandFailed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t)
+			tt.modify(f)
+			_, err := f.prov.CreateSite(context.Background(), f.cfg)
+			if err == nil || (tt.want != nil && !errors.Is(err, tt.want)) {
+				t.Errorf("err = %v, want %v", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestInvalidSiteID(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	for _, id := range []string{"", "../etc", "UPPER", "a b"} {
+		if _, err := f.prov.GetSite(ctx, id); !errors.Is(err, compose.ErrInvalidSite) {
+			t.Errorf("GetSite(%q) = %v", id, err)
+		}
+		if err := f.prov.DeleteSite(ctx, id); !errors.Is(err, compose.ErrInvalidSite) {
+			t.Errorf("DeleteSite(%q) = %v", id, err)
+		}
+	}
+	if len(f.docker.calls) != 0 {
+		t.Errorf("ran docker for invalid IDs: %q", f.docker.calls)
+	}
+}
+
+func TestNotImplemented(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if err := f.prov.SetMaintenance(ctx, testSiteID, true); !errors.Is(err, errors.ErrUnsupported) {
+		t.Errorf("SetMaintenance = %v", err)
+	}
+	if err := f.prov.PurgeCache(ctx, testSiteID); !errors.Is(err, errors.ErrUnsupported) {
+		t.Errorf("PurgeCache = %v", err)
+	}
+}

@@ -85,21 +85,74 @@ type UpOptions struct {
 	Wait bool
 	// WaitTimeout bounds Wait; zero means no limit beyond ctx.
 	WaitTimeout time.Duration
+	// NoStart creates or recreates containers without starting them, so a
+	// stopped project stays stopped. Wait is ignored.
+	NoStart bool
+	// ForceRecreate recreates containers even if their configuration is
+	// unchanged. Compose can't see changes to the content of bind-mounted
+	// files, such as a site's wp-config.php.
+	ForceRecreate bool
+	// Services limits Up to these services; empty means all of them.
+	Services []string
 }
 
 // Up creates or updates the project's containers in the background,
 // recreating only services whose configuration changed. Services no longer
 // in compose.yaml are removed.
 func (p Project) Up(ctx context.Context, opts UpOptions) error {
-	args := []string{"up", "--detach", "--remove-orphans"}
+	args := []string{"up"}
+	if opts.NoStart {
+		args = append(args, "--no-start", "--remove-orphans")
+	} else {
+		args = append(args, "--detach", "--remove-orphans")
+		if opts.Wait {
+			args = append(args, "--wait")
+			if opts.WaitTimeout > 0 {
+				args = append(args, "--wait-timeout", waitSeconds(opts.WaitTimeout))
+			}
+		}
+	}
+	if opts.ForceRecreate {
+		args = append(args, "--force-recreate")
+	}
+	if len(opts.Services) > 0 {
+		args = append(append(args, "--"), opts.Services...)
+	}
+	_, err := p.run(ctx, nil, args...)
+	return err
+}
+
+// StartOptions configures Start.
+type StartOptions struct {
+	// Wait blocks until every service is running and healthy.
+	Wait bool
+	// WaitTimeout bounds Wait; zero means no limit beyond ctx.
+	WaitTimeout time.Duration
+}
+
+// Start starts the project's existing containers.
+func (p Project) Start(ctx context.Context, opts StartOptions) error {
+	args := []string{"start"}
 	if opts.Wait {
 		args = append(args, "--wait")
 		if opts.WaitTimeout > 0 {
-			args = append(args, "--wait-timeout", strconv.Itoa(int(opts.WaitTimeout.Round(time.Second).Seconds())))
+			args = append(args, "--wait-timeout", waitSeconds(opts.WaitTimeout))
 		}
 	}
 	_, err := p.run(ctx, nil, args...)
 	return err
+}
+
+// Stop stops the project's containers without removing them.
+func (p Project) Stop(ctx context.Context) error {
+	_, err := p.run(ctx, nil, "stop")
+	return err
+}
+
+// waitSeconds formats a wait timeout for Compose, which takes whole seconds
+// and reads 0 as no limit, so a positive timeout never rounds down to 0.
+func waitSeconds(d time.Duration) string {
+	return strconv.Itoa(max(1, int(d.Round(time.Second).Seconds())))
 }
 
 // DownOptions configures Down.

@@ -101,6 +101,9 @@ func TestPlatformUp(t *testing.T) {
 				t.Fatalf("service %s is %s: %+v", c.Service, c.State, containers)
 			}
 		}
+		if db.Name != "" && db.Name != platform.MariaDBContainer(cfg.ProjectName) {
+			t.Fatalf("MariaDB container is %s, want %s", db.Name, platform.MariaDBContainer(cfg.ProjectName))
+		}
 		if db.Health == "healthy" && cp.State == "running" {
 			cpHealth = cp.Health
 			break
