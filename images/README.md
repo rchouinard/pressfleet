@@ -179,6 +179,8 @@ Both image health checks run every 30 s with a 5 s timeout and 3 retries; Compos
 
 `wp` is at `/usr/local/bin/wp` in the php container, and the working directory and WP-CLI config (`WP_CLI_CONFIG_PATH=/etc/wp-cli/config.yml`) point at `/var/www/wordpress`, so `docker exec <php> wp <command>` works without `--path`. Run it as the site UID (the container's default user when started with `user:`). WP-CLI's cache and packages directories are under `/tmp`. `open_basedir` applies only to requests served by FPM, not to WP-CLI.
 
+The Compose driver runs WP-CLI as `timeout --kill-after=10s <n>s /usr/local/bin/wp <args>` (`Provisioner.ExecWPCLI`), because killing a `docker exec` client does not stop the process it started. The image must therefore provide GNU coreutils `timeout` on `PATH`.
+
 ### Logs
 
 Everything goes to the container's stdout/stderr (§7.4):

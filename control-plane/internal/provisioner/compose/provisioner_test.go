@@ -77,6 +77,12 @@ type fakeDocker struct {
 	mariaDBNetworks map[string]bool
 	// fail makes calls whose recorded form starts with the key fail.
 	fail map[string]error
+	// phpUser is the php container's configured user.
+	phpUser string
+	// exec is what `compose exec` returns; execArgs records its arguments.
+	execOut  []byte
+	execErr  error
+	execArgs []string
 }
 
 func newFakeDocker(t *testing.T) *fakeDocker {
@@ -84,6 +90,7 @@ func newFakeDocker(t *testing.T) *fakeDocker {
 		t:               t,
 		containers:      map[string]compose.Container{},
 		mariaDBNetworks: map[string]bool{"pressfleet_platform": true},
+		phpUser:         "20042:20042",
 	}
 }
 
@@ -151,6 +158,9 @@ func (f *fakeDocker) compose(args []string) ([]byte, error) {
 		f.phpStartedAt = time.Now()
 	case "stop":
 		set("exited", "")
+	case "exec":
+		f.execArgs = args
+		return f.execOut, f.execErr
 	case "down":
 		clear(f.containers)
 	default:
@@ -177,7 +187,7 @@ func (f *fakeDocker) inspect(name string) ([]byte, error) {
 			return nil, errNoSuchContainer
 		}
 		info = map[string]any{
-			"Config": map[string]any{"User": "20042:20042"},
+			"Config": map[string]any{"User": f.phpUser},
 			"State":  map[string]any{"Running": c.State == "running", "StartedAt": f.phpStartedAt.Format(time.RFC3339Nano)},
 		}
 	default:
@@ -257,11 +267,11 @@ func wantCommands(t *testing.T, f *fakeDocker, want ...string) {
 }
 
 func TestNewProvisionerValidates(t *testing.T) {
-	_, err := compose.NewProvisioner(compose.ProvisionerConfig{Layout: config.Layout{Root: "relative"}, WaitTimeout: -1})
+	_, err := compose.NewProvisioner(compose.ProvisionerConfig{Layout: config.Layout{Root: "relative"}, WaitTimeout: -1, WPCLIMaxOutput: -1})
 	if err == nil {
 		t.Fatal("NewProvisioner accepted an empty config")
 	}
-	for _, want := range []string{"absolute", "secret reader", "image resolver", "MariaDB container", "wait timeout"} {
+	for _, want := range []string{"absolute", "secret reader", "image resolver", "MariaDB container", "timeouts", "output limit"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}

@@ -70,6 +70,12 @@ type ProvisionerConfig struct {
 	// WaitTimeout bounds how long starting a site waits for its containers
 	// to become healthy; zero means DefaultWaitTimeout.
 	WaitTimeout time.Duration
+	// WPCLITimeout bounds each ExecWPCLI call, in addition to its context;
+	// zero means DefaultWPCLITimeout.
+	WPCLITimeout time.Duration
+	// WPCLIMaxOutput is the most standard output ExecWPCLI keeps, in bytes;
+	// zero means DefaultWPCLIMaxOutput.
+	WPCLIMaxOutput int
 }
 
 // Provisioner is the Compose implementation of provisioner.Provisioner. Each
@@ -88,6 +94,10 @@ type Provisioner struct {
 	docker      ExecFunc
 	log         *slog.Logger
 	waitTimeout time.Duration
+
+	wpcliDocker    ExecFunc // docker, but with bounded output
+	wpcliTimeout   time.Duration
+	wpcliMaxOutput int
 }
 
 // sharedService is a platform container that joins every site network under
@@ -112,23 +122,36 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 	if cfg.MariaDBContainer == "" {
 		errs = append(errs, errors.New("the MariaDB container name is required"))
 	}
-	if cfg.WaitTimeout < 0 {
-		errs = append(errs, errors.New("wait timeout must not be negative"))
+	if cfg.WaitTimeout < 0 || cfg.WPCLITimeout < 0 {
+		errs = append(errs, errors.New("timeouts must not be negative"))
+	}
+	if cfg.WPCLIMaxOutput < 0 {
+		errs = append(errs, errors.New("WP-CLI output limit must not be negative"))
 	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, fmt.Errorf("compose provisioner: %w", err)
 	}
 	p := &Provisioner{
-		layout:      cfg.Layout,
-		secrets:     cfg.Secrets,
-		images:      cfg.Images,
-		shared:      []sharedService{{container: cfg.MariaDBContainer, alias: MariaDBAlias}},
-		docker:      cfg.Docker,
-		log:         cfg.Logger,
-		waitTimeout: cfg.WaitTimeout,
+		layout:         cfg.Layout,
+		secrets:        cfg.Secrets,
+		images:         cfg.Images,
+		shared:         []sharedService{{container: cfg.MariaDBContainer, alias: MariaDBAlias}},
+		docker:         cfg.Docker,
+		log:            cfg.Logger,
+		waitTimeout:    cfg.WaitTimeout,
+		wpcliDocker:    cfg.Docker,
+		wpcliTimeout:   cfg.WPCLITimeout,
+		wpcliMaxOutput: cfg.WPCLIMaxOutput,
+	}
+	if p.wpcliTimeout == 0 {
+		p.wpcliTimeout = DefaultWPCLITimeout
+	}
+	if p.wpcliMaxOutput == 0 {
+		p.wpcliMaxOutput = DefaultWPCLIMaxOutput
 	}
 	if p.docker == nil {
 		p.docker = DockerExec
+		p.wpcliDocker = DockerExecLimited(p.wpcliMaxOutput, wpcliMaxStderr)
 	}
 	if p.log == nil {
 		p.log = slog.New(slog.DiscardHandler)
@@ -371,11 +394,6 @@ func (p *Provisioner) SetMaintenance(context.Context, string, bool) error {
 // PurgeCache is not implemented yet (#41).
 func (p *Provisioner) PurgeCache(context.Context, string) error {
 	return fmt.Errorf("purge cache: %w", ErrNotImplemented)
-}
-
-// ExecWPCLI is not implemented yet (#26).
-func (p *Provisioner) ExecWPCLI(context.Context, string, []string) (string, error) {
-	return "", fmt.Errorf("exec wp-cli: %w", ErrNotImplemented)
 }
 
 // project returns the site's Compose project. Its directory may not exist;

@@ -2,8 +2,11 @@ package compose_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -281,8 +284,9 @@ func TestProvisionerLifecycle(t *testing.T) {
 	if got := s.exec(t, ctx, "php", "cat", "/sys/fs/cgroup/memory.max"); got != strconv.Itoa(448*1024*1024) {
 		t.Errorf("php memory.max = %s after lowering the site limit to 512 MiB while stopped", got)
 	}
-	if got := s.exec(t, ctx, "php", "wp", "option", "get", "blogname"); got != "Lifecycle" {
-		t.Errorf("after update while stopped, blogname = %q", got)
+	// WP-CLI through the provisioner reaches the installed site.
+	if out, err := s.prov.ExecWPCLI(ctx, siteID, []string{"option", "get", "blogname"}); err != nil || out != "Lifecycle\n" {
+		t.Errorf("ExecWPCLI option get blogname = %q, %v", out, err)
 	}
 
 	// Delete removes everything, and deleting again succeeds.
@@ -310,5 +314,106 @@ func TestProvisionerLifecycle(t *testing.T) {
 	}
 	if err := s.prov.StartSite(ctx, siteID); !errors.Is(err, provisioner.ErrSiteNotFound) {
 		t.Errorf("StartSite after delete = %v, want ErrSiteNotFound", err)
+	}
+}
+
+// TestExecWPCLIDocker runs WP-CLI through the provisioner against a real
+// site: as the site UID, with hostile arguments reaching it verbatim, with
+// structured errors, bounded output, and a timeout that also ends the
+// process inside the container.
+func TestExecWPCLIDocker(t *testing.T) {
+	s := newDockerSite(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	siteID := s.cfg.ID
+	if _, err := s.prov.CreateSite(ctx, s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	wp := func(args ...string) string {
+		t.Helper()
+		out, err := s.prov.ExecWPCLI(ctx, siteID, args)
+		if err != nil {
+			t.Fatalf("wp %q: %v", args, err)
+		}
+		return out
+	}
+
+	// It runs as the site UID.
+	if got := wp("eval", "--skip-wordpress", "echo posix_geteuid(), ':', posix_getegid();"); got != fmt.Sprintf("%d:%d", s.cfg.UID, s.cfg.UID) {
+		t.Errorf("wp runs as %q, want the site UID %d", got, s.cfg.UID)
+	}
+
+	// Arguments arrive as WP-CLI's argv, unchanged. The PHP file prints
+	// the process's argv after the file name, as JSON.
+	s.exec(t, ctx, "php", "sh", "-c", `printf '%s' "$1" > /tmp/argv.php`, "sh",
+		`<?php echo json_encode( array_slice( $_SERVER['argv'], array_search( '/tmp/argv.php', $_SERVER['argv'], true ) + 1 ) );`)
+	raw := wp(append([]string{"eval-file", "--skip-wordpress", "/tmp/argv.php"}, hostileArgs...)...)
+	var got []string
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("argv output %q: %v", raw, err)
+	}
+	if !slices.Equal(got, hostileArgs) {
+		t.Errorf("wp saw argv\n %q\nwant\n %q", got, hostileArgs)
+	}
+	if _, err := s.project.Exec(ctx, "php", "test", "-e", "/tmp/pwned"); err == nil {
+		t.Error("an argument was executed by a shell")
+	}
+
+	// A non-zero exit is an *ExecError with the exit code and stderr.
+	_, err := s.prov.ExecWPCLI(ctx, siteID, []string{"eval", "--skip-wordpress", "echo 'out'; fwrite( STDERR, 'boom' ); exit( 3 );"})
+	var ee *provisioner.ExecError
+	if !errors.As(err, &ee) {
+		t.Fatalf("err = %v, want *provisioner.ExecError", err)
+	}
+	if ee.ExitCode != 3 || ee.Stdout != "out" || !strings.Contains(ee.Stderr, "boom") {
+		t.Errorf("ExecError = %+v", ee)
+	}
+
+	// Output beyond the limit is dropped and reported; stderr keeps its end.
+	small, err := compose.NewProvisioner(compose.ProvisionerConfig{
+		Layout: s.layout, Secrets: s.secrets, Images: imageMap{}, MariaDBContainer: s.dbName, WPCLIMaxOutput: 1000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := small.ExecWPCLI(ctx, siteID, []string{"eval", "--skip-wordpress", "echo str_repeat( 'x', 1 << 20 );"})
+	if !errors.Is(err, compose.ErrOutputTruncated) || out != strings.Repeat("x", 1000) {
+		t.Errorf("ExecWPCLI = %d bytes, %v; want 1000 bytes and ErrOutputTruncated", len(out), err)
+	}
+	_, err = small.ExecWPCLI(ctx, siteID, []string{"eval", "--skip-wordpress",
+		"fwrite( STDERR, str_repeat( 'n', 1 << 20 ) . 'the end' ); exit( 1 );"})
+	if !errors.As(err, &ee) || !strings.HasSuffix(ee.Stderr, "the end") || len(ee.Stderr) > 70<<10 {
+		t.Errorf("large stderr: %d bytes, ending %q, err %v", len(ee.Stderr), ee.Stderr[max(0, len(ee.Stderr)-20):], err)
+	}
+
+	// The deadline ends the call, and timeout(1) ends WP-CLI in the
+	// container shortly after.
+	short, cancelShort := context.WithTimeout(ctx, 2*time.Second)
+	defer cancelShort()
+	start := time.Now()
+	_, err = s.prov.ExecWPCLI(short, siteID, []string{"eval", "--skip-wordpress", "sleep( 120 ); // pf-timeout-test"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("err = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed := time.Since(start); elapsed > 15*time.Second {
+		t.Errorf("ExecWPCLI returned %s after its deadline", elapsed)
+	}
+	for deadline := time.Now().Add(20 * time.Second); ; {
+		procs := s.exec(t, ctx, "php", "sh", "-c", `cat /proc/[0-9]*/cmdline | tr '\0' ' '`)
+		if !strings.Contains(procs, "pf-timeout-test") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("WP-CLI still running in the container after the timeout: %s", procs)
+		}
+		time.Sleep(time.Second)
+	}
+
+	// A stopped site can't run WP-CLI.
+	if err := s.prov.StopSite(ctx, siteID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.prov.ExecWPCLI(ctx, siteID, []string{"--info"}); !errors.Is(err, compose.ErrSiteNotRunning) {
+		t.Errorf("on a stopped site: %v, want ErrSiteNotRunning", err)
 	}
 }
