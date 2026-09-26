@@ -1,0 +1,21 @@
+name: Go cache
+description: Cache the Go module and build caches. Run after Go is installed.
+
+runs:
+  using: composite
+  steps:
+    - name: Locate Go caches
+      id: paths
+      shell: bash
+      run: |
+        echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+        echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+        echo "goversion=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@v6
+      with:
+        path: |
+          ${{ steps.paths.outputs.gomodcache }}
+          ${{ steps.paths.outputs.gocache }}
+        key: go-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-${{ github.job }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          go-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-${{ github.job }}-
