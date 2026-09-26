@@ -1,0 +1,32 @@
+# Build output
+/bin/
+/dist/
+/pressfleet
+
+# Go
+*.test
+*.out
+coverage.*
+go.work
+go.work.sum
+
+# UI (Nuxt)
+/ui/node_modules/
+/ui/.nuxt/
+/ui/.output/
+/ui/.data/
+/ui/dist/
+
+# Local configuration and runtime data
+.env
+.env.*
+!.env.example
+/data/
+*.key
+
+# Editors / OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+.DS_Store
