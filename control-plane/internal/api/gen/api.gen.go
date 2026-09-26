@@ -56,10 +56,12 @@ func (e JobLogEntryLevel) Valid() bool {
 
 // Defines values for JobState.
 const (
-	JobStateFailed    JobState = "failed"
-	JobStateQueued    JobState = "queued"
-	JobStateRunning   JobState = "running"
-	JobStateSucceeded JobState = "succeeded"
+	JobStateFailed         JobState = "failed"
+	JobStateQueued         JobState = "queued"
+	JobStateRollbackFailed JobState = "rollback_failed"
+	JobStateRollingBack    JobState = "rolling_back"
+	JobStateRunning        JobState = "running"
+	JobStateSucceeded      JobState = "succeeded"
 )
 
 // Valid indicates whether the value is a known member of the JobState enum.
@@ -68,6 +70,10 @@ func (e JobState) Valid() bool {
 	case JobStateFailed:
 		return true
 	case JobStateQueued:
+		return true
+	case JobStateRollbackFailed:
+		return true
+	case JobStateRollingBack:
 		return true
 	case JobStateRunning:
 		return true
@@ -80,11 +86,12 @@ func (e JobState) Valid() bool {
 
 // Defines values for JobStepState.
 const (
-	JobStepStateFailed     JobStepState = "failed"
-	JobStepStatePending    JobStepState = "pending"
-	JobStepStateRolledBack JobStepState = "rolled_back"
-	JobStepStateRunning    JobStepState = "running"
-	JobStepStateSucceeded  JobStepState = "succeeded"
+	JobStepStateFailed         JobStepState = "failed"
+	JobStepStatePending        JobStepState = "pending"
+	JobStepStateRollbackFailed JobStepState = "rollback_failed"
+	JobStepStateRolledBack     JobStepState = "rolled_back"
+	JobStepStateRunning        JobStepState = "running"
+	JobStepStateSucceeded      JobStepState = "succeeded"
 )
 
 // Valid indicates whether the value is a known member of the JobStepState enum.
@@ -93,6 +100,8 @@ func (e JobStepState) Valid() bool {
 	case JobStepStateFailed:
 		return true
 	case JobStepStatePending:
+		return true
+	case JobStepStateRollbackFailed:
 		return true
 	case JobStepStateRolledBack:
 		return true
@@ -400,23 +409,37 @@ type ID = string
 
 // Job defines model for Job.
 type Job struct {
+	// Attempts Attempts in the current phase. A job gets `max_attempts` attempts, then its rollback gets as many again.
+	Attempts int `json:"attempts"`
+
 	// CreatedAt Examples: 2026-09-26T17:25:00Z
 	CreatedAt Timestamp `json:"created_at"`
 
 	// CreatedBy The user who started the job; null for jobs started by the platform.
 	CreatedBy *ID `json:"created_by,omitempty"`
 
-	// Error Why the job failed. Present only when `state` is `failed`.
+	// Error The most recent error. Present when the job failed, or is waiting to retry after an error.
 	Error      *string    `json:"error,omitempty"`
 	FinishedAt *Timestamp `json:"finished_at"`
 
 	// ID Opaque, server-assigned identifier.
 	//
 	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
-	ID        ID         `json:"id"`
-	StartedAt *Timestamp `json:"started_at"`
+	ID          ID  `json:"id"`
+	MaxAttempts int `json:"max_attempts"`
 
-	// State `succeeded` and `failed` are terminal. A failed job has rolled back the resources it created.
+	// Result Outputs of the job, such as the IDs of what it created. Contents depend on the job type.
+	// Secret outputs appear as `{"secret_ref": "..."}` and are retrieved through the endpoint for that secret.
+	Result    map[string]interface{} `json:"result"`
+	StartedAt *Timestamp             `json:"started_at"`
+
+	// State * `queued`: waiting for a worker, for the first time or to retry after an error (`error` says which).
+	// * `running`: a worker is running the job's steps.
+	// * `rolling_back`: the job failed for good and is undoing the steps it started.
+	// * `succeeded`: every step completed. Terminal.
+	// * `failed`: the job failed and rolled back the resources it created. Terminal.
+	// * `rollback_failed`: the job failed and rolling back failed too, so
+	//   resources may be left behind; the step errors say where. Terminal.
 	State  JobState  `json:"state"`
 	Steps  []JobStep `json:"steps"`
 	Target JobTarget `json:"target"`
@@ -455,7 +478,13 @@ type JobLogEntry struct {
 // JobLogEntryLevel defines model for JobLogEntry.Level.
 type JobLogEntryLevel string
 
-// JobState `succeeded` and `failed` are terminal. A failed job has rolled back the resources it created.
+// JobState * `queued`: waiting for a worker, for the first time or to retry after an error (`error` says which).
+//   - `running`: a worker is running the job's steps.
+//   - `rolling_back`: the job failed for good and is undoing the steps it started.
+//   - `succeeded`: every step completed. Terminal.
+//   - `failed`: the job failed and rolled back the resources it created. Terminal.
+//   - `rollback_failed`: the job failed and rolling back failed too, so
+//     resources may be left behind; the step errors say where. Terminal.
 type JobState string
 
 // JobStep defines model for JobStep.
@@ -467,12 +496,14 @@ type JobStep struct {
 	Log *[]JobLogEntry `json:"log,omitempty"`
 
 	// Name Examples: create_database
-	Name      string       `json:"name"`
-	StartedAt *Timestamp   `json:"started_at"`
-	State     JobStepState `json:"state"`
+	Name      string     `json:"name"`
+	StartedAt *Timestamp `json:"started_at"`
+
+	// State `failed` means the step's last attempt failed; it may be retried.
+	State JobStepState `json:"state"`
 }
 
-// JobStepState defines model for JobStepState.
+// JobStepState `failed` means the step's last attempt failed; it may be retried.
 type JobStepState string
 
 // JobTarget defines model for JobTarget.

@@ -14,6 +14,8 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
+	"github.com/rchouinard/pressfleet/control-plane/internal/store"
+	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
 )
 
 // problem is the decoded Problem Details body.
@@ -166,7 +168,7 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 		t.Fatal(err)
 	}
 	auth := &fakeAuth{}
-	h := newHandler(t, api.Options{Authenticator: auth})
+	h := newHandler(t, api.Options{Authenticator: auth, DB: storetest.Open(t, store.SQLite)})
 	for _, op := range ops {
 		t.Run(op.ID, func(t *testing.T) {
 			req := request{method: op.Method, target: samplePath(op.Path), body: sampleBodies[op.ID]}
@@ -199,9 +201,13 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 			req.authed = true
 			w = do(t, h, req)
 			switch op.ID {
-			case "getHealth", "getReadiness":
+			case "getHealth", "getReadiness", "listJobs":
 				if w.Code != http.StatusOK {
 					t.Errorf("status = %d, want 200; body: %s", w.Code, w.Body)
+				}
+			case "getJob":
+				if w.Code != http.StatusNotFound {
+					t.Errorf("status = %d, want 404; body: %s", w.Code, w.Body)
 				}
 			default:
 				if w.Code != http.StatusNotImplemented {

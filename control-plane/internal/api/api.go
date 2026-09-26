@@ -35,6 +35,7 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
+	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
 
 // Authenticator identifies the caller of an operation that requires
@@ -56,12 +57,16 @@ type Options struct {
 	// requests reach handlers unauthenticated; this is only acceptable until
 	// #13 lands, and NewHandler logs a warning.
 	Authenticator Authenticator
+	// DB is the state database. Handlers that need it fail with a 500
+	// without it.
+	DB *store.DB
 }
 
 // Handlers implements every API operation.
 type Handlers struct {
 	log       *slog.Logger
 	readiness *httpserver.Readiness
+	db        *store.DB
 }
 
 var _ gen.StrictServerInterface = (*Handlers)(nil)
@@ -86,7 +91,7 @@ func NewHandler(opts Options) (http.Handler, error) {
 		opts.Logger.Warn("API authentication is not configured; protected operations are open")
 	}
 
-	h := &Handlers{log: opts.Logger, readiness: opts.Readiness}
+	h := &Handlers{log: opts.Logger, readiness: opts.Readiness, db: opts.DB}
 	strict := gen.NewStrictHandlerWithOptions(h, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  requestErrorHandler(opts.Logger),
 		ResponseErrorHandlerFunc: responseErrorHandler(opts.Logger),

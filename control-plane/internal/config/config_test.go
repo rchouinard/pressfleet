@@ -66,6 +66,7 @@ func TestLoadPrecedence(t *testing.T) {
 		Listen:   ":9999",                                          // env overrides file
 		Log:      config.LogConfig{Level: "debug", Format: "json"}, // file and env
 		Database: config.DatabaseConfig{Driver: "sqlite"},          // default
+		Jobs:     config.JobsConfig{Concurrency: 4},                // default
 	}
 	if cfg != want {
 		t.Errorf("Load() = %+v, want %+v", cfg, want)
@@ -214,6 +215,28 @@ func TestDatabaseSettings(t *testing.T) {
 	cfg.Database.SQLitePath = ""
 	if got := cfg.SQLitePath(); got != "/srv/pf/state/pressfleet.db" {
 		t.Errorf("default SQLitePath() = %q", got)
+	}
+}
+
+func TestJobsSettings(t *testing.T) {
+	path := writeFile(t, "jobs:\n  concurrency: 8\n")
+	cfg, err := config.Load(path, env(nil))
+	if err != nil || cfg.Jobs.Concurrency != 8 {
+		t.Fatalf("from file: %d, %v", cfg.Jobs.Concurrency, err)
+	}
+	cfg, err = config.Load(path, env(map[string]string{"PRESSFLEET_JOBS_CONCURRENCY": "2"}))
+	if err != nil || cfg.Jobs.Concurrency != 2 {
+		t.Fatalf("from env: %d, %v", cfg.Jobs.Concurrency, err)
+	}
+	if _, err := config.Load(path, env(map[string]string{"PRESSFLEET_JOBS_CONCURRENCY": "many"})); err == nil {
+		t.Error("non-numeric PRESSFLEET_JOBS_CONCURRENCY accepted")
+	}
+	for _, n := range []int{0, config.MaxJobsConcurrency + 1} {
+		cfg := config.Default()
+		cfg.Jobs.Concurrency = n
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "jobs.concurrency") {
+			t.Errorf("concurrency %d: Validate() = %v", n, err)
+		}
 	}
 }
 

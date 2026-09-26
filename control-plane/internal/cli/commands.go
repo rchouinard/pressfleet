@@ -1,15 +1,19 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"runtime/debug"
 	"strconv"
+	"sync"
 
 	"github.com/spf13/cobra"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
+	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
+	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
 )
 
 // envSkipPreflight is the environment equivalent of serve's --skip-preflight
@@ -53,17 +57,35 @@ func (a *app) serveCommand() *cobra.Command {
 				return err
 			}
 
-			// Components register readiness checks here; job workers (#14)
-			// will start alongside the server.
+			// Components register readiness checks here.
 			readiness := &httpserver.Readiness{}
 			readiness.Register("state_database", db.Ping)
-			handler, err := api.NewHandler(api.Options{Logger: a.log, Readiness: readiness})
+			handler, err := api.NewHandler(api.Options{Logger: a.log, Readiness: readiness, DB: db})
 			if err != nil {
 				return err
 			}
+
+			// Job workers run alongside the server and
+			// stop with it; the pool gives running steps a grace period.
+			// Job handlers are registered on the pool as workflows land.
+			pool := jobs.NewPool(db, jobs.Options{
+				Concurrency: a.cfg.Jobs.Concurrency,
+				Logger:      a.log.With("component", "jobs"),
+				Secrets:     secrets.NewStore(db, keys),
+			})
+			workersCtx, stopWorkers := context.WithCancel(cmd.Context())
+			defer stopWorkers()
+			var workers sync.WaitGroup
+			workers.Go(func() { _ = pool.Run(workersCtx) })
+
 			srv := httpserver.New(httpserver.Options{Addr: a.cfg.Listen, Handler: handler, Logger: a.log})
-			if err := srv.Run(cmd.Context()); err != nil {
-				return err
+			srvErr := srv.Run(cmd.Context())
+			// Stop the workers too if the server failed on its own, and wait
+			// for them so the database isn't closed under running steps.
+			stopWorkers()
+			workers.Wait()
+			if srvErr != nil {
+				return srvErr
 			}
 
 			a.log.Info("pressfleet stopped")

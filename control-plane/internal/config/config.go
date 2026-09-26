@@ -14,6 +14,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -55,7 +56,19 @@ type Config struct {
 	// environment, so it never ends up in a config file; it wins over
 	// MasterKeyFile.
 	MasterKey redact.Secret `yaml:"-"`
+	// Jobs configures the background job workers.
+	Jobs JobsConfig `yaml:"jobs"`
 }
+
+// JobsConfig configures the background job workers (§5).
+type JobsConfig struct {
+	// Concurrency is how many jobs run at once.
+	Concurrency int `yaml:"concurrency"`
+}
+
+// MaxJobsConcurrency bounds jobs.concurrency. Jobs mostly wait on Docker
+// and databases, but each one holds resources on a single host.
+const MaxJobsConcurrency = 64
 
 // LogConfig configures logging.
 type LogConfig struct {
@@ -86,6 +99,7 @@ func Default() Config {
 		Listen:   ":8080",
 		Log:      LogConfig{Level: "info", Format: logging.FormatText},
 		Database: DatabaseConfig{Driver: DriverSQLite},
+		Jobs:     JobsConfig{Concurrency: 4},
 	}
 }
 
@@ -141,6 +155,13 @@ func Load(path string, env LookupEnv) (Config, error) {
 		if val, ok := env(v.name); ok {
 			*v.field(&cfg) = val
 		}
+	}
+	if val, ok := env("PRESSFLEET_JOBS_CONCURRENCY"); ok {
+		n, err := strconv.Atoi(val)
+		if err != nil {
+			return Config{}, fmt.Errorf("PRESSFLEET_JOBS_CONCURRENCY must be a whole number, got %q", val)
+		}
+		cfg.Jobs.Concurrency = n
 	}
 	return cfg, nil
 }
@@ -200,6 +221,9 @@ func (c Config) Validate() error {
 	}
 	if c.MasterKeyFile != "" && !filepath.IsAbs(c.MasterKeyFile) {
 		errs = append(errs, fmt.Errorf("master_key_file must be an absolute path, got %q", c.MasterKeyFile))
+	}
+	if c.Jobs.Concurrency < 1 || c.Jobs.Concurrency > MaxJobsConcurrency {
+		errs = append(errs, fmt.Errorf("jobs.concurrency must be between 1 and %d, got %d", MaxJobsConcurrency, c.Jobs.Concurrency))
 	}
 	return errors.Join(errs...)
 }

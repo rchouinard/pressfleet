@@ -33,6 +33,8 @@ database:
   # sqlite_path: /var/lib/pressfleet/state/pressfleet.db
   # postgres_dsn: postgres://pressfleet:secret@db.example:5432/pressfleet
 master_key_file: /etc/pressfleet/master.key   # outside data_dir
+jobs:
+  concurrency: 4
 ```
 
 ## Settings
@@ -51,6 +53,7 @@ master_key_file: /etc/pressfleet/master.key   # outside data_dir
 | `database.postgres_dsn` | `PRESSFLEET_DATABASE_POSTGRES_DSN` | | | PostgreSQL connection string (URL or `key=value`). Required when the driver is `postgres`. Treated as a secret: it is never logged. |
 | `master_key_file` | `PRESSFLEET_MASTER_KEY_FILE` | | (unset) | File holding the platform master key. Must be an absolute path outside `data_dir`. See [Master key](#master-key). |
 | (environment only) | `PRESSFLEET_MASTER_KEY` | | (unset) | The platform master key itself. Takes precedence over `master_key_file`. It can't be set in the config file. |
+| `jobs.concurrency` | `PRESSFLEET_JOBS_CONCURRENCY` | | `4` | How many background jobs (provisioning, backups, WP-Cron runs) run at once, from 1 to 64. Jobs that change the same site always run one at a time. |
 
 ## Master key
 

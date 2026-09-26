@@ -160,7 +160,7 @@ func TestServeStartsAndStops(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dataDir, "state", "pressfleet.db")); err != nil {
 		t.Errorf("state database not created: %v", err)
 	}
-	for _, want := range []string{`"msg":"pressfleet starting"`, `"listen":"127.0.0.1:0"`, `"msg":"state database ready"`, `"msg":"http server stopped"`, `"msg":"pressfleet stopped"`} {
+	for _, want := range []string{`"msg":"pressfleet starting"`, `"listen":"127.0.0.1:0"`, `"msg":"state database ready"`, `"msg":"http server stopped"`, `"msg":"job workers started"`, `"msg":"job workers stopped"`, `"msg":"pressfleet stopped"`} {
 		if !strings.Contains(r.stderr, want) {
 			t.Errorf("log output missing %s:\n%s", want, r.stderr)
 		}

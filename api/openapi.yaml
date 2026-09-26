@@ -17,7 +17,8 @@ info:
       Timestamps are RFC 3339 strings in UTC.
     * Long-running operations return `202 Accepted` with the queued job in the
       body and its URL in the `Location` header. Poll `GET /api/v1/jobs/{job_id}`
-      until the job reaches a terminal state (`succeeded` or `failed`).
+      until the job reaches a terminal state (`succeeded`, `failed`, or
+      `rollback_failed`).
     * Every error response is an RFC 9457 Problem Details document
       (`application/problem+json`) that carries the request ID.
     * List endpoints use cursor pagination: pass `limit` and, for later pages,
@@ -1500,8 +1501,15 @@ components:
 
     JobState:
       type: string
-      description: "`succeeded` and `failed` are terminal. A failed job has rolled back the resources it created."
-      enum: [queued, running, succeeded, failed]
+      description: |
+        * `queued`: waiting for a worker, for the first time or to retry after an error (`error` says which).
+        * `running`: a worker is running the job's steps.
+        * `rolling_back`: the job failed for good and is undoing the steps it started.
+        * `succeeded`: every step completed. Terminal.
+        * `failed`: the job failed and rolled back the resources it created. Terminal.
+        * `rollback_failed`: the job failed and rolling back failed too, so
+          resources may be left behind; the step errors say where. Terminal.
+      enum: [queued, running, rolling_back, succeeded, failed, rollback_failed]
 
     JobTargetType:
       type: string
@@ -1518,7 +1526,8 @@ components:
 
     JobStepState:
       type: string
-      enum: [pending, running, succeeded, failed, rolled_back]
+      description: "`failed` means the step's last attempt failed; it may be retried."
+      enum: [pending, running, succeeded, failed, rolled_back, rollback_failed]
 
     JobLogEntry:
       type: object
@@ -1560,7 +1569,7 @@ components:
 
     Job:
       type: object
-      required: [id, type, target, state, steps, created_at, updated_at, started_at, finished_at]
+      required: [id, type, target, state, attempts, max_attempts, result, steps, created_at, updated_at, started_at, finished_at]
       properties:
         id:
           $ref: "#/components/schemas/ID"
@@ -1574,7 +1583,20 @@ components:
           $ref: "#/components/schemas/JobState"
         error:
           type: string
-          description: Why the job failed. Present only when `state` is `failed`.
+          description: The most recent error. Present when the job failed, or is waiting to retry after an error.
+        attempts:
+          type: integer
+          minimum: 0
+          description: Attempts in the current phase. A job gets `max_attempts` attempts, then its rollback gets as many again.
+        max_attempts:
+          type: integer
+          minimum: 1
+        result:
+          type: object
+          additionalProperties: true
+          description: |
+            Outputs of the job, such as the IDs of what it created. Contents depend on the job type.
+            Secret outputs appear as `{"secret_ref": "..."}` and are retrieved through the endpoint for that secret.
         steps:
           type: array
           items:
