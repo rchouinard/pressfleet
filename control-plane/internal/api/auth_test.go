@@ -67,6 +67,9 @@ func newAuthEnv(t *testing.T, opts api.Options) *authEnv {
 	if opts.DB == nil {
 		opts.DB = storetest.Open(t, store.SQLite)
 	}
+	if opts.Sites == nil {
+		opts.Sites = newSiteEnv(t, opts.DB, testPreviewBase).svc
+	}
 	svc, clk := newAuthServiceOn(opts.DB)
 	u, err := svc.CreateUser(context.Background(), auth.NewUser{Email: "admin@example.com", Password: testPassword, Role: store.RoleAdmin})
 	if err != nil {

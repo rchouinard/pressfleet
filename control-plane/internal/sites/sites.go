@@ -36,6 +36,22 @@
 // sees what happened where they started it; DELETE removes it, and that job
 // finds nothing else left to remove.
 //
+// # Deletion
+//
+// [Service.Delete] sets the status to deleting and enqueues a
+// [DeleteJobType] job, whose steps remove the stack with its network,
+// volumes, and rendered files (provisioner.DeleteSite), the database, its
+// user and credentials (sitedb.Manager.DropDatabase), the salts and admin
+// password secrets, and finally the site row with its schedules. Each step
+// succeeds when there is nothing left to remove, so a retried or repeated
+// deletion converges. Deletion can't be rolled back: a job that gives up
+// marks the site failed, and deleting it again queues a new job.
+//
+// All site jobs share the lock key "site:<id>", so a deletion requested
+// while provisioning runs waits for it. Provisioning checks the status
+// before its expensive steps and gives up (rolling back) once it sees the
+// site is being deleted, and it never overwrites the deleting status.
+//
 // # Slugs
 //
 // A slug is derived from the site name ([Slugify]) and made unique with a
@@ -476,7 +492,7 @@ func (s *Service) TakeAdminCredentials(ctx context.Context, siteID string) (Admi
 // Handlers returns the job handlers of the site workflows, to register on
 // the job pool.
 func (s *Service) Handlers() []jobs.Handler {
-	return []jobs.Handler{s.createHandler()}
+	return []jobs.Handler{s.createHandler(), s.deleteHandler()}
 }
 
 // SharedServiceAttacher reconnects the platform services to a site's

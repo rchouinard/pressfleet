@@ -28,6 +28,7 @@ const testPreviewBase = "preview.example.test"
 // implementedSiteOps are the site operations that no longer answer 501.
 var implementedSiteOps = map[string]bool{
 	"createSite":                   true,
+	"deleteSite":                   true,
 	"getSite":                      true,
 	"retrieveSiteAdminCredentials": true,
 }
@@ -211,6 +212,39 @@ func TestSitesEndpoints(t *testing.T) {
 		}
 		if p := decodeProblem(t, w); !strings.Contains(p.Detail, "preview_base_domain") {
 			t.Errorf("detail = %q", p.Detail)
+		}
+
+		// Delete: 202 with the job; asking again returns the same job.
+		target := "/api/v1/sites/" + site.ID
+		w = do(t, h, request{authed: true, method: http.MethodDelete, target: target})
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("delete: %d %s", w.Code, w.Body)
+		}
+		del := decodeJSON[gen.JobAccepted](t, w.Body.Bytes()).Job
+		if del.Type != sites.DeleteJobType || del.Target.ID != site.ID || w.Header().Get("Location") != "/api/v1/jobs/"+del.ID {
+			t.Errorf("delete = %s (Location %q)", w.Body, w.Header().Get("Location"))
+		}
+		w = do(t, h, request{authed: true, method: http.MethodGet, target: target})
+		if got := decodeJSON[gen.Site](t, w.Body.Bytes()); got.Status != gen.SiteStatusDeleting {
+			t.Errorf("status while deleting: %s", w.Body)
+		}
+		w = do(t, h, request{authed: true, method: http.MethodDelete, target: target})
+		if w.Code != http.StatusAccepted || decodeJSON[gen.JobAccepted](t, w.Body.Bytes()).Job.ID != del.ID {
+			t.Errorf("delete again: %d %s", w.Code, w.Body)
+		}
+		e.runJobs(t)
+		if w := do(t, h, request{authed: true, method: http.MethodGet, target: target}); w.Code != http.StatusNotFound {
+			t.Errorf("get after delete: %d %s", w.Code, w.Body)
+		}
+		if w := do(t, h, request{authed: true, method: http.MethodDelete, target: target}); w.Code != http.StatusNotFound {
+			t.Errorf("delete a deleted site: %d %s", w.Code, w.Body)
+		}
+		if _, ok := e.prov.Site(site.ID); ok {
+			t.Error("the stack survived deletion")
+		}
+		// The client group can go now that its site has.
+		if w := do(t, h, request{authed: true, method: http.MethodDelete, target: "/api/v1/client-groups/" + group.ID}); w.Code != http.StatusNoContent {
+			t.Errorf("delete the emptied group: %d %s", w.Code, w.Body)
 		}
 	})
 }

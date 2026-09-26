@@ -87,12 +87,29 @@ func (h *Handlers) UpdateSite(ctx context.Context, req gen.UpdateSiteRequestObje
 	return nil, notImplemented(28)
 }
 
-// DeleteSite queues the site deletion job.
+// DeleteSite queues the site deletion job, or returns the one already
+// queued.
 func (h *Handlers) DeleteSite(ctx context.Context, req gen.DeleteSiteRequestObject) (gen.DeleteSiteResponseObject, error) {
-	if _, err := h.authorize(ctx, authz.DeleteSite, authz.Site(req.SiteID)); err != nil {
+	p, err := h.authorize(ctx, authz.DeleteSite, authz.Site(req.SiteID))
+	if err != nil {
 		return nil, err
 	}
-	return nil, notImplemented(29)
+	if h.sites == nil {
+		return nil, errNoSites
+	}
+	job, err := h.sites.Delete(ctx, req.SiteID, p.UserID)
+	if err != nil {
+		return nil, siteError(err)
+	}
+	j, err := jobResponse(job, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	location := jobLocation(job)
+	return gen.DeleteSite202JSONResponse{
+		Body:    gen.JobAccepted{Job: j},
+		Headers: gen.DeleteSite202ResponseHeaders{Location: &location},
+	}, nil
 }
 
 // StartSite queues a job that starts a stopped site.

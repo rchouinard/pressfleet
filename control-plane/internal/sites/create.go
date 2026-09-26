@@ -75,13 +75,7 @@ func (s *Service) prepareCreate(ctx context.Context, r *jobs.Run) error {
 // unless another request has changed its status meanwhile (a deletion).
 func (s *Service) failProvisioning(ctx context.Context, r *jobs.Run) error {
 	siteID := r.Job().TargetID
-	msg := "provisioning failed"
-	if e := r.Job().Error; e != "" {
-		msg += ": " + e
-	}
-	if len(msg) > maxStatusMessage {
-		msg = msg[:maxStatusMessage-3] + "..."
-	}
+	msg := statusMessage("provisioning failed", r.Job().Error)
 	err := s.db.InTx(ctx, func(q store.Querier) error {
 		sites := store.NewSites(q)
 		site, err := sites.Get(ctx, siteID)
@@ -179,6 +173,9 @@ func (s *Service) startStack(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
+	if err := abortIfDeleting(site); err != nil {
+		return err
+	}
 	ref, err := s.dbSecretRef(ctx, r)
 	if err != nil {
 		return err
@@ -210,6 +207,9 @@ func (s *Service) deleteStack(ctx context.Context, r *jobs.Run) error {
 func (s *Service) installWordPress(ctx context.Context, r *jobs.Run) error {
 	site, err := s.jobSite(ctx, r)
 	if err != nil {
+		return err
+	}
+	if err := abortIfDeleting(site); err != nil {
 		return err
 	}
 	_, err = s.prov.ExecWPCLI(ctx, site.ID, []string{"core", "is-installed"})
