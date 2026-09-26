@@ -1,0 +1,2 @@
+# Global WP-CLI configuration (WP_CLI_CONFIG_PATH).
+path: /var/www/wordpress
