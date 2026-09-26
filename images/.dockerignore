@@ -1,3 +1,6 @@
 **/README.md
+*.go
+manifest.json
+matrix.sh
 test.sh
-versions.env
+update-manifest.sh

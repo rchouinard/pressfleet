@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test for the site images (issues #17, #18).
 #
-#   images/test.sh [php-version ...]     default: every version in versions.env
+#   images/test.sh [php-version ...]     default: every PHP version images/matrix.sh builds
 #
 # Builds site-nginx and site-php, then for each PHP version starts MariaDB and
 # both site containers on a throwaway network (read-only root filesystems, no
@@ -12,17 +12,20 @@
 #
 # Environment:
 #   SKIP_BUILD=1     use existing images instead of building
-#   IMAGE_REPO       image repository (default ghcr.io/rchouinard/pressfleet)
+#   IMAGE_REPO       image repository (default: "registry" from manifest.json)
+#   WP_VERSION       WordPress version to test (default: the manifest's latest;
+#                    must be in the manifest, e.g. a pinned version)
 #   SITE_UID=10001   UID:GID the site containers run as
 #   MARIADB_IMAGE    database image (default mariadb:11.8)
 #   VERBOSE=1        print the tail of the site container logs
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source=versions.env
-. "$here/versions.env"
+matrix="$here/matrix.sh"
+WP_VERSION="${WP_VERSION:-$("$matrix" latest-wp)}"
+WP_SHA1="$("$matrix" sha1 "$WP_VERSION")"
 
-registry="${IMAGE_REPO:-ghcr.io/rchouinard/pressfleet}"
+registry="${IMAGE_REPO:-$("$matrix" registry)}"
 site_uid="${SITE_UID:-10001}"
 mariadb_image="${MARIADB_IMAGE:-mariadb:11.8}"
 run_id="pf-imgtest-$$"
@@ -32,7 +35,8 @@ nginx_image="$registry/site-nginx:wp$WP_VERSION"
 if [ $# -gt 0 ]; then
 	versions=("$@")
 else
-	read -ra versions <<<"$PHP_VERSIONS"
+	mapfile -t versions < <("$matrix" php)
+	[ "${#versions[@]}" -gt 0 ] || exit 1
 fi
 
 tmp="$(mktemp -d)"

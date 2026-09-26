@@ -1,0 +1,99 @@
+name: Image updates
+
+# Checks php.net and wordpress.org for new WordPress releases and PHP branch
+# support changes (images/update-manifest.sh) and proposes the new
+# images/manifest.json as a pull request on the automation/image-manifest
+# branch. Merging it triggers the Images workflow, which builds and pushes the
+# new site images. The weekly rebuild of the current matrix lives in the Images
+# workflow's schedule.
+#
+# Repository settings:
+#   - Settings > Actions > General > "Allow GitHub Actions to create and
+#     approve pull requests" must be enabled for the pull request. Without it,
+#     the job opens (or updates) an issue with the proposed change instead.
+#   - Pull requests opened with the default GITHUB_TOKEN do not trigger other
+#     workflows, so CI and the smoke test do not run on them until someone
+#     pushes to the branch (or closes and reopens the PR). To have them run
+#     automatically, add a fine-grained token or GitHub App token with
+#     contents, pull requests, and issues write access as the
+#     IMAGE_UPDATE_TOKEN secret; it is used instead of GITHUB_TOKEN when set.
+
+on:
+  schedule:
+    - cron: "41 5 * * *" # daily 05:41 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-updates
+  cancel-in-progress: false
+
+jobs:
+  manifest:
+    name: Update version manifest
+    if: github.repository == 'rchouinard/pressfleet'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the automation branch
+      pull-requests: write
+      issues: write # fallback when a pull request can't be created
+    env:
+      BRANCH: automation/image-manifest
+      TITLE: Update site image version manifest
+      GH_TOKEN: ${{ secrets.IMAGE_UPDATE_TOKEN || github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          token: ${{ secrets.IMAGE_UPDATE_TOKEN || github.token }}
+      - id: update
+        name: Check upstream versions
+        run: |
+          images/update-manifest.sh >"$RUNNER_TEMP/summary.md"
+          if git diff --quiet -- images/manifest.json; then
+            echo "changed=false" >>"$GITHUB_OUTPUT"
+            echo "Manifest is up to date." >>"$GITHUB_STEP_SUMMARY"
+          else
+            echo "changed=true" >>"$GITHUB_OUTPUT"
+            cat "$RUNNER_TEMP/summary.md" >>"$GITHUB_STEP_SUMMARY"
+          fi
+      - if: steps.update.outputs.changed == 'true'
+        name: Propose the change
+        run: |
+          body="$RUNNER_TEMP/body.md"
+          {
+            echo "Automated update of \`images/manifest.json\` by the [Image updates workflow]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+            echo
+            cat "$RUNNER_TEMP/summary.md"
+            echo
+            echo "Merging builds and pushes the new site images (Images workflow). Sources: php.net/releases/branches.php, api.wordpress.org/core/version-check/1.7/."
+          } >"$body"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          printf '%s\n\n' "$TITLE" | cat - "$RUNNER_TEMP/summary.md" | git commit -q -F - -- images/manifest.json
+          # The branch always holds one commit on top of the current main.
+          git push --force origin "$BRANCH"
+
+          pr="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$pr" ]; then
+            gh pr edit "$pr" --title "$TITLE" --body-file "$body"
+            echo "Updated pull request #$pr" >>"$GITHUB_STEP_SUMMARY"
+          elif gh pr create --base main --head "$BRANCH" --title "$TITLE" --body-file "$body"; then
+            echo "Opened a pull request" >>"$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::Could not open a pull request (is \"Allow GitHub Actions to create and approve pull requests\" enabled?). Opening an issue instead."
+            {
+              echo
+              echo "Opening a pull request failed. Enable Settings > Actions > General > \"Allow GitHub Actions to create and approve pull requests\", or open one from the \`$BRANCH\` branch by hand."
+            } >>"$body"
+            issue="$(gh issue list --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number // empty')"
+            if [ -n "$issue" ]; then
+              gh issue edit "$issue" --body-file "$body"
+            else
+              gh issue create --title "$TITLE" --body-file "$body"
+            fi
+          fi

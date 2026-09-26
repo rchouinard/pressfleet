@@ -7,7 +7,7 @@
 #
 # Verification is two-step:
 #   1. The release tarball's SHA-1 must match. The expected value is the
-#      WP_SHA1 build arg when given (pinned in images/versions.env); otherwise
+#      WP_SHA1 build arg when given (pinned in images/manifest.json); otherwise
 #      it is fetched from wordpress.org over HTTPS.
 #   2. Every extracted file must match the per-file MD5 published by the
 #      WordPress checksums API, and no file may be missing.

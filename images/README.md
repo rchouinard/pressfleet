@@ -9,14 +9,48 @@ Container images for site stacks (design doc §4.1, §5.5):
 
 `<PHP>` is a PHP minor branch (`8.4`), `<WP>` a full WordPress release (`7.1.2`). A site's two containers must always use the same `<WP>`.
 
+## Version manifest
+
+[`manifest.json`](manifest.json) is the single source of truth for which site images exist. The Makefile, [`test.sh`](test.sh), the CI workflows, and the control plane (package `control-plane/internal/catalog`, which embeds it through [`images.go`](images.go)) all read it; shell users go through [`matrix.sh`](matrix.sh).
+
+```json
+{
+  "registry": "ghcr.io/rchouinard/pressfleet",
+  "php": [
+    { "version": "8.4", "activeSupportEnds": "2026-12-31", "securitySupportEnds": "2028-12-31" }
+  ],
+  "wordpress": {
+    "latest": { "version": "7.1.2", "sha1": "<SHA-1 of wordpress-7.1.2.tar.gz>" },
+    "pinned": [ { "version": "7.0.6", "sha1": "..." } ]
+  }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `registry` | Repository prefix of the site images |
+| `php[]` | PHP branches with php.net's support dates (the last day of active and of security support). A branch is built through its `securitySupportEnds` date. Branches past it stay listed, so the control plane can report sites on them as end of life, but are no longer built; remove them by hand once no site uses them. |
+| `wordpress.latest` | The newest WordPress release and the SHA-1 of its tarball (`wordpress.org/wordpress-<WP>.tar.gz.sha1`) |
+| `wordpress.pinned[]` | Older releases to keep rebuilding for every supported PHP branch because sites are pinned to them (§5.5). Images of versions not listed here stay published but stop receiving rebuilds. |
+
+The build matrix is every WordPress version (latest and pinned) times every PHP branch that is not past end of life, plus one `site-nginx` per WordPress version. Image digests are not in the manifest: the weekly rebuild moves tags to new digests, and the control plane resolves digests from the registry when it checks for image updates (#58).
+
+The scheduled [Image updates workflow](../.github/workflows/image-updates.yml) runs [`update-manifest.sh`](update-manifest.sh) daily and opens a pull request when php.net or wordpress.org report changes. Merging it publishes the new images.
+
+## Publishing
+
+The [Images workflow](../.github/workflows/images.yml) builds every image for linux/amd64. Pull requests build without pushing (site images only when `images/` changes, plus the smoke test for the latest WordPress on the newest and oldest PHP branch). Pushes to `main`, `v*` tags, a weekly schedule (uncached, for base image patches), and manual runs on `main` push to GHCR. The control plane image is tagged `sha-<7-char commit>` from `main` and with the tag name (e.g. `v1.2.3`) from releases, matching the version the binary embeds.
+
 ## Building and testing
 
-The build context for both images is this `images/` directory (shared files live in [`shared/`](shared)). The versions built by default are in [`versions.env`](versions.env).
+The build context for both images is this `images/` directory (shared files live in [`shared/`](shared)). The Makefile and `test.sh` need `jq`.
 
 ```sh
-make images         # build site-nginx and site-php for every PHP version in versions.env
-make images-test    # build, then run the smoke test (test.sh) for every PHP version
-images/test.sh 8.5  # smoke test a single PHP version; SKIP_BUILD=1 reuses existing images
+make images                    # build the whole matrix from manifest.json
+make images-test               # build, then smoke test (test.sh) every PHP branch on the latest WordPress
+images/test.sh 8.5             # smoke test a single PHP version; SKIP_BUILD=1 reuses existing images
+WP_VERSION=7.0.6 images/test.sh  # test a pinned WordPress version from the manifest
+images/matrix.sh php           # the PHP branches being built
 ```
 
 Build args:

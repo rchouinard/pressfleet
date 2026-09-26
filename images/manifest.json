@@ -1,0 +1,32 @@
+{
+  "registry": "ghcr.io/rchouinard/pressfleet",
+  "php": [
+    {
+      "version": "8.5",
+      "activeSupportEnds": "2027-12-31",
+      "securitySupportEnds": "2029-12-31"
+    },
+    {
+      "version": "8.4",
+      "activeSupportEnds": "2026-12-31",
+      "securitySupportEnds": "2028-12-31"
+    },
+    {
+      "version": "8.3",
+      "activeSupportEnds": "2025-12-31",
+      "securitySupportEnds": "2027-12-31"
+    },
+    {
+      "version": "8.2",
+      "activeSupportEnds": "2024-12-31",
+      "securitySupportEnds": "2026-12-31"
+    }
+  ],
+  "wordpress": {
+    "latest": {
+      "version": "7.1.2",
+      "sha1": "761b8101538f0631a0bfc4fba7bc4abeea92f81c"
+    },
+    "pinned": []
+  }
+}

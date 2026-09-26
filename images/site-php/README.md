@@ -11,7 +11,7 @@ docker build -f images/site-php/Dockerfile \
 ## Base and PHP versions
 
 - Base: the official `php:<PHP>-fpm-trixie` image (Debian 13).
-- Supported branches (php.net, checked 2026-09-26): **8.2** (security fixes until 2026-12-31), **8.3** (security, until 2027-12-31), **8.4** and **8.5** (active). The list lives in [../versions.env](../versions.env).
+- Supported branches (php.net, checked 2026-09-26): **8.2** (security fixes until 2026-12-31), **8.3** (security, until 2027-12-31), **8.4** and **8.5** (active). The list and dates live in [../manifest.json](../manifest.json).
 
 ## PHP extensions
 

@@ -48,16 +48,19 @@ fmt: ## Format Go code
 tidy: ## Tidy go.mod/go.sum
 	go mod tidy
 
-IMAGE_REPO ?= ghcr.io/rchouinard/pressfleet
+IMAGE_REPO ?= $(shell images/matrix.sh registry)
 
 .PHONY: images
-images: ## Build the site images (versions from images/versions.env)
-	@set -e; . images/versions.env; \
-	docker build -f images/site-nginx/Dockerfile -t $(IMAGE_REPO)/site-nginx:wp$$WP_VERSION \
-		--build-arg WP_VERSION=$$WP_VERSION --build-arg WP_SHA1=$$WP_SHA1 images; \
-	for v in $$PHP_VERSIONS; do \
-		docker build -f images/site-php/Dockerfile -t $(IMAGE_REPO)/site-php:php$$v-wp$$WP_VERSION \
-			--build-arg PHP_VERSION=$$v --build-arg WP_VERSION=$$WP_VERSION --build-arg WP_SHA1=$$WP_SHA1 images; \
+images: ## Build the site image matrix from images/manifest.json (needs jq)
+	@set -e; php="$$(images/matrix.sh php)"; wps="$$(images/matrix.sh wp)"; \
+	for wp in $$wps; do \
+		sha1="$$(images/matrix.sh sha1 $$wp)"; \
+		docker build -f images/site-nginx/Dockerfile -t $(IMAGE_REPO)/site-nginx:wp$$wp \
+			--build-arg WP_VERSION=$$wp --build-arg WP_SHA1=$$sha1 images; \
+		for v in $$php; do \
+			docker build -f images/site-php/Dockerfile -t $(IMAGE_REPO)/site-php:php$$v-wp$$wp \
+				--build-arg PHP_VERSION=$$v --build-arg WP_VERSION=$$wp --build-arg WP_SHA1=$$sha1 images; \
+		done; \
 	done
 
 .PHONY: images-test
