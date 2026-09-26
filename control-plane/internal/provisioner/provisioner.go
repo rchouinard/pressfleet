@@ -23,6 +23,19 @@ const (
 	DefaultMemoryLimitMB       = 512
 )
 
+// Site UIDs (§6: each site runs as its own non-root UID). Every site gets a
+// unique UID from this range, used as both UID and GID of its containers,
+// and never reused after the site is deleted (store.AllocateSiteUID). The
+// range starts far above the IDs hosts give system accounts (below 1000) and
+// their first local users (from 1000), and ends below 65534 (nobody) and the
+// subordinate ID ranges user namespaces use (from 100000). Its 40,000 UIDs
+// are far more sites than one installation will create, deleted ones
+// included.
+const (
+	MinSiteUID = 20000
+	MaxSiteUID = 59999
+)
+
 // SiteConfig describes the desired runtime state of a site. It is expressed
 // as data and must stay free of orchestrator-specific fields (§4.2).
 type SiteConfig struct {
@@ -36,6 +49,13 @@ type SiteConfig struct {
 	EnableCache   bool
 	Resources     ResourceLimits
 	DBSecretRef   string // reference to stored credentials, never the plaintext password
+	// UID is the site's UID and GID, in [MinSiteUID, MaxSiteUID]. Every site
+	// component runs as it (§5.6, §6); it maps to runAsUser/runAsGroup on
+	// Kubernetes.
+	UID int
+	// WPSaltsSecretRef references the site's WordPress keys and salts, stored
+	// in the format of wpconfig.MarshalSalts.
+	WPSaltsSecretRef string
 	// RedisSecretRef references the site's Redis ACL credentials. Empty until
 	// the shared Redis service exists (M2).
 	RedisSecretRef string
@@ -51,11 +71,15 @@ func (c *SiteConfig) Validate() error {
 		{"PHPVersion", c.PHPVersion},
 		{"WPCoreVersion", c.WPCoreVersion},
 		{"DBSecretRef", c.DBSecretRef},
+		{"WPSaltsSecretRef", c.WPSaltsSecretRef},
 	}
 	for _, f := range required {
 		if f.value == "" {
 			errs = append(errs, fmt.Errorf("%s is required", f.name))
 		}
+	}
+	if c.UID < MinSiteUID || c.UID > MaxSiteUID {
+		errs = append(errs, fmt.Errorf("UID %d is outside the site UID range %d-%d", c.UID, MinSiteUID, MaxSiteUID))
 	}
 	if err := c.Resources.Validate(); err != nil {
 		errs = append(errs, err)

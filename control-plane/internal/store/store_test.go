@@ -181,13 +181,15 @@ func TestSchemaConstraints(t *testing.T) {
 		if err := store.NewClientGroups(db).Create(ctx, g); err != nil {
 			t.Fatal(err)
 		}
+		uid := 20000
 		insertSite := func(slug, groupID string, parent any) (string, error) {
 			siteID := id.New()
 			now := time.Now()
+			uid++
 			_, err := db.ExecContext(ctx, `INSERT INTO sites
-				(id, client_group_id, parent_site_id, name, slug, status, preview_domain, php_version, wp_core_version, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, 'provisioning', ?, '8.4', '6.9.1', ?, ?)`,
-				siteID, groupID, parent, slug, slug, slug+".preview.example", now, now)
+				(id, client_group_id, parent_site_id, name, slug, status, preview_domain, php_version, wp_core_version, uid, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, 'provisioning', ?, '8.4', '6.9.1', ?, ?, ?)`,
+				siteID, groupID, parent, slug, slug, slug+".preview.example", uid, now, now)
 			return siteID, err
 		}
 

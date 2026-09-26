@@ -14,13 +14,15 @@ import (
 
 func config(id string) *provisioner.SiteConfig {
 	return &provisioner.SiteConfig{
-		ID:            id,
-		ClientGroupID: "group1",
-		PreviewDomain: id + ".preview.example.com",
-		PHPVersion:    "8.4",
-		WPCoreVersion: "6.9.1",
-		DBSecretRef:   "secret/db/" + id,
-		Resources:     provisioner.DefaultResourceLimits(),
+		ID:               id,
+		ClientGroupID:    "group1",
+		PreviewDomain:    id + ".preview.example.com",
+		PHPVersion:       "8.4",
+		WPCoreVersion:    "6.9.1",
+		DBSecretRef:      "secret/db/" + id,
+		Resources:        provisioner.DefaultResourceLimits(),
+		UID:              provisioner.MinSiteUID,
+		WPSaltsSecretRef: "secret/salts/" + id,
 	}
 }
 

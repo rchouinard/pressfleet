@@ -87,8 +87,8 @@ func TestClientGroups(t *testing.T) {
 		// A group with sites can't be deleted.
 		now := time.Now()
 		if _, err := db.ExecContext(ctx, `INSERT INTO sites
-			(id, client_group_id, name, slug, status, preview_domain, php_version, wp_core_version, created_at, updated_at)
-			VALUES (?, ?, 'Site', 'site', 'running', 'site.preview.example', '8.4', '6.9.1', ?, ?)`,
+			(id, client_group_id, name, slug, status, preview_domain, php_version, wp_core_version, uid, created_at, updated_at)
+			VALUES (?, ?, 'Site', 'site', 'running', 'site.preview.example', '8.4', '6.9.1', 20000, ?, ?)`,
 			id.New(), beta.ID, now, now); err != nil {
 			t.Fatal(err)
 		}

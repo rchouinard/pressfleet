@@ -9,13 +9,15 @@ import (
 
 func validConfig() provisioner.SiteConfig {
 	return provisioner.SiteConfig{
-		ID:            "site1",
-		ClientGroupID: "group1",
-		PreviewDomain: "site1.preview.example.com",
-		PHPVersion:    "8.4",
-		WPCoreVersion: "6.9.1",
-		DBSecretRef:   "secret/db/site1",
-		Resources:     provisioner.DefaultResourceLimits(),
+		ID:               "site1",
+		ClientGroupID:    "group1",
+		PreviewDomain:    "site1.preview.example.com",
+		PHPVersion:       "8.4",
+		WPCoreVersion:    "6.9.1",
+		DBSecretRef:      "secret/db/site1",
+		Resources:        provisioner.DefaultResourceLimits(),
+		UID:              provisioner.MinSiteUID,
+		WPSaltsSecretRef: "secret/salts/site1",
 	}
 }
 
@@ -30,6 +32,30 @@ func TestSiteConfigValidate(t *testing.T) {
 			name:    "missing required fields",
 			mutate:  func(c *provisioner.SiteConfig) { c.ClientGroupID, c.PHPVersion = "", "" },
 			wantErr: []string{"ClientGroupID is required", "PHPVersion is required"},
+		},
+		{
+			name:    "missing salts",
+			mutate:  func(c *provisioner.SiteConfig) { c.WPSaltsSecretRef = "" },
+			wantErr: []string{"WPSaltsSecretRef is required"},
+		},
+		{
+			name:    "UID unset",
+			mutate:  func(c *provisioner.SiteConfig) { c.UID = 0 },
+			wantErr: []string{"UID 0 is outside the site UID range"},
+		},
+		{
+			name:    "UID below range",
+			mutate:  func(c *provisioner.SiteConfig) { c.UID = provisioner.MinSiteUID - 1 },
+			wantErr: []string{"outside the site UID range"},
+		},
+		{
+			name:    "UID above range",
+			mutate:  func(c *provisioner.SiteConfig) { c.UID = provisioner.MaxSiteUID + 1 },
+			wantErr: []string{"outside the site UID range"},
+		},
+		{
+			name:   "UID at top of range",
+			mutate: func(c *provisioner.SiteConfig) { c.UID = provisioner.MaxSiteUID },
 		},
 		{
 			name:    "limit below reservation",
