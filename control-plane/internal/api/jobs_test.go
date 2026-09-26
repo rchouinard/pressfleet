@@ -60,10 +60,10 @@ func TestJobsEndpoints(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		h := newHandler(t, api.Options{DB: db})
+		h := newHandler(t, api.Options{DB: db, Authenticator: &fakeAuth{}})
 
 		// Get: steps with their logs.
-		w := do(t, h, request{method: http.MethodGet, target: "/api/v1/jobs/" + failed.ID})
+		w := do(t, h, request{authed: true, method: http.MethodGet, target: "/api/v1/jobs/" + failed.ID})
 		if w.Code != http.StatusOK {
 			t.Fatalf("get: %d %s", w.Code, w.Body)
 		}
@@ -79,7 +79,7 @@ func TestJobsEndpoints(t *testing.T) {
 			(*j.Steps[1].Log)[0].Level != gen.JobLogEntryLevelError {
 			t.Errorf("steps = %s", w.Body)
 		}
-		if w := do(t, h, request{method: http.MethodGet, target: "/api/v1/jobs/" + id.New()}); w.Code != http.StatusNotFound {
+		if w := do(t, h, request{authed: true, method: http.MethodGet, target: "/api/v1/jobs/" + id.New()}); w.Code != http.StatusNotFound {
 			t.Errorf("get missing: %d %s", w.Code, w.Body)
 		}
 
@@ -87,7 +87,7 @@ func TestJobsEndpoints(t *testing.T) {
 		var got []string
 		target := "/api/v1/jobs?limit=2"
 		for page := 0; ; page++ {
-			w := do(t, h, request{method: http.MethodGet, target: target})
+			w := do(t, h, request{authed: true, method: http.MethodGet, target: target})
 			if w.Code != http.StatusOK {
 				t.Fatalf("list: %d %s", w.Code, w.Body)
 			}
@@ -121,7 +121,7 @@ func TestJobsEndpoints(t *testing.T) {
 			{"target_type=site&target_id=" + site, []string{queued.ID, failed.ID}},
 			{"target_type=client_group", []string{other.ID}},
 		} {
-			w := do(t, h, request{method: http.MethodGet, target: "/api/v1/jobs?" + tt.query})
+			w := do(t, h, request{authed: true, method: http.MethodGet, target: "/api/v1/jobs?" + tt.query})
 			if w.Code != http.StatusOK {
 				t.Fatalf("%s: %d %s", tt.query, w.Code, w.Body)
 			}
@@ -135,7 +135,7 @@ func TestJobsEndpoints(t *testing.T) {
 			}
 		}
 
-		if w := do(t, h, request{method: http.MethodGet, target: "/api/v1/jobs?cursor=bogus"}); w.Code != http.StatusBadRequest {
+		if w := do(t, h, request{authed: true, method: http.MethodGet, target: "/api/v1/jobs?cursor=bogus"}); w.Code != http.StatusBadRequest {
 			t.Errorf("bad cursor: %d %s", w.Code, w.Body)
 		}
 	})

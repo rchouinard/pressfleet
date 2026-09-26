@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
+	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
@@ -33,14 +34,19 @@ type problem struct {
 }
 
 // fakeAuth records calls and rejects requests without the magic header.
+// Accepted requests carry principal, if set.
 type fakeAuth struct {
-	calls []string
+	calls     []string
+	principal *auth.Principal
 }
 
 func (f *fakeAuth) Authenticate(r *http.Request) (context.Context, error) {
 	f.calls = append(f.calls, r.Pattern)
 	if r.Header.Get("X-Test-Auth") != "ok" {
 		return nil, api.ErrUnauthenticated
+	}
+	if f.principal != nil {
+		return auth.WithPrincipal(r.Context(), *f.principal), nil
 	}
 	return r.Context(), nil
 }
@@ -119,6 +125,7 @@ var sampleBodies = map[string]string{
 	"login":             `{"email":"a@example.com","password":"x"}`,
 	"createApiToken":    `{"name":"ci","scope":"read-only","expires_at":null}`,
 	"createUser":        `{"email":"a@example.com","password":"correct horse battery","role":"viewer"}`,
+	"changePassword":    `{"current_password":"wrong","new_password":"correct horse battery"}`,
 	"updateUser":        `{"role":"operator"}`,
 	"createClientGroup": `{"name":"Acme"}`,
 	"updateClientGroup": `{"notes":"hello"}`,
@@ -167,25 +174,31 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth := &fakeAuth{}
-	h := newHandler(t, api.Options{Authenticator: auth, DB: storetest.Open(t, store.SQLite)})
+	svc, _ := newAuthService(t)
+	u, err := svc.CreateUser(context.Background(), auth.NewUser{Email: "admin@example.com", Password: testPassword, Role: store.RoleAdmin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fa := &fakeAuth{principal: &auth.Principal{UserID: u.ID, Email: u.Email, Role: u.Role, Method: auth.MethodSession, SessionID: "none"}}
+	h := newHandler(t, api.Options{Authenticator: fa, Auth: svc, DB: storetest.Open(t, store.SQLite)})
 	for _, op := range ops {
 		t.Run(op.ID, func(t *testing.T) {
 			req := request{method: op.Method, target: samplePath(op.Path), body: sampleBodies[op.ID]}
 
 			// Without credentials, only public operations get through.
-			auth.calls = nil
+			fa.calls = nil
 			w := do(t, h, req)
 			if op.Public {
-				if len(auth.calls) != 0 {
+				if len(fa.calls) != 0 {
 					t.Errorf("authenticator called for public operation")
 				}
-				if w.Code == http.StatusUnauthorized {
+				// Login answers 401 for the sample's wrong credentials.
+				if w.Code == http.StatusUnauthorized && op.ID != "login" {
 					t.Errorf("public operation returned 401")
 				}
 			} else {
-				if len(auth.calls) != 1 || auth.calls[0] != op.Pattern() {
-					t.Errorf("authenticator calls = %v, want [%s]", auth.calls, op.Pattern())
+				if len(fa.calls) != 1 || fa.calls[0] != op.Pattern() {
+					t.Errorf("authenticator calls = %v, want [%s]", fa.calls, op.Pattern())
 				}
 				if w.Code != http.StatusUnauthorized {
 					t.Fatalf("status = %d, want 401; body: %s", w.Code, w.Body)
@@ -197,17 +210,27 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 			}
 
 			// With credentials, every operation reaches its handler: health
-			// works, everything else is a 501 until implemented.
+			// and authentication work, everything else is a 501 until
+			// implemented.
 			req.authed = true
 			w = do(t, h, req)
-			switch op.ID {
-			case "getHealth", "getReadiness", "listJobs":
+			switch {
+			case op.ID == "getHealth" || op.ID == "getReadiness" || op.ID == "listJobs":
 				if w.Code != http.StatusOK {
 					t.Errorf("status = %d, want 200; body: %s", w.Code, w.Body)
 				}
-			case "getJob":
+			case op.ID == "getJob":
 				if w.Code != http.StatusNotFound {
 					t.Errorf("status = %d, want 404; body: %s", w.Code, w.Body)
+				}
+			case op.ID == "login":
+				// The sample credentials are wrong.
+				if w.Code != http.StatusUnauthorized {
+					t.Errorf("status = %d, want 401; body: %s", w.Code, w.Body)
+				}
+			case strings.HasPrefix(op.Path, "/api/v1/auth/") || strings.HasPrefix(op.Path, "/api/v1/users"):
+				if w.Code == http.StatusUnauthorized || w.Code >= 500 {
+					t.Errorf("status = %d; body: %s", w.Code, w.Body)
 				}
 			default:
 				if w.Code != http.StatusNotImplemented {
@@ -256,7 +279,7 @@ func TestUnmatchedRoutes(t *testing.T) {
 }
 
 func TestRequestValidation(t *testing.T) {
-	h := newHandler(t, api.Options{})
+	h := newHandler(t, api.Options{Authenticator: &fakeAuth{}})
 	tests := []struct {
 		name       string
 		req        request
@@ -333,6 +356,7 @@ func TestRequestValidation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tt.req.authed = true
 			w := do(t, h, tt.req)
 			if w.Code != tt.status {
 				t.Fatalf("status = %d, want %d; body: %s", w.Code, tt.status, w.Body)

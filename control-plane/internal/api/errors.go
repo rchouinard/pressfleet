@@ -4,8 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
+	"strconv"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 )
 
@@ -55,6 +58,7 @@ var sentinelStatus = []struct {
 	{ErrConflict, http.StatusConflict},
 	{ErrGone, http.StatusGone},
 	{ErrNotImplemented, http.StatusNotImplemented},
+	{auth.ErrThrottled, http.StatusTooManyRequests},
 }
 
 // problemFor converts a handler error to Problem Details. The second result
@@ -94,6 +98,10 @@ func writeError(log *slog.Logger, w http.ResponseWriter, r *http.Request, err er
 		// RFC 9110 requires a challenge on 401; bearer is the scheme
 		// automation clients can act on.
 		w.Header().Set("WWW-Authenticate", `Bearer realm="pressfleet"`)
+	}
+	var te *auth.ThrottledError
+	if errors.As(err, &te) {
+		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(te.RetryAfter.Seconds()))))
 	}
 	httpserver.WriteProblem(w, r, p)
 }

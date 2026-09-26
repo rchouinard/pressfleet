@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -44,7 +45,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg != config.Default() {
+	if !reflect.DeepEqual(cfg, config.Default()) {
 		t.Errorf("Load() = %+v, want defaults %+v", cfg, config.Default())
 	}
 	if err := cfg.Validate(); err != nil {
@@ -68,7 +69,7 @@ func TestLoadPrecedence(t *testing.T) {
 		Database: config.DatabaseConfig{Driver: "sqlite"},          // default
 		Jobs:     config.JobsConfig{Concurrency: 4},                // default
 	}
-	if cfg != want {
+	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("Load() = %+v, want %+v", cfg, want)
 	}
 }

@@ -19,8 +19,11 @@ import (
 // Options configures a CLI invocation.
 type Options struct {
 	Version string
-	Stdout  io.Writer
-	Stderr  io.Writer
+	// Stdin is read by commands that accept secrets on standard input;
+	// nil means os.Stdin.
+	Stdin  io.Reader
+	Stdout io.Writer
+	Stderr io.Writer
 	// Env looks up environment variables; nil means os.LookupEnv.
 	Env config.LookupEnv
 	// HostProbe and DockerProbe feed preflight checks; nil means the real
@@ -45,6 +48,9 @@ type app struct {
 func Run(ctx context.Context, args []string, opts Options) int {
 	if opts.Env == nil {
 		opts.Env = os.LookupEnv
+	}
+	if opts.Stdin == nil {
+		opts.Stdin = os.Stdin
 	}
 	a := &app{opts: opts}
 	root := a.rootCommand()
@@ -99,6 +105,7 @@ func (a *app) rootCommand() *cobra.Command {
 	root.AddCommand(a.healthcheckCommand())
 	root.AddCommand(a.stateCommand())
 	root.AddCommand(a.keyCommand())
+	root.AddCommand(a.userCommand())
 	return root
 }
 

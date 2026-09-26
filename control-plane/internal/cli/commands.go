@@ -11,6 +11,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
+	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
+	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
@@ -60,7 +62,20 @@ func (a *app) serveCommand() *cobra.Command {
 			// Components register readiness checks here.
 			readiness := &httpserver.Readiness{}
 			readiness.Register("state_database", db.Ping)
-			handler, err := api.NewHandler(api.Options{Logger: a.log, Readiness: readiness, DB: db})
+			authn := auth.NewService(db, auth.Options{Logger: a.log})
+			proxies, err := a.cfg.HTTP.TrustedProxyPrefixes()
+			if err != nil {
+				return err
+			}
+			handler, err := api.NewHandler(api.Options{
+				Logger:         a.log,
+				Readiness:      readiness,
+				DB:             db,
+				Auth:           authn,
+				Authenticator:  api.NewAuthenticator(authn),
+				TrustedProxies: proxies,
+				SecureCookies:  a.cfg.HTTP.SecureCookies == config.SecureCookiesAlways,
+			})
 			if err != nil {
 				return err
 			}

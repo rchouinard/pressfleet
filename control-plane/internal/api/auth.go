@@ -2,38 +2,275 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"time"
+
+	openapi_types "github.com/oapi-codegen/runtime/types"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
+	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
+	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
+	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
+	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
 
 // Sessions, the current user, and the current user's API tokens (#13).
 
-// Login verifies credentials and starts a session.
-func (h *Handlers) Login(context.Context, gen.LoginRequestObject) (gen.LoginResponseObject, error) {
-	return nil, notImplemented(13)
+// errAuthNotConfigured is a 500: the server was built without Options.Auth.
+var errAuthNotConfigured = errors.New("authentication service is not configured")
+
+// Login verifies credentials and starts a session. It is public, so it
+// needs no authorization check.
+func (h *Handlers) Login(ctx context.Context, req gen.LoginRequestObject) (gen.LoginResponseObject, error) {
+	if h.auth == nil {
+		return nil, errAuthNotConfigured
+	}
+	client := clientFromContext(ctx)
+	res, err := h.auth.Login(ctx, auth.LoginRequest{
+		Email:     string(req.Body.Email),
+		Password:  redact.Secret(deref(req.Body.Password)),
+		ClientIP:  client.IP,
+		UserAgent: client.UserAgent,
+	})
+	if errors.Is(err, auth.ErrInvalidCredentials) {
+		return nil, httpserver.NewProblem(http.StatusUnauthorized, "Invalid email or password.")
+	} else if err != nil {
+		return nil, err
+	}
+	cookie := h.sessionCookie(ctx, res.Token.Reveal(), res.Session.ExpiresAt).String()
+	csrf := res.CSRFToken.Reveal()
+	return gen.Login200JSONResponse{
+		Body:    currentUser(res.User, gen.AuthMethodSession, &csrf),
+		Headers: gen.Login200ResponseHeaders{SetCookie: &cookie},
+	}, nil
 }
 
-// Logout ends the current session.
-func (h *Handlers) Logout(context.Context, gen.LogoutRequestObject) (gen.LogoutResponseObject, error) {
-	return nil, notImplemented(13)
+// Logout ends the current session and clears the cookie.
+func (h *Handlers) Logout(ctx context.Context, _ gen.LogoutRequestObject) (gen.LogoutResponseObject, error) {
+	p, err := h.principal(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Logging out is always allowed for one's own session; no authorization
+	// check (#103) is needed.
+	if p.Method == auth.MethodSession {
+		if err := h.auth.Logout(ctx, p.SessionID); err != nil {
+			return nil, err
+		}
+	}
+	cookie := h.sessionCookie(ctx, "", time.Time{}).String()
+	return gen.Logout204Response{Headers: gen.Logout204ResponseHeaders{SetCookie: &cookie}}, nil
 }
 
-// GetCurrentUser returns the authenticated user.
-func (h *Handlers) GetCurrentUser(context.Context, gen.GetCurrentUserRequestObject) (gen.GetCurrentUserResponseObject, error) {
-	return nil, notImplemented(13)
+// GetCurrentUser returns the authenticated user and, for sessions, the CSRF
+// token.
+func (h *Handlers) GetCurrentUser(ctx context.Context, _ gen.GetCurrentUserRequestObject) (gen.GetCurrentUserResponseObject, error) {
+	p, err := h.principal(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Reading oneself is always allowed; no authorization check (#103).
+	u, err := h.auth.GetUser(ctx, p.UserID)
+	if errors.Is(err, auth.ErrUserNotFound) {
+		return nil, ErrUnauthenticated
+	} else if err != nil {
+		return nil, err
+	}
+	method, csrf := gen.AuthMethodToken, (*string)(nil)
+	if p.Method == auth.MethodSession {
+		method = gen.AuthMethodSession
+		if t, ok := csrfFromContext(ctx); ok {
+			s := t.Reveal()
+			csrf = &s
+		}
+	}
+	return gen.GetCurrentUser200JSONResponse(currentUser(u, method, csrf)), nil
+}
+
+// ChangePassword changes the caller's own password.
+func (h *Handlers) ChangePassword(ctx context.Context, req gen.ChangePasswordRequestObject) (gen.ChangePasswordResponseObject, error) {
+	p, err := h.principal(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// TODO(#103): h.authorize(ctx, <manage own password>, p.UserID) before acting.
+	err = h.auth.ChangePassword(ctx, p,
+		redact.Secret(deref(req.Body.CurrentPassword)), redact.Secret(deref(req.Body.NewPassword)))
+	switch {
+	case errors.Is(err, auth.ErrWrongPassword):
+		return nil, fieldError("/current_password", "is incorrect")
+	case err != nil:
+		return nil, authError(err, "/new_password")
+	}
+	return gen.ChangePassword204Response{}, nil
 }
 
 // ListAPITokens lists the current user's API tokens.
-func (h *Handlers) ListAPITokens(context.Context, gen.ListAPITokensRequestObject) (gen.ListAPITokensResponseObject, error) {
-	return nil, notImplemented(13)
+func (h *Handlers) ListAPITokens(ctx context.Context, req gen.ListAPITokensRequestObject) (gen.ListAPITokensResponseObject, error) {
+	p, err := h.principal(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// TODO(#103): h.authorize(ctx, <view own API tokens>, p.UserID) before acting.
+	limit := pageLimit(req.Params.Limit)
+	tokens, err := h.auth.ListAPITokens(ctx, p.UserID, deref(req.Params.Cursor), limit+1)
+	if err != nil {
+		return nil, err
+	}
+	tokens, next := page(tokens, limit, func(t store.APIToken) string { return t.ID })
+	body := gen.APITokenList{Items: make([]gen.APIToken, 0, len(tokens)), NextCursor: next}
+	for _, t := range tokens {
+		body.Items = append(body.Items, apiToken(t))
+	}
+	return gen.ListAPITokens200JSONResponse(body), nil
 }
 
 // CreateAPIToken creates an API token and returns its plaintext once.
-func (h *Handlers) CreateAPIToken(context.Context, gen.CreateAPITokenRequestObject) (gen.CreateAPITokenResponseObject, error) {
-	return nil, notImplemented(13)
+func (h *Handlers) CreateAPIToken(ctx context.Context, req gen.CreateAPITokenRequestObject) (gen.CreateAPITokenResponseObject, error) {
+	p, err := h.principal(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// TODO(#103): h.authorize(ctx, <manage own API tokens>, p.UserID) before
+	// acting. A token must not be able to mint one that can do more than
+	// itself.
+	tok, plain, err := h.auth.CreateAPIToken(ctx, p.UserID, auth.NewAPIToken{
+		Name:      req.Body.Name,
+		Scope:     store.TokenScope(req.Body.Scope),
+		ExpiresAt: req.Body.ExpiresAt,
+	})
+	if err != nil {
+		return nil, authError(err, "")
+	}
+	t := apiToken(tok)
+	location := "/api/v1/auth/tokens/" + tok.ID
+	return gen.CreateAPIToken201JSONResponse{
+		Body: gen.APITokenWithSecret{
+			ID: t.ID, Name: t.Name, Scope: t.Scope, Prefix: t.Prefix,
+			CreatedAt: t.CreatedAt, ExpiresAt: t.ExpiresAt, LastUsedAt: t.LastUsedAt,
+			Token: plain.Reveal(),
+		},
+		Headers: gen.CreateAPIToken201ResponseHeaders{Location: &location},
+	}, nil
 }
 
 // RevokeAPIToken revokes one of the current user's API tokens.
-func (h *Handlers) RevokeAPIToken(context.Context, gen.RevokeAPITokenRequestObject) (gen.RevokeAPITokenResponseObject, error) {
-	return nil, notImplemented(13)
+func (h *Handlers) RevokeAPIToken(ctx context.Context, req gen.RevokeAPITokenRequestObject) (gen.RevokeAPITokenResponseObject, error) {
+	p, err := h.principal(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// TODO(#103): h.authorize(ctx, <manage own API tokens>, p.UserID) before acting.
+	if err := h.auth.RevokeAPIToken(ctx, p.UserID, req.TokenID); err != nil {
+		return nil, authError(err, "")
+	}
+	return gen.RevokeAPIToken204Response{}, nil
+}
+
+// principal returns the authenticated caller. The authentication middleware
+// guarantees one for protected operations; checking again keeps a handler
+// from ever running anonymously if that changes.
+func (h *Handlers) principal(ctx context.Context) (auth.Principal, error) {
+	if h.auth == nil {
+		return auth.Principal{}, errAuthNotConfigured
+	}
+	p, ok := auth.PrincipalFromContext(ctx)
+	if !ok {
+		return auth.Principal{}, ErrUnauthenticated
+	}
+	return p, nil
+}
+
+// authError maps auth errors to API errors. passwordField names the body
+// member that holds a new password, for policy violations.
+func authError(err error, passwordField string) error {
+	switch {
+	case errors.Is(err, auth.ErrUserNotFound), errors.Is(err, auth.ErrTokenNotFound):
+		return fmt.Errorf("%w: %w", ErrNotFound, err)
+	case errors.Is(err, auth.ErrEmailTaken):
+		return fmt.Errorf("%w: %w", ErrConflict, err)
+	case errors.Is(err, auth.ErrUnauthenticated):
+		return ErrUnauthenticated
+	case errors.Is(err, auth.ErrPasswordPolicy):
+		return fieldError(passwordField, err.Error())
+	case errors.Is(err, auth.ErrInvalidEmail):
+		return fieldError("/email", "must be an email address such as name@example.com")
+	case errors.Is(err, auth.ErrInvalidRole):
+		return fieldError("/role", err.Error())
+	case errors.Is(err, auth.ErrInvalidScope):
+		return fieldError("/scope", err.Error())
+	case errors.Is(err, auth.ErrInvalidTokenName):
+		return fieldError("/name", err.Error())
+	case errors.Is(err, auth.ErrInvalidExpiry):
+		return fieldError("/expires_at", err.Error())
+	}
+	return err
+}
+
+func fieldError(field, detail string) error {
+	return &ValidationError{Fields: []httpserver.FieldError{{Field: field, Detail: detail}}}
+}
+
+func currentUser(u store.User, method gen.CurrentUserAuthMethod, csrf *string) gen.CurrentUser {
+	g := user(u)
+	return gen.CurrentUser{
+		ID: g.ID, Email: g.Email, Role: g.Role, Disabled: g.Disabled,
+		CreatedAt: g.CreatedAt, UpdatedAt: g.UpdatedAt, LastLoginAt: g.LastLoginAt,
+		AuthMethod: method, CsrfToken: csrf,
+	}
+}
+
+func user(u store.User) gen.User {
+	return gen.User{
+		ID:          u.ID,
+		Email:       openapi_types.Email(u.Email),
+		Role:        gen.Role(u.Role),
+		Disabled:    u.Disabled(),
+		CreatedAt:   u.CreatedAt,
+		UpdatedAt:   u.UpdatedAt,
+		LastLoginAt: u.LastLoginAt,
+	}
+}
+
+func apiToken(t store.APIToken) gen.APIToken {
+	return gen.APIToken{
+		ID:         t.ID,
+		Name:       t.Name,
+		Scope:      gen.TokenScope(t.Scope),
+		Prefix:     t.Prefix,
+		CreatedAt:  t.CreatedAt,
+		ExpiresAt:  t.ExpiresAt,
+		LastUsedAt: t.LastUsedAt,
+	}
+}
+
+// defaultPageLimit matches the Limit parameter's default in the spec.
+const defaultPageLimit = 50
+
+func pageLimit(l *int) int {
+	if l == nil || *l <= 0 {
+		return defaultPageLimit
+	}
+	return *l
+}
+
+// page trims items fetched with limit+1 to limit, returning the cursor for
+// the next page if there is one.
+func page[T any](items []T, limit int, key func(T) string) ([]T, *string) {
+	if len(items) <= limit {
+		return items, nil
+	}
+	items = items[:limit]
+	next := key(items[len(items)-1])
+	return items, &next
+}
+
+func deref[T any](p *T) T {
+	var zero T
+	if p == nil {
+		return zero
+	}
+	return *p
 }

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -57,13 +56,6 @@ func TestUnexpectedHandlerErrorIsLoggedNotLeaked(t *testing.T) {
 	if !strings.Contains(logs.String(), "xyzzy") {
 		t.Errorf("internal error not logged: %s", logs.String())
 	}
-}
-
-// rejectAll is an Authenticator that rejects every request.
-type rejectAll struct{}
-
-func (rejectAll) Authenticate(*http.Request) (context.Context, error) {
-	return nil, fmt.Errorf("no credentials: %w", ErrUnauthenticated)
 }
 
 func TestAuthenticationRunsBeforeValidation(t *testing.T) {

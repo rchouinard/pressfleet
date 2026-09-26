@@ -35,6 +35,9 @@ database:
 master_key_file: /etc/pressfleet/master.key   # outside data_dir
 jobs:
   concurrency: 4
+http:
+  secure_cookies: auto   # auto, always
+  # trusted_proxies: [172.18.0.0/16]   # default: loopback and private networks
 ```
 
 ## Settings
@@ -54,6 +57,27 @@ jobs:
 | `master_key_file` | `PRESSFLEET_MASTER_KEY_FILE` | | (unset) | File holding the platform master key. Must be an absolute path outside `data_dir`. See [Master key](#master-key). |
 | (environment only) | `PRESSFLEET_MASTER_KEY` | | (unset) | The platform master key itself. Takes precedence over `master_key_file`. It can't be set in the config file. |
 | `jobs.concurrency` | `PRESSFLEET_JOBS_CONCURRENCY` | | `4` | How many background jobs (provisioning, backups, WP-Cron runs) run at once, from 1 to 64. Jobs that change the same site always run one at a time. |
+| `http.secure_cookies` | `PRESSFLEET_HTTP_SECURE_COOKIES` | | `auto` | `auto` marks the session cookie `Secure` when the request arrived over HTTPS; `always` marks it `Secure` on every response. See [Sessions and HTTPS](#sessions-and-https). |
+| `http.trusted_proxies` | `PRESSFLEET_HTTP_TRUSTED_PROXIES` (comma-separated) | | loopback and private networks | IP addresses or CIDR networks whose `X-Forwarded-For` and `X-Forwarded-Proto` headers are believed. |
+
+## Sessions and HTTPS
+
+The dashboard logs in with a session cookie, `pressfleet_session`. It is always `HttpOnly`, `SameSite=Lax`, and `Path=/`. With `http.secure_cookies: auto` (the default) it is also `Secure` whenever the request arrived over HTTPS: either directly over TLS, or through a trusted proxy that sent `X-Forwarded-Proto: https`. Traefik terminates TLS for the dashboard domain and sends that header, so production cookies are `Secure`, while plain-HTTP development against `http://localhost:8080` still works. (Browsers and `curl` don't send `Secure` cookies over plain HTTP to anything but, in browsers, `localhost`.) Set `always` to require HTTPS regardless of headers.
+
+`X-Forwarded-For` and `X-Forwarded-Proto` are only believed when the connection comes from `http.trusted_proxies`. The default, loopback and private networks, fits the Compose deployment: the control plane's port isn't published on the host, so only containers on its Docker network, Traefik among them, can reach it. The client address taken from `X-Forwarded-For` is used for login throttling and recorded with each session. If you publish the control plane port or put it behind another proxy, list exactly the proxy's addresses.
+
+Sessions end after 12 hours without use, 7 days after login, on logout, and when the user's password is changed or reset or the user is disabled. Failed logins are throttled in memory (5 failures per account and 20 per client address in 15 minutes); restarting the control plane resets the counters.
+
+## Users
+
+Users are managed in the dashboard or the API. To create the first user, or to recover access, run inside the control plane container:
+
+```sh
+docker compose exec control-plane pressfleet user create --email admin@example.com [--role admin|operator|viewer]
+docker compose exec control-plane pressfleet user reset-password --email admin@example.com
+```
+
+The default role is `admin`. Both commands generate a random password and print it once. To choose the password instead, pipe it in with `--password-stdin` (and `docker compose exec -T`). Passwords must be 12 to 256 characters. `reset-password` signs the user out everywhere and revokes their API tokens.
 
 ## Master key
 

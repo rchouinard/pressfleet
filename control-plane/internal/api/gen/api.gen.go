@@ -18,6 +18,24 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for CurrentUserAuthMethod.
+const (
+	AuthMethodSession CurrentUserAuthMethod = "session"
+	AuthMethodToken   CurrentUserAuthMethod = "token"
+)
+
+// Valid indicates whether the value is a known member of the CurrentUserAuthMethod enum.
+func (e CurrentUserAuthMethod) Valid() bool {
+	switch e {
+	case AuthMethodSession:
+		return true
+	case AuthMethodToken:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatus.
 const (
 	HealthStatusOk HealthStatus = "ok"
@@ -380,6 +398,40 @@ type ClientGroupUpdate struct {
 	Notes *string `json:"notes,omitempty"`
 }
 
+// CurrentUser The authenticated user, and how they authenticated.
+type CurrentUser struct {
+	AuthMethod CurrentUserAuthMethod `json:"auth_method"`
+
+	// CreatedAt Examples: 2026-09-26T17:25:00Z
+	CreatedAt Timestamp `json:"created_at"`
+
+	// CsrfToken The session's CSRF token. Send it in the `X-CSRF-Token` header
+	// with every cookie-authenticated unsafe request. Null for bearer
+	// token authentication, which needs none.
+	CsrfToken *string `json:"csrf_token"`
+
+	// Disabled Disabled users can't log in and their tokens are rejected.
+	Disabled bool  `json:"disabled"`
+	Email    Email `json:"email"`
+
+	// ID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ID ID `json:"id"`
+
+	// LastLoginAt Null if the user has never logged in.
+	LastLoginAt *Timestamp `json:"last_login_at,omitempty"`
+
+	// Role Platform-wide role (design doc §4.6).
+	Role Role `json:"role"`
+
+	// UpdatedAt Examples: 2026-09-26T17:25:00Z
+	UpdatedAt Timestamp `json:"updated_at"`
+}
+
+// CurrentUserAuthMethod defines model for CurrentUser.AuthMethod.
+type CurrentUserAuthMethod string
+
 // Email defines model for Email.
 type Email = openapi_types.Email
 
@@ -534,6 +586,12 @@ type PHPVersion = string
 
 // Password defines model for Password.
 type Password = string
+
+// PasswordChange defines model for PasswordChange.
+type PasswordChange struct {
+	CurrentPassword *string   `json:"current_password,omitempty"`
+	NewPassword     *Password `json:"new_password,omitempty"`
+}
 
 // Problem RFC 9457 Problem Details. Additional members may be added.
 type Problem struct {
@@ -862,6 +920,9 @@ type Gone = Problem
 // NotFound RFC 9457 Problem Details. Additional members may be added.
 type NotFound = Problem
 
+// TooManyRequests RFC 9457 Problem Details. Additional members may be added.
+type TooManyRequests = Problem
+
 // Unauthorized RFC 9457 Problem Details. Additional members may be added.
 type Unauthorized = Problem
 
@@ -934,6 +995,9 @@ type ListUsersParams struct {
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
 
+// ChangePasswordJSONRequestBody defines body for ChangePassword for application/json ContentType.
+type ChangePasswordJSONRequestBody = PasswordChange
+
 // CreateAPITokenJSONRequestBody defines body for CreateAPIToken for application/json ContentType.
 type CreateAPITokenJSONRequestBody = APITokenCreate
 
@@ -966,6 +1030,9 @@ type ServerInterface interface {
 	// GetCurrentUser Get the authenticated user
 	// (GET /api/v1/auth/me)
 	GetCurrentUser(w http.ResponseWriter, r *http.Request)
+	// ChangePassword Change the current user's password
+	// (POST /api/v1/auth/password)
+	ChangePassword(w http.ResponseWriter, r *http.Request)
 	// ListAPITokens List the current user's API tokens
 	// (GET /api/v1/auth/tokens)
 	ListAPITokens(w http.ResponseWriter, r *http.Request, params ListAPITokensParams)
@@ -1085,6 +1152,20 @@ func (siw *ServerInterfaceWrapper) GetCurrentUser(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetCurrentUser(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ChangePassword operation middleware
+func (siw *ServerInterfaceWrapper) ChangePassword(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ChangePassword(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1975,6 +2056,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/login", wrapper.Login)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/logout", wrapper.Logout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/auth/me", wrapper.GetCurrentUser)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/password", wrapper.ChangePassword)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/auth/tokens", wrapper.ListAPITokens)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/tokens", wrapper.CreateAPIToken)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/auth/tokens/{token_id}", wrapper.RevokeAPIToken)
@@ -2014,6 +2096,15 @@ type GoneApplicationProblemPlusJSONResponse Problem
 
 type NotFoundApplicationProblemPlusJSONResponse Problem
 
+type TooManyRequestsResponseHeaders struct {
+	RetryAfter *int
+}
+type TooManyRequestsApplicationProblemPlusJSONResponse struct {
+	Body Problem
+
+	Headers TooManyRequestsResponseHeaders
+}
+
 type UnauthorizedApplicationProblemPlusJSONResponse Problem
 
 type UnprocessableContentApplicationProblemPlusJSONResponse Problem
@@ -2031,7 +2122,7 @@ type Login200ResponseHeaders struct {
 }
 
 type Login200JSONResponse struct {
-	Body    User
+	Body    CurrentUser
 	Headers Login200ResponseHeaders
 }
 
@@ -2082,6 +2173,22 @@ func (response Login401ApplicationProblemPlusJSONResponse) VisitLoginResponse(w 
 	return err
 }
 
+type Login403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response Login403ApplicationProblemPlusJSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type Login422ApplicationProblemPlusJSONResponse struct {
 	UnprocessableContentApplicationProblemPlusJSONResponse
 }
@@ -2094,6 +2201,25 @@ func (response Login422ApplicationProblemPlusJSONResponse) VisitLoginResponse(w 
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Login429ApplicationProblemPlusJSONResponse struct {
+	TooManyRequestsApplicationProblemPlusJSONResponse
+}
+
+func (response Login429ApplicationProblemPlusJSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -2154,6 +2280,22 @@ func (response Logout401ApplicationProblemPlusJSONResponse) VisitLogoutResponse(
 	return err
 }
 
+type Logout403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response Logout403ApplicationProblemPlusJSONResponse) VisitLogoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type LogoutdefaultApplicationProblemPlusJSONResponse struct {
 	Body       Problem
 	StatusCode int
@@ -2178,7 +2320,7 @@ type GetCurrentUserResponseObject interface {
 	VisitGetCurrentUserResponse(w http.ResponseWriter) error
 }
 
-type GetCurrentUser200JSONResponse User
+type GetCurrentUser200JSONResponse CurrentUser
 
 func (response GetCurrentUser200JSONResponse) VisitGetCurrentUserResponse(w http.ResponseWriter) error {
 
@@ -2214,6 +2356,122 @@ type GetCurrentUserdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetCurrentUserdefaultApplicationProblemPlusJSONResponse) VisitGetCurrentUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ChangePasswordRequestObject struct {
+	Body *ChangePasswordJSONRequestBody
+}
+
+type ChangePasswordResponseObject interface {
+	VisitChangePasswordResponse(w http.ResponseWriter) error
+}
+
+type ChangePassword204Response struct {
+}
+
+func (response ChangePassword204Response) VisitChangePasswordResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type ChangePassword400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response ChangePassword400ApplicationProblemPlusJSONResponse) VisitChangePasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ChangePassword401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ChangePassword401ApplicationProblemPlusJSONResponse) VisitChangePasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ChangePassword403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ChangePassword403ApplicationProblemPlusJSONResponse) VisitChangePasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ChangePassword422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response ChangePassword422ApplicationProblemPlusJSONResponse) VisitChangePasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ChangePassword429ApplicationProblemPlusJSONResponse struct {
+	TooManyRequestsApplicationProblemPlusJSONResponse
+}
+
+func (response ChangePassword429ApplicationProblemPlusJSONResponse) VisitChangePasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ChangePassworddefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ChangePassworddefaultApplicationProblemPlusJSONResponse) VisitChangePasswordResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -4720,6 +4978,9 @@ type StrictServerInterface interface {
 	// GetCurrentUser Get the authenticated user
 	// (GET /api/v1/auth/me)
 	GetCurrentUser(ctx context.Context, request GetCurrentUserRequestObject) (GetCurrentUserResponseObject, error)
+	// ChangePassword Change the current user's password
+	// (POST /api/v1/auth/password)
+	ChangePassword(ctx context.Context, request ChangePasswordRequestObject) (ChangePasswordResponseObject, error)
 	// ListAPITokens List the current user's API tokens
 	// (GET /api/v1/auth/tokens)
 	ListAPITokens(ctx context.Context, request ListAPITokensRequestObject) (ListAPITokensResponseObject, error)
@@ -4908,6 +5169,37 @@ func (sh *strictHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetCurrentUserResponseObject); ok {
 		if err := validResponse.VisitGetCurrentUserResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ChangePassword operation middleware
+func (sh *strictHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	var request ChangePasswordRequestObject
+
+	var body ChangePasswordJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ChangePassword(ctx, request.(ChangePasswordRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ChangePassword")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ChangePasswordResponseObject); ok {
+		if err := validResponse.VisitChangePasswordResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

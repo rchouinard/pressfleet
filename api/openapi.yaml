@@ -28,9 +28,34 @@ info:
     ## Authentication
 
     Every operation requires authentication except login and the health
-    endpoints. The dashboard uses a session cookie obtained from
-    `POST /api/v1/auth/login`; automation uses bearer API tokens. Cookie-authenticated
-    state-changing requests also require CSRF protection (#13).
+    endpoints. Unauthenticated requests get `401` with a `WWW-Authenticate`
+    header.
+
+    * **Session cookie (dashboard).** `POST /api/v1/auth/login` sets the
+      `pressfleet_session` cookie (`HttpOnly`, `SameSite=Lax`, `Path=/`, and
+      `Secure` when the request arrived over HTTPS). Sessions end after 12
+      hours without use, 7 days after login, on logout, and when the user's
+      password changes or the user is disabled.
+    * **Bearer API token (automation).** Send `Authorization: Bearer pft_...`.
+      Tokens are created with `POST /api/v1/auth/tokens` and shown only once.
+      If an `Authorization` header is present, the cookie is ignored.
+
+    ### CSRF protection
+
+    Cookie-authenticated requests with an unsafe method (anything but `GET`,
+    `HEAD`, and `OPTIONS`) must send the session's CSRF token in the
+    `X-CSRF-Token` header. The token is returned as `csrf_token` by login and
+    by `GET /api/v1/auth/me`. In addition, unsafe requests that don't use a
+    bearer token (including login) are rejected if the browser marks them as
+    cross-origin (`Sec-Fetch-Site`, or an `Origin` that doesn't match the
+    host). Both failures return `403`. Bearer-token requests are exempt,
+    because browsers never attach them automatically.
+
+    ### Login throttling
+
+    Failed logins return `401` without saying whether the email exists.
+    Repeated failures for one account or from one client address are
+    throttled with `429` and a `Retry-After` header.
 
     ## Authorization
 
@@ -120,19 +145,23 @@ paths:
           description: Logged in.
           headers:
             Set-Cookie:
-              description: The session cookie (`HttpOnly`, `Secure`, `SameSite`).
+              description: The session cookie (`HttpOnly`, `SameSite=Lax`, and `Secure` over HTTPS).
               schema:
                 type: string
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/User"
+                $ref: "#/components/schemas/CurrentUser"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/UnprocessableContent"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         default:
           $ref: "#/components/responses/Error"
 
@@ -141,6 +170,7 @@ paths:
       operationId: logout
       tags: [auth]
       summary: End the current session
+      description: Deletes the session. With a bearer token there is no session, and the call only clears the cookie.
       responses:
         "204":
           description: Logged out; the session cookie is cleared.
@@ -151,6 +181,8 @@ paths:
                 type: string
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         default:
           $ref: "#/components/responses/Error"
 
@@ -159,15 +191,48 @@ paths:
       operationId: getCurrentUser
       tags: [auth]
       summary: Get the authenticated user
+      description: Also returns the session's CSRF token, so the dashboard can recover it after a page reload.
       responses:
         "200":
           description: The authenticated user.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/User"
+                $ref: "#/components/schemas/CurrentUser"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/auth/password:
+    post:
+      operationId: changePassword
+      tags: [auth]
+      summary: Change the current user's password
+      description: |
+        Requires the current password. Signs out the user's other sessions and
+        revokes all of their API tokens (including the one making the request,
+        if any); the current session stays signed in. A wrong current password
+        returns `422` and counts toward login throttling.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordChange"
+      responses:
+        "204":
+          description: Password changed.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         default:
           $ref: "#/components/responses/Error"
 
@@ -338,6 +403,8 @@ paths:
       summary: Update a user
       description: |
         Changes apply immediately to the user's existing sessions and tokens.
+        Setting a password or disabling the user signs them out everywhere and
+        revokes their API tokens; re-enabling a user doesn't restore them.
         Demoting or disabling the last Admin returns `409`.
       requestBody:
         required: true
@@ -838,7 +905,10 @@ components:
       type: apiKey
       in: cookie
       name: pressfleet_session
-      description: Session cookie set by `POST /api/v1/auth/login`. Used by the dashboard.
+      description: |
+        Session cookie set by `POST /api/v1/auth/login`. Used by the dashboard.
+        Unsafe requests must also send the `X-CSRF-Token` header (see CSRF
+        protection above).
     bearerToken:
       type: http
       scheme: bearer
@@ -943,6 +1013,17 @@ components:
             $ref: "#/components/schemas/Problem"
     UnprocessableContent:
       description: The request is well-formed but fails validation. `errors` lists each invalid field.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    TooManyRequests:
+      description: Too many failed attempts. Try again after `Retry-After` seconds.
+      headers:
+        Retry-After:
+          description: Seconds until another attempt is allowed.
+          schema:
+            type: integer
       content:
         application/problem+json:
           schema:
@@ -1104,6 +1185,40 @@ components:
           oneOf:
             - $ref: "#/components/schemas/Timestamp"
             - type: "null"
+
+    CurrentUser:
+      description: The authenticated user, and how they authenticated.
+      allOf:
+        - $ref: "#/components/schemas/User"
+        - type: object
+          required: [auth_method, csrf_token]
+          properties:
+            auth_method:
+              type: string
+              enum: [session, token]
+              x-enum-varnames: [AuthMethodSession, AuthMethodToken]
+            csrf_token:
+              description: |
+                The session's CSRF token. Send it in the `X-CSRF-Token` header
+                with every cookie-authenticated unsafe request. Null for bearer
+                token authentication, which needs none.
+              oneOf:
+                - type: string
+                - type: "null"
+
+    PasswordChange:
+      type: object
+      required: [current_password, new_password]
+      additionalProperties: false
+      properties:
+        current_password:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 1
+          maxLength: 256
+        new_password:
+          $ref: "#/components/schemas/Password"
 
     UserCreate:
       type: object

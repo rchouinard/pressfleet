@@ -5,18 +5,23 @@
 // methods, one file per area) and the per-operation middleware that runs
 // between routing and the handler:
 //
-//  1. authentication, for every operation that isn't Public (see
-//     Authenticator; implemented in #13);
-//  2. request validation against the OpenAPI document;
-//  3. JSON decoding (generated), then the handler.
+//  1. the cross-origin check for unsafe requests without a bearer token,
+//     including login (see crossOrigin);
+//  2. authentication, for every operation that isn't Public (see
+//     Authenticator and NewAuthenticator). Without an Authenticator every
+//     protected operation is rejected: the API fails closed;
+//  3. request validation against the OpenAPI document;
+//  4. JSON decoding (generated), then the handler.
+//
+// Handlers find the caller with auth.PrincipalFromContext (or h.principal).
 //
 // # Writing a handler
 //
 // Handlers implement gen.StrictServerInterface. Adding or implementing an
 // endpoint never touches the router: edit the spec, run `make generate`, and
 // fill in the method. Every handler must start with the single authorization
-// check (design doc §4.6), before reading or changing anything. #103 adds it;
-// the intended shape is:
+// check (design doc §4.6), before reading or changing anything. #103 adds it
+// where handlers are marked TODO(#103); the intended shape is:
 //
 //	if err := h.authorize(ctx, action, target); err != nil {
 //		return nil, err // wraps ErrForbidden -> 403
@@ -32,8 +37,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
+	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
@@ -53,20 +60,33 @@ type Options struct {
 	Logger *slog.Logger
 	// Readiness holds the checks behind GET /readyz. Nil means no checks.
 	Readiness *httpserver.Readiness
-	// Authenticator authenticates every non-public operation. If nil,
-	// requests reach handlers unauthenticated; this is only acceptable until
-	// #13 lands, and NewHandler logs a warning.
+	// Authenticator authenticates every non-public operation, normally
+	// NewAuthenticator(Auth). If nil, every protected operation is rejected
+	// with 401.
 	Authenticator Authenticator
 	// DB is the state database. Handlers that need it fail with a 500
 	// without it.
 	DB *store.DB
+	// Auth backs login, the current user, API tokens, and user management.
+	// If nil, those operations fail with 500.
+	Auth *auth.Service
+	// TrustedProxies are the networks whose X-Forwarded-For and
+	// X-Forwarded-Proto headers are believed. Nil means
+	// DefaultTrustedProxies; use an empty, non-nil slice to trust none.
+	TrustedProxies []netip.Prefix
+	// SecureCookies forces the Secure flag on the session cookie. Otherwise
+	// it is set when the request arrived over HTTPS, directly or through a
+	// trusted proxy, so plain-HTTP development on localhost still works.
+	SecureCookies bool
 }
 
 // Handlers implements every API operation.
 type Handlers struct {
-	log       *slog.Logger
-	readiness *httpserver.Readiness
-	db        *store.DB
+	log           *slog.Logger
+	readiness     *httpserver.Readiness
+	db            *store.DB
+	auth          *auth.Service
+	secureCookies bool
 }
 
 var _ gen.StrictServerInterface = (*Handlers)(nil)
@@ -87,11 +107,14 @@ func NewHandler(opts Options) (http.Handler, error) {
 	}
 	ops := newOperationTable(doc)
 	if opts.Authenticator == nil {
-		opts.Authenticator = unauthenticated{}
-		opts.Logger.Warn("API authentication is not configured; protected operations are open")
+		opts.Authenticator = rejectAll{}
+		opts.Logger.Warn("API authentication is not configured; protected operations are rejected")
+	}
+	if opts.TrustedProxies == nil {
+		opts.TrustedProxies = DefaultTrustedProxies
 	}
 
-	h := &Handlers{log: opts.Logger, readiness: opts.Readiness, db: opts.DB}
+	h := &Handlers{log: opts.Logger, readiness: opts.Readiness, db: opts.DB, auth: opts.Auth, secureCookies: opts.SecureCookies}
 	strict := gen.NewStrictHandlerWithOptions(h, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  requestErrorHandler(opts.Logger),
 		ResponseErrorHandlerFunc: responseErrorHandler(opts.Logger),
@@ -100,11 +123,13 @@ func NewHandler(opts Options) (http.Handler, error) {
 	gen.HandlerWithOptions(strict, gen.StdHTTPServerOptions{
 		BaseRouter: mux,
 		// The generated wrapper applies these in order, so the last one is
-		// the outermost: operation lookup, then authentication, then
-		// validation.
+		// the outermost: operation lookup and client details, the
+		// cross-origin check, authentication, then validation.
 		Middlewares: []gen.MiddlewareFunc{
 			validateRequests(opts.Logger),
 			authenticate(opts.Logger, opts.Authenticator),
+			crossOrigin(opts.Logger),
+			withClient(opts.TrustedProxies),
 			withOperation(ops),
 		},
 		ErrorHandlerFunc: requestErrorHandler(opts.Logger),
@@ -119,6 +144,9 @@ func withOperation(ops operationTable) func(http.Handler) http.Handler {
 			if op, ok := ops.forRequest(r); ok {
 				r = r.WithContext(context.WithValue(r.Context(), operationKey{}, op))
 			}
+			// Responses are per-user and may carry credentials (tokens, CSRF
+			// tokens); keep them out of shared and browser caches.
+			w.Header().Set("Cache-Control", "no-store")
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -145,11 +173,4 @@ func authenticate(log *slog.Logger, auth Authenticator) func(http.Handler) http.
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-}
-
-// unauthenticated lets every request through. It stands in until #13.
-type unauthenticated struct{}
-
-func (unauthenticated) Authenticate(r *http.Request) (context.Context, error) {
-	return r.Context(), nil
 }

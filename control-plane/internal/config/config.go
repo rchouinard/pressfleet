@@ -58,6 +58,46 @@ type Config struct {
 	MasterKey redact.Secret `yaml:"-"`
 	// Jobs configures the background job workers.
 	Jobs JobsConfig `yaml:"jobs"`
+	// HTTP configures how the API sees requests that come through the
+	// reverse proxy.
+	HTTP HTTPConfig `yaml:"http"`
+}
+
+// Values of http.secure_cookies.
+const (
+	SecureCookiesAuto   = "auto"
+	SecureCookiesAlways = "always"
+)
+
+// HTTPConfig configures request handling behind the reverse proxy.
+type HTTPConfig struct {
+	// SecureCookies is "auto" (the default, also spelled "": mark the
+	// session cookie Secure when the request arrived over HTTPS, directly or
+	// via a trusted proxy) or "always".
+	SecureCookies string `yaml:"secure_cookies"`
+	// TrustedProxies lists addresses or CIDR networks whose
+	// X-Forwarded-For and X-Forwarded-Proto headers are believed. Empty
+	// means the default: loopback and private networks.
+	TrustedProxies []string `yaml:"trusted_proxies"`
+}
+
+// TrustedProxyPrefixes parses TrustedProxies. It returns nil (use the
+// default) if the list is empty.
+func (h HTTPConfig) TrustedProxyPrefixes() ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, s := range h.TrustedProxies {
+		s = strings.TrimSpace(s)
+		p, err := netip.ParsePrefix(s)
+		if err != nil {
+			a, aerr := netip.ParseAddr(s)
+			if aerr != nil {
+				return nil, fmt.Errorf("http.trusted_proxies: %q is not an IP address or CIDR network", s)
+			}
+			p = netip.PrefixFrom(a, a.BitLen())
+		}
+		out = append(out, p.Masked())
+	}
+	return out, nil
 }
 
 // JobsConfig configures the background job workers (§5).
@@ -120,7 +160,11 @@ var envVars = []struct {
 	{"PRESSFLEET_DATABASE_POSTGRES_DSN", func(c *Config) *string { return (*string)(&c.Database.PostgresDSN) }},
 	{"PRESSFLEET_MASTER_KEY_FILE", func(c *Config) *string { return &c.MasterKeyFile }},
 	{"PRESSFLEET_MASTER_KEY", func(c *Config) *string { return (*string)(&c.MasterKey) }},
+	{"PRESSFLEET_HTTP_SECURE_COOKIES", func(c *Config) *string { return &c.HTTP.SecureCookies }},
 }
+
+// envTrustedProxies sets http.trusted_proxies as a comma-separated list.
+const envTrustedProxies = "PRESSFLEET_HTTP_TRUSTED_PROXIES"
 
 // LookupEnv looks up an environment variable, like os.LookupEnv.
 type LookupEnv func(key string) (string, bool)
@@ -162,6 +206,14 @@ func Load(path string, env LookupEnv) (Config, error) {
 			return Config{}, fmt.Errorf("PRESSFLEET_JOBS_CONCURRENCY must be a whole number, got %q", val)
 		}
 		cfg.Jobs.Concurrency = n
+	}
+	if val, ok := env(envTrustedProxies); ok {
+		cfg.HTTP.TrustedProxies = nil
+		for p := range strings.SplitSeq(val, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				cfg.HTTP.TrustedProxies = append(cfg.HTTP.TrustedProxies, p)
+			}
+		}
 	}
 	return cfg, nil
 }
@@ -218,6 +270,12 @@ func (c Config) Validate() error {
 		}
 	default:
 		errs = append(errs, fmt.Errorf("database.driver must be %q or %q, got %q", DriverSQLite, DriverPostgres, c.Database.Driver))
+	}
+	if c.HTTP.SecureCookies != "" && c.HTTP.SecureCookies != SecureCookiesAuto && c.HTTP.SecureCookies != SecureCookiesAlways {
+		errs = append(errs, fmt.Errorf("http.secure_cookies must be %q or %q, got %q", SecureCookiesAuto, SecureCookiesAlways, c.HTTP.SecureCookies))
+	}
+	if _, err := c.HTTP.TrustedProxyPrefixes(); err != nil {
+		errs = append(errs, err)
 	}
 	if c.MasterKeyFile != "" && !filepath.IsAbs(c.MasterKeyFile) {
 		errs = append(errs, fmt.Errorf("master_key_file must be an absolute path, got %q", c.MasterKeyFile))

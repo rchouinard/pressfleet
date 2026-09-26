@@ -10,7 +10,7 @@ The OpenAPI 3.1 spec (`openapi.yaml`) lives here and is the source of truth for 
 
 CI runs `make generate` and fails if the generated code differs from what's committed.
 
-The server loads the embedded spec at startup (`spec.go`). It validates every request against the spec, so handlers only receive requests that match the schema, and it uses each operation's `security` to decide which operations require authentication. Only login and the `/healthz` and `/readyz` probes are public.
+The server loads the embedded spec at startup (`spec.go`). It validates every request against the spec, so handlers only receive requests that match the schema, and it uses each operation's `security` to decide which operations require authentication. Only login and the `/healthz` and `/readyz` probes are public. Authentication fails closed: if the server is built without an authenticator, every protected operation returns `401`. Handlers get the caller from `auth.PrincipalFromContext`; see the Authentication section of `openapi.yaml` for sessions, bearer tokens, and CSRF.
 
 ## Conventions
 
