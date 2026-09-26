@@ -87,6 +87,11 @@ type Config struct {
 	MariaDBMemoryMB      int
 	// MariaDBRootPassword is written to secrets/mariadb_root_password.
 	MariaDBRootPassword redact.Secret
+	// MasterKeyFile is the host path of the platform master key file. It is
+	// given to the control plane as a Compose secret and must be outside
+	// DataDir, which is backed up (§4.1). The key itself never passes
+	// through the rendered project.
+	MasterKeyFile string
 	// SkipPreflight starts the control plane even if required host checks
 	// fail. Only for development machines and CI; never for real installs.
 	SkipPreflight bool
@@ -120,6 +125,11 @@ func (c Config) withDefaults() (Config, error) {
 	if c.MariaDBMemoryMB < 512 {
 		errs = append(errs, fmt.Errorf("MariaDB memory must be at least 512 MiB, got %d", c.MariaDBMemoryMB))
 	}
+	if !filepath.IsAbs(c.MasterKeyFile) || filepath.Clean(c.MasterKeyFile) != c.MasterKeyFile {
+		errs = append(errs, fmt.Errorf("master key file must be a clean absolute path, got %q", c.MasterKeyFile))
+	} else if rel, err := filepath.Rel(c.DataDir, c.MasterKeyFile); err == nil && filepath.IsLocal(rel) {
+		errs = append(errs, fmt.Errorf("master key file %s must not be inside the data directory", c.MasterKeyFile))
+	}
 	if c.MariaDBRootPassword.Reveal() == "" {
 		errs = append(errs, errors.New("MariaDB root password is required"))
 	}
@@ -143,6 +153,8 @@ type templateData struct {
 	ControlPlaneMemoryMB int
 	MariaDBMemoryMB      int
 	MariaDBBufferPoolMB  int
+	MasterKeyFile        string
+	MasterKeySecretPath  string
 	SkipPreflight        bool
 }
 
@@ -152,6 +164,10 @@ type output struct {
 	template string // empty for secrets
 	secret   redact.Secret
 }
+
+// MasterKeySecretPath is where the control plane container sees the master
+// key file.
+const MasterKeySecretPath = "/run/secrets/master_key" //nolint:gosec // G101: a path, not a credential
 
 // Files rendered by Render, relative to the project directory.
 const (
@@ -177,6 +193,8 @@ func Render(dir string, cfg Config) error {
 		ControlPlaneMemoryMB: cfg.ControlPlaneMemoryMB,
 		MariaDBMemoryMB:      cfg.MariaDBMemoryMB,
 		MariaDBBufferPoolMB:  bufferPoolMB(cfg.MariaDBMemoryMB),
+		MasterKeyFile:        cfg.MasterKeyFile,
+		MasterKeySecretPath:  MasterKeySecretPath,
 		SkipPreflight:        cfg.SkipPreflight,
 	}
 	tmpl, err := template.New("").Option("missingkey=error").Funcs(template.FuncMap{"q": quote}).

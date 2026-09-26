@@ -33,6 +33,10 @@ func (a *app) serveCommand() *cobra.Command {
 			if err := a.preflight(cmd.Context(), skipPreflight); err != nil {
 				return err
 			}
+			keys, err := a.loadKeyring()
+			if err != nil {
+				return err
+			}
 			layout := a.cfg.Layout()
 			if err := layout.Ensure(); err != nil {
 				return err
@@ -45,6 +49,9 @@ func (a *app) serveCommand() *cobra.Command {
 				return err
 			}
 			defer func() { _ = db.Close() }()
+			if err := a.verifyMasterKey(cmd.Context(), db, keys); err != nil {
+				return err
+			}
 
 			// Components register readiness checks here; job workers (#14)
 			// will start alongside the server.

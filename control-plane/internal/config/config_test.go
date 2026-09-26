@@ -216,3 +216,33 @@ func TestDatabaseSettings(t *testing.T) {
 		t.Errorf("default SQLitePath() = %q", got)
 	}
 }
+
+func TestMasterKeySettings(t *testing.T) {
+	path := writeFile(t, "master_key_file: /etc/pressfleet/master.key\n")
+	cfg, err := config.Load(path, env(map[string]string{"PRESSFLEET_MASTER_KEY": "pfmk1:from-env"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MasterKeyFile != "/etc/pressfleet/master.key" || cfg.MasterKey.Reveal() != "pfmk1:from-env" {
+		t.Errorf("MasterKeyFile = %q, MasterKey set = %v", cfg.MasterKeyFile, cfg.MasterKey != "")
+	}
+	if got := fmt.Sprintf("%+v", cfg); strings.Contains(got, "from-env") {
+		t.Errorf("formatted config reveals the master key: %s", got)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v", err)
+	}
+
+	cfg, err = config.Load(path, env(map[string]string{"PRESSFLEET_MASTER_KEY_FILE": "relative.key"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "master_key_file must be an absolute path") {
+		t.Errorf("Validate() = %v, want master_key_file error", err)
+	}
+
+	// The key itself can't be put in the config file.
+	if _, err := config.Load(writeFile(t, "master_key: pfmk1:in-file\n"), env(nil)); err == nil {
+		t.Error("master_key in the config file was accepted")
+	}
+}

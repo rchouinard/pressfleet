@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -82,7 +83,7 @@ func TestBackupBeforeUpgrade(t *testing.T) {
 		t.Errorf("result = %+v", res)
 	}
 	if !strings.HasPrefix(res.BackupPath, backups+string(filepath.Separator)) ||
-		!strings.HasSuffix(res.BackupPath, "-schema0001.db") {
+		!strings.HasSuffix(res.BackupPath, fmt.Sprintf("-schema%04d.db", len(all))) {
 		t.Fatalf("BackupPath = %q", res.BackupPath)
 	}
 

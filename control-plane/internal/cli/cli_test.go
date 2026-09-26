@@ -19,7 +19,12 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/cli"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/doctor/doctortest"
+	"github.com/rchouinard/pressfleet/control-plane/internal/secrets/secretstest"
 )
+
+// testKey is the master key run and runWith supply by default; override
+// PRESSFLEET_MASTER_KEY in env to use another one ("" means unset).
+func testKey(t *testing.T) string { return secretstest.KeyText(t, 1) }
 
 // syncBuffer is a bytes.Buffer safe for concurrent use.
 type syncBuffer struct {
@@ -75,7 +80,7 @@ func runFull(t *testing.T, ctx context.Context, args []string, env map[string]st
 	if err := os.WriteFile(emptyConfig, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	vars := map[string]string{config.EnvConfigPath: emptyConfig}
+	vars := map[string]string{config.EnvConfigPath: emptyConfig, "PRESSFLEET_MASTER_KEY": testKey(t)}
 	for k, v := range env {
 		vars[k] = v
 	}

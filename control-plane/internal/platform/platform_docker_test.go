@@ -13,6 +13,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
+	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
 )
 
 // TestPlatformUp renders the platform project into a temporary data
@@ -40,11 +41,17 @@ func TestPlatformUp(t *testing.T) {
 	}
 	images.ControlPlane = image
 	const password = "test-root-pw"
+	// A throwaway master key, outside the data directory as serve requires.
+	keyFile := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(keyFile, []byte(secrets.GenerateMasterKey().Encode().Reveal()+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	cfg := platform.Config{
 		ProjectName:         fmt.Sprintf("pftest-%d", time.Now().UnixNano()),
 		DataDir:             layout.Root,
 		Images:              images,
 		MariaDBRootPassword: password,
+		MasterKeyFile:       keyFile,
 		// Development machines and CI runners often lack Docker address pools.
 		SkipPreflight: true,
 	}
@@ -139,6 +146,7 @@ func TestPlatformUp(t *testing.T) {
 	// drive the host's Docker daemon through the socket.
 	exec("control-plane", "test", "-f", filepath.Join(dir, platform.ComposeFile))
 	exec("control-plane", "test", "-f", "/run/secrets/mariadb_root_password")
+	exec("control-plane", "test", "-f", platform.MasterKeySecretPath)
 	if got := exec("control-plane", "docker", "compose", "--project-name", cfg.ProjectName, "ps", "--quiet"); len(strings.Fields(got)) != 2 {
 		t.Errorf("docker compose ps inside the control plane listed %q", got)
 	}

@@ -98,6 +98,7 @@ func (a *app) rootCommand() *cobra.Command {
 	root.AddCommand(a.serveCommand(), a.initCommand(), a.doctorCommand(), a.versionCommand())
 	root.AddCommand(a.healthcheckCommand())
 	root.AddCommand(a.stateCommand())
+	root.AddCommand(a.keyCommand())
 	return root
 }
 

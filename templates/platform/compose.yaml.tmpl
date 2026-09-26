@@ -22,6 +22,7 @@ services:
     environment:
       PRESSFLEET_DATA_DIR: {{ q .DataDir }}
       PRESSFLEET_LISTEN: {{ q .Listen }}
+      PRESSFLEET_MASTER_KEY_FILE: {{ q .MasterKeySecretPath }}
 {{- if .SkipPreflight }}
       # Development/CI only: start even if required host checks fail.
       PRESSFLEET_SKIP_PREFLIGHT: "true"
@@ -42,6 +43,7 @@ services:
         target: /var/run/docker.sock
     secrets:
       - mariadb_root_password
+      - master_key
     networks:
       - platform
     deploy:
@@ -101,3 +103,7 @@ volumes:
 secrets:
   mariadb_root_password:
     file: ./secrets/mariadb_root_password
+  # The platform master key stays where the operator keeps it, outside the
+  # data directory and its backups (§4.1); it is only mounted, never copied.
+  master_key:
+    file: {{ q .MasterKeyFile }}

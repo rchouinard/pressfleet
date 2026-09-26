@@ -27,6 +27,7 @@ func testConfig() platform.Config {
 			MariaDB:      "docker.io/library/mariadb:12.3.3@sha256:2f4f46f80e7251990bfdc601ae3f7f2964ddb4dc1868f7deca699fc1ece8c35e",
 		},
 		MariaDBRootPassword: testPassword,
+		MasterKeyFile:       "/etc/pressfleet/master.key",
 	}
 }
 
@@ -245,6 +246,11 @@ func TestRenderedCompose(t *testing.T) {
 	if file.Secrets["mariadb_root_password"].File != "./"+platform.MariaDBRootPasswordSecret {
 		t.Errorf("secrets = %+v", file.Secrets)
 	}
+	// The master key file is mounted from where the operator keeps it.
+	if file.Secrets["master_key"].File != "/etc/pressfleet/master.key" ||
+		cp.Environment["PRESSFLEET_MASTER_KEY_FILE"] != platform.MasterKeySecretPath {
+		t.Errorf("master key: secrets = %+v, env = %q", file.Secrets, cp.Environment["PRESSFLEET_MASTER_KEY_FILE"])
+	}
 
 	cnf, err := os.ReadFile(filepath.Join(dir, platform.MariaDBConfigFile))
 	if err != nil {
@@ -264,6 +270,9 @@ func TestRenderInvalidConfig(t *testing.T) {
 		"multiline pw":      func(c *platform.Config) { c.MariaDBRootPassword = "a\nb" },
 		"tiny mariadb":      func(c *platform.Config) { c.MariaDBMemoryMB = 128 },
 		"tiny cp":           func(c *platform.Config) { c.ControlPlaneMemoryMB = 16 },
+		"no master key":     func(c *platform.Config) { c.MasterKeyFile = "" },
+		"relative key file": func(c *platform.Config) { c.MasterKeyFile = "master.key" },
+		"key in data dir":   func(c *platform.Config) { c.MasterKeyFile = "/var/lib/pressfleet/master.key" },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {

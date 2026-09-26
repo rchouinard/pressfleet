@@ -48,6 +48,13 @@ type Config struct {
 	PublicIP string `yaml:"public_ip"`
 	// Database configures the control plane state database.
 	Database DatabaseConfig `yaml:"database"`
+	// MasterKeyFile is a file holding the platform master key. It must be
+	// outside DataDir (§4.1).
+	MasterKeyFile string `yaml:"master_key_file"`
+	// MasterKey is the platform master key itself. It is only read from the
+	// environment, so it never ends up in a config file; it wins over
+	// MasterKeyFile.
+	MasterKey redact.Secret `yaml:"-"`
 }
 
 // LogConfig configures logging.
@@ -97,6 +104,8 @@ var envVars = []struct {
 	{"PRESSFLEET_DATABASE_DRIVER", func(c *Config) *string { return &c.Database.Driver }},
 	{"PRESSFLEET_DATABASE_SQLITE_PATH", func(c *Config) *string { return &c.Database.SQLitePath }},
 	{"PRESSFLEET_DATABASE_POSTGRES_DSN", func(c *Config) *string { return (*string)(&c.Database.PostgresDSN) }},
+	{"PRESSFLEET_MASTER_KEY_FILE", func(c *Config) *string { return &c.MasterKeyFile }},
+	{"PRESSFLEET_MASTER_KEY", func(c *Config) *string { return (*string)(&c.MasterKey) }},
 }
 
 // LookupEnv looks up an environment variable, like os.LookupEnv.
@@ -188,6 +197,9 @@ func (c Config) Validate() error {
 		}
 	default:
 		errs = append(errs, fmt.Errorf("database.driver must be %q or %q, got %q", DriverSQLite, DriverPostgres, c.Database.Driver))
+	}
+	if c.MasterKeyFile != "" && !filepath.IsAbs(c.MasterKeyFile) {
+		errs = append(errs, fmt.Errorf("master_key_file must be an absolute path, got %q", c.MasterKeyFile))
 	}
 	return errors.Join(errs...)
 }

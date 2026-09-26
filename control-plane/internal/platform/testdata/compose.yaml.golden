@@ -22,6 +22,7 @@ services:
     environment:
       PRESSFLEET_DATA_DIR: "/var/lib/pressfleet"
       PRESSFLEET_LISTEN: ":8080"
+      PRESSFLEET_MASTER_KEY_FILE: "/run/secrets/master_key"
     volumes:
       # The data directory is mounted at the same absolute path as on the host.
       # The control plane starts helper containers (backups, restores) that
@@ -38,6 +39,7 @@ services:
         target: /var/run/docker.sock
     secrets:
       - mariadb_root_password
+      - master_key
     networks:
       - platform
     deploy:
@@ -97,3 +99,7 @@ volumes:
 secrets:
   mariadb_root_password:
     file: ./secrets/mariadb_root_password
+  # The platform master key stays where the operator keeps it, outside the
+  # data directory and its backups (§4.1); it is only mounted, never copied.
+  master_key:
+    file: "/etc/pressfleet/master.key"
