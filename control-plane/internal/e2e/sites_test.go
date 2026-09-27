@@ -24,10 +24,20 @@ import (
 // images are ensured first) but waits for the containers' health checks.
 const jobTimeout = 6 * time.Minute
 
-// TestSiteCreateDelete is the acceptance test of #27, #29, and #31: create
-// a site through the API, wait for provisioning, check that WordPress is
-// installed and serving, then delete it and check that nothing is left.
+// TestSiteCreateDelete is the acceptance test of #27, #28, #29, and #31:
+// create a site through the API, wait for provisioning, check that
+// WordPress is installed and serving, change its PHP version, stop and
+// start it, then delete it and check that nothing is left.
 func TestSiteCreateDelete(t *testing.T) {
+	// The site's project directory belongs to the control plane, which runs
+	// as root and creates it with mode 0700, so the test (an unprivileged
+	// user in CI) can't read it, and `docker compose` fails when it can't
+	// stat the directory's .env. The test addresses the site project by
+	// name with this empty directory instead: ps and down work from the
+	// Compose labels alone, and commands in containers go through
+	// ExecService (`docker exec`). Created before the cleanup below, it is
+	// removed after it.
+	projectDir := t.TempDir()
 	// Whatever happens below, don't leave the site's containers, network,
 	// or volumes behind: they aren't part of the platform project that
 	// Start tears down. Registered first, this runs last, after the
@@ -62,7 +72,22 @@ func TestSiteCreateDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e2e.EnsureImages(t, images.PHP, images.Nginx)
+	// The site moves to another PHP version later on.
+	otherPHP := ""
+	for _, v := range cat.AvailablePHPVersions(time.Now()) {
+		if v.Version != php {
+			otherPHP = v.Version
+			break
+		}
+	}
+	if otherPHP == "" {
+		t.Fatal("the catalog offers only one PHP version")
+	}
+	otherImages, err := cat.Images(otherPHP, cat.LatestWordPress().Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e2e.EnsureImages(t, images.PHP, images.Nginx, otherImages.PHP)
 
 	group, err := p.Client.CreateClientGroupWithResponse(ctx, client.CreateClientGroupJSONRequestBody{Name: "E2E Agency"})
 	if err != nil {
@@ -89,7 +114,8 @@ func TestSiteCreateDelete(t *testing.T) {
 	if site.Slug != "e2e-site" || site.PreviewDomain != "e2e-site."+e2e.PreviewBaseDomain || site.Status != client.SiteStatusProvisioning {
 		t.Errorf("created site = %s", created.Body)
 	}
-	siteProject = compose.Project{Name: compose.SiteProjectName(site.ID), Dir: filepath.Join(p.DataDir, "sites", site.ID)}
+	siteProject = compose.Project{Name: compose.SiteProjectName(site.ID), Dir: projectDir}
+	siteDir := filepath.Join(p.DataDir, "sites", site.ID)
 
 	waitJob(t, p, created.JSON202.Job.ID)
 
@@ -128,7 +154,7 @@ func TestSiteCreateDelete(t *testing.T) {
 	t.Run("WordPress is installed", func(t *testing.T) {
 		exec := func(command ...string) string {
 			t.Helper()
-			out, err := siteProject.Exec(ctx, "php", command...)
+			out, err := siteProject.ExecService(ctx, "php", command...)
 			if err != nil {
 				t.Fatalf("%v: %v", command, err)
 			}
@@ -150,17 +176,19 @@ func TestSiteCreateDelete(t *testing.T) {
 		}
 	})
 
-	t.Run("WordPress answers through nginx", func(t *testing.T) {
-		// Fetched from the php container over the site network, with the
-		// preview host: the host can't reach sites until routing exists.
-		// A 200 with the site's title, or WordPress redirecting to its
-		// HTTPS preview URL, both mean WordPress answered.
+	// answers checks that WordPress answers through nginx. The page is
+	// fetched from the php container over the site network, with the
+	// preview host: the host can't reach sites until routing exists. A 200
+	// with the site's title, or WordPress redirecting to its HTTPS preview
+	// URL, both mean WordPress answered.
+	answers := func(t *testing.T) {
+		t.Helper()
 		script := fmt.Sprintf(`$c = stream_context_create(["http" => ["header" => "Host: %s", "follow_location" => 0, "ignore_errors" => true, "timeout" => 10]]);
 $body = @file_get_contents("http://nginx:8080/", false, $c);
 echo implode("\n", $http_response_header ?? ["no response"]), "\n\n", $body;`, site.PreviewDomain)
 		var out string
 		for deadline := time.Now().Add(30 * time.Second); ; {
-			b, err := siteProject.Exec(ctx, "php", "php", "-r", script)
+			b, err := siteProject.ExecService(ctx, "php", "php", "-r", script)
 			out = string(b)
 			if err == nil && !strings.HasPrefix(out, "no response") || time.Now().After(deadline) {
 				break
@@ -175,7 +203,8 @@ echo implode("\n", $http_response_header ?? ["no response"]), "\n\n", $body;`, s
 		default:
 			t.Errorf("home page response:\n%.600s", out)
 		}
-	})
+	}
+	t.Run("WordPress answers through nginx", answers)
 
 	t.Run("admin credentials are shown once", func(t *testing.T) {
 		if admin.Email != "owner@e2e.test" || admin.LoginURL != "https://"+site.PreviewDomain+"/wp-login.php" || len(admin.Password) < 20 {
@@ -194,6 +223,97 @@ echo implode("\n", $http_response_header ?? ["no response"]), "\n\n", $body;`, s
 		if dbs, users := siteDatabase(t, p, site.ID); dbs != 1 || users != 1 {
 			t.Errorf("site databases = %d, users = %d; want 1 and 1", dbs, users)
 		}
+	})
+
+	t.Run("the site is listed and has a live status", func(t *testing.T) {
+		list, err := p.Client.ListSitesWithResponse(ctx, &client.ListSitesParams{ClientGroupID: &group.JSON201.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if list.JSON200 == nil || len(list.JSON200.Items) != 1 || list.JSON200.Items[0].ID != site.ID {
+			t.Fatalf("list: status %d: %s", list.StatusCode(), list.Body)
+		}
+		if got := getSite(t, p, site.ID); got.Runtime == nil || got.Runtime.Phase != client.SiteRuntimePhaseRunning {
+			t.Errorf("runtime = %+v", got.Runtime)
+		}
+	})
+
+	// #28's acceptance criterion: changing the PHP version recreates the
+	// php container on the new image; nginx keeps running.
+	t.Run("changing the PHP version recreates php on the new image", func(t *testing.T) {
+		phpBefore, err := siteProject.ServiceContainer(ctx, "php")
+		if err != nil {
+			t.Fatal(err)
+		}
+		nginxBefore, err := siteProject.ServiceContainer(ctx, "nginx")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if phpBefore.Image != images.PHP {
+			t.Fatalf("php runs %s, want %s", phpBefore.Image, images.PHP)
+		}
+		resp, err := p.Client.UpdateSiteWithResponse(ctx, site.ID, client.UpdateSiteJSONRequestBody{PhpVersion: &otherPHP})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.JSON202 == nil {
+			t.Fatalf("update site: status %d: %s", resp.StatusCode(), resp.Body)
+		}
+		if s := resp.JSON202.Site; s.Status != client.SiteStatusUpdating || s.PhpVersion != otherPHP {
+			t.Errorf("accepted site = %s", resp.Body)
+		}
+		waitJob(t, p, resp.JSON202.Job.ID)
+
+		phpAfter, err := siteProject.ServiceContainer(ctx, "php")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if phpAfter.ID == phpBefore.ID || phpAfter.Image != otherImages.PHP || !phpAfter.Running {
+			t.Errorf("php after the update = %+v; want a new, running container of %s", phpAfter, otherImages.PHP)
+		}
+		if nginxAfter, err := siteProject.ServiceContainer(ctx, "nginx"); err != nil || nginxAfter.ID != nginxBefore.ID {
+			t.Errorf("nginx after the update = %+v, %v; want it untouched", nginxAfter, err)
+		}
+		out, err := siteProject.ExecService(ctx, "php", "php", "-r", `echo PHP_MAJOR_VERSION, ".", PHP_MINOR_VERSION;`)
+		if err != nil || string(out) != otherPHP {
+			t.Errorf("PHP version in the container = %q, %v; want %s", out, err, otherPHP)
+		}
+		if got := getSite(t, p, site.ID); got.Status != client.SiteStatusRunning || got.PhpVersion != otherPHP {
+			t.Errorf("site after the update: status %s, PHP %s", got.Status, got.PhpVersion)
+		}
+		answers(t)
+	})
+
+	t.Run("stop and start", func(t *testing.T) {
+		stop, err := p.Client.StopSiteWithResponse(ctx, site.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stop.JSON202 == nil {
+			t.Fatalf("stop: status %d: %s", stop.StatusCode(), stop.Body)
+		}
+		waitJob(t, p, stop.JSON202.Job.ID)
+		got := getSite(t, p, site.ID)
+		if got.Status != client.SiteStatusStopped || got.Runtime == nil || got.Runtime.Phase != client.SiteRuntimePhaseStopped {
+			t.Errorf("after stop: status %s, runtime %+v", got.Status, got.Runtime)
+		}
+		if c, err := siteProject.ServiceContainer(ctx, "php"); err != nil || c.Running {
+			t.Errorf("php after stop = %+v, %v", c, err)
+		}
+
+		start, err := p.Client.StartSiteWithResponse(ctx, site.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if start.JSON202 == nil {
+			t.Fatalf("start: status %d: %s", start.StatusCode(), start.Body)
+		}
+		waitJob(t, p, start.JSON202.Job.ID)
+		got = getSite(t, p, site.ID)
+		if got.Status != client.SiteStatusRunning || got.Runtime == nil || got.Runtime.Phase != client.SiteRuntimePhaseRunning {
+			t.Errorf("after start: status %s, runtime %+v", got.Status, got.Runtime)
+		}
+		answers(t)
 	})
 
 	deleted, err := p.Client.DeleteSiteWithResponse(ctx, site.ID)
@@ -223,7 +343,8 @@ echo implode("\n", $http_response_header ?? ["no response"]), "\n\n", $body;`, s
 		if !res.Empty() {
 			t.Errorf("site project left resources behind: %+v", res)
 		}
-		if _, err := os.Stat(siteProject.Dir); !errors.Is(err, fs.ErrNotExist) {
+		// The test created the sites directory, so it can see into it.
+		if _, err := os.Stat(siteDir); !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("site directory: %v, want it gone", err)
 		}
 	})
@@ -258,6 +379,19 @@ echo implode("\n", $http_response_header ?? ["no response"]), "\n\n", $body;`, s
 			}
 		}
 	})
+}
+
+// getSite gets a site through the API, failing the test unless it exists.
+func getSite(t *testing.T, p *e2e.Platform, siteID string) client.Site {
+	t.Helper()
+	resp, err := p.Client.GetSiteWithResponse(t.Context(), siteID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.JSON200 == nil {
+		t.Fatalf("get site %s: status %d: %s", siteID, resp.StatusCode(), resp.Body)
+	}
+	return *resp.JSON200
 }
 
 // waitJob polls a job until it reaches a terminal state and fails the test

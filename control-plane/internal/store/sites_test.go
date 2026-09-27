@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -152,6 +153,99 @@ func TestSites(t *testing.T) {
 		}
 		if got, err := sites.Aliases(ctx, s.ID); err != nil || len(got) != 0 {
 			t.Errorf("Aliases after Delete = %v, %v", got, err)
+		}
+	})
+}
+
+func TestSiteListAndSettings(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		groupA, groupB := createGroup(ctx, t, db), createGroup(ctx, t, db)
+		sites := store.NewSites(db)
+		var created []string
+		for i := range 5 {
+			group := groupA
+			if i%2 == 1 {
+				group = groupB
+			}
+			s := newTestSite(group, fmt.Sprintf("site-%d", i), 20000+i)
+			if i == 4 {
+				s.Status = store.SiteRunning
+			}
+			if err := sites.Create(ctx, s); err != nil {
+				t.Fatal(err)
+			}
+			created = append(created, s.ID)
+		}
+		newestFirst := slices.Clone(created)
+		slices.Sort(newestFirst)
+		slices.Reverse(newestFirst)
+		idsOf := func(p store.SitePage) []string {
+			var out []string
+			for _, s := range p.Sites {
+				out = append(out, s.ID)
+			}
+			return out
+		}
+
+		// Paging through everything visits every site once, newest first.
+		var all []string
+		cursor := ""
+		for range 10 {
+			page, err := sites.List(ctx, store.SiteFilter{Before: cursor, Limit: 2})
+			if err != nil {
+				t.Fatal(err)
+			}
+			all = append(all, idsOf(page)...)
+			if cursor = page.NextCursor; cursor == "" {
+				break
+			}
+		}
+		if !slices.Equal(all, newestFirst) {
+			t.Errorf("paged = %v\nwant %v", all, newestFirst)
+		}
+		page, err := sites.List(ctx, store.SiteFilter{ClientGroupID: groupB})
+		if err != nil || len(page.Sites) != 2 || page.NextCursor != "" {
+			t.Errorf("group filter = %v, %v", idsOf(page), err)
+		}
+		page, err = sites.List(ctx, store.SiteFilter{ClientGroupID: groupA, Status: store.SiteRunning})
+		if err != nil || !slices.Equal(idsOf(page), []string{created[4]}) {
+			t.Errorf("group and status filter = %v, %v", idsOf(page), err)
+		}
+		if page, err := sites.List(ctx, store.SiteFilter{ClientGroupID: id.New()}); err != nil || page.Sites == nil || len(page.Sites) != 0 {
+			t.Errorf("unknown group = %+v, %v", page, err)
+		}
+
+		// Aliases for a page of sites.
+		now := time.Now()
+		if _, err := db.ExecContext(ctx, "INSERT INTO site_aliases (domain, site_id, created_at) VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?)",
+			"z.example", created[0], now, "a.example", created[0], now, "b.example", created[1], now); err != nil {
+			t.Fatal(err)
+		}
+		aliases, err := sites.AliasesForSites(ctx, created[:3])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(aliases[created[0]], []string{"a.example", "z.example"}) || !slices.Equal(aliases[created[1]], []string{"b.example"}) ||
+			len(aliases[created[2]]) != 0 {
+			t.Errorf("AliasesForSites = %v", aliases)
+		}
+		if got, err := sites.AliasesForSites(ctx, nil); err != nil || len(got) != 0 {
+			t.Errorf("AliasesForSites(nil) = %v, %v", got, err)
+		}
+
+		// Settings.
+		before, _ := sites.Get(ctx, created[0])
+		want := store.SiteSettings{PHPVersion: "8.3", CPULimit: "2.5", MemoryReservationMB: 256, MemoryLimitMB: 1024}
+		if ok, err := sites.SetSettings(ctx, created[0], want); err != nil || !ok {
+			t.Fatalf("SetSettings = %v, %v", ok, err)
+		}
+		got, _ := sites.Get(ctx, created[0])
+		if got.Settings() != want || got.UpdatedAt.Before(before.UpdatedAt) || before.WithSettings(want).PHPVersion != "8.3" {
+			t.Errorf("after SetSettings: %+v", got)
+		}
+		if ok, err := sites.SetSettings(ctx, id.New(), want); err != nil || ok {
+			t.Errorf("SetSettings on a missing site = %v, %v", ok, err)
 		}
 	})
 }

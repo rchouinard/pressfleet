@@ -282,7 +282,8 @@ func TestUnmatchedRoutes(t *testing.T) {
 }
 
 func TestRequestValidation(t *testing.T) {
-	h := newHandler(t, api.Options{Authenticator: &fakeAuth{}})
+	db := storetest.Open(t, store.SQLite)
+	h := newHandler(t, api.Options{Authenticator: &fakeAuth{}, DB: db, Sites: newSiteEnv(t, db, testPreviewBase).svc})
 	tests := []struct {
 		name       string
 		req        request
@@ -290,9 +291,10 @@ func TestRequestValidation(t *testing.T) {
 		wantFields []string
 	}{
 		{
+			// The handler answers: there is no such site.
 			name:   "valid body reaches handler",
 			req:    request{method: http.MethodPatch, target: "/api/v1/sites/abc123", body: sampleBodies["updateSite"]},
-			status: http.StatusNotImplemented,
+			status: http.StatusNotFound,
 		},
 		{
 			name:   "malformed JSON",

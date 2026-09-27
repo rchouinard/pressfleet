@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
+	"github.com/rchouinard/pressfleet/control-plane/internal/id"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
@@ -17,12 +19,41 @@ import (
 // errNoSites is a wiring bug: serve always passes the site service.
 var errNoSites = errors.New("api: no site service configured")
 
-// ListSites lists sites, optionally filtered by client group or status.
+// ListSites lists sites, newest first, optionally filtered by client group
+// or status. The cursor is the ID of the last site on the previous page.
 func (h *Handlers) ListSites(ctx context.Context, req gen.ListSitesRequestObject) (gen.ListSitesResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ViewSites, authz.ClientGroup(deref(req.Params.ClientGroupID))); err != nil {
 		return nil, err
 	}
-	return nil, notImplemented(28)
+	if h.sites == nil {
+		return nil, errNoSites
+	}
+	p := req.Params
+	f := store.SiteFilter{ClientGroupID: deref(p.ClientGroupID)}
+	if p.Limit != nil {
+		f.Limit = *p.Limit
+	}
+	if p.Cursor != nil {
+		if !id.Valid(*p.Cursor) {
+			return nil, httpserver.NewProblem(http.StatusBadRequest, "The cursor is invalid; pass the next_cursor of a previous page.")
+		}
+		f.Before = *p.Cursor
+	}
+	if p.Status != nil {
+		f.Status = store.SiteStatus(*p.Status)
+	}
+	page, aliases, err := h.sites.List(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	out := gen.ListSites200JSONResponse{Items: make([]gen.Site, len(page.Sites))}
+	for i, s := range page.Sites {
+		out.Items[i] = siteResponse(s, aliases[s.ID])
+	}
+	if page.NextCursor != "" {
+		out.NextCursor = &page.NextCursor
+	}
+	return out, nil
 }
 
 // CreateSite starts the provisioning workflow and returns 202 with the job.
@@ -63,8 +94,9 @@ func (h *Handlers) CreateSite(ctx context.Context, req gen.CreateSiteRequestObje
 	}, nil
 }
 
-// GetSite returns a site. Its status is the recorded lifecycle status; live
-// runtime status comes with #28.
+// GetSite returns a site with its recorded status and its live runtime
+// state. The live state is best effort: if the container runtime can't be
+// reached in time, the phase is unknown and the request still succeeds.
 func (h *Handlers) GetSite(ctx context.Context, req gen.GetSiteRequestObject) (gen.GetSiteResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ViewSites, authz.Site(req.SiteID)); err != nil {
 		return nil, err
@@ -76,15 +108,47 @@ func (h *Handlers) GetSite(ctx context.Context, req gen.GetSiteRequestObject) (g
 	if err != nil {
 		return nil, siteError(err)
 	}
-	return gen.GetSite200JSONResponse(siteResponse(site, aliases)), nil
+	rt := h.sites.Runtime(ctx, site.ID)
+	out := siteResponse(site, aliases)
+	out.Runtime = &gen.SiteRuntime{Phase: gen.SiteRuntimePhase(rt.Phase)}
+	if rt.Message != "" {
+		out.Runtime.Message = &rt.Message
+	}
+	return gen.GetSite200JSONResponse(out), nil
 }
 
-// UpdateSite queues a job that applies a new PHP version or resource limits.
+// UpdateSite saves a new PHP version or resource limits and queues the job
+// that applies them.
 func (h *Handlers) UpdateSite(ctx context.Context, req gen.UpdateSiteRequestObject) (gen.UpdateSiteResponseObject, error) {
-	if _, err := h.authorize(ctx, authz.UpdateSite, authz.Site(req.SiteID)); err != nil {
+	p, err := h.authorize(ctx, authz.UpdateSite, authz.Site(req.SiteID))
+	if err != nil {
 		return nil, err
 	}
-	return nil, notImplemented(28)
+	if h.sites == nil {
+		return nil, errNoSites
+	}
+	b := deref(req.Body)
+	in := sites.SiteUpdate{PHPVersion: b.PhpVersion, CreatedByUserID: p.UserID}
+	if r := b.Resources; r != nil {
+		in.CPU, in.MemoryReservationMB, in.MemoryLimitMB = r.CPU, r.MemoryReservationMb, r.MemoryLimitMb
+	}
+	site, job, err := h.sites.Update(ctx, req.SiteID, in)
+	if err != nil {
+		return nil, siteError(err)
+	}
+	_, aliases, err := h.sites.Get(ctx, site.ID)
+	if err != nil {
+		return nil, siteError(err)
+	}
+	j, err := jobResponse(job, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	location := jobLocation(job)
+	return gen.UpdateSite202JSONResponse{
+		Body:    gen.SiteAccepted{Site: siteResponse(site, aliases), Job: j},
+		Headers: gen.UpdateSite202ResponseHeaders{Location: &location},
+	}, nil
 }
 
 // DeleteSite queues the site deletion job, or returns the one already
@@ -114,18 +178,50 @@ func (h *Handlers) DeleteSite(ctx context.Context, req gen.DeleteSiteRequestObje
 
 // StartSite queues a job that starts a stopped site.
 func (h *Handlers) StartSite(ctx context.Context, req gen.StartSiteRequestObject) (gen.StartSiteResponseObject, error) {
-	if _, err := h.authorize(ctx, authz.StartSite, authz.Site(req.SiteID)); err != nil {
+	p, err := h.authorize(ctx, authz.StartSite, authz.Site(req.SiteID))
+	if err != nil {
 		return nil, err
 	}
-	return nil, notImplemented(28)
+	if h.sites == nil {
+		return nil, errNoSites
+	}
+	job, err := h.sites.Start(ctx, req.SiteID, p.UserID)
+	if err != nil {
+		return nil, siteError(err)
+	}
+	j, err := jobResponse(job, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	location := jobLocation(job)
+	return gen.StartSite202JSONResponse{
+		Body:    gen.JobAccepted{Job: j},
+		Headers: gen.StartSite202ResponseHeaders{Location: &location},
+	}, nil
 }
 
 // StopSite queues a job that stops a running site.
 func (h *Handlers) StopSite(ctx context.Context, req gen.StopSiteRequestObject) (gen.StopSiteResponseObject, error) {
-	if _, err := h.authorize(ctx, authz.StopSite, authz.Site(req.SiteID)); err != nil {
+	p, err := h.authorize(ctx, authz.StopSite, authz.Site(req.SiteID))
+	if err != nil {
 		return nil, err
 	}
-	return nil, notImplemented(28)
+	if h.sites == nil {
+		return nil, errNoSites
+	}
+	job, err := h.sites.Stop(ctx, req.SiteID, p.UserID)
+	if err != nil {
+		return nil, siteError(err)
+	}
+	j, err := jobResponse(job, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	location := jobLocation(job)
+	return gen.StopSite202JSONResponse{
+		Body:    gen.JobAccepted{Job: j},
+		Headers: gen.StopSite202ResponseHeaders{Location: &location},
+	}, nil
 }
 
 // RetrieveSiteAdminCredentials returns the initial WordPress admin
@@ -168,10 +264,15 @@ func siteError(err error) error {
 		{sites.ErrNoPreviewDomain, ErrConflict},
 		{sites.ErrNotReady, ErrConflict},
 		{sites.ErrCredentialsGone, ErrGone},
+		{sites.ErrNotProvisioned, ErrConflict},
 	} {
 		if errors.Is(err, m.from) {
 			return fmt.Errorf("%w: %w", m.to, m.from)
 		}
+	}
+	// The wrapping says what the site is doing.
+	if errors.Is(err, sites.ErrBusy) {
+		return fmt.Errorf("%w: %w", ErrConflict, err)
 	}
 	return err
 }

@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -27,9 +28,13 @@ const testPreviewBase = "preview.example.test"
 
 // implementedSiteOps are the site operations that no longer answer 501.
 var implementedSiteOps = map[string]bool{
+	"listSites":                    true,
 	"createSite":                   true,
-	"deleteSite":                   true,
 	"getSite":                      true,
+	"updateSite":                   true,
+	"deleteSite":                   true,
+	"startSite":                    true,
+	"stopSite":                     true,
 	"retrieveSiteAdminCredentials": true,
 }
 
@@ -246,5 +251,227 @@ func TestSitesEndpoints(t *testing.T) {
 		if w := do(t, h, request{authed: true, method: http.MethodDelete, target: "/api/v1/client-groups/" + group.ID}); w.Code != http.StatusNoContent {
 			t.Errorf("delete the emptied group: %d %s", w.Code, w.Body)
 		}
+	})
+}
+
+func TestSiteManagementEndpoints(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		e := newSiteEnv(t, db, testPreviewBase)
+		h := newHandler(t, api.Options{DB: db, Authenticator: &fakeAuth{}, Sites: e.svc})
+		now := time.Now()
+		if _, err := db.ExecContext(ctx, "INSERT INTO users (id, email, password_hash, role, created_at, updated_at) VALUES (?, ?, 'x', 'admin', ?, ?)",
+			"01j9zq3v6t8k4m2n5p7r9s1x3y", "admin@example.com", now, now); err != nil {
+			t.Fatal(err)
+		}
+		var groups [2]string
+		for i := range groups {
+			g := &store.ClientGroup{Name: "Group " + id.New()}
+			if err := store.NewClientGroups(db).Create(ctx, g); err != nil {
+				t.Fatal(err)
+			}
+			groups[i] = g.ID
+		}
+		var (
+			ids    []string
+			byID   = map[string]string{}
+			groupB []string
+		)
+		for i, name := range []string{"One", "Two", "Three"} {
+			site, _, err := e.svc.Create(ctx, sites.NewSite{ClientGroupID: groups[min(i, 1)], Name: name, AdminEmail: "o@example.com", PHPVersion: "8.4"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ids = append(ids, site.ID)
+			byID[site.ID] = name
+			if i > 0 {
+				groupB = append(groupB, site.ID)
+			}
+		}
+		e.runJobs(t)
+		// Newest first is ID order, which is creation order to the
+		// millisecond.
+		order := func(siteIDs []string) []string {
+			sorted := slices.Clone(siteIDs)
+			slices.Sort(sorted)
+			slices.Reverse(sorted)
+			var names []string
+			for _, s := range sorted {
+				names = append(names, byID[s])
+			}
+			return names
+		}
+		all, inB := order(ids), order(groupB)
+
+		list := func(query string) gen.SiteList {
+			t.Helper()
+			w := do(t, h, request{authed: true, method: http.MethodGet, target: "/api/v1/sites" + query})
+			if w.Code != http.StatusOK {
+				t.Fatalf("list %q: %d %s", query, w.Code, w.Body)
+			}
+			return decodeJSON[gen.SiteList](t, w.Body.Bytes())
+		}
+		names := func(l gen.SiteList) string {
+			var out []string
+			for _, s := range l.Items {
+				out = append(out, s.Name)
+				if s.Runtime != nil || s.Aliases == nil {
+					t.Errorf("listed site %s: runtime %v, aliases %v", s.Name, s.Runtime, s.Aliases)
+				}
+			}
+			return strings.Join(out, ",")
+		}
+
+		// List: newest first, paginated, filtered.
+		if got := list(""); names(got) != strings.Join(all, ",") || got.NextCursor != nil {
+			t.Errorf("list = %s, next %v", names(got), got.NextCursor)
+		}
+		page := list("?limit=2")
+		if names(page) != strings.Join(all[:2], ",") || page.NextCursor == nil {
+			t.Fatalf("first page = %s, next %v", names(page), page.NextCursor)
+		}
+		if got := list("?limit=2&cursor=" + *page.NextCursor); names(got) != all[2] || got.NextCursor != nil {
+			t.Errorf("second page = %s, next %v", names(got), got.NextCursor)
+		}
+		if got := list("?client_group_id=" + groups[1]); names(got) != strings.Join(inB, ",") {
+			t.Errorf("group filter = %s", names(got))
+		}
+		if got := list("?client_group_id=" + id.New()); names(got) != "" {
+			t.Errorf("unknown group = %s", names(got))
+		}
+		if got := list("?status=stopped"); names(got) != "" {
+			t.Errorf("status filter = %s", names(got))
+		}
+		if w := do(t, h, request{authed: true, method: http.MethodGet, target: "/api/v1/sites?cursor=nope"}); w.Code != http.StatusBadRequest {
+			t.Errorf("bad cursor: %d %s", w.Code, w.Body)
+		}
+
+		siteID := ids[0]
+		target := "/api/v1/sites/" + siteID
+		get := func() gen.Site {
+			t.Helper()
+			w := do(t, h, request{authed: true, method: http.MethodGet, target: target})
+			if w.Code != http.StatusOK {
+				t.Fatalf("get: %d %s", w.Code, w.Body)
+			}
+			return decodeJSON[gen.Site](t, w.Body.Bytes())
+		}
+
+		// Get includes the live runtime state, and falls back to the
+		// recorded status when the runtime can't be asked.
+		if got := get(); got.Runtime == nil || got.Runtime.Phase != gen.SiteRuntimePhaseRunning {
+			t.Errorf("runtime = %+v", got.Runtime)
+		}
+		e.prov.Err = func(op, _ string) error {
+			if op == "GetSite" {
+				return errors.New("cannot connect to the Docker daemon")
+			}
+			return nil
+		}
+		if got := get(); got.Status != gen.SiteStatusRunning || got.Runtime == nil || got.Runtime.Phase != gen.SiteRuntimePhaseUnknown ||
+			got.Runtime.Message == nil || strings.Contains(*got.Runtime.Message, "daemon") {
+			t.Errorf("with the runtime down: status %s, runtime %+v", got.Status, got.Runtime)
+		}
+		e.prov.Err = nil
+
+		// PATCH: 202 with the desired state saved and the job queued;
+		// further changes wait for it.
+		w := do(t, h, request{authed: true, method: http.MethodPatch, target: target, body: `{"php_version":"8.3","resources":{"memory_limit_mb":768}}`})
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("patch: %d %s", w.Code, w.Body)
+		}
+		acc := decodeJSON[gen.SiteAccepted](t, w.Body.Bytes())
+		if acc.Site.Status != gen.SiteStatusUpdating || acc.Site.PhpVersion != "8.3" || acc.Site.Resources.MemoryLimitMb != 768 ||
+			acc.Job.Type != sites.UpdateJobType || w.Header().Get("Location") != "/api/v1/jobs/"+acc.Job.ID {
+			t.Errorf("patch = %s", w.Body)
+		}
+		for _, req := range []request{
+			{method: http.MethodPatch, target: target, body: `{"php_version":"8.4"}`},
+			{method: http.MethodPost, target: target + "/stop"},
+		} {
+			req.authed = true
+			if w := do(t, h, req); w.Code != http.StatusConflict {
+				t.Errorf("%s %s while updating: %d %s", req.method, req.target, w.Code, w.Body)
+			} else if p := decodeProblem(t, w); !strings.Contains(p.Detail, "updating") {
+				t.Errorf("detail = %q", p.Detail)
+			}
+		}
+		e.runJobs(t)
+		if got := get(); got.Status != gen.SiteStatusRunning || got.PhpVersion != "8.3" {
+			t.Errorf("after the update: %+v", got)
+		}
+		if s, _ := e.prov.Site(siteID); s.Config.PHPVersion != "8.3" || s.Config.Resources.MemoryLimitMB != 768 {
+			t.Errorf("provisioner config = %+v", s.Config)
+		}
+
+		// Validation.
+		for _, tt := range []struct{ name, body, field string }{
+			{"unknown PHP", `{"php_version":"5.6"}`, "/php_version"},
+			{"reservation over limit", `{"resources":{"memory_reservation_mb":1024}}`, "/resources/memory_reservation_mb"},
+		} {
+			w := do(t, h, request{authed: true, method: http.MethodPatch, target: target, body: tt.body})
+			if w.Code != http.StatusUnprocessableEntity {
+				t.Errorf("%s: %d %s", tt.name, w.Code, w.Body)
+				continue
+			}
+			if p := decodeProblem(t, w); len(p.Errors) != 1 || p.Errors[0].Field != tt.field {
+				t.Errorf("%s: errors = %+v", tt.name, p.Errors)
+			}
+		}
+		if w := do(t, h, request{authed: true, method: http.MethodPatch, target: target, body: `{}`}); w.Code != http.StatusUnprocessableEntity {
+			t.Errorf("empty patch: %d %s", w.Code, w.Body)
+		}
+
+		// Stop and start.
+		for _, step := range []struct {
+			action  string
+			jobType string
+			status  gen.SiteStatus
+			phase   provisioner.SitePhase
+		}{
+			{"stop", sites.StopJobType, gen.SiteStatusStopped, provisioner.SiteStopped},
+			{"start", sites.StartJobType, gen.SiteStatusRunning, provisioner.SiteRunning},
+		} {
+			w := do(t, h, request{authed: true, method: http.MethodPost, target: target + "/" + step.action})
+			if w.Code != http.StatusAccepted {
+				t.Fatalf("%s: %d %s", step.action, w.Code, w.Body)
+			}
+			if j := decodeJSON[gen.JobAccepted](t, w.Body.Bytes()).Job; j.Type != step.jobType || w.Header().Get("Location") != "/api/v1/jobs/"+j.ID {
+				t.Errorf("%s = %s", step.action, w.Body)
+			}
+			e.runJobs(t)
+			if got := get(); got.Status != step.status {
+				t.Errorf("after %s: status %s", step.action, got.Status)
+			}
+			if s, _ := e.prov.Site(siteID); s.Phase != step.phase {
+				t.Errorf("after %s: phase %s", step.action, s.Phase)
+			}
+		}
+
+		// Missing sites, and sites being deleted.
+		missing := "/api/v1/sites/" + id.New()
+		for _, req := range []request{
+			{method: http.MethodPatch, target: missing, body: `{"php_version":"8.4"}`},
+			{method: http.MethodPost, target: missing + "/start"},
+			{method: http.MethodPost, target: missing + "/stop"},
+		} {
+			req.authed = true
+			if w := do(t, h, req); w.Code != http.StatusNotFound {
+				t.Errorf("%s %s: %d %s", req.method, req.target, w.Code, w.Body)
+			}
+		}
+		if w := do(t, h, request{authed: true, method: http.MethodDelete, target: target}); w.Code != http.StatusAccepted {
+			t.Fatalf("delete: %d %s", w.Code, w.Body)
+		}
+		for _, req := range []request{
+			{method: http.MethodPatch, target: target, body: `{"php_version":"8.4"}`},
+			{method: http.MethodPost, target: target + "/start"},
+		} {
+			req.authed = true
+			if w := do(t, h, req); w.Code != http.StatusConflict {
+				t.Errorf("%s %s while deleting: %d %s", req.method, req.target, w.Code, w.Body)
+			}
+		}
+		e.runJobs(t)
 	})
 }

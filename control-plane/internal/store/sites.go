@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/id"
@@ -148,6 +149,146 @@ func (r Sites) Aliases(ctx context.Context, siteID string) ([]string, error) {
 		return nil, fmt.Errorf("aliases of site %s: %w", siteID, err)
 	}
 	return out, nil
+}
+
+// SiteFilter selects sites for List. Zero fields don't filter.
+type SiteFilter struct {
+	ClientGroupID string
+	Status        SiteStatus
+	// Before is a cursor: only sites with a smaller ID (older ones) are
+	// returned. Pass the previous page's NextCursor.
+	Before string
+	// Limit is the page size: default 50, at most 200.
+	Limit int
+}
+
+// SitePage is one page of List results, newest first.
+type SitePage struct {
+	Sites []Site
+	// NextCursor is the Before value for the next page, or empty on the
+	// last page.
+	NextCursor string
+}
+
+// List returns the sites matching f, newest first, one page at a time. IDs
+// are ULIDs, so ID order is creation order and a cursor stays valid while
+// sites are added or deleted.
+func (r Sites) List(ctx context.Context, f SiteFilter) (SitePage, error) {
+	limit := f.Limit
+	switch {
+	case limit <= 0:
+		limit = 50
+	case limit > 200:
+		limit = 200
+	}
+	var (
+		where []string
+		args  []any
+	)
+	if f.ClientGroupID != "" {
+		where = append(where, "client_group_id = ?")
+		args = append(args, f.ClientGroupID)
+	}
+	if f.Status != "" {
+		where = append(where, "status = ?")
+		args = append(args, string(f.Status))
+	}
+	if f.Before != "" {
+		where = append(where, "id < ?")
+		args = append(args, f.Before)
+	}
+	query := "SELECT " + siteColumns + " FROM sites"
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	// Fetch one extra row to learn whether there is another page.
+	query += " ORDER BY id DESC LIMIT ?"
+	args = append(args, limit+1)
+	rows, err := r.q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return SitePage{}, fmt.Errorf("list sites: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	page := SitePage{Sites: []Site{}}
+	for rows.Next() {
+		s, err := scanSite(rows)
+		if err != nil {
+			return SitePage{}, fmt.Errorf("list sites: %w", err)
+		}
+		page.Sites = append(page.Sites, s)
+	}
+	if err := rows.Err(); err != nil {
+		return SitePage{}, fmt.Errorf("list sites: %w", err)
+	}
+	if len(page.Sites) > limit {
+		page.Sites = page.Sites[:limit]
+		page.NextCursor = page.Sites[limit-1].ID
+	}
+	return page, nil
+}
+
+// AliasesForSites returns the alias domains of several sites, sorted and
+// keyed by site ID, for listings. Sites without aliases have no entry.
+func (r Sites) AliasesForSites(ctx context.Context, siteIDs []string) (map[string][]string, error) {
+	out := map[string][]string{}
+	if len(siteIDs) == 0 {
+		return out, nil
+	}
+	args := make([]any, len(siteIDs))
+	for i, siteID := range siteIDs {
+		args[i] = siteID
+	}
+	rows, err := r.q.QueryContext(ctx, "SELECT site_id, domain FROM site_aliases WHERE site_id IN ("+
+		placeholders(len(siteIDs))+") ORDER BY site_id, domain", args...)
+	if err != nil {
+		return nil, fmt.Errorf("aliases of sites: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var siteID, domain string
+		if err := rows.Scan(&siteID, &domain); err != nil {
+			return nil, fmt.Errorf("aliases of sites: %w", err)
+		}
+		out[siteID] = append(out[siteID], domain)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("aliases of sites: %w", err)
+	}
+	return out, nil
+}
+
+// SiteSettings are the settings of a site that users change after
+// creation: its PHP version and resource limits.
+type SiteSettings struct {
+	PHPVersion          string `json:"php_version"`
+	CPULimit            string `json:"cpu_limit"`
+	MemoryReservationMB int    `json:"memory_reservation_mb"`
+	MemoryLimitMB       int    `json:"memory_limit_mb"`
+}
+
+// Settings returns the site's current settings.
+func (s Site) Settings() SiteSettings {
+	return SiteSettings{
+		PHPVersion:          s.PHPVersion,
+		CPULimit:            s.CPULimit,
+		MemoryReservationMB: s.MemoryReservationMB,
+		MemoryLimitMB:       s.MemoryLimitMB,
+	}
+}
+
+// WithSettings returns a copy of the site with the given settings.
+func (s Site) WithSettings(set SiteSettings) Site {
+	s.PHPVersion, s.CPULimit = set.PHPVersion, set.CPULimit
+	s.MemoryReservationMB, s.MemoryLimitMB = set.MemoryReservationMB, set.MemoryLimitMB
+	return s
+}
+
+// SetSettings saves the site's PHP version and resource limits. It reports
+// whether the site exists; a missing site is not an error.
+func (r Sites) SetSettings(ctx context.Context, siteID string, s SiteSettings) (bool, error) {
+	return r.exec(ctx, "set settings of site "+siteID,
+		"UPDATE sites SET php_version = ?, cpu_limit = ?, memory_reservation_mb = ?, memory_limit_mb = ?, updated_at = ? WHERE id = ?",
+		s.PHPVersion, s.CPULimit, s.MemoryReservationMB, s.MemoryLimitMB, now(), siteID)
 }
 
 // SlugTaken reports whether a site already uses the slug or the preview

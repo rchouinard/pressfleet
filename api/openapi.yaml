@@ -603,6 +603,9 @@ paths:
       operationId: listSites
       tags: [sites]
       summary: List sites
+      description: |
+        Newest first. Listings come from the recorded state alone, so they
+        omit `runtime`; get a site for its live state.
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Cursor"
@@ -679,6 +682,11 @@ paths:
       operationId: getSite
       tags: [sites]
       summary: Get a site
+      description: |
+        Returns the site with its live runtime state in `runtime`, read from
+        the container runtime with a short timeout. If the container runtime
+        can't be reached, `runtime.phase` is `unknown` and `status` is the
+        last recorded status; the request still succeeds.
       responses:
         "200":
           description: The site, including its live runtime status.
@@ -699,11 +707,23 @@ paths:
       tags: [sites]
       summary: Update a site's settings
       description: |
-        Changes the PHP version or resource limits. The change is applied by a
-        job that recreates the affected containers (design doc §5.5); the
-        response contains the site with the requested settings and the job.
-        Only one mutating job runs per site at a time; a conflicting request
-        returns `409`.
+        Changes the PHP version or resource limits. The settings are
+        validated, saved as the site's desired state, and applied by a job
+        that recreates the affected containers (design doc §5.5); changing
+        the PHP version recreates the `php` container on the new image. The
+        response contains the site with the requested settings and status
+        `updating`, and the job. A stopped site stays stopped and runs with
+        the new settings when started.
+
+        If the job fails, it reverts: the previous settings are applied and
+        saved again, the status returns to what the containers are doing,
+        and `status_message` says why the update failed. Only if reverting
+        fails too is the site marked `failed`.
+
+        A site that is `provisioning`, `updating`, or `deleting`, or whose
+        provisioning failed, can't be changed (`409`). The PHP version is
+        only validated when it changes, so a site on a PHP version past end
+        of life can still get new resource limits.
       requestBody:
         required: true
         content:
@@ -770,6 +790,13 @@ paths:
       operationId: startSite
       tags: [sites]
       summary: Start a stopped site
+      description: |
+        Queues a job that starts the site's containers and waits for them to
+        be healthy, then sets the status to `running`. The status doesn't
+        change until then. Starting a running site succeeds without changing
+        it. If the job fails, the site is marked `failed` with the reason in
+        `status_message`. A site that is `provisioning`, `updating`, or
+        `deleting`, or whose provisioning failed, returns `409`.
       responses:
         "202":
           description: Start job queued.
@@ -798,6 +825,14 @@ paths:
       operationId: stopSite
       tags: [sites]
       summary: Stop a running site
+      description: |
+        Queues a job that stops the site's containers, keeping its data,
+        then sets the status to `stopped`. A stopped site stays stopped when
+        Docker restarts, and WP-Cron doesn't run for it. Stopping a stopped
+        site succeeds without changing it. If the job fails, the site is
+        marked `failed` with the reason in `status_message`. A site that is
+        `provisioning`, `updating`, or `deleting`, or whose provisioning
+        failed, returns `409`.
       responses:
         "202":
           description: Stop job queued.
@@ -1497,10 +1532,35 @@ components:
     SiteStatus:
       type: string
       description: |
-        Lifecycle status of a site. `provisioning`, `updating`, and `deleting`
-        mean a job is working on the site; `failed` means the last job failed
-        or the runtime reports the site unhealthy (see `status_message`).
+        Recorded lifecycle status of a site. `provisioning`, `updating`, and
+        `deleting` mean a job is working on the site; `failed` means the last
+        job failed (see `status_message`). What the containers are doing
+        right now is the site's `runtime`.
       enum: [provisioning, running, stopped, updating, deleting, failed]
+
+    SiteRuntime:
+      type: object
+      description: |
+        The live state of the site's containers, observed when the site was
+        read. Only `GET /api/v1/sites/{site_id}` includes it; listings report
+        the recorded `status` alone.
+      required: [phase]
+      properties:
+        phase:
+          type: string
+          description: |
+            * `pending`: containers are starting or not healthy yet.
+            * `running`: every container is running and healthy.
+            * `stopped`: the containers are stopped.
+            * `failed`: a container exited or is unhealthy (see `message`).
+            * `absent`: the site has no containers, e.g. before provisioning
+              starts them or after failed provisioning removed them.
+            * `unknown`: the container runtime couldn't be reached in time;
+              `status` is the last recorded status.
+          enum: [pending, running, stopped, failed, absent, unknown]
+        message:
+          type: string
+          description: Details about the phase, such as which container is unhealthy.
 
     PHPVersion:
       type: string
@@ -1607,6 +1667,8 @@ components:
         status_message:
           type: string
           description: Details about the status, such as why the site failed.
+        runtime:
+          $ref: "#/components/schemas/SiteRuntime"
         url:
           type: string
           format: uri

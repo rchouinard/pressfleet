@@ -231,6 +231,36 @@ func (e Role) Valid() bool {
 	}
 }
 
+// Defines values for SiteRuntimePhase.
+const (
+	SiteRuntimePhaseAbsent  SiteRuntimePhase = "absent"
+	SiteRuntimePhaseFailed  SiteRuntimePhase = "failed"
+	SiteRuntimePhasePending SiteRuntimePhase = "pending"
+	SiteRuntimePhaseRunning SiteRuntimePhase = "running"
+	SiteRuntimePhaseStopped SiteRuntimePhase = "stopped"
+	SiteRuntimePhaseUnknown SiteRuntimePhase = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the SiteRuntimePhase enum.
+func (e SiteRuntimePhase) Valid() bool {
+	switch e {
+	case SiteRuntimePhaseAbsent:
+		return true
+	case SiteRuntimePhaseFailed:
+		return true
+	case SiteRuntimePhasePending:
+		return true
+	case SiteRuntimePhaseRunning:
+		return true
+	case SiteRuntimePhaseStopped:
+		return true
+	case SiteRuntimePhaseUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SiteStatus.
 const (
 	SiteStatusDeleting     SiteStatus = "deleting"
@@ -795,14 +825,20 @@ type Site struct {
 	// Resources Limits for the site as a whole; the platform splits them between the site's containers.
 	Resources ResourceLimits `json:"resources"`
 
+	// Runtime The live state of the site's containers, observed when the site was
+	// read. Only `GET /api/v1/sites/{site_id}` includes it; listings report
+	// the recorded `status` alone.
+	Runtime *SiteRuntime `json:"runtime,omitempty"`
+
 	// Slug Unique, URL-safe name assigned at creation. Forms the preview domain.
 	//
 	// Examples: acme-marketing
 	Slug string `json:"slug"`
 
-	// Status Lifecycle status of a site. `provisioning`, `updating`, and `deleting`
-	// mean a job is working on the site; `failed` means the last job failed
-	// or the runtime reports the site unhealthy (see `status_message`).
+	// Status Recorded lifecycle status of a site. `provisioning`, `updating`, and
+	// `deleting` mean a job is working on the site; `failed` means the last
+	// job failed (see `status_message`). What the containers are doing
+	// right now is the site's `runtime`.
 	Status SiteStatus `json:"status"`
 
 	// StatusMessage Details about the status, such as why the site failed.
@@ -875,9 +911,38 @@ type SiteList struct {
 	NextCursor *NextCursor `json:"next_cursor"`
 }
 
-// SiteStatus Lifecycle status of a site. `provisioning`, `updating`, and `deleting`
-// mean a job is working on the site; `failed` means the last job failed
-// or the runtime reports the site unhealthy (see `status_message`).
+// SiteRuntime The live state of the site's containers, observed when the site was
+// read. Only `GET /api/v1/sites/{site_id}` includes it; listings report
+// the recorded `status` alone.
+type SiteRuntime struct {
+	// Message Details about the phase, such as which container is unhealthy.
+	Message *string `json:"message,omitempty"`
+
+	// Phase * `pending`: containers are starting or not healthy yet.
+	// * `running`: every container is running and healthy.
+	// * `stopped`: the containers are stopped.
+	// * `failed`: a container exited or is unhealthy (see `message`).
+	// * `absent`: the site has no containers, e.g. before provisioning
+	//   starts them or after failed provisioning removed them.
+	// * `unknown`: the container runtime couldn't be reached in time;
+	//   `status` is the last recorded status.
+	Phase SiteRuntimePhase `json:"phase"`
+}
+
+// SiteRuntimePhase * `pending`: containers are starting or not healthy yet.
+//   - `running`: every container is running and healthy.
+//   - `stopped`: the containers are stopped.
+//   - `failed`: a container exited or is unhealthy (see `message`).
+//   - `absent`: the site has no containers, e.g. before provisioning
+//     starts them or after failed provisioning removed them.
+//   - `unknown`: the container runtime couldn't be reached in time;
+//     `status` is the last recorded status.
+type SiteRuntimePhase string
+
+// SiteStatus Recorded lifecycle status of a site. `provisioning`, `updating`, and
+// `deleting` mean a job is working on the site; `failed` means the last
+// job failed (see `status_message`). What the containers are doing
+// right now is the site's `runtime`.
 type SiteStatus string
 
 // SiteUpdate Only the fields present are changed.

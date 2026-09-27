@@ -1,8 +1,9 @@
 // Package sites implements the site workflows: provisioning (design doc
 // §5.1), the one-time retrieval of the initial WordPress admin credentials,
-// and deletion. The API validates and records a request in one transaction
-// and queues a job; the job's steps create or remove the site's runtime
-// resources through provisioner.Provisioner and sitedb.Manager.
+// settings changes and start/stop (§5.5), and deletion. The API validates
+// and records a request in one transaction and queues a job; the job's
+// steps create, change, or remove the site's runtime resources through
+// provisioner.Provisioner and sitedb.Manager.
 //
 // # Provisioning
 //
@@ -46,6 +47,47 @@
 // succeeds when there is nothing left to remove, so a retried or repeated
 // deletion converges. Deletion can't be rolled back: a job that gives up
 // marks the site failed, and deleting it again queues a new job.
+//
+// # Settings changes
+//
+// [Service.Update] changes the PHP version and resource limits. It
+// validates the merged settings like creation does (a PHP version only when
+// it changes, so a site on an end-of-life branch can still get new limits),
+// then in one transaction saves them as the site's desired state, sets the
+// status to updating, and enqueues an [UpdateJobType] job whose payload
+// records the previous settings. The job's steps are:
+//
+//  1. prepare: check the site isn't being deleted. Its Undo runs last in a
+//     rollback (see below).
+//  2. apply: provisioner.UpdateSite with the saved settings, which
+//     recreates php on the new image; a stopped site stays stopped. Undo
+//     applies the previous settings again.
+//  3. finish: set the status from the live phase, running or stopped.
+//
+// A failed update is reverted, not left half applied: the rollback puts the
+// previous settings back on the containers and in the site record, and sets
+// the status from what the containers are then doing, with the error in the
+// status message ("update failed and was reverted: ..."). Only if the
+// containers can't be reverted either is the site marked failed; its record
+// then holds the previous settings, which a new PATCH can retry from.
+//
+// # Start and stop
+//
+// [Service.Start] and [Service.Stop] enqueue [StartJobType] and
+// [StopJobType] jobs, which call provisioner.StartSite or StopSite and set
+// the status to running or stopped (the WP-Cron job skips stopped sites).
+// The status doesn't change while the job waits; a job that gives up marks
+// the site failed.
+//
+// Updating, starting, and stopping are refused with ErrBusy while a job is
+// provisioning, updating, or deleting the site, and with ErrNotProvisioned
+// for a site whose provisioning failed, which has nothing left to change.
+//
+// # Live status
+//
+// [Service.Runtime] asks the provisioner for the site's live phase, within
+// a short timeout. If the container runtime can't be reached it reports
+// RuntimeUnknown instead of failing, and the recorded status stands.
 //
 // All site jobs share the lock key "site:<id>", so a deletion requested
 // while provisioning runs waits for it. Provisioning checks the status
@@ -94,6 +136,9 @@ import (
 const (
 	CreateJobType = "site.create"
 	DeleteJobType = "site.delete"
+	UpdateJobType = "site.update"
+	StartJobType  = "site.start"
+	StopJobType   = "site.stop"
 )
 
 // Sentinel errors.
@@ -109,6 +154,12 @@ var (
 	// ErrCredentialsGone means the admin credentials were already retrieved,
 	// or provisioning failed and deleted them.
 	ErrCredentialsGone = errors.New("the initial admin credentials are no longer available")
+	// ErrBusy means a job is provisioning, updating, or deleting the site,
+	// so it can't be changed until that finishes.
+	ErrBusy = errors.New("another job is working on the site; try again when it has finished")
+	// ErrNotProvisioned means the site's provisioning failed, so it has
+	// nothing to update, start, or stop; it can only be deleted.
+	ErrNotProvisioned = errors.New("the site was never provisioned; delete it and create it again")
 )
 
 // FieldError is a problem with one field of a request, named by its JSON
@@ -147,6 +198,9 @@ type Options struct {
 	// Now defaults to time.Now; tests fix it for the catalog's support
 	// dates.
 	Now func() time.Time
+	// StatusTimeout bounds each live status query (Service.Runtime); zero
+	// means DefaultStatusTimeout.
+	StatusTimeout time.Duration
 }
 
 // Service runs the site workflows.
@@ -159,6 +213,8 @@ type Service struct {
 	databases   sitedb.Manager
 	log         *slog.Logger
 	now         func() time.Time
+
+	statusTimeout time.Duration
 }
 
 // New returns a Service.
@@ -188,6 +244,11 @@ func New(opts Options) (*Service, error) {
 		databases:   opts.Databases,
 		log:         opts.Logger,
 		now:         opts.Now,
+
+		statusTimeout: opts.StatusTimeout,
+	}
+	if s.statusTimeout <= 0 {
+		s.statusTimeout = DefaultStatusTimeout
 	}
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
@@ -492,7 +553,7 @@ func (s *Service) TakeAdminCredentials(ctx context.Context, siteID string) (Admi
 // Handlers returns the job handlers of the site workflows, to register on
 // the job pool.
 func (s *Service) Handlers() []jobs.Handler {
-	return []jobs.Handler{s.createHandler(), s.deleteHandler()}
+	return []jobs.Handler{s.createHandler(), s.deleteHandler(), s.updateHandler(), s.startHandler(), s.stopHandler()}
 }
 
 // SharedServiceAttacher reconnects the platform services to a site's

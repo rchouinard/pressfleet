@@ -231,6 +231,36 @@ func (e Role) Valid() bool {
 	}
 }
 
+// Defines values for SiteRuntimePhase.
+const (
+	SiteRuntimePhaseAbsent  SiteRuntimePhase = "absent"
+	SiteRuntimePhaseFailed  SiteRuntimePhase = "failed"
+	SiteRuntimePhasePending SiteRuntimePhase = "pending"
+	SiteRuntimePhaseRunning SiteRuntimePhase = "running"
+	SiteRuntimePhaseStopped SiteRuntimePhase = "stopped"
+	SiteRuntimePhaseUnknown SiteRuntimePhase = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the SiteRuntimePhase enum.
+func (e SiteRuntimePhase) Valid() bool {
+	switch e {
+	case SiteRuntimePhaseAbsent:
+		return true
+	case SiteRuntimePhaseFailed:
+		return true
+	case SiteRuntimePhasePending:
+		return true
+	case SiteRuntimePhaseRunning:
+		return true
+	case SiteRuntimePhaseStopped:
+		return true
+	case SiteRuntimePhaseUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SiteStatus.
 const (
 	SiteStatusDeleting     SiteStatus = "deleting"
@@ -795,14 +825,20 @@ type Site struct {
 	// Resources Limits for the site as a whole; the platform splits them between the site's containers.
 	Resources ResourceLimits `json:"resources"`
 
+	// Runtime The live state of the site's containers, observed when the site was
+	// read. Only `GET /api/v1/sites/{site_id}` includes it; listings report
+	// the recorded `status` alone.
+	Runtime *SiteRuntime `json:"runtime,omitempty"`
+
 	// Slug Unique, URL-safe name assigned at creation. Forms the preview domain.
 	//
 	// Examples: acme-marketing
 	Slug string `json:"slug"`
 
-	// Status Lifecycle status of a site. `provisioning`, `updating`, and `deleting`
-	// mean a job is working on the site; `failed` means the last job failed
-	// or the runtime reports the site unhealthy (see `status_message`).
+	// Status Recorded lifecycle status of a site. `provisioning`, `updating`, and
+	// `deleting` mean a job is working on the site; `failed` means the last
+	// job failed (see `status_message`). What the containers are doing
+	// right now is the site's `runtime`.
 	Status SiteStatus `json:"status"`
 
 	// StatusMessage Details about the status, such as why the site failed.
@@ -875,9 +911,38 @@ type SiteList struct {
 	NextCursor *NextCursor `json:"next_cursor"`
 }
 
-// SiteStatus Lifecycle status of a site. `provisioning`, `updating`, and `deleting`
-// mean a job is working on the site; `failed` means the last job failed
-// or the runtime reports the site unhealthy (see `status_message`).
+// SiteRuntime The live state of the site's containers, observed when the site was
+// read. Only `GET /api/v1/sites/{site_id}` includes it; listings report
+// the recorded `status` alone.
+type SiteRuntime struct {
+	// Message Details about the phase, such as which container is unhealthy.
+	Message *string `json:"message,omitempty"`
+
+	// Phase * `pending`: containers are starting or not healthy yet.
+	// * `running`: every container is running and healthy.
+	// * `stopped`: the containers are stopped.
+	// * `failed`: a container exited or is unhealthy (see `message`).
+	// * `absent`: the site has no containers, e.g. before provisioning
+	//   starts them or after failed provisioning removed them.
+	// * `unknown`: the container runtime couldn't be reached in time;
+	//   `status` is the last recorded status.
+	Phase SiteRuntimePhase `json:"phase"`
+}
+
+// SiteRuntimePhase * `pending`: containers are starting or not healthy yet.
+//   - `running`: every container is running and healthy.
+//   - `stopped`: the containers are stopped.
+//   - `failed`: a container exited or is unhealthy (see `message`).
+//   - `absent`: the site has no containers, e.g. before provisioning
+//     starts them or after failed provisioning removed them.
+//   - `unknown`: the container runtime couldn't be reached in time;
+//     `status` is the last recorded status.
+type SiteRuntimePhase string
+
+// SiteStatus Recorded lifecycle status of a site. `provisioning`, `updating`, and
+// `deleting` mean a job is working on the site; `failed` means the last
+// job failed (see `status_message`). What the containers are doing
+// right now is the site's `runtime`.
 type SiteStatus string
 
 // SiteUpdate Only the fields present are changed.
@@ -1373,6 +1438,9 @@ type ClientInterface interface {
 
 	// ListSites List sites
 	//
+	// Newest first. Listings come from the recorded state alone, so they
+	// omit `runtime`; get a site for its live state.
+	//
 	// Corresponds with GET /api/v1/sites (the `ListSites` operationId).
 	ListSites(ctx context.Context, params *ListSitesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1417,16 +1485,33 @@ type ClientInterface interface {
 
 	// GetSite Get a site
 	//
+	// Returns the site with its live runtime state in `runtime`, read from
+	// the container runtime with a short timeout. If the container runtime
+	// can't be reached, `runtime.phase` is `unknown` and `status` is the
+	// last recorded status; the request still succeeds.
+	//
 	// Corresponds with GET /api/v1/sites/{site_id} (the `GetSite` operationId).
 	GetSite(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateSiteWithBody Update a site's settings
 	//
-	// Changes the PHP version or resource limits. The change is applied by a
-	// job that recreates the affected containers (design doc §5.5); the
-	// response contains the site with the requested settings and the job.
-	// Only one mutating job runs per site at a time; a conflicting request
-	// returns `409`.
+	// Changes the PHP version or resource limits. The settings are
+	// validated, saved as the site's desired state, and applied by a job
+	// that recreates the affected containers (design doc §5.5); changing
+	// the PHP version recreates the `php` container on the new image. The
+	// response contains the site with the requested settings and status
+	// `updating`, and the job. A stopped site stays stopped and runs with
+	// the new settings when started.
+	//
+	// If the job fails, it reverts: the previous settings are applied and
+	// saved again, the status returns to what the containers are doing,
+	// and `status_message` says why the update failed. Only if reverting
+	// fails too is the site marked `failed`.
+	//
+	// A site that is `provisioning`, `updating`, or `deleting`, or whose
+	// provisioning failed, can't be changed (`409`). The PHP version is
+	// only validated when it changes, so a site on a PHP version past end
+	// of life can still get new resource limits.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -1435,11 +1520,23 @@ type ClientInterface interface {
 
 	// UpdateSite Update a site's settings
 	//
-	// Changes the PHP version or resource limits. The change is applied by a
-	// job that recreates the affected containers (design doc §5.5); the
-	// response contains the site with the requested settings and the job.
-	// Only one mutating job runs per site at a time; a conflicting request
-	// returns `409`.
+	// Changes the PHP version or resource limits. The settings are
+	// validated, saved as the site's desired state, and applied by a job
+	// that recreates the affected containers (design doc §5.5); changing
+	// the PHP version recreates the `php` container on the new image. The
+	// response contains the site with the requested settings and status
+	// `updating`, and the job. A stopped site stays stopped and runs with
+	// the new settings when started.
+	//
+	// If the job fails, it reverts: the previous settings are applied and
+	// saved again, the status returns to what the containers are doing,
+	// and `status_message` says why the update failed. Only if reverting
+	// fails too is the site marked `failed`.
+	//
+	// A site that is `provisioning`, `updating`, or `deleting`, or whose
+	// provisioning failed, can't be changed (`409`). The PHP version is
+	// only validated when it changes, so a site on a PHP version past end
+	// of life can still get new resource limits.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -1459,10 +1556,25 @@ type ClientInterface interface {
 
 	// StartSite Start a stopped site
 	//
+	// Queues a job that starts the site's containers and waits for them to
+	// be healthy, then sets the status to `running`. The status doesn't
+	// change until then. Starting a running site succeeds without changing
+	// it. If the job fails, the site is marked `failed` with the reason in
+	// `status_message`. A site that is `provisioning`, `updating`, or
+	// `deleting`, or whose provisioning failed, returns `409`.
+	//
 	// Corresponds with POST /api/v1/sites/{site_id}/start (the `StartSite` operationId).
 	StartSite(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// StopSite Stop a running site
+	//
+	// Queues a job that stops the site's containers, keeping its data,
+	// then sets the status to `stopped`. A stopped site stays stopped when
+	// Docker restarts, and WP-Cron doesn't run for it. Stopping a stopped
+	// site succeeds without changing it. If the job fails, the site is
+	// marked `failed` with the reason in `status_message`. A site that is
+	// `provisioning`, `updating`, or `deleting`, or whose provisioning
+	// failed, returns `409`.
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/stop (the `StopSite` operationId).
 	StopSite(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1911,6 +2023,9 @@ func (c *Client) GetJob(ctx context.Context, jobID JobID, reqEditors ...RequestE
 
 // ListSites List sites
 //
+// Newest first. Listings come from the recorded state alone, so they
+// omit `runtime`; get a site for its live state.
+//
 // Corresponds with GET /api/v1/sites (the `ListSites` operationId).
 func (c *Client) ListSites(ctx context.Context, params *ListSitesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListSitesRequest(c.Server, params)
@@ -1995,6 +2110,11 @@ func (c *Client) DeleteSite(ctx context.Context, siteID SiteID, reqEditors ...Re
 
 // GetSite Get a site
 //
+// Returns the site with its live runtime state in `runtime`, read from
+// the container runtime with a short timeout. If the container runtime
+// can't be reached, `runtime.phase` is `unknown` and `status` is the
+// last recorded status; the request still succeeds.
+//
 // Corresponds with GET /api/v1/sites/{site_id} (the `GetSite` operationId).
 func (c *Client) GetSite(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetSiteRequest(c.Server, siteID)
@@ -2010,11 +2130,23 @@ func (c *Client) GetSite(ctx context.Context, siteID SiteID, reqEditors ...Reque
 
 // UpdateSiteWithBody Update a site's settings
 //
-// Changes the PHP version or resource limits. The change is applied by a
-// job that recreates the affected containers (design doc §5.5); the
-// response contains the site with the requested settings and the job.
-// Only one mutating job runs per site at a time; a conflicting request
-// returns `409`.
+// Changes the PHP version or resource limits. The settings are
+// validated, saved as the site's desired state, and applied by a job
+// that recreates the affected containers (design doc §5.5); changing
+// the PHP version recreates the `php` container on the new image. The
+// response contains the site with the requested settings and status
+// `updating`, and the job. A stopped site stays stopped and runs with
+// the new settings when started.
+//
+// If the job fails, it reverts: the previous settings are applied and
+// saved again, the status returns to what the containers are doing,
+// and `status_message` says why the update failed. Only if reverting
+// fails too is the site marked `failed`.
+//
+// A site that is `provisioning`, `updating`, or `deleting`, or whose
+// provisioning failed, can't be changed (`409`). The PHP version is
+// only validated when it changes, so a site on a PHP version past end
+// of life can still get new resource limits.
 //
 // Takes any type of body and a specified content type.
 //
@@ -2033,11 +2165,23 @@ func (c *Client) UpdateSiteWithBody(ctx context.Context, siteID SiteID, contentT
 
 // UpdateSite Update a site's settings
 //
-// Changes the PHP version or resource limits. The change is applied by a
-// job that recreates the affected containers (design doc §5.5); the
-// response contains the site with the requested settings and the job.
-// Only one mutating job runs per site at a time; a conflicting request
-// returns `409`.
+// Changes the PHP version or resource limits. The settings are
+// validated, saved as the site's desired state, and applied by a job
+// that recreates the affected containers (design doc §5.5); changing
+// the PHP version recreates the `php` container on the new image. The
+// response contains the site with the requested settings and status
+// `updating`, and the job. A stopped site stays stopped and runs with
+// the new settings when started.
+//
+// If the job fails, it reverts: the previous settings are applied and
+// saved again, the status returns to what the containers are doing,
+// and `status_message` says why the update failed. Only if reverting
+// fails too is the site marked `failed`.
+//
+// A site that is `provisioning`, `updating`, or `deleting`, or whose
+// provisioning failed, can't be changed (`409`). The PHP version is
+// only validated when it changes, so a site on a PHP version past end
+// of life can still get new resource limits.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -2077,6 +2221,13 @@ func (c *Client) RetrieveSiteAdminCredentials(ctx context.Context, siteID SiteID
 
 // StartSite Start a stopped site
 //
+// Queues a job that starts the site's containers and waits for them to
+// be healthy, then sets the status to `running`. The status doesn't
+// change until then. Starting a running site succeeds without changing
+// it. If the job fails, the site is marked `failed` with the reason in
+// `status_message`. A site that is `provisioning`, `updating`, or
+// `deleting`, or whose provisioning failed, returns `409`.
+//
 // Corresponds with POST /api/v1/sites/{site_id}/start (the `StartSite` operationId).
 func (c *Client) StartSite(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewStartSiteRequest(c.Server, siteID)
@@ -2091,6 +2242,14 @@ func (c *Client) StartSite(ctx context.Context, siteID SiteID, reqEditors ...Req
 }
 
 // StopSite Stop a running site
+//
+// Queues a job that stops the site's containers, keeping its data,
+// then sets the status to `stopped`. A stopped site stays stopped when
+// Docker restarts, and WP-Cron doesn't run for it. Stopping a stopped
+// site succeeds without changing it. If the job fails, the site is
+// marked `failed` with the reason in `status_message`. A site that is
+// `provisioning`, `updating`, or `deleting`, or whose provisioning
+// failed, returns `409`.
 //
 // Corresponds with POST /api/v1/sites/{site_id}/stop (the `StopSite` operationId).
 func (c *Client) StopSite(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3905,6 +4064,9 @@ type ClientWithResponsesInterface interface {
 
 	// ListSitesWithResponse List sites
 	//
+	// Newest first. Listings come from the recorded state alone, so they
+	// omit `runtime`; get a site for its live state.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /api/v1/sites (the `ListSites` operationId).
@@ -3953,6 +4115,11 @@ type ClientWithResponsesInterface interface {
 
 	// GetSiteWithResponse Get a site
 	//
+	// Returns the site with its live runtime state in `runtime`, read from
+	// the container runtime with a short timeout. If the container runtime
+	// can't be reached, `runtime.phase` is `unknown` and `status` is the
+	// last recorded status; the request still succeeds.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /api/v1/sites/{site_id} (the `GetSite` operationId).
@@ -3960,11 +4127,23 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateSiteWithBodyWithResponse Update a site's settings
 	//
-	// Changes the PHP version or resource limits. The change is applied by a
-	// job that recreates the affected containers (design doc §5.5); the
-	// response contains the site with the requested settings and the job.
-	// Only one mutating job runs per site at a time; a conflicting request
-	// returns `409`.
+	// Changes the PHP version or resource limits. The settings are
+	// validated, saved as the site's desired state, and applied by a job
+	// that recreates the affected containers (design doc §5.5); changing
+	// the PHP version recreates the `php` container on the new image. The
+	// response contains the site with the requested settings and status
+	// `updating`, and the job. A stopped site stays stopped and runs with
+	// the new settings when started.
+	//
+	// If the job fails, it reverts: the previous settings are applied and
+	// saved again, the status returns to what the containers are doing,
+	// and `status_message` says why the update failed. Only if reverting
+	// fails too is the site marked `failed`.
+	//
+	// A site that is `provisioning`, `updating`, or `deleting`, or whose
+	// provisioning failed, can't be changed (`409`). The PHP version is
+	// only validated when it changes, so a site on a PHP version past end
+	// of life can still get new resource limits.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -3973,11 +4152,23 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateSiteWithResponse Update a site's settings
 	//
-	// Changes the PHP version or resource limits. The change is applied by a
-	// job that recreates the affected containers (design doc §5.5); the
-	// response contains the site with the requested settings and the job.
-	// Only one mutating job runs per site at a time; a conflicting request
-	// returns `409`.
+	// Changes the PHP version or resource limits. The settings are
+	// validated, saved as the site's desired state, and applied by a job
+	// that recreates the affected containers (design doc §5.5); changing
+	// the PHP version recreates the `php` container on the new image. The
+	// response contains the site with the requested settings and status
+	// `updating`, and the job. A stopped site stays stopped and runs with
+	// the new settings when started.
+	//
+	// If the job fails, it reverts: the previous settings are applied and
+	// saved again, the status returns to what the containers are doing,
+	// and `status_message` says why the update failed. Only if reverting
+	// fails too is the site marked `failed`.
+	//
+	// A site that is `provisioning`, `updating`, or `deleting`, or whose
+	// provisioning failed, can't be changed (`409`). The PHP version is
+	// only validated when it changes, so a site on a PHP version past end
+	// of life can still get new resource limits.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -3999,12 +4190,27 @@ type ClientWithResponsesInterface interface {
 
 	// StartSiteWithResponse Start a stopped site
 	//
+	// Queues a job that starts the site's containers and waits for them to
+	// be healthy, then sets the status to `running`. The status doesn't
+	// change until then. Starting a running site succeeds without changing
+	// it. If the job fails, the site is marked `failed` with the reason in
+	// `status_message`. A site that is `provisioning`, `updating`, or
+	// `deleting`, or whose provisioning failed, returns `409`.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/start (the `StartSite` operationId).
 	StartSiteWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*StartSiteResponse, error)
 
 	// StopSiteWithResponse Stop a running site
+	//
+	// Queues a job that stops the site's containers, keeping its data,
+	// then sets the status to `stopped`. A stopped site stays stopped when
+	// Docker restarts, and WP-Cron doesn't run for it. Stopping a stopped
+	// site succeeds without changing it. If the job fails, the site is
+	// marked `failed` with the reason in `status_message`. A site that is
+	// `provisioning`, `updating`, or `deleting`, or whose provisioning
+	// failed, returns `409`.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -6657,6 +6863,9 @@ func (c *ClientWithResponses) GetJobWithResponse(ctx context.Context, jobID JobI
 
 // ListSitesWithResponse List sites
 //
+// Newest first. Listings come from the recorded state alone, so they
+// omit `runtime`; get a site for its live state.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /api/v1/sites (the `ListSites` operationId).
@@ -6729,6 +6938,11 @@ func (c *ClientWithResponses) DeleteSiteWithResponse(ctx context.Context, siteID
 
 // GetSiteWithResponse Get a site
 //
+// Returns the site with its live runtime state in `runtime`, read from
+// the container runtime with a short timeout. If the container runtime
+// can't be reached, `runtime.phase` is `unknown` and `status` is the
+// last recorded status; the request still succeeds.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /api/v1/sites/{site_id} (the `GetSite` operationId).
@@ -6742,11 +6956,23 @@ func (c *ClientWithResponses) GetSiteWithResponse(ctx context.Context, siteID Si
 
 // UpdateSiteWithBodyWithResponse Update a site's settings
 //
-// Changes the PHP version or resource limits. The change is applied by a
-// job that recreates the affected containers (design doc §5.5); the
-// response contains the site with the requested settings and the job.
-// Only one mutating job runs per site at a time; a conflicting request
-// returns `409`.
+// Changes the PHP version or resource limits. The settings are
+// validated, saved as the site's desired state, and applied by a job
+// that recreates the affected containers (design doc §5.5); changing
+// the PHP version recreates the `php` container on the new image. The
+// response contains the site with the requested settings and status
+// `updating`, and the job. A stopped site stays stopped and runs with
+// the new settings when started.
+//
+// If the job fails, it reverts: the previous settings are applied and
+// saved again, the status returns to what the containers are doing,
+// and `status_message` says why the update failed. Only if reverting
+// fails too is the site marked `failed`.
+//
+// A site that is `provisioning`, `updating`, or `deleting`, or whose
+// provisioning failed, can't be changed (`409`). The PHP version is
+// only validated when it changes, so a site on a PHP version past end
+// of life can still get new resource limits.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -6761,11 +6987,23 @@ func (c *ClientWithResponses) UpdateSiteWithBodyWithResponse(ctx context.Context
 
 // UpdateSiteWithResponse Update a site's settings
 //
-// Changes the PHP version or resource limits. The change is applied by a
-// job that recreates the affected containers (design doc §5.5); the
-// response contains the site with the requested settings and the job.
-// Only one mutating job runs per site at a time; a conflicting request
-// returns `409`.
+// Changes the PHP version or resource limits. The settings are
+// validated, saved as the site's desired state, and applied by a job
+// that recreates the affected containers (design doc §5.5); changing
+// the PHP version recreates the `php` container on the new image. The
+// response contains the site with the requested settings and status
+// `updating`, and the job. A stopped site stays stopped and runs with
+// the new settings when started.
+//
+// If the job fails, it reverts: the previous settings are applied and
+// saved again, the status returns to what the containers are doing,
+// and `status_message` says why the update failed. Only if reverting
+// fails too is the site marked `failed`.
+//
+// A site that is `provisioning`, `updating`, or `deleting`, or whose
+// provisioning failed, can't be changed (`409`). The PHP version is
+// only validated when it changes, so a site on a PHP version past end
+// of life can still get new resource limits.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -6799,6 +7037,13 @@ func (c *ClientWithResponses) RetrieveSiteAdminCredentialsWithResponse(ctx conte
 
 // StartSiteWithResponse Start a stopped site
 //
+// Queues a job that starts the site's containers and waits for them to
+// be healthy, then sets the status to `running`. The status doesn't
+// change until then. Starting a running site succeeds without changing
+// it. If the job fails, the site is marked `failed` with the reason in
+// `status_message`. A site that is `provisioning`, `updating`, or
+// `deleting`, or whose provisioning failed, returns `409`.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v1/sites/{site_id}/start (the `StartSite` operationId).
@@ -6811,6 +7056,14 @@ func (c *ClientWithResponses) StartSiteWithResponse(ctx context.Context, siteID 
 }
 
 // StopSiteWithResponse Stop a running site
+//
+// Queues a job that stops the site's containers, keeping its data,
+// then sets the status to `stopped`. A stopped site stays stopped when
+// Docker restarts, and WP-Cron doesn't run for it. Stopping a stopped
+// site succeeds without changing it. If the job fails, the site is
+// marked `failed` with the reason in `status_message`. A site that is
+// `provisioning`, `updating`, or `deleting`, or whose provisioning
+// failed, returns `409`.
 //
 // Returns a wrapper object for the known response body format(s).
 //
