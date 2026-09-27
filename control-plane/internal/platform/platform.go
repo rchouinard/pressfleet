@@ -37,14 +37,17 @@ import (
 const ProjectName = "pressfleet"
 
 // Memory limits from the §4.1 capacity budget. The control plane shares its
-// 256 MiB budget line with Traefik, which gets the remaining 64 MiB (it
-// uses about 25 MiB idle). The socket proxy, a small Go program serving one
-// client, uses about 11 MiB and comes on top, out of the headroom line, as
-// does the maintenance page service, which serves one static page.
+// 256 MiB budget line with Traefik. Traefik uses about 25 MiB idle, but
+// about 50 MiB while it starts and while it gets certificates; with 64 MiB
+// (a Go memory limit of 48 MiB) it spent its time collecting garbage and
+// failed its healthcheck, so it gets 96 MiB, the extra 32 MiB out of the
+// headroom line. The socket proxy, a small Go program serving one client,
+// uses about 11 MiB and comes on top, out of the headroom line, as does the
+// maintenance page service, which serves one static page.
 const (
 	DefaultMariaDBMemoryMB      = 768
 	DefaultControlPlaneMemoryMB = 192
-	DefaultTraefikMemoryMB      = 64
+	DefaultTraefikMemoryMB      = 96
 	DefaultSocketProxyMemoryMB  = 24
 	MaintenanceMemoryMB         = 24
 )
