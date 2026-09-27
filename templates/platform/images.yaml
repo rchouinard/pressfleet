@@ -7,8 +7,11 @@
 #
 #   docker buildx imagetools inspect mariadb:<tag>   # use the linux/amd64 "Name"
 #
-# Traefik and VictoriaMetrics join this list in later milestones.
+# VictoriaMetrics joins this list in a later milestone.
 mariadb: docker.io/library/mariadb:12.3.3@sha256:2f4f46f80e7251990bfdc601ae3f7f2964ddb4dc1868f7deca699fc1ece8c35e
+traefik: docker.io/library/traefik:v3.7.13@sha256:3429c14149401de2ac82fc72ddc6a92642332b90deb3012301ff211b9d2d0f18
+# Gives Traefik read-only, allowlisted access to the Docker API (design doc §6).
+socket-proxy: docker.io/wollomatic/socket-proxy:1.13.1@sha256:14b0afd0939218e02736794447868b7d5e1d5b231207b727a935845236f08507
 
 # The object cache ("redis" throughout PressFleet) is Valkey, the
 # BSD-licensed fork of Redis. 9.0 or later is required: per-site isolation

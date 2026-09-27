@@ -30,7 +30,9 @@ func (s *scripted) exec(_ context.Context, _ io.Reader, args ...string) ([]byte,
 }
 
 const inspectPHP = `[{"Id":"abc123","Name":"/pf-site1-php-1","Config":{"Image":"registry.example/site-php:php8.4-wp7.1.2"},
-"State":{"Running":true},"NetworkSettings":{"Networks":{"pf-site1":{"IPAddress":"172.30.0.3"}}}}]`
+"State":{"Running":true},"NetworkSettings":{"Networks":{"pf-site1":{"IPAddress":"172.30.0.3"}}},
+"Mounts":[{"Type":"volume","Name":"pf-site1_wp-content","Source":"/var/lib/docker/volumes/pf-site1_wp-content/_data",
+"Destination":"/var/www/html/wp-content","RW":true}]}]`
 
 func TestServiceContainerAndExecService(t *testing.T) {
 	ctx := context.Background()
@@ -46,7 +48,8 @@ func TestServiceContainerAndExecService(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.ID != "abc123" || c.Name != "pf-site1-php-1" || c.Image != "registry.example/site-php:php8.4-wp7.1.2" || !c.Running ||
-		c.Networks["pf-site1"] != "172.30.0.3" {
+		c.Networks["pf-site1"] != "172.30.0.3" ||
+		len(c.Mounts) != 1 || c.Mounts[0].Destination != "/var/www/html/wp-content" || !c.Mounts[0].RW {
 		t.Errorf("container = %+v", c)
 	}
 	// Found by label, without the project directory.

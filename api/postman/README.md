@@ -10,7 +10,7 @@ A Postman collection with a request for every operation in [`openapi.yaml`](../o
 ## Setup
 
 1. Start a platform with `pressfleet init` ([installation.md](../../docs/installation.md)). On a development machine, add `--skip-preflight` and `--control-plane-image` with an image from `make image`.
-2. Publish the API on the host. The platform doesn't publish it: until Traefik arrives (M2), the control plane is only reachable on its Docker network. Add a `compose.override.yaml` next to the rendered `compose.yaml` (`<data_dir>/platform/`), then recreate the project:
+2. Point `base_url` at the API. Traefik serves it at `https://<dashboard domain>`, which works as is once the dashboard domain resolves to the host and has its certificate. On a development machine without DNS, publish the control plane's own port on the host instead: add a `compose.override.yaml` next to the rendered `compose.yaml` (`<data_dir>/platform/`), then recreate the project:
 
    ```yaml
    services:
@@ -24,7 +24,7 @@ A Postman collection with a request for every operation in [`openapi.yaml`](../o
      -f /var/lib/pressfleet/platform/compose.override.yaml up -d
    ```
 
-3. In Postman, import both files, select the **PressFleet local** environment, and set `admin_email` and `admin_password` to the admin that `init` created. Change `base_url` if you published another port.
+3. In Postman, import both files, select the **PressFleet local** environment, and set `admin_email` and `admin_password` to the admin that `init` created. Set `base_url` to `https://<dashboard domain>`, or leave it at `http://localhost:8080` if you published that port.
 4. Send **Auth → Log in**.
 
 Put credentials in the environment's current values, which stay on your machine. Don't export the environment over the committed file: the export includes whatever values it holds.

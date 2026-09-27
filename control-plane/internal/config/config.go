@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/mail"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -81,6 +82,8 @@ type Config struct {
 	SMTP SMTPConfig `yaml:"smtp"`
 	// WordPressSecurity is the install-wide WordPress security set (§6.1).
 	WordPressSecurity WordPressSecurityConfig `yaml:"wordpress_security"`
+	// ACME configures how Traefik obtains TLS certificates.
+	ACME ACMEConfig `yaml:"acme"`
 }
 
 // Values of smtp.encryption.
@@ -194,6 +197,39 @@ func validHost(s string) bool {
 		return true
 	}
 	return ValidDomain(s) || (!strings.Contains(s, ".") && ValidDomain(s+".local"))
+}
+
+// ACMEConfig configures Traefik's ACME certificate resolvers. The host CLI
+// renders it into the platform's Traefik configuration.
+type ACMEConfig struct {
+	// Email is the contact address of the ACME account; optional.
+	Email string `yaml:"email"`
+	// CAServer is the ACME directory URL. Empty means Let's Encrypt.
+	CAServer string `yaml:"ca_server"`
+}
+
+// CheckACMEEmail validates acme.email, which may be empty.
+func CheckACMEEmail(email string) error {
+	if email == "" {
+		return nil
+	}
+	local, domain, ok := strings.Cut(email, "@")
+	if !ok || local == "" || strings.ContainsAny(email, " \t\r\n\"<>") || !ValidDomain(domain) {
+		return fmt.Errorf("acme.email must be an email address like ops@agency.example, got %q", email)
+	}
+	return nil
+}
+
+// CheckACMEServer validates an ACME directory URL, which may be empty.
+func CheckACMEServer(server string) error {
+	if server == "" {
+		return nil
+	}
+	u, err := url.Parse(server)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+		return fmt.Errorf("acme.ca_server must be an https:// URL of an ACME directory, got %q", server)
+	}
+	return nil
 }
 
 // AuditConfig configures the audit log.
@@ -364,6 +400,8 @@ var envVars = []struct {
 	{"PRESSFLEET_SMTP_ENCRYPTION", func(c *Config) *string { return &c.SMTP.Encryption }},
 	{"PRESSFLEET_SMTP_FROM_EMAIL", func(c *Config) *string { return &c.SMTP.FromEmail }},
 	{"PRESSFLEET_SMTP_FROM_NAME", func(c *Config) *string { return &c.SMTP.FromName }},
+	{"PRESSFLEET_ACME_EMAIL", func(c *Config) *string { return &c.ACME.Email }},
+	{"PRESSFLEET_ACME_CA_SERVER", func(c *Config) *string { return &c.ACME.CAServer }},
 }
 
 // envTrustedProxies sets http.trusted_proxies as a comma-separated list.
@@ -533,6 +571,12 @@ func (c Config) Validate() error {
 	}
 	if !filepath.IsAbs(c.Redis.AdminPasswordFile) {
 		errs = append(errs, fmt.Errorf("redis.admin_password_file must be an absolute path, got %q", c.Redis.AdminPasswordFile))
+	}
+	if err := CheckACMEEmail(c.ACME.Email); err != nil {
+		errs = append(errs, err)
+	}
+	if err := CheckACMEServer(c.ACME.CAServer); err != nil {
+		errs = append(errs, err)
 	}
 	if !composeProjectName.MatchString(c.PlatformProject) {
 		errs = append(errs, fmt.Errorf("platform_project must be a Compose project name (lowercase letters, digits, - and _), got %q", c.PlatformProject))

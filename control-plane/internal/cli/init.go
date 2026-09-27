@@ -83,6 +83,8 @@ type initAnswers struct {
 	MasterKeyFile     string
 	AdminEmail        string
 	smtpAnswers
+	ACMEEmail    string
+	ACMECAServer string
 }
 
 // initQuestion is one setting init collects: from its flag if given, else by
@@ -96,6 +98,10 @@ type initQuestion struct {
 	prompt string
 	// optional questions may be left empty.
 	optional bool
+	// flagOnly questions are never prompted for: their answer comes from
+	// the flag, the environment, or the default. They are for settings few
+	// operators change.
+	flagOnly bool
 	// field returns where the answer goes. Its value before asking is the
 	// default.
 	field func(*initAnswers) *string
@@ -174,6 +180,22 @@ var initQuestions = []initQuestion{
 			}
 			return nil
 		},
+	},
+	{
+		flag:     "acme-email",
+		usage:    "contact address for the Let's Encrypt account, used for important notices (optional; also $PRESSFLEET_ACME_EMAIL)",
+		prompt:   "Contact email address for Let's Encrypt (optional)",
+		optional: true,
+		field:    func(a *initAnswers) *string { return &a.ACMEEmail },
+		check:    func(v string, _ *initAnswers) error { return config.CheckACMEEmail(v) },
+	},
+	{
+		flag:     "acme-ca-server",
+		usage:    "ACME directory URL of another certificate authority, e.g. a Pebble server for tests (default Let's Encrypt; also $PRESSFLEET_ACME_CA_SERVER)",
+		optional: true,
+		flagOnly: true,
+		field:    func(a *initAnswers) *string { return &a.ACMECAServer },
+		check:    func(v string, _ *initAnswers) error { return config.CheckACMEServer(v) },
 	},
 }
 
@@ -396,6 +418,8 @@ func (i *installer) defaults() (initAnswers, error) {
 		DataDir:           cfg.DataDir,
 		MasterKeyFile:     cfg.MasterKeyFile,
 		smtpAnswers:       smtpDefaults(cfg.SMTP),
+		ACMEEmail:         cfg.ACME.Email,
+		ACMECAServer:      cfg.ACME.CAServer,
 	}
 	if a.MasterKeyFile == "" {
 		a.MasterKeyFile = filepath.Join(filepath.Dir(i.configPath), "master.key")
@@ -414,7 +438,7 @@ func (i *installer) ask(answers *initAnswers, given map[string]string) error {
 			*field = v
 			continue
 		}
-		if i.f.nonInteractive {
+		if i.f.nonInteractive || q.flagOnly {
 			if err := q.validate(*field, answers); err != nil {
 				return fmt.Errorf("--%s: %w", q.flag, err)
 			}
@@ -521,6 +545,8 @@ func (a initAnswers) config(base config.Config) config.Config {
 	base.PublicIP = a.PublicIP
 	base.MasterKeyFile = a.MasterKeyFile
 	base.SMTP = a.smtpConfig()
+	base.ACME.Email = a.ACMEEmail
+	base.ACME.CAServer = a.ACMECAServer
 	return base
 }
 
@@ -634,7 +660,24 @@ type fileConfig struct {
 	MasterKeyFile     string `yaml:"master_key_file"`
 
 	// SMTP is only written when a relay is configured.
-	SMTP *fileSMTP `yaml:"smtp,omitempty"`
+	SMTP *fileSMTP       `yaml:"smtp,omitempty"`
+	ACME *fileACMEConfig `yaml:"acme,omitempty"`
+}
+
+// fileACMEConfig is the acme section init writes, when any of it is set.
+type fileACMEConfig struct {
+	Email    string `yaml:"email,omitempty"`
+	CAServer string `yaml:"ca_server,omitempty"`
+}
+
+// acmeFileConfig returns the acme section for the config file, or nil if
+// every ACME setting keeps its default.
+func (a initAnswers) acmeFileConfig() *fileACMEConfig {
+	c := fileACMEConfig{Email: a.ACMEEmail, CAServer: a.ACMECAServer}
+	if c == (fileACMEConfig{}) {
+		return nil
+	}
+	return &c
 }
 
 const configHeader = `# PressFleet configuration, written by pressfleet init.
@@ -652,6 +695,7 @@ func (i *installer) writeConfig(a initAnswers) error {
 		PublicIP:          a.PublicIP,
 		MasterKeyFile:     a.MasterKeyFile,
 		SMTP:              a.smtpFileConfig(),
+		ACME:              a.acmeFileConfig(),
 	})
 	if err != nil {
 		return err
@@ -731,6 +775,8 @@ func (i *installer) startPlatform(ctx context.Context, a initAnswers) error {
 		SkipPreflight:       i.f.skipPreflight,
 		PreviewBaseDomain:   a.PreviewBaseDomain,
 		SMTP:                a.smtpConfig(),
+		DashboardDomain:     a.DashboardDomain,
+		ACME:                platform.ACMEConfig{Email: a.ACMEEmail, CAServer: a.ACMECAServer},
 	}); err != nil {
 		return err
 	}

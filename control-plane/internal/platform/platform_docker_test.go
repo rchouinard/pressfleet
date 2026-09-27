@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
+	"github.com/rchouinard/pressfleet/control-plane/internal/e2e"
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
@@ -59,11 +60,16 @@ func TestPlatformUp(t *testing.T) {
 		MasterKeyFile:       keyFile,
 		// Development machines and CI runners often lack Docker address pools.
 		SkipPreflight: true,
+		// Never ask Let's Encrypt for certificates from a test.
+		ACME: platform.ACMEConfig{CAServer: e2e.ACMECAServer},
 	}
 	dir := layout.PlatformDir()
 	if err := platform.Render(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
+	// Publishes Traefik on ephemeral loopback ports instead of the host's
+	// 80 and 443.
+	e2e.WriteOverride(t, dir)
 	p := compose.Project{Name: cfg.ProjectName, Dir: dir}
 
 	t.Cleanup(func() {
@@ -101,7 +107,7 @@ func TestPlatformUp(t *testing.T) {
 		for _, c := range containers {
 			state[c.Service] = c
 		}
-		db, cp, redis := state["mariadb"], state["control-plane"], state["redis"]
+		db, cp, redis, tr := state["mariadb"], state["control-plane"], state["redis"], state["traefik"]
 		for _, c := range containers {
 			if c.State == "exited" || c.State == "restarting" || c.State == "dead" {
 				t.Fatalf("service %s is %s: %+v", c.Service, c.State, containers)
@@ -113,7 +119,8 @@ func TestPlatformUp(t *testing.T) {
 		if redis.Name != "" && redis.Name != platform.RedisContainer(cfg.ProjectName) {
 			t.Fatalf("Redis container is %s, want %s", redis.Name, platform.RedisContainer(cfg.ProjectName))
 		}
-		if db.Health == "healthy" && redis.Health == "healthy" && cp.State == "running" {
+		if db.Health == "healthy" && redis.Health == "healthy" && cp.State == "running" &&
+			tr.Health == "healthy" && state["socket-proxy"].Health == "healthy" {
 			cpHealth = cp.Health
 			break
 		}
@@ -138,6 +145,7 @@ func TestPlatformUp(t *testing.T) {
 		"mariadb":       platform.DefaultMariaDBMemoryMB,
 		"control-plane": platform.DefaultControlPlaneMemoryMB,
 		"redis":         platform.DefaultRedisMaxMemoryMB + platform.RedisOverheadMB,
+		"traefik":       platform.DefaultTraefikMemoryMB,
 	} {
 		got := exec(service, "cat", "/sys/fs/cgroup/memory.max")
 		if want := strconv.Itoa(mb * 1024 * 1024); got != want {
@@ -214,7 +222,7 @@ func TestPlatformUp(t *testing.T) {
 		t.Errorf("control plane's Redis admin password = %q", got)
 	}
 	exec("control-plane", "test", "-f", platform.MasterKeySecretPath)
-	if got := exec("control-plane", "docker", "compose", "--project-name", cfg.ProjectName, "ps", "--quiet"); len(strings.Fields(got)) != 3 {
+	if got := exec("control-plane", "docker", "compose", "--project-name", cfg.ProjectName, "ps", "--quiet"); len(strings.Fields(got)) != 5 {
 		t.Errorf("docker compose ps inside the control plane listed %q", got)
 	}
 

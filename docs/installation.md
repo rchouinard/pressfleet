@@ -7,7 +7,7 @@
 3. Runs the install [preflight checks](configuration.md#preflight-checks), the same ones `pressfleet doctor` runs, and stops if a required check fails.
 4. Generates the platform master key, prints it once with the warning below, and waits for you to confirm that you have stored it off-host.
 5. Writes the master key file (mode `0600`) and the config file.
-6. Renders the platform Compose project into `<data_dir>/platform/` and starts it, waiting until MariaDB, the object cache (Valkey), and the control plane report healthy. The first start pulls the images and can take a few minutes.
+6. Renders the platform Compose project into `<data_dir>/platform/` and starts it, waiting until MariaDB, the object cache (Valkey), the control plane, and Traefik report healthy. The first start pulls the images and can take a few minutes. Traefik takes ports 80 and 443 and gets a certificate for the dashboard domain (see [Edge router and certificates](configuration.md#edge-router-and-certificates)); the dashboard and API are then served at `https://<dashboard domain>/`.
 7. Creates the first admin user by running `pressfleet user create` inside the control plane container, and prints the generated password once. The host CLI never touches the state database itself.
 
 Run it as root (or a user in the `docker` group who can write `/etc/pressfleet` and the data directory).
@@ -28,6 +28,8 @@ Run it as root (or a user in the `docker` group who can write `/etc/pressfleet` 
 | Data directory | `--data-dir` | `PRESSFLEET_DATA_DIR` | `/var/lib/pressfleet` |
 | Master key file | `--master-key-file` | `PRESSFLEET_MASTER_KEY_FILE` | `master.key` next to the config file |
 | First admin's email address | `--admin-email` | | (required) |
+| Contact address for Let's Encrypt | `--acme-email` | `PRESSFLEET_ACME_EMAIL` | (unset) |
+| ACME directory of another CA (not prompted) | `--acme-ca-server` | `PRESSFLEET_ACME_CA_SERVER` | Let's Encrypt |
 | SMTP relay host for site email | `--smtp-host` | `PRESSFLEET_SMTP_HOST` | (unset: sites send no email) |
 | SMTP encryption | `--smtp-encryption` | `PRESSFLEET_SMTP_ENCRYPTION` | `starttls` |
 | SMTP port | `--smtp-port` | `PRESSFLEET_SMTP_PORT` | 587, 465, or 25 by encryption |
@@ -37,7 +39,7 @@ Run it as root (or a user in the `docker` group who can write `/etc/pressfleet` 
 
 The config file is written to `--config`, else `$PRESSFLEET_CONFIG`, else `/etc/pressfleet/pressfleet.yaml`. It holds the settings above; everything else keeps its [default](configuration.md#settings).
 
-The dashboard and preview domains must already resolve to this host: the preflight checks look up the dashboard domain and a random name under the preview base domain.
+The dashboard and preview domains must already resolve to this host: the preflight checks look up the dashboard domain and a random name under the preview base domain. Ports 80 and 443 must be free, and reachable from the internet for Let's Encrypt.
 
 The SMTP settings are optional; see [Outbound email](configuration.md#outbound-email). In interactive mode the other SMTP questions are only asked once a relay host is given. `init` reads the relay password from the first line of `--smtp-password-file`, encrypts it with the master key, and writes only the encrypted value to the config file.
 
@@ -64,6 +66,7 @@ Public IP address of this host, only needed behind NAT (optional):
 Data directory for sites, state, and rendered projects [/var/lib/pressfleet]:
 Master key file, outside the data directory [/etc/pressfleet/master.key]:
 Email address of the first admin user: admin@agency.example
+Contact email address for Let's Encrypt (optional): ops@agency.example
 
 Running preflight checks...
 

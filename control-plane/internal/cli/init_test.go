@@ -180,6 +180,13 @@ func (e *initEnv) assertInstalled(r result) secrets.MasterKey {
 	if !strings.Contains(string(compose), `"pressfleet-control-plane:test"`) {
 		t.Errorf("compose.yaml doesn't use the --control-plane-image")
 	}
+	// Traefik routes the dashboard domain to the control plane.
+	if !strings.Contains(string(compose), "Host(`fleet.example.com`)") {
+		t.Errorf("compose.yaml has no dashboard route")
+	}
+	if _, err := os.Stat(filepath.Join(e.dataDir, "platform", platform.TraefikConfigFile)); err != nil {
+		t.Errorf("traefik config: %v", err)
+	}
 	if e.platform.name != platform.ProjectName || e.platform.dir != filepath.Join(e.dataDir, "platform") {
 		t.Errorf("project = %s in %s", e.platform.name, e.platform.dir)
 	}
@@ -266,8 +273,10 @@ func TestInitInteractive(t *testing.T) {
 		"", // default key file, next to the config file
 		"",
 		"admin@example.com", // required, so the empty line above re-prompts
-		"",                  // no SMTP relay: the other SMTP questions are skipped
-		"maybe",             // not a confirmation
+		"acme",              // rejected: not an email address
+		"ops@example.com",
+		"",      // no SMTP relay: the other SMTP questions are skipped
+		"maybe", // not a confirmation
 		"yes",
 	}, "\n") + "\n"
 	r := e.run(answers, "--control-plane-image", "pressfleet-control-plane:test")
@@ -279,6 +288,8 @@ func TestInitInteractive(t *testing.T) {
 		"Data directory for sites, state, and rendered projects [" + e.dataDir + "]: ",
 		"Master key file, outside the data directory [" + e.keyFile + "]: ",
 		"a value is required",
+		"Contact email address for Let's Encrypt (optional): ",
+		`acme.email must be an email address`,
 		`Type "yes" or the key ID once the key above is stored off-host`,
 		"PASS  Linux on amd64",
 	} {
@@ -288,6 +299,35 @@ func TestInitInteractive(t *testing.T) {
 	}
 	if !strings.Contains(r.stdout, "Admin password:") {
 		t.Error("generated password not printed")
+	}
+	cfg, err := config.Load(e.configPath, func(string) (string, bool) { return "", false })
+	if err != nil || cfg.ACME.Email != "ops@example.com" || cfg.ACME.CAServer != "" {
+		t.Errorf("acme = %+v, %v", cfg.ACME, err)
+	}
+	traefik, err := os.ReadFile(filepath.Join(e.dataDir, "platform", platform.TraefikConfigFile))
+	if err != nil || !strings.Contains(string(traefik), `email: "ops@example.com"`) {
+		t.Errorf("traefik config lacks the ACME email: %v\n%s", err, traefik)
+	}
+}
+
+func TestInitACMECAServer(t *testing.T) {
+	e := newInitEnv(t)
+	e.env["PRESSFLEET_ACME_CA_SERVER"] = "https://pebble.test:14000/dir"
+	r := e.run("", e.nonInteractiveArgs()...)
+	e.assertInstalled(r)
+	cfg, err := config.Load(e.configPath, func(string) (string, bool) { return "", false })
+	if err != nil || cfg.ACME.CAServer != "https://pebble.test:14000/dir" || cfg.ACME.Email != "" {
+		t.Errorf("acme = %+v, %v", cfg.ACME, err)
+	}
+	traefik, err := os.ReadFile(filepath.Join(e.dataDir, "platform", platform.TraefikConfigFile))
+	if err != nil || !strings.Contains(string(traefik), `caServer: "https://pebble.test:14000/dir"`) {
+		t.Errorf("traefik config lacks the CA server: %v\n%s", err, traefik)
+	}
+
+	e = newInitEnv(t)
+	r = e.run("", e.nonInteractiveArgs("--acme-ca-server", "http://pebble.test/dir")...)
+	if r.code == 0 || !strings.Contains(r.stderr, "acme.ca_server must be an https:// URL") {
+		t.Errorf("plain HTTP CA server: exit %d, stderr %s", r.code, r.stderr)
 	}
 }
 
@@ -301,7 +341,7 @@ func TestInitConfirmWithKeyID(t *testing.T) {
 		done <- cli.Run(context.Background(), []string{"init", "--config", e.configPath,
 			"--dashboard-domain", "fleet.example.com", "--preview-base-domain", "preview.example.com",
 			"--public-ip", "203.0.113.10", "--data-dir", e.dataDir, "--master-key-file", e.keyFile,
-			"--admin-email", "admin@example.com", "--smtp-host", "", "--control-plane-image", "img:test",
+			"--admin-email", "admin@example.com", "--acme-email", "", "--smtp-host", "", "--control-plane-image", "img:test",
 		}, cli.Options{
 			Version: "v1.2.3-test", Stdin: pr, Stdout: out, Stderr: io.Discard,
 			Env:       func(string) (string, bool) { return "", false },
@@ -345,9 +385,9 @@ func TestInitInteractiveAbort(t *testing.T) {
 	tests := []struct {
 		name, stdin, want string
 	}{
-		{"declined", "fleet.example.com\npreview.example.com\n\n\n\nadmin@example.com\n\nno\n", "must be stored off-host"},
+		{"declined", "fleet.example.com\npreview.example.com\n\n\n\nadmin@example.com\n\n\nno\n", "must be stored off-host"},
 		{"input ends", "fleet.example.com\n", "standard input closed"},
-		{"input ends at confirmation", "fleet.example.com\npreview.example.com\n\n\n\nadmin@example.com\n\n", "standard input closed"},
+		{"input ends at confirmation", "fleet.example.com\npreview.example.com\n\n\n\nadmin@example.com\n\n\n", "standard input closed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

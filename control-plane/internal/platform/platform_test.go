@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"flag"
+	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,6 +19,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
+	"github.com/rchouinard/pressfleet/control-plane/internal/ingress"
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
 )
 
@@ -34,11 +37,15 @@ func testConfig() platform.Config {
 			ControlPlane: "ghcr.io/rchouinard/pressfleet/control-plane:v1.2.3",
 			MariaDB:      "docker.io/library/mariadb:12.3.3@sha256:2f4f46f80e7251990bfdc601ae3f7f2964ddb4dc1868f7deca699fc1ece8c35e",
 			Redis:        "docker.io/valkey/valkey:9.1.2@sha256:ac9c858b86dc81f3482d53a9d854547379a5f41e012500f839ab257c399063e0",
+			Traefik:      "docker.io/library/traefik:v3.7.13@sha256:3429c14149401de2ac82fc72ddc6a92642332b90deb3012301ff211b9d2d0f18",
+			SocketProxy:  "docker.io/wollomatic/socket-proxy:1.13.1@sha256:14b0afd0939218e02736794447868b7d5e1d5b231207b727a935845236f08507",
 		},
 		MariaDBRootPassword: testPassword,
 		RedisAdminPassword:  testRedisPassword,
 		MasterKeyFile:       "/etc/pressfleet/master.key",
 		PreviewBaseDomain:   "preview.agency.example",
+		DashboardDomain:     "fleet.agency.example",
+		ACME:                platform.ACMEConfig{Email: "ops@agency.example"},
 	}
 }
 
@@ -57,6 +64,7 @@ func TestRenderGolden(t *testing.T) {
 		{platform.ComposeFile, "compose.yaml.golden"},
 		{platform.MariaDBConfigFile, "pressfleet.cnf.golden"},
 		{platform.RedisConfigFile, "valkey.conf.golden"},
+		{platform.TraefikConfigFile, "traefik.yaml.golden"},
 	} {
 		got, err := os.ReadFile(filepath.Join(dir, tc.file))
 		if err != nil {
@@ -99,6 +107,7 @@ func TestRenderFileModesAndSecrets(t *testing.T) {
 	for path, want := range map[string]os.FileMode{
 		platform.ComposeFile:               0o644,
 		platform.MariaDBConfigFile:         0o644,
+		platform.TraefikConfigFile:         0o644,
 		platform.MariaDBRootPasswordSecret: 0o600,
 		platform.RedisConfigFile:           0o644,
 		platform.RedisAdminPasswordSecret:  0o600,
@@ -189,8 +198,12 @@ func TestRenderedCompose(t *testing.T) {
 			Image       string
 			Restart     string
 			Environment map[string]string
+			Labels      map[string]string
+			Ports       []string
 			Volumes     []mount
 			Networks    []string
+			ReadOnly    bool     `yaml:"read_only"`
+			CapDrop     []string `yaml:"cap_drop"`
 			Logging     struct {
 				Options map[string]string
 			}
@@ -201,7 +214,8 @@ func TestRenderedCompose(t *testing.T) {
 			}
 			Healthcheck struct{ Test []string }
 		}
-		Secrets map[string]struct{ File string }
+		Secrets  map[string]struct{ File string }
+		Networks map[string]struct{ Internal bool }
 	}
 	if err := yaml.Unmarshal(raw, &file); err != nil {
 		t.Fatal(err)
@@ -209,10 +223,22 @@ func TestRenderedCompose(t *testing.T) {
 	if file.Name != "pftest" {
 		t.Errorf("name = %q", file.Name)
 	}
-	if len(file.Services) != 3 {
-		t.Errorf("services = %d, want 3", len(file.Services))
+	if len(file.Services) != 5 {
+		t.Errorf("services = %d, want 5", len(file.Services))
 	}
-	socketUsers := 0
+	// Every service is on the platform network except the socket proxy,
+	// which only Traefik can reach.
+	wantNetworks := map[string][]string{
+		"control-plane": {"platform"},
+		"mariadb":       {"platform"},
+		"redis":         {"platform"},
+		"traefik":       {"platform", "socket-proxy"},
+		"socket-proxy":  {"socket-proxy"},
+	}
+	if !file.Networks["socket-proxy"].Internal {
+		t.Error("socket-proxy network is not internal")
+	}
+	socketMounts := map[string]bool{} // service -> read-only
 	for name, svc := range file.Services {
 		if svc.Restart != "unless-stopped" {
 			t.Errorf("%s: restart = %q", name, svc.Restart)
@@ -226,20 +252,33 @@ func TestRenderedCompose(t *testing.T) {
 		if len(svc.Healthcheck.Test) == 0 {
 			t.Errorf("%s: no healthcheck", name)
 		}
-		if len(svc.Networks) != 1 || svc.Networks[0] != "platform" {
-			t.Errorf("%s: networks = %v", name, svc.Networks)
+		if !slices.Equal(svc.Networks, wantNetworks[name]) {
+			t.Errorf("%s: networks = %v, want %v", name, svc.Networks, wantNetworks[name])
 		}
 		for _, v := range svc.Volumes {
 			if v.Source == "/var/run/docker.sock" {
-				socketUsers++
-				if name != "control-plane" || v.ReadOnly {
-					t.Errorf("%s: unexpected docker socket mount %+v", name, v)
-				}
+				socketMounts[name] = v.ReadOnly
 			}
 		}
+		if len(svc.Ports) > 0 && name != "traefik" {
+			t.Errorf("%s publishes ports %v; only Traefik may", name, svc.Ports)
+		}
 	}
-	if socketUsers != 1 {
-		t.Errorf("docker socket mounted %d times, want 1", socketUsers)
+	// Only the control plane has read-write access to the Docker socket
+	// (§6). Traefik doesn't mount it at all; the socket proxy mounts it
+	// read-only (and refuses write requests, see TestRenderedTraefikConfig).
+	if want := map[string]bool{"control-plane": false, "socket-proxy": true}; !maps.Equal(socketMounts, want) {
+		t.Errorf("docker socket mounts (service: read-only) = %v, want %v", socketMounts, want)
+	}
+	for _, name := range []string{"traefik", "socket-proxy"} {
+		svc := file.Services[name]
+		if !svc.ReadOnly || !slices.Equal(svc.CapDrop, []string{"ALL"}) {
+			t.Errorf("%s: read_only = %v, cap_drop = %v", name, svc.ReadOnly, svc.CapDrop)
+		}
+	}
+	tr := file.Services["traefik"]
+	if want := []string{"80:80/tcp", "443:443/tcp", "443:443/udp"}; !slices.Equal(tr.Ports, want) {
+		t.Errorf("traefik ports = %v, want %v", tr.Ports, want)
 	}
 
 	cp := file.Services["control-plane"]
@@ -284,6 +323,26 @@ func TestRenderedCompose(t *testing.T) {
 	if want := platform.MariaDBContainer("pftest"); want != "pftest-mariadb-1" {
 		t.Errorf("MariaDB container = %q", want)
 	}
+	if want := platform.TraefikContainer("pftest"); want != "pftest-traefik-1" {
+		t.Errorf("Traefik container = %q", want)
+	}
+	// The dashboard domain reaches the control plane through Traefik.
+	if cp.Environment["PRESSFLEET_DASHBOARD_DOMAIN"] != "fleet.agency.example" {
+		t.Errorf("PRESSFLEET_DASHBOARD_DOMAIN = %q", cp.Environment["PRESSFLEET_DASHBOARD_DOMAIN"])
+	}
+	for k, want := range map[string]string{
+		ingress.PlatformLabel:                                         "pftest",
+		"traefik.enable":                                              "true",
+		"traefik.docker.network":                                      "pftest_platform",
+		"traefik.http.routers.pf-dashboard.rule":                      "Host(`fleet.agency.example`)",
+		"traefik.http.routers.pf-dashboard.entrypoints":               ingress.EntryPointHTTPS,
+		"traefik.http.routers.pf-dashboard.tls.certresolver":          ingress.CertResolverHTTP,
+		"traefik.http.services.pf-dashboard.loadbalancer.server.port": "8080",
+	} {
+		if got := cp.Labels[k]; got != want {
+			t.Errorf("control plane label %s = %q, want %q", k, got, want)
+		}
+	}
 
 	cnf, err := os.ReadFile(filepath.Join(dir, platform.MariaDBConfigFile))
 	if err != nil {
@@ -311,6 +370,11 @@ func TestRenderInvalidConfig(t *testing.T) {
 		"relative key file": func(c *platform.Config) { c.MasterKeyFile = "master.key" },
 		"key in data dir":   func(c *platform.Config) { c.MasterKeyFile = "/var/lib/pressfleet/master.key" },
 		"bad preview base":  func(c *platform.Config) { c.PreviewBaseDomain = "*.preview.example" },
+		"bad dashboard":     func(c *platform.Config) { c.DashboardDomain = "https://fleet.example" },
+		"bad listen":        func(c *platform.Config) { c.Listen = "8080" },
+		"tiny traefik":      func(c *platform.Config) { c.TraefikMemoryMB = 16 },
+		"bad acme email":    func(c *platform.Config) { c.ACME.Email = "ops" },
+		"http acme server":  func(c *platform.Config) { c.ACME.CAServer = "http://pebble:14000/dir" },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -341,7 +405,9 @@ func TestDefaultImages(t *testing.T) {
 	}
 	// Third-party images must be pinned as tag@sha256:digest (§4.7).
 	pinned := regexp.MustCompile(`^[a-z0-9./-]+:[0-9A-Za-z._-]+@sha256:[0-9a-f]{64}$`)
-	for name, img := range map[string]string{"mariadb": images.MariaDB, "redis": images.Redis} {
+	for name, img := range map[string]string{
+		"mariadb": images.MariaDB, "redis": images.Redis, "traefik": images.Traefik, "socket-proxy": images.SocketProxy,
+	} {
 		if !pinned.MatchString(img) {
 			t.Errorf("%s image not pinned by digest: %q", name, img)
 		}
@@ -351,15 +417,18 @@ func TestDefaultImages(t *testing.T) {
 	}
 }
 
-func TestRenderWithoutPreviewBaseDomain(t *testing.T) {
+func TestRenderWithoutDomains(t *testing.T) {
 	cfg := testConfig()
 	cfg.PreviewBaseDomain = ""
+	cfg.DashboardDomain = ""
 	raw, err := os.ReadFile(filepath.Join(render(t, cfg), platform.ComposeFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(raw, []byte("PRESSFLEET_PREVIEW_BASE_DOMAIN")) {
-		t.Errorf("empty preview base domain rendered:\n%s", raw)
+	for _, s := range []string{"PRESSFLEET_PREVIEW_BASE_DOMAIN", "PRESSFLEET_DASHBOARD_DOMAIN", "pf-dashboard"} {
+		if bytes.Contains(raw, []byte(s)) {
+			t.Errorf("%s rendered without domains:\n%s", s, raw)
+		}
 	}
 }
 
@@ -410,6 +479,130 @@ func TestRenderSMTP(t *testing.T) {
 	if err := platform.Render(t.TempDir(), cfg); !errors.Is(err, platform.ErrInvalidConfig) {
 		t.Errorf("plaintext SMTP password: err = %v, want ErrInvalidConfig", err)
 	}
+}
+
+// TestRenderedTraefikConfig checks the properties of Traefik's static
+// configuration that the rest of PressFleet relies on.
+func TestRenderedTraefikConfig(t *testing.T) {
+	tests := map[string]struct {
+		acme       platform.ACMEConfig
+		wantServer string
+	}{
+		"lets encrypt": {wantServer: platform.LetsEncryptCAServer},
+		"pebble": {
+			acme:       platform.ACMEConfig{CAServer: "https://pebble:14000/dir"},
+			wantServer: "https://pebble:14000/dir",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			cfg := testConfig()
+			cfg.ProjectName = "pftest"
+			cfg.ACME = tc.acme
+			tr := readTraefikConfig(t, render(t, cfg))
+
+			web, websecure := tr.EntryPoints[ingress.EntryPointHTTP], tr.EntryPoints[ingress.EntryPointHTTPS]
+			if web.Address != ":80" || web.HTTP.Redirections.EntryPoint.To != ingress.EntryPointHTTPS ||
+				web.HTTP.Redirections.EntryPoint.Scheme != "https" || !web.HTTP.Redirections.EntryPoint.Permanent {
+				t.Errorf("web entry point = %+v", web)
+			}
+			if websecure.Address != ":443" || !websecure.AsDefault || websecure.HTTP3 == nil || websecure.HTTP.TLS == nil {
+				t.Errorf("websecure entry point = %+v", websecure)
+			}
+			internal := tr.EntryPoints[ingress.EntryPointInternal]
+			if internal.Address != fmt.Sprintf(":%d", ingress.InternalPort) ||
+				tr.Ping.EntryPoint != ingress.EntryPointInternal ||
+				tr.Metrics.Prometheus.EntryPoint != ingress.EntryPointInternal ||
+				!tr.Metrics.Prometheus.AddRoutersLabels {
+				t.Errorf("internal entry point %+v, ping %+v, metrics %+v", internal, tr.Ping, tr.Metrics)
+			}
+			if tr.AccessLog == nil || tr.AccessLog.Fields.Headers.DefaultMode != "drop" {
+				t.Errorf("access log = %+v, want enabled without headers", tr.AccessLog)
+			}
+			d := tr.Providers.Docker
+			if d.Endpoint != "tcp://socket-proxy:2375" || d.ExposedByDefault ||
+				d.Constraints != "Label(`"+ingress.PlatformLabel+"`, `pftest`)" {
+				t.Errorf("docker provider = %+v", d)
+			}
+			resolver := tr.CertificatesResolvers[ingress.CertResolverHTTP].ACME
+			if resolver.CAServer != tc.wantServer || resolver.HTTPChallenge.EntryPoint != ingress.EntryPointHTTP ||
+				resolver.Storage == "" {
+				t.Errorf("%s resolver = %+v", ingress.CertResolverHTTP, resolver)
+			}
+		})
+	}
+}
+
+// traefikConfig is the part of Traefik's static configuration the tests
+// check.
+type traefikConfig struct {
+	EntryPoints map[string]struct {
+		Address   string
+		AsDefault bool `yaml:"asDefault"`
+		HTTP      struct {
+			Redirections struct {
+				EntryPoint struct {
+					To, Scheme string
+					Permanent  bool
+				} `yaml:"entryPoint"`
+			}
+			TLS *struct {
+				CertResolver string `yaml:"certResolver"`
+			}
+		}
+		HTTP3 *struct{} `yaml:"http3"`
+	} `yaml:"entryPoints"`
+	Ping struct {
+		EntryPoint string `yaml:"entryPoint"`
+	}
+	Metrics struct {
+		Prometheus struct {
+			EntryPoint       string `yaml:"entryPoint"`
+			AddRoutersLabels bool   `yaml:"addRoutersLabels"`
+		}
+	}
+	AccessLog *struct {
+		Fields struct {
+			Headers struct {
+				DefaultMode string `yaml:"defaultMode"`
+			}
+		}
+	} `yaml:"accessLog"`
+	Providers struct {
+		Docker struct {
+			Endpoint         string
+			ExposedByDefault bool `yaml:"exposedByDefault"`
+			Constraints      string
+		}
+		File *struct{ Filename string }
+	}
+	CertificatesResolvers map[string]struct {
+		ACME struct {
+			Email         string
+			CAServer      string `yaml:"caServer"`
+			Storage       string
+			HTTPChallenge struct {
+				EntryPoint string `yaml:"entryPoint"`
+			} `yaml:"httpChallenge"`
+			DNSChallenge *struct {
+				Provider  string
+				Resolvers []string
+			} `yaml:"dnsChallenge"`
+		}
+	} `yaml:"certificatesResolvers"`
+}
+
+func readTraefikConfig(t *testing.T, dir string) traefikConfig {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dir, platform.TraefikConfigFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tr traefikConfig
+	if err := yaml.Unmarshal(raw, &tr); err != nil {
+		t.Fatalf("%v\n%s", err, raw)
+	}
+	return tr
 }
 
 // The control plane's default platform_project matches the project name

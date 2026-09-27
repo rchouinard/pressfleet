@@ -14,8 +14,8 @@ Unit tests never need Docker. Besides `make test-platform`, a few packages have 
 
 The end-to-end tests live in `control-plane/internal/e2e`. For each test, the harness:
 
-1. Renders the platform project (control plane, MariaDB, and the object cache) into a temporary data directory, under a unique Compose project name (`pfe2e-<random>`), with a throwaway master key outside the data directory. Host preflight checks are skipped.
-2. Adds a `compose.override.yaml` that publishes the control plane on an ephemeral `127.0.0.1` port. The real platform never publishes it.
+1. Renders the platform project (control plane, MariaDB, the object cache, Traefik, and its socket proxy) into a temporary data directory, under a unique Compose project name (`pfe2e-<random>`), with a throwaway master key outside the data directory. Host preflight checks are skipped. The dashboard domain is `fleet.e2e.test` and the ACME directory is `https://acme.invalid/directory`, which never resolves: tests never ask Let's Encrypt for certificates, and Traefik serves its self-signed default certificate.
+2. Adds a `compose.override.yaml` that publishes the control plane on an ephemeral `127.0.0.1` port, which the real platform never does, and replaces Traefik's ports 80 and 443 with ephemeral `127.0.0.1` ports (TCP only; `ports: !override`). So platforms never take the host's ports 80 and 443, and any number of them can run side by side, next to whatever else uses those ports.
 3. Starts the project and waits until the containers are healthy and `GET /readyz` returns `200`.
 4. Creates an admin user with `pressfleet user create --password-stdin` inside the control plane container, then logs in.
 5. Hands the test a generated API client (`control-plane/internal/api/client`) with the session cookie and CSRF token.
@@ -38,14 +38,18 @@ PRESSFLEET_DOCKER_TESTS=1 PRESSFLEET_TEST_CONTROL_PLANE_IMAGE=pressfleet-control
   go test -count=1 -v -run TestAPI ./control-plane/internal/e2e/
 ```
 
-The tests work with Docker Engine on Linux and with Docker Desktop. If a run is killed before its cleanup can run, remove what it left. Remove the platform first: its MariaDB and object cache keep the site networks in use.
+The tests work with Docker Engine on Linux and with Docker Desktop, with Compose 2.24.4 or later (for `!override`). If a run is killed before its cleanup can run, remove what it left. Remove the platform first: its MariaDB and object cache keep the site networks in use.
 
 ```sh
 docker compose -p pfe2e-<random> down --volumes
 docker compose -p pf-<site-id> down --volumes   # for each site it created
 ```
 
-`TestInit` doesn't use `e2e.Start`: it runs `pressfleet init --non-interactive --skip-preflight` into a temporary root under the project name `pfinit-<random>`, then logs in as the admin init created. `e2e.Adopt` gives it the same teardown, and `e2e.WriteOverride` publishes the control plane port.
+`TestInit` doesn't use `e2e.Start`: it runs `pressfleet init --non-interactive --skip-preflight --acme-ca-server https://acme.invalid/directory` into a temporary root under the project name `pfinit-<random>`, then logs in as the admin init created. `e2e.Adopt` gives it the same teardown, and `e2e.WriteOverride` publishes the control plane and Traefik ports. Anything else that starts a platform in a test, like `TestPlatformUp` (`make test-platform`), must write the override too, or Traefik takes the host's ports 80 and 443.
+
+#### Traefik
+
+`TestIngress` checks the edge router (#33) through `p.IngressClient`, an HTTP client that sends any `http://` URL to Traefik's published HTTP port and any `https://` URL to its HTTPS port, with the URL's host as `Host` and TLS server name. It doesn't verify certificates (Traefik's default certificate is self-signed) or follow redirects. The test checks that HTTP redirects to HTTPS, that `https://fleet.e2e.test/` reaches the control plane over HTTP/2 with HTTP/3 advertised, that logging in through Traefik gives a `Secure` session cookie (Traefik is a trusted proxy), and that other hosts get `404`. From inside the Traefik container, it checks that Traefik doesn't mount the Docker socket, that the socket proxy lists containers but refuses writes, logs, file downloads, and other endpoints, and that Prometheus metrics are served. `p.HTTPAddr` and `p.HTTPSAddr` are Traefik's published addresses.
 
 #### The M1 acceptance test
 
@@ -57,7 +61,7 @@ docker compose -p pf-<site-id> down --volumes   # for each site it created
 4. It changes one site's PHP version, checks that the php container was recreated on the new image and nginx was left alone, then stops and starts the site (#28).
 5. It deletes both sites. It checks that no container, network, or volume with either project's label is left, that nothing is left under `sites/` and neither MariaDB nor the object cache is on a site network, that the site databases, users, and grants are gone from MariaDB and the site users from the object cache, and that no secret, site, alias, database, object cache, or schedule row is left in the state database.
 
-**"Reached over HTTP on the host" in M1.** The host can't route to a site until Traefik serves preview domains (M2). Until then, the test starts a throwaway client container on the host's Docker engine, attached to the site's network, the way Traefik will be (`compose.RunContainer`: curl from the site's php image, which is already on the host, running as nobody with a read-only root filesystem and no capabilities). It requests `http://nginx:8080/` with the preview domain as `Host` and expects `200` with the site's title and `wp-content` URLs. It requests `/wp-login.php` and expects WordPress's `302` to the HTTPS login page: only a trusted proxy's requests count as HTTPS, so the redirect shows WordPress answering. Once Traefik lands, this check should move to the host's own HTTP client.
+**"Reached over HTTP on the host" in M1.** The host can't route to a site until Traefik serves preview domains (M2). Until then, the test starts a throwaway client container on the host's Docker engine, attached to the site's network, the way Traefik will be (`compose.RunContainer`: curl from the site's php image, which is already on the host, running as nobody with a read-only root filesystem and no capabilities). It requests `http://nginx:8080/` with the preview domain as `Host` and expects `200` with the site's title and `wp-content` URLs. It requests `/wp-login.php` and expects WordPress's `302` to the HTTPS login page: only a trusted proxy's requests count as HTTPS, so the redirect shows WordPress answering. Once Traefik routes preview domains (#36), this check should move to the host's own HTTP client (`p.IngressClient`).
 
 It needs the site images for the latest WordPress in [`images/manifest.json`](../images/manifest.json) and two PHP versions: the default one and the next available one, e.g. `ghcr.io/rchouinard/pressfleet/site-php:php8.5-wp7.1.2`, `site-php:php8.4-wp7.1.2`, and `site-nginx:wp7.1.2`. The harness (`e2e.EnsureImages`) uses local images when they exist, so images built with `make images` are tested as they are, and otherwise pulls them from GHCR. If neither works, the test fails and says to run `make images` (see [images/README.md](../images/README.md)). After changing `images/`, run `make images` before `make test-e2e`, or the test runs against whatever images you already have.
 

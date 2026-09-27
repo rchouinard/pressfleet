@@ -1,7 +1,7 @@
 // Package platform renders the platform services Compose project: the
-// control plane, MariaDB, and the object cache (Redis protocol, served by
-// Valkey) now, Traefik and VictoriaMetrics in later milestones (design doc
-// §4.1).
+// control plane, MariaDB, the object cache (Redis protocol, served by
+// Valkey), and Traefik with its Docker socket proxy now, VictoriaMetrics in
+// a later milestone (design doc §4.1).
 //
 // The host CLI renders the project from templates embedded in its binary
 // (package templates) into <data_dir>/platform/. Rendered files are never
@@ -16,14 +16,17 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
 
 	"go.yaml.in/yaml/v3"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
+	"github.com/rchouinard/pressfleet/control-plane/internal/ingress"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 	"github.com/rchouinard/pressfleet/templates"
@@ -33,10 +36,14 @@ import (
 const ProjectName = "pressfleet"
 
 // Memory limits from the §4.1 capacity budget. The control plane shares its
-// 256 MiB budget line with Traefik, which gets the remaining 64 MiB.
+// 256 MiB budget line with Traefik, which gets the remaining 64 MiB (it
+// uses about 25 MiB idle). The socket proxy, a small Go program serving one
+// client, uses about 11 MiB and comes on top, out of the headroom line.
 const (
 	DefaultMariaDBMemoryMB      = 768
 	DefaultControlPlaneMemoryMB = 192
+	DefaultTraefikMemoryMB      = 64
+	DefaultSocketProxyMemoryMB  = 24
 )
 
 // Object cache sizing. The §4.1 budget line is the cache's maxmemory; the
@@ -57,6 +64,10 @@ const RedisDatabases = 1024
 // sites with; config.Config's redis.admin_user defaults to it.
 const RedisAdminUser = "pressfleet"
 
+// LetsEncryptCAServer is the ACME directory Traefik uses unless
+// ACMEConfig.CAServer names another.
+const LetsEncryptCAServer = "https://acme-v02.api.letsencrypt.org/directory"
+
 // DefaultListen is the control plane's listen address inside its container.
 const DefaultListen = ":8080"
 
@@ -68,6 +79,8 @@ type Images struct {
 	ControlPlane string
 	MariaDB      string
 	Redis        string
+	Traefik      string
+	SocketProxy  string
 }
 
 // DefaultImages returns the images pinned for this release: third-party
@@ -82,6 +95,8 @@ func DefaultImages(version string) (Images, error) {
 		ControlPlane string `yaml:"control-plane"`
 		MariaDB      string `yaml:"mariadb"`
 		Redis        string `yaml:"redis"`
+		Traefik      string `yaml:"traefik"`
+		SocketProxy  string `yaml:"socket-proxy"`
 	}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
@@ -91,7 +106,13 @@ func DefaultImages(version string) (Images, error) {
 	if version == "" {
 		return Images{}, fmt.Errorf("%w: control plane version is required", ErrInvalidConfig)
 	}
-	return Images{ControlPlane: list.ControlPlane + ":" + version, MariaDB: list.MariaDB, Redis: list.Redis}, nil
+	return Images{
+		ControlPlane: list.ControlPlane + ":" + version,
+		MariaDB:      list.MariaDB,
+		Redis:        list.Redis,
+		Traefik:      list.Traefik,
+		SocketProxy:  list.SocketProxy,
+	}, nil
 }
 
 // Config is everything needed to render the platform project.
@@ -109,6 +130,8 @@ type Config struct {
 	// Memory limits in MiB; zero means the §4.1 default.
 	ControlPlaneMemoryMB int
 	MariaDBMemoryMB      int
+	TraefikMemoryMB      int
+	SocketProxyMemoryMB  int
 	// MariaDBRootPassword is written to secrets/mariadb_root_password.
 	MariaDBRootPassword redact.Secret
 	// RedisMaxMemoryMB is the object cache's maxmemory; zero means
@@ -135,6 +158,22 @@ type Config struct {
 	// the master key, so the rendered project never holds it in plaintext.
 	// A zero value (no host) leaves outbound email off.
 	SMTP config.SMTPConfig
+	// DashboardDomain is where Traefik serves the control plane's dashboard
+	// and API (config.Config.DashboardDomain). Empty renders no dashboard
+	// route.
+	DashboardDomain string
+	// ACME configures how Traefik obtains certificates.
+	ACME ACMEConfig
+}
+
+// ACMEConfig configures Traefik's ACME certificate resolvers
+// (config.Config.ACME).
+type ACMEConfig struct {
+	// Email is the ACME account's contact address; empty registers the
+	// account without one.
+	Email string
+	// CAServer is the ACME directory URL; empty means LetsEncryptCAServer.
+	CAServer string
 }
 
 // withDefaults fills zero fields and validates the result.
@@ -154,13 +193,26 @@ func (c Config) withDefaults() (Config, error) {
 	if c.RedisMaxMemoryMB == 0 {
 		c.RedisMaxMemoryMB = DefaultRedisMaxMemoryMB
 	}
+	if c.TraefikMemoryMB == 0 {
+		c.TraefikMemoryMB = DefaultTraefikMemoryMB
+	}
+	if c.SocketProxyMemoryMB == 0 {
+		c.SocketProxyMemoryMB = DefaultSocketProxyMemoryMB
+	}
+	if c.ACME.CAServer == "" {
+		c.ACME.CAServer = LetsEncryptCAServer
+	}
 
 	var errs []error
 	if !filepath.IsAbs(c.DataDir) || filepath.Clean(c.DataDir) != c.DataDir {
 		errs = append(errs, fmt.Errorf("data dir must be a clean absolute path, got %q", c.DataDir))
 	}
-	if c.Images.ControlPlane == "" || c.Images.MariaDB == "" || c.Images.Redis == "" {
-		errs = append(errs, errors.New("control plane, MariaDB, and Redis images are required"))
+	if c.Images.ControlPlane == "" || c.Images.MariaDB == "" || c.Images.Redis == "" ||
+		c.Images.Traefik == "" || c.Images.SocketProxy == "" {
+		errs = append(errs, errors.New("control plane, MariaDB, Redis, Traefik, and socket proxy images are required"))
+	}
+	if _, err := listenPort(c.Listen); err != nil {
+		errs = append(errs, err)
 	}
 	if c.ControlPlaneMemoryMB < 64 {
 		errs = append(errs, fmt.Errorf("control plane memory must be at least 64 MiB, got %d", c.ControlPlaneMemoryMB))
@@ -171,6 +223,12 @@ func (c Config) withDefaults() (Config, error) {
 	if c.RedisMaxMemoryMB < 32 {
 		errs = append(errs, fmt.Errorf("the object cache's maxmemory must be at least 32 MiB, got %d", c.RedisMaxMemoryMB))
 	}
+	if c.TraefikMemoryMB < 32 {
+		errs = append(errs, fmt.Errorf("traefik memory must be at least 32 MiB, got %d", c.TraefikMemoryMB))
+	}
+	if c.SocketProxyMemoryMB < 8 {
+		errs = append(errs, fmt.Errorf("socket proxy memory must be at least 8 MiB, got %d", c.SocketProxyMemoryMB))
+	}
 	if !filepath.IsAbs(c.MasterKeyFile) || filepath.Clean(c.MasterKeyFile) != c.MasterKeyFile {
 		errs = append(errs, fmt.Errorf("master key file must be a clean absolute path, got %q", c.MasterKeyFile))
 	} else if rel, err := filepath.Rel(c.DataDir, c.MasterKeyFile); err == nil && filepath.IsLocal(rel) {
@@ -180,6 +238,15 @@ func (c Config) withDefaults() (Config, error) {
 		errs = append(errs, fmt.Errorf("preview base domain must be a domain name like preview.example.com, got %q", c.PreviewBaseDomain))
 	}
 	if err := c.SMTP.Validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if c.DashboardDomain != "" && !config.ValidDomain(c.DashboardDomain) {
+		errs = append(errs, fmt.Errorf("dashboard domain must be a domain name like fleet.example.com, got %q", c.DashboardDomain))
+	}
+	if err := config.CheckACMEEmail(c.ACME.Email); err != nil {
+		errs = append(errs, err)
+	}
+	if err := config.CheckACMEServer(c.ACME.CAServer); err != nil {
 		errs = append(errs, err)
 	}
 	if c.MariaDBRootPassword.Reveal() == "" {
@@ -225,6 +292,22 @@ type templateData struct {
 	SkipPreflight          bool
 	PreviewBaseDomain      string
 	SMTP                   *config.SMTPConfig // nil when outbound email is off
+	ListenPort             int
+	TraefikMemoryMB        int
+	TraefikGoMemLimitMB    int
+	SocketProxyMemoryMB    int
+	DashboardDomain        string
+	ACME                   ACMEConfig
+
+	// Traefik names shared with site routes (package ingress).
+	PlatformLabel      string
+	Constraint         string
+	TraefikService     string
+	EntryPointHTTP     string
+	EntryPointHTTPS    string
+	EntryPointInternal string
+	InternalPort       int
+	CertResolverHTTP   string
 }
 
 // output is one rendered file, relative to the project directory.
@@ -245,6 +328,7 @@ const (
 	MariaDBRootPasswordSecret = "secrets/mariadb_root_password"
 	RedisConfigFile           = "redis/valkey.conf"
 	RedisAdminPasswordSecret  = "secrets/redis_admin_password"
+	TraefikConfigFile         = "traefik/traefik.yaml"
 )
 
 // Render writes the platform Compose project into dir, normally
@@ -257,10 +341,12 @@ func Render(dir string, cfg Config) error {
 	if err != nil {
 		return err
 	}
+	port, _ := listenPort(cfg.Listen) // validated by withDefaults
 	data := templateData{
 		ProjectName:          cfg.ProjectName,
 		DataDir:              cfg.DataDir,
 		Listen:               cfg.Listen,
+		ListenPort:           port,
 		Images:               cfg.Images,
 		ControlPlaneMemoryMB: cfg.ControlPlaneMemoryMB,
 		MariaDBMemoryMB:      cfg.MariaDBMemoryMB,
@@ -275,11 +361,25 @@ func Render(dir string, cfg Config) error {
 		MasterKeySecretPath:    MasterKeySecretPath,
 		SkipPreflight:          cfg.SkipPreflight,
 		PreviewBaseDomain:      cfg.PreviewBaseDomain,
+		TraefikMemoryMB:        cfg.TraefikMemoryMB,
+		TraefikGoMemLimitMB:    cfg.TraefikMemoryMB * 3 / 4,
+		SocketProxyMemoryMB:    cfg.SocketProxyMemoryMB,
+		DashboardDomain:        cfg.DashboardDomain,
+		ACME:                   cfg.ACME,
+		PlatformLabel:          ingress.PlatformLabel,
+		Constraint:             fmt.Sprintf("Label(`%s`, `%s`)", ingress.PlatformLabel, cfg.ProjectName),
+		TraefikService:         ingress.TraefikService,
+		EntryPointHTTP:         ingress.EntryPointHTTP,
+		EntryPointHTTPS:        ingress.EntryPointHTTPS,
+		EntryPointInternal:     ingress.EntryPointInternal,
+		InternalPort:           ingress.InternalPort,
+		CertResolverHTTP:       ingress.CertResolverHTTP,
 	}
 	if cfg.SMTP.Enabled() {
 		data.SMTP = &cfg.SMTP
 	}
-	tmpl, err := template.New("").Option("missingkey=error").Funcs(template.FuncMap{"q": quote}).
+	tmpl, err := template.New("").Option("missingkey=error").
+		Funcs(template.FuncMap{"q": quote, "yq": yamlQuote, "backquote": backquote}).
 		ParseFS(templates.Platform(), "*.tmpl")
 	if err != nil {
 		return fmt.Errorf("parsing platform templates: %w", err)
@@ -288,6 +388,7 @@ func Render(dir string, cfg Config) error {
 	outputs := []output{
 		{path: ComposeFile, template: "compose.yaml.tmpl"},
 		{path: MariaDBConfigFile, template: "mariadb.cnf.tmpl"},
+		{path: TraefikConfigFile, template: "traefik.yaml.tmpl"},
 		{path: MariaDBRootPasswordSecret, secret: cfg.MariaDBRootPassword},
 		{path: RedisConfigFile, template: "valkey.conf.tmpl"},
 		{path: RedisAdminPasswordSecret, secret: cfg.RedisAdminPassword},
@@ -327,6 +428,13 @@ func RedisContainer(projectName string) string {
 	return projectName + "-redis-1"
 }
 
+// TraefikContainer is the name of the Traefik container of the platform
+// project called projectName. The Compose provisioner connects it to each
+// site network, like MariaDB.
+func TraefikContainer(projectName string) string {
+	return projectName + "-" + ingress.TraefikService + "-1"
+}
+
 // Project returns the Compose project for a rendered platform directory.
 func Project(dir string) compose.Project {
 	return compose.Project{Name: ProjectName, Dir: dir}
@@ -345,14 +453,36 @@ func sha256Hex(s redact.Secret) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// quote renders s as a double-quoted YAML scalar. JSON string syntax is valid
-// YAML; '$' is doubled so Compose doesn't treat it as interpolation.
+// quote renders s as a double-quoted YAML scalar in compose.yaml. JSON
+// string syntax is valid YAML; '$' is doubled so Compose doesn't treat it as
+// interpolation.
 func quote(s string) (string, error) {
+	b, err := yamlQuote(s)
+	return strings.ReplaceAll(b, "$", "$$"), err
+}
+
+// yamlQuote renders s as a double-quoted YAML scalar in files Compose
+// doesn't interpolate, such as Traefik's configuration.
+func yamlQuote(s string) (string, error) {
 	b, err := json.Marshal(s)
-	if err != nil {
-		return "", err
+	return string(b), err
+}
+
+// backquote wraps s in backquotes, the string syntax of Traefik rules.
+// Domains are validated, so they never contain one themselves.
+func backquote(s string) string {
+	return "`" + s + "`"
+}
+
+// listenPort returns the TCP port of a listen address like ":8080", which
+// Traefik forwards dashboard requests to.
+func listenPort(listen string) (int, error) {
+	if _, port, err := net.SplitHostPort(listen); err == nil {
+		if n, err := strconv.Atoi(port); err == nil && n > 0 && n <= 65535 {
+			return n, nil
+		}
 	}
-	return strings.ReplaceAll(string(b), "$", "$$"), nil
+	return 0, fmt.Errorf("listen address must be host:port or :port, got %q", listen)
 }
 
 // writeFile atomically replaces path with content. Writing to a temporary

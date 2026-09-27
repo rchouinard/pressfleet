@@ -49,6 +49,7 @@ func TestInit(t *testing.T) {
 		"--preview-base-domain", "preview.init.test",
 		"--data-dir", dataDir,
 		"--admin-email", email, "--admin-password-stdin",
+		"--acme-ca-server", e2e.ACMECAServer,
 		"--control-plane-image", image,
 	}, cli.Options{
 		Version:             "e2e",

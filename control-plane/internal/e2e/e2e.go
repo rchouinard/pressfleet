@@ -1,7 +1,7 @@
 // Package e2e is the end-to-end test harness (design doc §10, item 3). It
 // boots a real platform, the control plane from a locally built image plus
-// MariaDB, as an isolated Compose project on the local Docker daemon, and
-// drives it through the generated API client.
+// MariaDB and Traefik, as an isolated Compose project on the local Docker
+// daemon, and drives it through the generated API client.
 //
 // Tests using it are skipped unless PRESSFLEET_DOCKER_TESTS=1 and
 // PRESSFLEET_TEST_CONTROL_PLANE_IMAGE names a control plane image. Run them
@@ -15,8 +15,10 @@ package e2e
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"fmt"
 	"maps"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"os"
@@ -29,6 +31,7 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/client"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
+	"github.com/rchouinard/pressfleet/control-plane/internal/ingress"
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
@@ -46,12 +49,29 @@ const Service = "control-plane"
 
 // PreviewBaseDomain is the preview base domain of platforms Start boots.
 // Nothing resolves it: tests reach sites over their networks, from the
-// sites' containers or a client container (compose.RunContainer), because
-// routing (Traefik) isn't part of the platform yet.
+// sites' containers or a client container (compose.RunContainer), until
+// Traefik routes preview domains (#36).
 const PreviewBaseDomain = "preview.e2e.test"
 
-// controlPlanePort is the container port of platform.DefaultListen.
-const controlPlanePort = 8080
+// DashboardDomain is the dashboard domain of platforms Start boots. Nothing
+// resolves it either: tests send it as the Host header (and TLS server
+// name) to Traefik's published port (Platform.HTTPSAddr).
+const DashboardDomain = "fleet.e2e.test"
+
+// ACMECAServer is the ACME directory of platforms the harness boots. The
+// .invalid top-level domain never resolves (RFC 6761), so Traefik can't
+// reach a certificate authority and serves its self-signed default
+// certificate: tests never ask Let's Encrypt for certificates. A test that
+// needs real issuance runs Pebble and points the platform at it instead.
+const ACMECAServer = "https://acme.invalid/directory"
+
+// Container ports: the control plane's platform.DefaultListen, and
+// Traefik's entry points.
+const (
+	controlPlanePort = 8080
+	traefikHTTPPort  = 80
+	traefikHTTPSPort = 443
+)
 
 // Timeouts for booting and tearing down the platform. Pulling MariaDB on a
 // cold CI runner dominates the boot time.
@@ -63,11 +83,20 @@ const (
 
 // overrideFile publishes the control plane API on an ephemeral loopback port,
 // so tests reach it the same way on Linux and Docker Desktop (where container
-// IPs aren't routable from the host). Compose merges compose.override.yaml
-// automatically, which keeps this test-only change out of the rendered
-// platform project.
+// IPs aren't routable from the host). It also moves Traefik from the host's
+// ports 80 and 443 to ephemeral loopback ports (TCP only), so platforms can
+// run side by side on one host, and next to anything else using those
+// ports. Compose merges compose.override.yaml automatically, which keeps
+// these test-only changes out of the rendered platform project; !override
+// replaces the rendered port list instead of adding to it.
+//
+// The control plane comes last: Restart appends its environment.
 const overrideFile = `# Written by the e2e test harness (control-plane/internal/e2e).
 services:
+  traefik:
+    ports: !override
+      - "127.0.0.1::80"
+      - "127.0.0.1::443"
   control-plane:
     ports:
       - "127.0.0.1::8080"
@@ -82,6 +111,9 @@ type Platform struct {
 	DataDir string
 	// BaseURL is the control plane's URL on the host, e.g. http://127.0.0.1:49153.
 	BaseURL string
+	// HTTPAddr and HTTPSAddr are the host addresses ("127.0.0.1:port") of
+	// Traefik's HTTP and HTTPS entry points.
+	HTTPAddr, HTTPSAddr string
 	// AdminEmail and AdminPassword are the credentials of the admin user
 	// Start created; empty for adopted projects.
 	AdminEmail    string
@@ -128,6 +160,8 @@ func Start(t *testing.T) *Platform {
 		// Development machines and CI runners often lack Docker address pools.
 		SkipPreflight:     true,
 		PreviewBaseDomain: PreviewBaseDomain,
+		DashboardDomain:   DashboardDomain,
+		ACME:              platform.ACMEConfig{CAServer: ACMECAServer},
 	}
 	dir := layout.PlatformDir()
 	if err := platform.Render(dir, cfg); err != nil {
@@ -167,7 +201,9 @@ func Image(t *testing.T) string {
 }
 
 // WriteOverride writes the compose.override.yaml that publishes the control
-// plane API on the host into a platform project directory.
+// plane API and Traefik on ephemeral loopback ports into a platform project
+// directory. Every platform a test boots needs it: without it, Traefik
+// takes the host's ports 80 and 443.
 func WriteOverride(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -216,15 +252,26 @@ func Adopt(t *testing.T, project compose.Project, dataDir string) *Platform {
 	return p
 }
 
-// Connect finds the control plane's published port (see WriteOverride) and
-// waits until it reports ready.
+// Connect finds the published ports of the control plane and Traefik (see
+// WriteOverride) and waits until the control plane reports ready.
 func (p *Platform) Connect(ctx context.Context, t *testing.T) {
 	t.Helper()
-	addr, err := p.Project.Port(ctx, Service, controlPlanePort)
-	if err != nil {
-		t.Fatal(err)
+	for _, port := range []struct {
+		service string
+		port    int
+		dst     *string
+	}{
+		{Service, controlPlanePort, &p.BaseURL},
+		{ingress.TraefikService, traefikHTTPPort, &p.HTTPAddr},
+		{ingress.TraefikService, traefikHTTPSPort, &p.HTTPSAddr},
+	} {
+		addr, err := p.Project.Port(ctx, port.service, port.port)
+		if err != nil {
+			t.Fatal(err)
+		}
+		*port.dst = addr
 	}
-	p.BaseURL = "http://" + addr
+	p.BaseURL = "http://" + p.BaseURL
 	p.waitReady(ctx, t)
 }
 
@@ -270,6 +317,46 @@ func (p *Platform) Login(t *testing.T, email string, password redact.Secret) *cl
 	}
 	csrf = *resp.JSON200.CsrfToken
 	return c
+}
+
+// IngressClient returns an HTTP client that reaches Traefik's published
+// ports whatever host a URL names: port 80 of a URL goes to HTTPAddr and
+// port 443 to HTTPSAddr. It sends the URL's host as the Host header and TLS
+// server name, as a browser would once DNS points at the host. It doesn't
+// follow redirects, and doesn't verify certificates: with ACMECAServer,
+// Traefik serves its self-signed default certificate. It speaks HTTP/2
+// when Traefik offers it.
+func (p *Platform) IngressClient(t *testing.T) *http.Client {
+	t.Helper()
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			_, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			switch port {
+			case "80":
+				return dialer.DialContext(ctx, network, p.HTTPAddr)
+			case "443":
+				return dialer.DialContext(ctx, network, p.HTTPSAddr)
+			}
+			return nil, fmt.Errorf("e2e: ingress client only dials ports 80 and 443, not %s", addr)
+		},
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // G402: Traefik's self-signed default certificate, see above
+		ForceAttemptHTTP2: true,
+	}
+	t.Cleanup(transport.CloseIdleConnections)
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &http.Client{
+		Transport:     transport,
+		Jar:           jar,
+		Timeout:       30 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 }
 
 // BearerClient returns a client that authenticates with an API token.

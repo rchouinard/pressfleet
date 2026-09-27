@@ -24,6 +24,16 @@ type ContainerDetails struct {
 	// Networks maps each network the container is attached to to its IPv4
 	// address there.
 	Networks map[string]string
+	// Mounts are the container's volumes and bind mounts.
+	Mounts []Mount
+}
+
+// Mount is one of a container's volumes or bind mounts.
+type Mount struct {
+	Type        string // "bind", "volume", "tmpfs"
+	Source      string // host path of a bind mount; empty for a tmpfs
+	Destination string // path in the container
+	RW          bool
 }
 
 // ServiceContainer returns the container of one of the project's services.
@@ -146,6 +156,7 @@ func InspectContainer(ctx context.Context, docker ExecFunc, container string) (C
 				IPAddress string `json:"IPAddress"`
 			} `json:"Networks"`
 		} `json:"NetworkSettings"`
+		Mounts []Mount `json:"Mounts"`
 	}
 	if err := json.Unmarshal(out, &infos); err != nil {
 		return ContainerDetails{}, fmt.Errorf("parsing inspect output for container %s: %w", container, err)
@@ -160,6 +171,7 @@ func InspectContainer(ctx context.Context, docker ExecFunc, container string) (C
 		Image:    info.Config.Image,
 		Running:  info.State.Running,
 		Networks: map[string]string{},
+		Mounts:   info.Mounts,
 	}
 	for name, n := range info.NetworkSettings.Networks {
 		d.Networks[name] = n.IPAddress

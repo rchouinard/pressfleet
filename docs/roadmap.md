@@ -61,7 +61,7 @@ Done when: a site can be created in a client group via the API, reached over HTT
 
 Follow-ups carried out of M1:
 
-- Pass `dashboard_domain` to the control plane container and narrow `NGINX_TRUSTED_PROXIES` to the site subnet (with Traefik, M2).
+- ~~Pass `dashboard_domain` to the control plane container~~ (done in #33) and narrow `NGINX_TRUSTED_PROXIES` to the site subnet (with Traefik, M2).
 - Attach Traefik and Redis to site networks alongside MariaDB (M2); the provisioner keeps a list of shared services for this.
 - Record the actor's email on audit events so they stay readable after a user is deleted (needs a migration).
 - Prune expired sessions, job history, and state database backups on a schedule.

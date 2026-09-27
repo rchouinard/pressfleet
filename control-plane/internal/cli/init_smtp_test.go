@@ -110,6 +110,7 @@ func TestInitSMTPInteractive(t *testing.T) {
 		"preview.example.com",
 		"", "", "",
 		"admin@example.com",
+		"",                // no Let's Encrypt contact
 		"mailpit",         // SMTP host
 		"ssl",             // rejected: not an encryption mode
 		"none",            // encryption

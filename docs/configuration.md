@@ -71,6 +71,9 @@ wordpress_security:            # install-wide; see "WordPress security set"
   headers: true
   two_factor: "off"            # off, optional, required_for_admins
   disable_application_passwords: false
+acme:
+  email: ops@agency.example   # optional
+  # ca_server: https://acme-v02.api.letsencrypt.org/directory
 ```
 
 ## Settings
@@ -81,7 +84,7 @@ wordpress_security:            # install-wide; see "WordPress security set"
 | `listen` | `PRESSFLEET_LISTEN` | `--listen` (`serve` only) | `:8080` | HTTP listen address for the API and dashboard. |
 | `log.level` | `PRESSFLEET_LOG_LEVEL` | `--log-level` | `info` | `debug`, `info`, `warn`, or `error`. |
 | `log.format` | `PRESSFLEET_LOG_FORMAT` | `--log-format` | `text` | `text` or `json`. Logs go to stderr. |
-| `dashboard_domain` | `PRESSFLEET_DASHBOARD_DOMAIN` | | (unset) | Domain serving the dashboard and API, e.g. `fleet.agency.example`. |
+| `dashboard_domain` | `PRESSFLEET_DASHBOARD_DOMAIN` | | (unset) | Domain serving the dashboard and API, e.g. `fleet.agency.example`. Traefik routes it to the control plane with a Let's Encrypt certificate (see [Edge router and certificates](#edge-router-and-certificates)), and `pressfleet init` passes it to the control plane container. |
 | `preview_base_domain` | `PRESSFLEET_PREVIEW_BASE_DOMAIN` | | (unset) | Domain whose wildcard record points at this host; previews use its subdomains. Give the base (`preview.agency.example`), not `*.preview.agency.example`. Each site's preview domain is `<slug>.<preview_base_domain>`, so site creation is refused (`409`) while it is unset. `pressfleet init` passes it to the control plane container. |
 | `public_ip` | `PRESSFLEET_PUBLIC_IP` | | (unset) | Optional. This host's public IP address, used only to verify DNS records when the host is behind NAT (see [Preflight checks](#preflight-checks)). |
 | `database.driver` | `PRESSFLEET_DATABASE_DRIVER` | | `sqlite` | State database: `sqlite` or `postgres`. See [State database](#state-database). |
@@ -99,6 +102,8 @@ wordpress_security:            # install-wide; see "WordPress security set"
 | `redis.address` | `PRESSFLEET_REDIS_ADDRESS` | | `redis:6379` | `host:port` of the shared object cache server (Valkey), as seen from the control plane. See [Object cache](#object-cache). |
 | `redis.admin_user` | `PRESSFLEET_REDIS_ADMIN_USER` | | `pressfleet` | Object cache ACL user that creates and deletes site users. |
 | `redis.admin_password_file` | `PRESSFLEET_REDIS_ADMIN_PASSWORD_FILE` | | `/run/secrets/redis_admin_password` | File holding the admin password; a trailing newline is ignored. Must be an absolute path. The default is where the platform Compose project mounts the password `pressfleet init` generates. |
+| `acme.email` | `PRESSFLEET_ACME_EMAIL` | `--acme-email` (`init` only) | (unset) | Optional contact address of the ACME account Traefik registers, for important notices from the certificate authority. |
+| `acme.ca_server` | `PRESSFLEET_ACME_CA_SERVER` | `--acme-ca-server` (`init` only) | Let's Encrypt | ACME directory URL (`https://` only) of the certificate authority Traefik gets certificates from. Change it only to test against another CA, such as [Pebble](https://github.com/letsencrypt/pebble). |
 | `platform_project` | `PRESSFLEET_PLATFORM_PROJECT` | | `pressfleet` | Compose project name of the platform services. The control plane uses it to find the platform's MariaDB and object cache containers (`<project>-mariadb-1`, `<project>-redis-1`), which it connects to each site's network. The platform Compose project sets it for the control plane; change it only for a platform installed under another project name. |
 | `smtp.host` | `PRESSFLEET_SMTP_HOST` | `--smtp-host` (`init` only) | (unset) | SMTP relay every site sends email through (host name or IP address). Unset means sites send no email: the site images have no local mail server. See [Outbound email](#outbound-email). |
 | `smtp.port` | `PRESSFLEET_SMTP_PORT` | `--smtp-port` (`init` only) | by encryption | Relay port. Unset (`0`) means 587 for `starttls`, 465 for `tls`, and 25 for `none`. |
@@ -144,6 +149,16 @@ The `wordpress_security` settings are the platform's WordPress hardening (design
 - **Disable application passwords** (off).
 
 **Changing a setting** takes effect when the control plane restarts. At startup it queues a `site.reconcile` job for every site (skipping sites being deleted, and not queuing a second one for a site whose job hasn't run yet). The job re-renders running and stopped sites with the current settings: `wp-config.php` and the site's Compose project are rewritten, and only containers whose configuration changed are recreated. A stopped site stays stopped and picks the change up when it starts. Sites that are failed are left alone and pick up the settings with their next update. If a job gives up, the error is recorded in the site's status message, and the site is marked failed only if its containers are no longer running.
+
+## Edge router and certificates
+
+Traefik is the platform's edge router (design doc §3). It publishes ports 80 and 443 (TCP, and UDP 443 for HTTP/3) on every interface of the host, and redirects every plain-HTTP request to HTTPS permanently, except ACME HTTP-01 challenges. HTTPS serves HTTP/1.1, HTTP/2, and HTTP/3, and advertises HTTP/3 with an `Alt-Svc` header.
+
+The dashboard domain is routed to the control plane. Its certificate comes from Let's Encrypt (or `acme.ca_server`) through the HTTP-01 challenge, so the domain must resolve to this host and port 80 must be reachable from the internet. Traefik keeps its ACME account and certificates in the platform's `traefik-acme` volume. A request for any other host name gets `404` and Traefik's self-signed default certificate.
+
+Traefik learns routes from Docker container labels, but never touches the Docker socket: access to it is equivalent to root on the host (design doc §6). A socket proxy ([wollomatic/socket-proxy](https://github.com/wollomatic/socket-proxy)) mounts the socket read-only and forwards only the read-only requests Traefik's Docker provider makes (list and inspect containers, the event stream, the API version), and only from the Traefik container, over a network no other service joins. Everything else, including every write, container logs, and file downloads, is refused. Only the control plane has read-write access to the socket. Traefik only routes containers labelled `pressfleet.platform=<platform_project>`, so it ignores containers of anything else on the host.
+
+Traefik writes JSON access logs to its container log, which Docker rotates like every platform log, without request headers (they carry cookies and credentials). It serves Prometheus metrics at `http://traefik:8082/metrics` on the platform network; the port isn't published on the host.
 
 ## Sessions and HTTPS
 
