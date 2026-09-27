@@ -48,14 +48,15 @@ Restricted to `NGINX_STATUS_ALLOW` (default loopback only) and not logged:
 | `/fpm-status` | PHP-FPM pool status (`?json`, `?full`) |
 | `/fpm-ping` | `pong` from PHP-FPM |
 
-## Extension points for FastCGI caching (M2)
+## FastCGI page cache
 
-Caching is not implemented here. The config has three empty include directories so #40 can add it without restructuring:
+Anonymous page views are cached in `/var/cache/pressfleet/fastcgi` (the site's `cache` volume); the rules, cache key, and file layout are in the [runtime contract](../README.md#fastcgi-page-cache). The configuration is split across the config's include directories so other features can add files next to it:
 
-| Directory | Included in | Intended content |
+| File | Included in | Content |
 | --- | --- | --- |
-| `/etc/nginx/pressfleet/http.d/*.conf` | `http {}` | `fastcgi_cache_path /var/cache/pressfleet/fastcgi ...`, bypass `map`s |
-| `/etc/nginx/pressfleet/server.d/*.conf` | site `server {}`, before the locations | cache-bypass variables (cookies, POST, query strings, `wp-admin`, WooCommerce) |
-| `/etc/nginx/pressfleet/php.d/*.conf` | the PHP location (and `/xmlrpc.php` when allowed) | `fastcgi_cache`, `fastcgi_cache_bypass`, `fastcgi_no_cache`, `X-Cache` header |
+| [`conf/http.d/fastcgi-cache.conf`](conf/http.d/fastcgi-cache.conf) | `http {}` | bypass `map`s, the cache key's method; includes the generated zone |
+| [`conf/server.d/fastcgi-cache.conf`](conf/server.d/fastcgi-cache.conf) | site `server {}` | `X-Cache` header (at server level, so locations keep inheriting the server's other headers) |
+| [`conf/php.d/fastcgi-cache.conf`](conf/php.d/fastcgi-cache.conf) | the PHP location (and `/xmlrpc.php` when allowed) | includes the generated cache directives |
+| [`conf/snippets/fastcgi-cache.conf`](conf/snippets/fastcgi-cache.conf) | the generated file, when caching is on | `fastcgi_cache`, key, bypass, locking, stale use |
 
-The cache volume mount point `/var/cache/pressfleet/fastcgi` already exists in both images, and the access log already records `$upstream_cache_status`. An `EnableCache` toggle can be implemented in the entrypoint the same way as `NGINX_XMLRPC`.
+The entrypoint writes `/tmp/nginx/fastcgi-cache-http.conf` (the `fastcgi_cache_path` zone) and `/tmp/nginx/fastcgi-cache-php.conf` (the snippet and `fastcgi_cache_valid`) when `NGINX_FASTCGI_CACHE=on`, and empty files when it is `off`.

@@ -84,6 +84,10 @@ services:
       pressfleet.managed: "true"
       pressfleet.site-id: "01k5z3m8q9r7t6v5w4x3y2z1ab"
       pressfleet.client-group-id: "01k5z3m8q9r7t6v5w4x3y2z1cg"
+    environment:
+      # FastCGI page cache (SiteConfig.EnableCache). The cache volume below
+      # holds it; php purges it (§5.6).
+      NGINX_FASTCGI_CACHE: "on"
     volumes:
       - type: volume
         source: wp-content

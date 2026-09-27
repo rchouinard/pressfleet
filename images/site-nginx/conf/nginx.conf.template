@@ -5,11 +5,11 @@
 # from the environment, and the files included from /tmp/nginx/ are generated
 # from list-valued variables. See images/README.md for the runtime contract.
 #
-# Extension points for later milestones (empty in this image; a glob that
-# matches nothing is fine):
-#   /etc/nginx/pressfleet/http.d/*.conf    http context   (M2: fastcgi_cache_path, cache maps)
-#   /etc/nginx/pressfleet/server.d/*.conf  site server    (M2: cache bypass rules)
-#   /etc/nginx/pressfleet/php.d/*.conf     PHP location   (M2: fastcgi_cache directives)
+# Include directories, so features can be added in files of their own (a glob
+# that matches nothing is fine):
+#   /etc/nginx/pressfleet/http.d/*.conf    http context   (FastCGI cache zone and bypass maps)
+#   /etc/nginx/pressfleet/server.d/*.conf  site server    (X-Cache header)
+#   /etc/nginx/pressfleet/php.d/*.conf     PHP location   (fastcgi_cache directives)
 
 # No `user` directive: the master runs as the site UID, not root.
 worker_processes ${NGINX_WORKER_PROCESSES};
@@ -80,7 +80,8 @@ http {
     }
 
     # One JSON object per line on stdout (design doc §7.1, §7.4).
-    # upstream_cache_status is empty until the FastCGI cache is enabled (M2).
+    # upstream_cache_status is empty for static files and when the FastCGI
+    # cache is off.
     log_format pressfleet escape=json
         '{"time":"$time_iso8601",'
         '"remote_addr":"$remote_addr",'

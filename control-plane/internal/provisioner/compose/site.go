@@ -170,6 +170,7 @@ type siteTemplateData struct {
 	Nginx          containerResources
 	PHPMemoryLimit string
 	PHPMaxChildren int
+	EnableCache    bool
 	WPConfigFile   string
 }
 
@@ -208,6 +209,7 @@ func siteData(dir string, in SiteRender) (siteTemplateData, error) {
 		Nginx:          split.Nginx,
 		PHPMemoryLimit: strconv.Itoa(split.PHPMemoryLimitMB) + "M",
 		PHPMaxChildren: split.PHPMaxChildren,
+		EnableCache:    in.Site.EnableCache,
 		WPConfigFile:   SiteWPConfigFile,
 	}, nil
 }

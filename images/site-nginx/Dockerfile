@@ -37,8 +37,9 @@ LABEL org.opencontainers.image.title="pressfleet site-nginx" \
 # renders into /tmp as the site UID instead.
 RUN rm -rf /docker-entrypoint.sh /docker-entrypoint.d /etc/nginx/conf.d /usr/share/nginx/html
 
-COPY site-nginx/conf/nginx.conf.template /etc/nginx/pressfleet/nginx.conf.template
-COPY site-nginx/conf/snippets /etc/nginx/pressfleet/snippets
+# nginx.conf.template, snippets/, and the http.d/, server.d/, and php.d/
+# include directories.
+COPY site-nginx/conf/ /etc/nginx/pressfleet/
 COPY site-nginx/docker-entrypoint.sh /usr/local/bin/pressfleet-entrypoint
 
 # The same core tree as site-php (PHP files included, so nginx can check that
@@ -64,7 +65,10 @@ ENV PHP_FPM_HOST=php \
 	NGINX_CLIENT_MAX_BODY_SIZE=64m \
 	NGINX_FASTCGI_READ_TIMEOUT=300s \
 	NGINX_WORKER_PROCESSES=1 \
-	NGINX_WORKER_CONNECTIONS=512
+	NGINX_WORKER_CONNECTIONS=512 \
+	NGINX_FASTCGI_CACHE=on \
+	NGINX_FASTCGI_CACHE_VALID=1h \
+	NGINX_FASTCGI_CACHE_MAX_SIZE=256m
 
 # Fallback only: the control plane always sets the site UID with `user:`.
 USER 65534:65534

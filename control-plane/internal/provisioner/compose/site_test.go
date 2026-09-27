@@ -33,6 +33,7 @@ func testSiteRender() compose.SiteRender {
 			PreviewDomain:    "acme.preview.example.com",
 			PHPVersion:       "8.4",
 			WPCoreVersion:    "7.1.2",
+			EnableCache:      true,
 			Resources:        provisioner.DefaultResourceLimits(),
 			DBSecretRef:      "01k5z3m8q9r7t6v5w4x3y2z1db",
 			WPSaltsSecretRef: "01k5z3m8q9r7t6v5w4x3y2z1ws",
@@ -254,6 +255,31 @@ func TestRenderedSiteCompose(t *testing.T) {
 	// No secrets in compose.yaml.
 	if bytes.Contains(raw, []byte("db-")) || bytes.Contains(raw, []byte("ecret")) {
 		t.Error("compose.yaml contains the database password")
+	}
+}
+
+func TestRenderSiteEnableCache(t *testing.T) {
+	for _, tc := range []struct {
+		enable bool
+		want   string
+	}{
+		{true, "on"},
+		{false, "off"},
+	} {
+		in := testSiteRender()
+		in.Site.EnableCache = tc.enable
+		dir, _ := renderSite(t, in)
+		raw, err := os.ReadFile(filepath.Join(dir, compose.SiteComposeFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var f siteFile
+		if err := yaml.Unmarshal(raw, &f); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.Services["nginx"].Environment["NGINX_FASTCGI_CACHE"]; got != tc.want {
+			t.Errorf("EnableCache=%v: NGINX_FASTCGI_CACHE = %q, want %q", tc.enable, got, tc.want)
+		}
 	}
 }
 

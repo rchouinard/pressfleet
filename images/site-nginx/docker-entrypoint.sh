@@ -30,6 +30,8 @@ scalar NGINX_FASTCGI_READ_TIMEOUT '0-9smh'
 scalar NGINX_RESOLVER 'a-zA-Z0-9.: -'
 scalar PHP_FPM_HOST 'a-zA-Z0-9.-'
 scalar PHP_FPM_PORT '0-9'
+scalar NGINX_FASTCGI_CACHE_VALID '0-9smhdwMy'
+scalar NGINX_FASTCGI_CACHE_MAX_SIZE '0-9kKmMgG'
 
 # address_list NAME: splits a comma/space separated list of IPs or CIDRs.
 address_list() {
@@ -69,6 +71,30 @@ deny | off | 0)
 	echo "return 403;" >"$run/xmlrpc.conf"
 	;;
 *) die "invalid NGINX_XMLRPC: '$NGINX_XMLRPC' (want allow or deny)" ;;
+esac
+
+# FastCGI page cache (#40). levels=1:2 is what Nginx Helper's file purge
+# expects (see snippets/fastcgi-cache.conf). use_temp_path=off writes
+# responses straight into the cache volume instead of copying them over from
+# /tmp. The cache files belong to the site UID nginx runs as, so PHP (same
+# UID) can delete them.
+cache_dir=/var/cache/pressfleet/fastcgi
+case "$NGINX_FASTCGI_CACHE" in
+on | 1 | true)
+	[ -w "$cache_dir" ] || echo "pressfleet: warning: $cache_dir is not writable; pages will not be cached" >&2
+	cat >"$run/fastcgi-cache-http.conf" <<-EOF
+		fastcgi_cache_path $cache_dir levels=1:2 keys_zone=pressfleet:10m max_size=$NGINX_FASTCGI_CACHE_MAX_SIZE inactive=1d use_temp_path=off;
+	EOF
+	cat >"$run/fastcgi-cache-php.conf" <<-EOF
+		include $conf/snippets/fastcgi-cache.conf;
+		fastcgi_cache_valid 200 301 $NGINX_FASTCGI_CACHE_VALID;
+	EOF
+	;;
+off | 0 | false)
+	: >"$run/fastcgi-cache-http.conf"
+	: >"$run/fastcgi-cache-php.conf"
+	;;
+*) die "invalid NGINX_FASTCGI_CACHE: '$NGINX_FASTCGI_CACHE' (want on or off)" ;;
 esac
 
 # shellcheck disable=SC2016 # the variable names are for envsubst, not the shell

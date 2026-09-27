@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test for the site images (issues #17, #18).
+# Smoke test for the site images (issues #17, #18, #40).
 #
 #   images/test.sh [php-version ...]     default: every PHP version images/matrix.sh builds
 #
@@ -78,6 +78,11 @@ check_eq() {
 # check_contains DESCRIPTION NEEDLE HAYSTACK
 check_contains() {
 	if grep -qF -- "$2" <<<"$3"; then pass "$1"; else fail "$1" "missing '$2' in: $(head -c 300 <<<"$3")"; fi
+}
+
+# x_cache CURL-ARGS...: the response's X-Cache header, or nothing.
+x_cache() {
+	curl -s -o /dev/null -D - "$@" | tr -d '\r' | awk -F': ' 'tolower($1) == "x-cache" { print $2 }'
 }
 
 wait_healthy() {
@@ -229,6 +234,48 @@ test_stack() {
 	check_eq "filesystem method is direct" "direct" \
 		"$("${cexec[@]}" wp eval 'require_once ABSPATH . "wp-admin/includes/file.php"; echo get_filesystem_method();')"
 
+	# --- FastCGI page cache (#40) --------------------------------------------
+	# The first request for a page misses and stores it; bypass rules keep
+	# per-user and dynamic requests away from the cache.
+	check_eq "anonymous GET misses the cache first" "MISS" "$(x_cache "$base/")"
+	check_eq "anonymous GET then hits the cache" "HIT" "$(x_cache "$base/")"
+	check_eq "HEAD shares the GET cache entry" "HIT" "$(x_cache -I "$base/")"
+	check_eq "wordpress_test_cookie alone still hits" "HIT" \
+		"$(x_cache -H 'Cookie: wordpress_test_cookie=WP%20Cookie%20check' "$base/")"
+	check_eq "logged-in cookie bypasses the cache" "BYPASS" \
+		"$(x_cache -H 'Cookie: wordpress_test_cookie=x; wordpress_logged_in_0123456789abcdef0123456789abcdef=admin' "$base/")"
+	check_eq "comment author cookie bypasses the cache" "BYPASS" \
+		"$(x_cache -H 'Cookie: comment_author_0123456789abcdef0123456789abcdef=someone' "$base/")"
+	check_eq "WooCommerce cart cookie bypasses the cache" "BYPASS" \
+		"$(x_cache -H 'Cookie: woocommerce_items_in_cart=1' "$base/")"
+	# nginx doesn't look up methods outside fastcgi_cache_methods at all.
+	check_eq "POST is never served from the cache" "" "$(x_cache -X POST -d x=1 "$base/")"
+	check_eq "query string bypasses the cache" "BYPASS" "$(x_cache "$base/?s=hello")"
+	check_eq "Authorization header bypasses the cache" "BYPASS" "$(x_cache -u admin:secret "$base/")"
+	check_eq "wp-login.php bypasses the cache" "BYPASS" "$(x_cache "$base/wp-login.php")"
+	check_eq "wp-admin bypasses the cache" "BYPASS" "$(x_cache "$base/wp-admin/")"
+	check_eq "REST API bypasses the cache" "BYPASS" "$(x_cache "$base/wp-json/")"
+	check_eq "feed bypasses the cache" "BYPASS" "$(x_cache "$base/feed/")"
+	check_eq "WooCommerce cart page bypasses the cache" "BYPASS" "$(x_cache "$base/cart/")"
+	check_eq "static files have no X-Cache" "" "$(x_cache "$base/wp-includes/css/dashicons.min.css")"
+	check_contains "cache keeps X-Content-Type-Options" "x-content-type-options: nosniff" \
+		"$(curl -s -o /dev/null -D - "$base/" | tr -d '\r' | tr '[:upper:]' '[:lower:]')"
+	# Nginx Helper's file purge (#41) deletes md5(scheme . "GET" . host . path)
+	# under levels=1:2, with the visitor's scheme (https from a trusted proxy).
+	check_eq "proxied HTTPS request has its own cache entry" "MISS" \
+		"$(x_cache -H 'X-Forwarded-Proto: https' "$base/")"
+	local key_hash cache_file
+	key_hash="$(printf '%s' "httpsGET127.0.0.1/" | md5sum | cut -c1-32)"
+	cache_file="/var/cache/pressfleet/fastcgi/${key_hash:31:1}/${key_hash:29:2}/$key_hash"
+	check "cache file at the Nginx Helper path" "${cexec[@]}" test -f "$cache_file"
+	check_eq "cache file owned by the site UID" "$site_uid" "$("${cexec[@]}" stat -c %u "$cache_file" 2>&1)"
+	check "php can purge a cache file" "${cexec[@]}" rm "$cache_file"
+	check_eq "a purged page misses again" "MISS" "$(x_cache -H 'X-Forwarded-Proto: https' "$base/")"
+	check "nginx -t with the cache off" docker run --rm --label "$label" --user "$user" "${hardening[@]}" \
+		-e NGINX_FASTCGI_CACHE=off "$nginx_image" nginx -e stderr -c /tmp/nginx/nginx.conf -t
+	check_not "invalid NGINX_FASTCGI_CACHE is rejected" docker run --rm --label "$label" --user "$user" \
+		"${hardening[@]}" -e NGINX_FASTCGI_CACHE=maybe "$nginx_image" true
+
 	# --- HTTP through nginx ---------------------------------------------------
 	local body code
 	body="$(curl -fsS "$base/")" && pass "home page returns 200" || fail "home page returns 200"
@@ -287,8 +334,9 @@ test_stack() {
 	docker stop "$php" >/dev/null
 	check_eq "core static asset served with php stopped" "200" \
 		"$(curl -s -o /dev/null -w '%{http_code}' "$base/wp-includes/js/jquery/jquery.min.js")"
-	code="$(curl -s -o /dev/null -w '%{http_code}' "$base/")"
+	code="$(curl -s -o /dev/null -w '%{http_code}' "$base/?uncached=1")"
 	case "$code" in 502 | 504) pass "PHP request fails with php stopped" ;; *) fail "PHP request fails with php stopped" "got $code" ;; esac
+	check_eq "cached page still served with php stopped" "HIT" "$(x_cache "$base/")"
 
 	# A recreated php container (new IP, as on a PHP version change) is picked
 	# up by nginx without a restart.

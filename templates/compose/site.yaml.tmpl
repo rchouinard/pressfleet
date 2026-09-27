@@ -91,6 +91,10 @@ services:
         condition: service_started
     labels:
 {{- template "labels" . }}
+    environment:
+      # FastCGI page cache (SiteConfig.EnableCache). The cache volume below
+      # holds it; php purges it (§5.6).
+      NGINX_FASTCGI_CACHE: {{ if .EnableCache }}"on"{{ else }}"off"{{ end }}
     volumes:
       - type: volume
         source: wp-content
