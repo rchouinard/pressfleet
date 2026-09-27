@@ -258,7 +258,7 @@ type Provisioner interface {
     StopSite(ctx context.Context, siteID string) error
     SetMaintenance(ctx context.Context, siteID string, enabled bool) error
     ExecWPCLI(ctx context.Context, siteID string, args []string) (string, error)
-    PurgeCache(ctx context.Context, siteID string) error
+    PurgeCache(ctx context.Context, siteID string) error // page cache; the object cache manager flushes the object cache
 }
 
 // DatabaseManager manages per-site databases and users on the shared MariaDB server.
@@ -461,7 +461,7 @@ All long-running operations run as **Jobs**. API endpoints that start them retur
 ### 5.6. WordPress Runtime Defaults
 * **Plugin and theme updates:** Handled natively by WordPress (auto-updates or wp-admin), writing to the `wp-content` volume.
 * **WP-Cron:** `DISABLE_WP_CRON` is set; cron is triggered by the control plane scheduler so it runs reliably on low-traffic sites.
-* **Cache purging:** Nginx Helper purges the FastCGI cache using file-based purging against the per-site cache volume shared between the `nginx` and `php` containers. Both containers run as the site's UID so the cache files can be deleted.
+* **Cache purging:** Nginx Helper purges the FastCGI cache using file-based purging against the per-site cache volume shared between the `nginx` and `php` containers. Both containers run as the site's UID so the cache files can be deleted. The platform configures it that way at provisioning and whenever it reconciles the site. A full purge (`POST /api/v1/sites/{id}/cache/purge`, and the purges in go-live and restore) runs as a job in the control plane rather than inside WordPress, so it works on stopped or broken sites: it flushes the site's object cache database as the object cache admin, then deletes the page cache files through the driver (`Provisioner.PurgeCache`).
 * **Outbound email:** Sites send mail through a configurable SMTP relay.
 
 ---

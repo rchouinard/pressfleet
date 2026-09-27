@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test for the site images (issues #17, #18, #39, #40, #47, #108, #109).
+# Smoke test for the site images (issues #17, #18, #39, #40, #41, #47, #108, #109).
 #
 #   images/test.sh [php-version ...]     default: every PHP version images/matrix.sh builds
 #
@@ -138,6 +138,7 @@ define( 'WPMU_PLUGIN_URL', '/_pressfleet/mu-plugins' );
 define( 'FS_METHOD', 'direct' );
 define( 'WP_AUTO_UPDATE_CORE', false );
 define( 'DISABLE_WP_CRON', true );
+define( 'RT_WP_NGINX_HELPER_CACHE_PATH', '/var/cache/pressfleet/fastcgi' );
 define( 'PRESSFLEET_SMTP_HOST', 'mailpit' );
 define( 'PRESSFLEET_SMTP_PORT', 1025 );
 define( 'PRESSFLEET_SMTP_USERNAME', 'relay' );
@@ -268,6 +269,14 @@ test_stack() {
 	# per-user and dynamic requests away from the cache.
 	check_eq "anonymous GET misses the cache first" "MISS" "$(x_cache "$base/")"
 	check_eq "anonymous GET then hits the cache" "HIT" "$(x_cache "$base/")"
+	# nginx adds its headers to pages served from the cache too (#109).
+	local hit_headers
+	hit_headers="$(curl -s -o /dev/null -D - "$base/" | tr -d '\r' | tr '[:upper:]' '[:lower:]')"
+	check_contains "cache HIT response" "x-cache: hit" "$hit_headers"
+	check_contains "cache HIT has Referrer-Policy" "referrer-policy: strict-origin-when-cross-origin" "$hit_headers"
+	check_contains "cache HIT has X-Frame-Options" "x-frame-options: sameorigin" "$hit_headers"
+	check_contains "cache HIT has Permissions-Policy" "permissions-policy: camera=(), microphone=(), usb=()" "$hit_headers"
+	check_contains "cache HIT has X-Content-Type-Options" "x-content-type-options: nosniff" "$hit_headers"
 	check_eq "HEAD shares the GET cache entry" "HIT" "$(x_cache -I "$base/")"
 	check_eq "wordpress_test_cookie alone still hits" "HIT" \
 		"$(x_cache -H 'Cookie: wordpress_test_cookie=WP%20Cookie%20check' "$base/")"
@@ -300,6 +309,16 @@ test_stack() {
 	check_eq "cache file owned by the site UID" "$site_uid" "$("${cexec[@]}" stat -c %u "$cache_file" 2>&1)"
 	check "php can purge a cache file" "${cexec[@]}" rm "$cache_file"
 	check_eq "a purged page misses again" "MISS" "$(x_cache -H 'X-Forwarded-Proto: https' "$base/")"
+	# The bundled Nginx Helper, configured as the control plane configures
+	# it, purges the home page when a post is published (#41).
+	"${cexec[@]}" wp plugin activate nginx-helper >/dev/null
+	"${cexec[@]}" wp option update rt_wp_nginx_helper_options \
+		'{"enable_purge":1,"cache_method":"enable_fastcgi","purge_method":"unlink_files"}' --format=json >/dev/null
+	x_cache "$base/" >/dev/null
+	check_eq "home page cached before publishing" "HIT" "$(x_cache "$base/")"
+	check "publish a post" "${cexec[@]}" wp post create --post_title="Cache purge test" --post_status=publish
+	check_eq "publishing purges the home page (Nginx Helper)" "MISS" "$(x_cache "$base/")"
+	"${cexec[@]}" wp plugin deactivate nginx-helper >/dev/null
 	check "nginx -t with the cache off" docker run --rm --label "$label" --user "$user" "${hardening[@]}" \
 		-e NGINX_FASTCGI_CACHE=off "$nginx_image" nginx -e stderr -c /tmp/nginx/nginx.conf -t
 	check_not "invalid NGINX_FASTCGI_CACHE is rejected" docker run --rm --label "$label" --user "$user" \

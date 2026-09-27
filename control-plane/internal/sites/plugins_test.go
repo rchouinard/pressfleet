@@ -46,7 +46,7 @@ func TestDefaultPluginsAreBundled(t *testing.T) {
 		}
 		pinned[p.Slug] = true
 	}
-	for _, slug := range []string{sites.PluginRedisCache} {
+	for _, slug := range []string{sites.PluginNginxHelper, sites.PluginRedisCache} {
 		if !pinned[slug] {
 			t.Errorf("%s is not in images/shared/plugins.json", slug)
 		}
@@ -54,8 +54,11 @@ func TestDefaultPluginsAreBundled(t *testing.T) {
 }
 
 const (
-	listPlugins = "plugin list --format=json --fields=name,status,title --skip-update-check"
-	redisDropIn = "Redis Object Cache Drop-In"
+	listPlugins      = "plugin list --format=json --fields=name,status,title --skip-update-check"
+	redisDropIn      = "Redis Object Cache Drop-In"
+	getNginxHelper   = "option get rt_wp_nginx_helper_options --format=json"
+	nginxHelperCaps  = "cap add administrator Nginx Helper | Config Nginx Helper | Purge cache"
+	nginxHelperFresh = `{"cache_method":"enable_fastcgi","enable_purge":1,"purge_method":"unlink_files"}`
 )
 
 func bundleCheck(slug string) string {
@@ -64,6 +67,15 @@ func bundleCheck(slug string) string {
 
 func install(slug string) string {
 	return "plugin install " + sites.BundledPluginDir + "/" + slug + ".zip"
+}
+
+func setNginxHelper(value string) string {
+	return "option update rt_wp_nginx_helper_options " + value + " --format=json"
+}
+
+// allActive is the plugin list of a site with the whole default stack.
+func allActive() map[string]string {
+	return map[string]string{sites.PluginNginxHelper: "active", sites.PluginRedisCache: "active"}
 }
 
 func TestProvisioningInstallsDefaultPlugins(t *testing.T) {
@@ -76,19 +88,22 @@ func TestProvisioningInstallsDefaultPlugins(t *testing.T) {
 		}
 		want := []string{
 			listPlugins,
+			bundleCheck(sites.PluginNginxHelper), install(sites.PluginNginxHelper),
 			bundleCheck(sites.PluginRedisCache), install(sites.PluginRedisCache),
-			"plugin activate " + sites.PluginRedisCache,
+			"plugin activate " + sites.PluginNginxHelper + " " + sites.PluginRedisCache,
+			nginxHelperCaps, getNginxHelper, setNginxHelper(nginxHelperFresh),
 			"redis enable",
 		}
 		if got := e.wp.pluginCalls(site.ID); !slices.Equal(got, want) {
 			t.Errorf("WP-CLI calls:\n got %q\nwant %q", got, want)
 		}
 		st := e.wp.state(site.ID)
-		if st.plugins[sites.PluginRedisCache] != "active" || st.dropin != redisDropIn {
+		delete(st.plugins, "akismet")
+		if !maps.Equal(st.plugins, allActive()) || st.dropin != redisDropIn {
 			t.Errorf("plugins = %v, drop-in %q", st.plugins, st.dropin)
 		}
-		if st.plugins["akismet"] != "inactive" {
-			t.Errorf("the platform touched another plugin: %v", st.plugins)
+		if got := e.wp.state(site.ID).plugins["akismet"]; got != "inactive" {
+			t.Errorf("the platform touched another plugin: akismet is %s", got)
 		}
 	})
 }
@@ -104,18 +119,29 @@ func TestReconcilePlugins(t *testing.T) {
 		wantCalls []string
 		wantWarn  string
 		want      wpSite
+		// wantNginxHelper is Nginx Helper's settings afterwards; empty
+		// means nginxHelperFresh.
+		wantNginxHelper string
 	}{
 		{
-			name:      "configured site costs one call",
+			name:      "configured site costs two calls",
 			drift:     func(*wpSite) {},
-			wantCalls: []string{listPlugins},
-			want:      wpSite{plugins: map[string]string{sites.PluginRedisCache: "active"}, dropin: redisDropIn},
+			wantCalls: []string{listPlugins, getNginxHelper},
+			want:      wpSite{plugins: allActive(), dropin: redisDropIn},
 		},
 		{
 			name:      "deactivated plugin is activated",
 			drift:     func(s *wpSite) { s.plugins[sites.PluginRedisCache] = "inactive" },
-			wantCalls: []string{listPlugins, "plugin activate " + sites.PluginRedisCache},
-			want:      wpSite{plugins: map[string]string{sites.PluginRedisCache: "active"}, dropin: redisDropIn},
+			wantCalls: []string{listPlugins, "plugin activate " + sites.PluginRedisCache, getNginxHelper},
+			want:      wpSite{plugins: allActive(), dropin: redisDropIn},
+		},
+		{
+			name:  "reactivated Nginx Helper gets its capabilities back",
+			drift: func(s *wpSite) { s.plugins[sites.PluginNginxHelper] = "inactive" },
+			wantCalls: []string{
+				listPlugins, "plugin activate " + sites.PluginNginxHelper, nginxHelperCaps, getNginxHelper,
+			},
+			want: wpSite{plugins: allActive(), dropin: redisDropIn},
 		},
 		{
 			name: "deleted plugin and drop-in are reinstalled",
@@ -125,16 +151,28 @@ func TestReconcilePlugins(t *testing.T) {
 			},
 			wantCalls: []string{
 				listPlugins, bundleCheck(sites.PluginRedisCache), install(sites.PluginRedisCache),
-				"plugin activate " + sites.PluginRedisCache, "redis enable",
+				"plugin activate " + sites.PluginRedisCache, getNginxHelper, "redis enable",
 			},
-			want: wpSite{plugins: map[string]string{sites.PluginRedisCache: "active"}, dropin: redisDropIn},
+			want: wpSite{plugins: allActive(), dropin: redisDropIn},
+		},
+		{
+			name: "changed purge settings are put back, others kept",
+			drift: func(s *wpSite) {
+				s.options["rt_wp_nginx_helper_options"] = `{"enable_purge":"1","cache_method":"enable_fastcgi","purge_method":"get_request","purge_feeds":0,"log_level":"INFO"}`
+			},
+			wantCalls: []string{
+				listPlugins, getNginxHelper,
+				setNginxHelper(`{"cache_method":"enable_fastcgi","enable_purge":"1","log_level":"INFO","purge_feeds":0,"purge_method":"unlink_files"}`),
+			},
+			want:            wpSite{plugins: allActive(), dropin: redisDropIn},
+			wantNginxHelper: `{"cache_method":"enable_fastcgi","enable_purge":"1","log_level":"INFO","purge_feeds":0,"purge_method":"unlink_files"}`,
 		},
 		{
 			name:      "another object cache drop-in is left alone",
 			drift:     func(s *wpSite) { s.dropin = "W3 Total Cache Object Cache" },
-			wantCalls: []string{listPlugins},
+			wantCalls: []string{listPlugins, getNginxHelper},
 			wantWarn:  "another object cache drop-in",
-			want:      wpSite{plugins: map[string]string{sites.PluginRedisCache: "active"}, dropin: "W3 Total Cache Object Cache"},
+			want:      wpSite{plugins: allActive(), dropin: "W3 Total Cache Object Cache"},
 		},
 		{
 			name: "plugin missing from the image is skipped",
@@ -143,9 +181,9 @@ func TestReconcilePlugins(t *testing.T) {
 				s.dropin = ""
 			},
 			unbundled: []string{sites.PluginRedisCache},
-			wantCalls: []string{listPlugins, bundleCheck(sites.PluginRedisCache)},
+			wantCalls: []string{listPlugins, bundleCheck(sites.PluginRedisCache), getNginxHelper},
 			wantWarn:  "doesn't bundle the redis-cache plugin",
-			want:      wpSite{plugins: map[string]string{}},
+			want:      wpSite{plugins: map[string]string{sites.PluginNginxHelper: "active"}},
 		},
 	}
 	for _, tt := range tests {
@@ -187,6 +225,13 @@ func TestReconcilePlugins(t *testing.T) {
 				delete(st.plugins, "akismet")
 				if !maps.Equal(st.plugins, tt.want.plugins) || st.dropin != tt.want.dropin {
 					t.Errorf("state = %v %q, want %v %q", st.plugins, st.dropin, tt.want.plugins, tt.want.dropin)
+				}
+				wantNginx := tt.wantNginxHelper
+				if wantNginx == "" {
+					wantNginx = nginxHelperFresh
+				}
+				if got := st.options["rt_wp_nginx_helper_options"]; got != wantNginx {
+					t.Errorf("Nginx Helper settings = %s, want %s", got, wantNginx)
 				}
 				if got := e.site(t, site.ID); got.Status != store.SiteRunning || got.StatusMessage != "" {
 					t.Errorf("site = %s %q", got.Status, got.StatusMessage)

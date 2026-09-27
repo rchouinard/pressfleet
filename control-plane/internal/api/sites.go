@@ -224,6 +224,31 @@ func (h *Handlers) StopSite(ctx context.Context, req gen.StopSiteRequestObject) 
 	}, nil
 }
 
+// PurgeSiteCache queues a job that purges the site's object cache and page
+// cache (#41).
+func (h *Handlers) PurgeSiteCache(ctx context.Context, req gen.PurgeSiteCacheRequestObject) (gen.PurgeSiteCacheResponseObject, error) {
+	p, err := h.authorize(ctx, authz.PurgeSiteCache, authz.Site(req.SiteID))
+	if err != nil {
+		return nil, err
+	}
+	if h.sites == nil {
+		return nil, errNoSites
+	}
+	job, err := h.sites.PurgeCache(ctx, req.SiteID, p.UserID)
+	if err != nil {
+		return nil, siteError(err)
+	}
+	j, err := jobResponse(job, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	location := jobLocation(job)
+	return gen.PurgeSiteCache202JSONResponse{
+		Body:    gen.JobAccepted{Job: j},
+		Headers: gen.PurgeSiteCache202ResponseHeaders{Location: &location},
+	}, nil
+}
+
 // RetrieveSiteAdminCredentials returns the initial WordPress admin
 // credentials exactly once.
 func (h *Handlers) RetrieveSiteAdminCredentials(ctx context.Context, req gen.RetrieveSiteAdminCredentialsRequestObject) (gen.RetrieveSiteAdminCredentialsResponseObject, error) {

@@ -28,7 +28,7 @@ import (
 var _ provisioner.Provisioner = (*Provisioner)(nil)
 
 // ErrNotImplemented is returned by Provisioner methods whose feature has not
-// been built yet (SetMaintenance, #44; PurgeCache, #41).
+// been built yet (SetMaintenance, #44).
 var ErrNotImplemented = fmt.Errorf("compose: not implemented yet: %w", errors.ErrUnsupported)
 
 // ErrSharedServiceUnavailable means a platform container that sites depend
@@ -462,9 +462,36 @@ func (p *Provisioner) SetMaintenance(context.Context, string, bool) error {
 	return fmt.Errorf("set maintenance: %w", ErrNotImplemented)
 }
 
-// PurgeCache is not implemented yet (#41).
-func (p *Provisioner) PurgeCache(context.Context, string) error {
-	return fmt.Errorf("purge cache: %w", ErrNotImplemented)
+// PurgeCache empties the site's FastCGI page cache by deleting everything
+// under wpconfig.FastCGICachePath in the site's cache volume, as the site's
+// UID, which is what Nginx Helper's purge-all does too. nginx treats a
+// missing cache file as a miss, so it needs no reload. A running site is
+// purged through its php container. A stopped site gets a one-off container
+// of its php service (same image, user, and volumes), since its cached pages
+// would otherwise be served again once it starts.
+//
+// The object cache is not the driver's to purge: it is a platform service
+// the object cache manager flushes (provisioner.Provisioner).
+func (p *Provisioner) PurgeCache(ctx context.Context, siteID string) error {
+	proj, err := p.existing(ctx, siteID)
+	if err != nil {
+		return fmt.Errorf("purge cache: %w", err)
+	}
+	find := []string{"find", wpconfig.FastCGICachePath, "-mindepth", "1", "-delete"}
+	user, err := p.phpUser(ctx, siteID)
+	switch {
+	case err == nil:
+		_, err = proj.run(ctx, nil, append([]string{"exec", "--no-TTY", "--user", user, "--", string(provisioner.ComponentPHP)}, find...)...)
+	case errors.Is(err, ErrSiteNotRunning):
+		_, err = proj.run(ctx, nil, append([]string{
+			"run", "--rm", "--no-deps", "--no-TTY", "--entrypoint", find[0], "--", string(provisioner.ComponentPHP),
+		}, find[1:]...)...)
+	}
+	if err != nil {
+		return fmt.Errorf("purge page cache of site %s: %w", siteID, err)
+	}
+	p.log.InfoContext(ctx, "site page cache purged", "site_id", siteID)
+	return nil
 }
 
 // project returns the site's Compose project. Its directory may not exist;

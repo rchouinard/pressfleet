@@ -386,6 +386,27 @@ func TestObjectCacheIsolation(t *testing.T) {
 		a.must(t, "SET", a.key("still"), "here")
 	})
 
+	// The platform's cache purge (#41) flushes one site's database as the
+	// admin.
+	t.Run("flushing a site's cache leaves other sites alone", func(t *testing.T) {
+		a.must(t, "SET", a.key("purge-me"), "1")
+		b.must(t, "SET", b.key("keep-me"), "1")
+		if err := m.FlushCache(ctx, idA); err != nil {
+			t.Fatal(err)
+		}
+		if n, _ := a.must(t, "DBSIZE").(int64); n != 0 {
+			t.Errorf("site A's DBSIZE after the flush = %d", n)
+		}
+		if v := b.must(t, "GET", b.key("keep-me")); v != "1" {
+			t.Errorf("site B's key after flushing site A = %v", v)
+		}
+		// Site A's connection and user survive.
+		a.must(t, "SET", a.key("after-purge"), "1")
+		if err := m.FlushCache(ctx, id.New()); err != nil {
+			t.Errorf("flushing a site without a user: %v", err)
+		}
+	})
+
 	t.Run("the server's restart is repaired", func(t *testing.T) {
 		watchCtx, cancel := context.WithCancel(ctx)
 		done := make(chan struct{})

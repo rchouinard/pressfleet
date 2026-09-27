@@ -854,6 +854,44 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/sites/{site_id}/cache/purge:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    post:
+      operationId: purgeSiteCache
+      tags: [sites]
+      summary: Purge a site's caches
+      description: |
+        Queues a job that empties the site's object cache (its database on
+        the shared object cache server), then its page cache (the FastCGI
+        cache nginx keeps), so the next requests are rendered afresh. The
+        site keeps serving throughout and its status doesn't change; stopped
+        sites are purged too. WordPress already purges the pages a change
+        affects when content is published or edited (Nginx Helper); this is
+        for everything else, such as a theme change or an edit made directly
+        in the database. A site that is `provisioning`, `updating`, or
+        `deleting`, or whose provisioning failed, returns `409`.
+      responses:
+        "202":
+          description: Cache purge job queued.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/sites/{site_id}/admin-credentials:
     parameters:
       - $ref: "#/components/parameters/SiteID"

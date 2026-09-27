@@ -317,6 +317,60 @@ func TestProvisionerLifecycle(t *testing.T) {
 	}
 }
 
+// TestPurgeCacheDocker empties the page cache of a running site and of a
+// stopped one against real Docker (#41): cache files nginx wrote as the
+// site UID are deleted, and the cache directory stays usable.
+func TestPurgeCacheDocker(t *testing.T) {
+	s := newDockerSite(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	siteID := s.cfg.ID
+	if _, err := s.prov.CreateSite(ctx, s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	const cacheDir = "/var/cache/pressfleet/fastcgi"
+	// nginx writes cache files as levels=1:2 subdirectories.
+	seed := func() {
+		t.Helper()
+		s.exec(t, ctx, "nginx", "sh", "-c", "mkdir -p "+cacheDir+"/c/ba && echo page > "+cacheDir+"/c/ba/0123456789abcdef0123456789abcbac")
+	}
+	left := func() string {
+		t.Helper()
+		return s.exec(t, ctx, "php", "find", cacheDir, "-mindepth", "1")
+	}
+
+	seed()
+	if err := s.prov.PurgeCache(ctx, siteID); err != nil {
+		t.Fatal(err)
+	}
+	if got := left(); got != "" {
+		t.Errorf("left in the cache of a running site: %q", got)
+	}
+
+	seed()
+	if err := s.prov.StopSite(ctx, siteID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.prov.PurgeCache(ctx, siteID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.prov.StartSite(ctx, siteID); err != nil {
+		t.Fatal(err)
+	}
+	if got := left(); got != "" {
+		t.Errorf("left in the cache of a stopped site: %q", got)
+	}
+	// The one-off container is gone, and nginx can still write.
+	containers, err := s.project.Ps(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(containers) != 2 {
+		t.Errorf("containers after purging a stopped site: %+v", containers)
+	}
+	s.exec(t, ctx, "nginx", "touch", cacheDir+"/writable")
+}
+
 // TestExecWPCLIDocker runs WP-CLI through the provisioner against a real
 // site: as the site UID, with hostile arguments reaching it verbatim, with
 // structured errors, bounded output, and a timeout that also ends the

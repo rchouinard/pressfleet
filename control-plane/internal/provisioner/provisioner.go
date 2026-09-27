@@ -198,6 +198,14 @@ type Provisioner interface {
 	// A non-zero exit yields an *ExecError; a site that exists but isn't
 	// running yields ErrSiteNotRunning.
 	ExecWPCLI(ctx context.Context, siteID string, args []string) (string, error)
-	// PurgeCache purges the site's page cache and object cache.
+	// PurgeCache empties the site's page cache, which lives in the site's
+	// own runtime (the FastCGI cache nginx keeps in the site's cache
+	// volume), whether or not the site is running. Returns ErrSiteNotFound
+	// if the site does not exist.
+	//
+	// The object cache isn't the driver's: it is a platform service, which
+	// objectcache.Manager.FlushCache empties. Package sites purges both
+	// wherever the design calls for a cache purge (§5.2, §5.4, the cache
+	// purge API).
 	PurgeCache(ctx context.Context, siteID string) error
 }

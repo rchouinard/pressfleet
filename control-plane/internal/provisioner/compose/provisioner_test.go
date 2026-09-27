@@ -162,6 +162,8 @@ func (f *fakeDocker) compose(args []string) ([]byte, error) {
 	case "exec":
 		f.execArgs = args
 		return f.execOut, f.execErr
+	case "run":
+		return nil, nil
 	case "down":
 		clear(f.containers)
 	default:
@@ -683,7 +685,51 @@ func TestNotImplemented(t *testing.T) {
 	if err := f.prov.SetMaintenance(ctx, testSiteID, true); !errors.Is(err, errors.ErrUnsupported) {
 		t.Errorf("SetMaintenance = %v", err)
 	}
-	if err := f.prov.PurgeCache(ctx, testSiteID); !errors.Is(err, errors.ErrUnsupported) {
-		t.Errorf("PurgeCache = %v", err)
+}
+
+// TestPurgeCache checks how the page cache is purged: through the running
+// php container as the site's UID, or a one-off php container when the site
+// is stopped (#41).
+func TestPurgeCache(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if err := f.prov.PurgeCache(ctx, testSiteID); !errors.Is(err, provisioner.ErrSiteNotFound) {
+		t.Errorf("PurgeCache of a missing site = %v", err)
+	}
+	if _, err := f.prov.CreateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	f.docker.calls = nil
+
+	if err := f.prov.PurgeCache(ctx, testSiteID); err != nil {
+		t.Fatal(err)
+	}
+	wantCommands(t, f.docker, "compose exec --no-TTY --user 20042:20042 -- php find /var/cache/pressfleet/fastcgi -mindepth 1 -delete")
+
+	if err := f.prov.StopSite(ctx, testSiteID); err != nil {
+		t.Fatal(err)
+	}
+	f.docker.calls = nil
+	if err := f.prov.PurgeCache(ctx, testSiteID); err != nil {
+		t.Fatal(err)
+	}
+	wantCommands(t, f.docker, "compose run --rm --no-deps --no-TTY --entrypoint find -- php /var/cache/pressfleet/fastcgi -mindepth 1 -delete")
+
+	// A php container that runs as anything but a site UID is refused, not
+	// used.
+	if err := f.prov.StartSite(ctx, testSiteID); err != nil {
+		t.Fatal(err)
+	}
+	f.docker.phpUser = "0:0"
+	f.docker.calls = nil
+	if err := f.prov.PurgeCache(ctx, testSiteID); !errors.Is(err, compose.ErrUnexpectedUser) {
+		t.Errorf("PurgeCache as root = %v", err)
+	}
+	wantCommands(t, f.docker)
+
+	f.docker.phpUser = "20042:20042"
+	f.docker.fail = map[string]error{"compose exec": &compose.CommandError{Stderr: "find: permission denied", Err: errors.New("exit status 1")}}
+	if err := f.prov.PurgeCache(ctx, testSiteID); err == nil || !strings.Contains(err.Error(), "purge page cache") {
+		t.Errorf("failed purge = %v", err)
 	}
 }

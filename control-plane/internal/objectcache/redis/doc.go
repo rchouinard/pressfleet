@@ -81,6 +81,10 @@
 //     data stays until evicted or until the database's next user, whose
 //     creation flushes it.
 //
+// FlushCache (the platform's cache purge) runs FLUSHDB ASYNC on the site's
+// recorded database as the admin user, so it doesn't depend on the site's
+// plugin or on WordPress running.
+//
 // Flushing whenever a user is created, not only when one is deleted, is
 // what makes reusing databases safe: a database can only hold another
 // site's data while that site's user is gone, and the server keeps nothing

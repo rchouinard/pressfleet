@@ -1110,6 +1110,40 @@
           ]
         },
         {
+          "id": "6f0d3a52-2d1c-5b8e-9a41-7c3e5b0f1d27",
+          "name": "Purge site cache",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/cache/purge",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "cache",
+                "purge"
+              ]
+            },
+            "description": "Queues a job that flushes the site's object cache, then purges its page cache. Follow it with **Jobs \u2192 Get job**."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "id": "d22ac131-213f-502a-8eb6-d2b74715836d",
           "name": "Retrieve admin credentials",
           "request": {
@@ -1650,6 +1684,89 @@
                 "exec": [
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "pm.test(\"has a password\", () => pm.expect(pm.response.json().password).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "0c9e4b7a-58f3-5d62-b1a4-3e8f6d2c9a15",
+          "name": "Purge site cache",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/cache/purge",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "cache",
+                "purge"
+              ]
+            },
+            "description": "Queues a job that flushes the site's object cache, then purges its page cache. Follow it with **Jobs \u2192 Get job**."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "b3d7e1f9-4a26-5c80-9e5b-1f2a7c4d8e63",
+          "name": "Wait for cache purge",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/jobs/{{job_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "jobs",
+                "{{job_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Polls the job until it reaches a terminal state. Repeating a request only",
+                  "// works in the Collection Runner and newman; sent by hand, this is one poll.",
+                  "const terminal = [\"succeeded\", \"failed\", \"rollback_failed\"];",
+                  "const job = pm.response.json();",
+                  "const polls = (pm.variables.get(\"job_polls\") || 0) + 1;",
+                  "const maxPolls = 150; // 2s apart, so 5 minutes",
+                  "",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "if (!terminal.includes(job.state) && polls < maxPolls) {",
+                  "    pm.variables.set(\"job_polls\", polls);",
+                  "    console.log(`job ${job.id} (${job.type}) is ${job.state}; polling again`);",
+                  "    setTimeout(() => {}, 2000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "} else {",
+                  "    pm.variables.set(\"job_polls\", 0);",
+                  "    pm.test(`job ${job.type} succeeded`, () => {",
+                  "        pm.expect(job.state, job.error || \"\").to.eql(\"succeeded\");",
+                  "    });",
+                  "}"
                 ]
               }
             }

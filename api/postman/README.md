@@ -46,7 +46,7 @@ Site changes run as jobs. Follow them with **Jobs → Get job**. When the collec
 
 ## Smoke test
 
-The **Smoke test** folder runs a whole site lifecycle: log in, create a client group and a site, wait for provisioning, retrieve the admin credentials, then delete the site and the group. Run it in the Collection Runner, or with [newman](https://github.com/postmanlabs/newman):
+The **Smoke test** folder runs a whole site lifecycle: log in, create a client group and a site, wait for provisioning, retrieve the admin credentials, purge the site's caches, then delete the site and the group. Run it in the Collection Runner, or with [newman](https://github.com/postmanlabs/newman):
 
 ```sh
 npx newman run api/postman/pressfleet.postman_collection.json \

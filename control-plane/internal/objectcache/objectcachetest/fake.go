@@ -12,7 +12,7 @@ import (
 
 // Call records one method invocation on the fake.
 type Call struct {
-	Op     string // "CreateUser" or "DeleteUser"
+	Op     string // "CreateUser", "DeleteUser", or "FlushCache"
 	SiteID string
 }
 
@@ -22,16 +22,17 @@ type Fake struct {
 	// is returned without changing state. Use it to inject failures.
 	Err func(op, siteID string) error
 
-	mu    sync.Mutex
-	users map[string]bool
-	calls []Call
+	mu      sync.Mutex
+	users   map[string]bool
+	flushes map[string]int
+	calls   []Call
 }
 
 var _ objectcache.Manager = (*Fake)(nil)
 
 // New returns an empty Fake.
 func New() *Fake {
-	return &Fake{users: make(map[string]bool)}
+	return &Fake{users: make(map[string]bool), flushes: make(map[string]int)}
 }
 
 // SecretRef returns the reference CreateUser hands out for siteID.
@@ -92,5 +93,28 @@ func (f *Fake) DeleteUser(_ context.Context, siteID string) error {
 		return err
 	}
 	delete(f.users, siteID)
+	delete(f.flushes, siteID)
 	return nil
+}
+
+// FlushCache implements objectcache.Manager. It counts flushes of sites
+// that have a user.
+func (f *Fake) FlushCache(_ context.Context, siteID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.begin("FlushCache", siteID); err != nil {
+		return err
+	}
+	if f.users[siteID] {
+		f.flushes[siteID]++
+	}
+	return nil
+}
+
+// Flushes returns how often the site's cache was flushed since its user
+// was created.
+func (f *Fake) Flushes(siteID string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.flushes[siteID]
 }

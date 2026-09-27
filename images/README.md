@@ -204,6 +204,7 @@ The php image bundles the platform's default WordPress plugins (design doc §5.1
 
 | Plugin | Purpose |
 | --- | --- |
+| [Nginx Helper](https://wordpress.org/plugins/nginx-helper/) (`nginx-helper`) | Purges the FastCGI page cache when content changes (#41): purging on, `cache_method` `enable_fastcgi`, `purge_method` `unlink_files` (in the `rt_wp_nginx_helper_options` option), under `RT_WP_NGINX_HELPER_CACHE_PATH`. See [FastCGI page cache](#fastcgi-page-cache). |
 | [Redis Object Cache](https://wordpress.org/plugins/redis-cache/) (`redis-cache`) | Object cache on the platform's shared Valkey server, through its `object-cache.php` drop-in (#39) |
 
 The control plane installs a plugin with `wp plugin install /opt/pressfleet/plugins/<slug>.zip` when the site doesn't have it, activates it, and configures it (package `sites`, `plugins.go`), at provisioning and whenever the control plane starts. Installing from the image needs no network access and gets exactly the version CI tested. After that the plugin is an ordinary plugin in `wp-content`: WordPress updates it like any other, and the control plane never replaces a version the site already has.

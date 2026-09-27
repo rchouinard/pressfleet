@@ -64,12 +64,14 @@ type wordpress struct {
 type wpSite struct {
 	plugins map[string]string // slug -> status
 	dropin  string            // title of object-cache.php, "" if none
+	options map[string]string // option -> JSON value
+	caps    []string          // capabilities added to administrator
 }
 
 func (w *wordpress) site(siteID string) *wpSite {
 	s, ok := w.sites[siteID]
 	if !ok {
-		s = &wpSite{plugins: map[string]string{"akismet": "inactive"}}
+		s = &wpSite{plugins: map[string]string{"akismet": "inactive"}, options: map[string]string{}}
 		w.sites[siteID] = s
 	}
 	return s
@@ -140,6 +142,21 @@ func (w *wordpress) wpcli(siteID string, args []string) (string, error) {
 		}
 		s.dropin = "Redis Object Cache Drop-In"
 		return "Success: Object cache enabled.", nil
+	case len(args) == 4 && args[0] == "option" && args[1] == "get" && args[3] == "--format=json":
+		v, ok := s.options[args[2]]
+		if !ok {
+			return "", &provisioner.ExecError{ExitCode: 1, Stderr: "Error: Could not get '" + args[2] + "' option. Does it exist?"}
+		}
+		return v, nil
+	case len(args) == 5 && args[0] == "option" && args[1] == "update" && args[4] == "--format=json":
+		if !json.Valid([]byte(args[3])) {
+			return "", &provisioner.ExecError{ExitCode: 1, Stderr: "Error: Invalid JSON."}
+		}
+		s.options[args[2]] = args[3]
+		return "Success: Updated.", nil
+	case len(args) > 3 && args[0] == "cap" && args[1] == "add" && args[2] == "administrator":
+		s.caps = append(s.caps, args[3:]...)
+		return "Success: Added.", nil
 	}
 	return "", nil
 }
@@ -178,7 +195,7 @@ func (w *wordpress) state(siteID string) wpSite {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	s := w.site(siteID)
-	return wpSite{plugins: maps.Clone(s.plugins), dropin: s.dropin}
+	return wpSite{plugins: maps.Clone(s.plugins), dropin: s.dropin, options: maps.Clone(s.options), caps: slices.Clone(s.caps)}
 }
 
 // edit changes the site's plugin state, as the site owner might.

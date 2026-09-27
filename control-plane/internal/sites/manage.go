@@ -204,19 +204,20 @@ func (s *Service) validateUpdate(site store.Site, req SiteUpdate) (store.SiteSet
 
 // Start queues a [StartJobType] job that starts the site's containers.
 func (s *Service) Start(ctx context.Context, siteID, createdByUserID string) (store.Job, error) {
-	return s.enqueuePower(ctx, siteID, StartJobType, createdByUserID)
+	return s.enqueueSiteJob(ctx, siteID, StartJobType, createdByUserID)
 }
 
 // Stop queues a [StopJobType] job that stops the site's containers,
 // keeping its data.
 func (s *Service) Stop(ctx context.Context, siteID, createdByUserID string) (store.Job, error) {
-	return s.enqueuePower(ctx, siteID, StopJobType, createdByUserID)
+	return s.enqueueSiteJob(ctx, siteID, StopJobType, createdByUserID)
 }
 
-// enqueuePower queues a start or stop job. The status doesn't change until
-// the job has done its work: there is no "starting" status, and the job is
-// quick. Starting a running site, or stopping a stopped one, converges.
-func (s *Service) enqueuePower(ctx context.Context, siteID, jobType, createdByUserID string) (store.Job, error) {
+// enqueueSiteJob queues a job that works on a manageable site: start, stop,
+// or a cache purge. The status doesn't change until the job has done its
+// work: there is no "starting" status, and the jobs are quick. Starting a
+// running site, or stopping a stopped one, converges.
+func (s *Service) enqueueSiteJob(ctx context.Context, siteID, jobType, createdByUserID string) (store.Job, error) {
 	var job store.Job
 	err := s.db.InTx(ctx, func(q store.Querier) error {
 		if _, err := s.manageable(ctx, store.NewSites(q), siteID); err != nil {

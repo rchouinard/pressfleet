@@ -21,6 +21,14 @@ func TestFake(t *testing.T) {
 	if !f.HasUser("a") || !slices.Equal(f.Users(), []string{"a"}) {
 		t.Errorf("users = %v", f.Users())
 	}
+	for _, site := range []string{"a", "a", "nobody"} {
+		if err := f.FlushCache(ctx, site); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if f.Flushes("a") != 2 || f.Flushes("nobody") != 0 {
+		t.Errorf("flushes = %d, %d", f.Flushes("a"), f.Flushes("nobody"))
+	}
 	for range 2 {
 		if err := f.DeleteUser(ctx, "a"); err != nil {
 			t.Fatal(err)
@@ -40,7 +48,7 @@ func TestFake(t *testing.T) {
 	if _, err := f.CreateUser(ctx, "b"); !errors.Is(err, injected) || f.HasUser("b") {
 		t.Errorf("injected failure: err = %v, has user %v", err, f.HasUser("b"))
 	}
-	if n := len(f.Calls()); n != 5 {
-		t.Errorf("calls = %d, want 5", n)
+	if n := len(f.Calls()); n != 8 {
+		t.Errorf("calls = %d, want 8", n)
 	}
 }

@@ -323,6 +323,29 @@ func (m *Manager) DeleteUser(ctx context.Context, siteID string) error {
 	return nil
 }
 
+// FlushCache implements objectcache.Manager. It empties the site's
+// database as the admin user (FLUSHDB ASYNC), so it works however the site
+// is configured, and whether or not it is running: a site whose plugin was
+// deactivated or misconfigured doesn't keep stale entries for when it is
+// fixed. The database holds only the site's keys, so nothing else is lost.
+func (m *Manager) FlushCache(ctx context.Context, siteID string) error {
+	if _, err := newSiteUser(siteID); err != nil {
+		return fmt.Errorf("flush object cache: %w", err)
+	}
+	rec, err := getRecord(ctx, m.state, siteID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("flush object cache of site %s: %w", siteID, err)
+	}
+	if err := m.server.flushDB(ctx, rec.DB); err != nil {
+		return fmt.Errorf("flush object cache of site %s: %w", siteID, err)
+	}
+	m.log.InfoContext(ctx, "site object cache flushed", "site_id", siteID, "database", rec.DB)
+	return nil
+}
+
 // Reconcile makes the server's site users match the stored records: it
 // (re)creates the user of every record with the stored password, which
 // restores them after the server restarts (it keeps users only in memory),

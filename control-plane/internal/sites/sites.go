@@ -86,9 +86,16 @@
 // The status doesn't change while the job waits; a job that gives up marks
 // the site failed.
 //
-// Updating, starting, and stopping are refused with ErrBusy while a job is
-// provisioning, updating, or deleting the site, and with ErrNotProvisioned
-// for a site whose provisioning failed, which has nothing left to change.
+// # Cache purge
+//
+// [Service.PurgeCache] enqueues a [PurgeCacheJobType] job, which flushes
+// the site's object cache and then purges its page cache (cache.go). The
+// status doesn't change.
+//
+// Updating, starting, stopping, and purging are refused with ErrBusy while
+// a job is provisioning, updating, or deleting the site, and with
+// ErrNotProvisioned for a site whose provisioning failed, which has nothing
+// left to change.
 //
 // # Startup reconciliation
 //
@@ -583,7 +590,7 @@ func (s *Service) TakeAdminCredentials(ctx context.Context, siteID string) (Admi
 func (s *Service) Handlers() []jobs.Handler {
 	return []jobs.Handler{
 		s.createHandler(), s.deleteHandler(), s.updateHandler(), s.startHandler(), s.stopHandler(),
-		s.reconcileHandler(),
+		s.reconcileHandler(), s.purgeCacheHandler(),
 	}
 }
 

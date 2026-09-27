@@ -250,6 +250,70 @@ func TestSiteCreateDelete(t *testing.T) {
 		}
 	})
 
+	// Page cache purging (#41). Requests come from a client container on
+	// the site network, so nginx trusts their X-Forwarded-Proto and caches
+	// them under the site's https URL, as behind Traefik.
+	xCache := func(t *testing.T) string {
+		t.Helper()
+		resp := fetch(t, images.PHP, site, "/", "X-Forwarded-Proto: https")
+		for line := range strings.Lines(resp) {
+			if name, value, ok := strings.Cut(strings.TrimSpace(line), ":"); ok && strings.EqualFold(name, "X-Cache") {
+				return strings.TrimSpace(value)
+			}
+		}
+		return ""
+	}
+	cached := func(t *testing.T) {
+		t.Helper()
+		xCache(t)
+		if got := xCache(t); got != "HIT" {
+			t.Fatalf("home page X-Cache = %q, want HIT", got)
+		}
+	}
+	siteExec := func(t *testing.T, command ...string) (string, error) {
+		t.Helper()
+		out, err := siteProject.ExecService(ctx, "php", command...)
+		return strings.TrimSpace(string(out)), err
+	}
+
+	t.Run("publishing a post purges the pages it affects", func(t *testing.T) {
+		settings, err := siteExec(t, "wp", "option", "get", "rt_wp_nginx_helper_options", "--format=json")
+		if err != nil || !strings.Contains(settings, `"purge_method":"unlink_files"`) || !strings.Contains(settings, `"enable_purge":1`) {
+			t.Errorf("Nginx Helper settings = %s (%v)", settings, err)
+		}
+		cached(t)
+		if _, err := siteExec(t, "wp", "post", "create", "--post_title=E2E news", "--post_status=publish"); err != nil {
+			t.Fatal(err)
+		}
+		if got := xCache(t); got != "MISS" {
+			t.Errorf("home page X-Cache after publishing = %q, want MISS", got)
+		}
+	})
+
+	t.Run("the cache purge API clears both caches", func(t *testing.T) {
+		if _, err := siteExec(t, "wp", "cache", "set", "e2e-probe", "cached"); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := siteExec(t, "wp", "cache", "get", "e2e-probe"); err != nil || got != "cached" {
+			t.Fatalf("object cache before the purge: %q, %v", got, err)
+		}
+		cached(t)
+		resp, err := p.Client.PurgeSiteCacheWithResponse(ctx, site.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.JSON202 == nil {
+			t.Fatalf("purge: status %d: %s", resp.StatusCode(), resp.Body)
+		}
+		waitJob(t, p, resp.JSON202.Job.ID)
+		if got, err := siteExec(t, "wp", "cache", "get", "e2e-probe"); err == nil {
+			t.Errorf("object cache entry survived the purge: %q", got)
+		}
+		if got := xCache(t); got != "MISS" {
+			t.Errorf("home page X-Cache after the purge = %q, want MISS", got)
+		}
+	})
+
 	// Two sites can't reach each other over the network (§6): a site's
 	// containers are only on its own network, and from one site's php
 	// container the other site's containers neither resolve by name nor
@@ -518,21 +582,25 @@ func createSite(t *testing.T, p *e2e.Platform, groupID, name, php string) client
 // fetch gets a page of the site from a throwaway client container on the
 // site's network, the way Traefik will reach it, and returns the response
 // headers and body. The client is curl in the site's own php image, which
-// is already on the host. Transient failures (nginx re-resolving a
-// recreated php) are retried for a while.
-func fetch(t *testing.T, image string, site client.Site, path string) string {
+// is already on the host. headers are extra request headers. Transient
+// failures (nginx re-resolving a recreated php) are retried for a while.
+func fetch(t *testing.T, image string, site client.Site, path string, headers ...string) string {
 	t.Helper()
 	var (
 		out []byte
 		err error
 	)
+	command := []string{"--silent", "--show-error", "--max-time", "10", "--include", "--header", "Host: " + site.PreviewDomain}
+	for _, h := range headers {
+		command = append(command, "--header", h)
+	}
+	command = append(command, "http://nginx:8080"+path)
 	for deadline := time.Now().Add(30 * time.Second); ; {
 		out, err = compose.RunContainer(t.Context(), nil, compose.RunOptions{
 			Image:      image,
 			Network:    compose.SiteProjectName(site.ID),
 			Entrypoint: "curl",
-			Command: []string{"--silent", "--show-error", "--max-time", "10", "--include",
-				"--header", "Host: " + site.PreviewDomain, "http://nginx:8080" + path},
+			Command:    command,
 		})
 		if err == nil && !strings.HasPrefix(string(out), "HTTP/1.1 5") || time.Now().After(deadline) {
 			break

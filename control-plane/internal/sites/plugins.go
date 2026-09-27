@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
@@ -28,12 +29,13 @@ import (
 // # Converging
 //
 // configurePlugins runs at provisioning and in every site.reconcile job. One
-// `wp plugin list` call says what the site has; it installs what is missing,
-// activates what is inactive, and configures what isn't configured, so a
-// site that already matches costs that one call. A plugin the site owner
-// deleted or deactivated comes back at the next reconciliation: the
-// platform depends on these plugins (the object cache drop-in, and Nginx
-// Helper's cache purges).
+// `wp plugin list` call says what the site has, and one `wp option get`
+// what Nginx Helper is set to; it installs what is missing, activates what
+// is inactive, and configures what isn't configured, so a site that already
+// matches costs those two calls. A plugin the site owner deleted or
+// deactivated comes back at the next reconciliation, and so do the settings
+// the platform needs: the platform depends on these plugins (the object
+// cache drop-in, and Nginx Helper's cache purges).
 //
 // A plugin missing from the site image (an image built before it was
 // bundled) is skipped with a warning rather than failing the job, so a site
@@ -46,7 +48,8 @@ const BundledPluginDir = "/opt/pressfleet/plugins"
 
 // WordPress.org slugs of the default plugins.
 const (
-	PluginRedisCache = "redis-cache"
+	PluginNginxHelper = "nginx-helper"
+	PluginRedisCache  = "redis-cache"
 )
 
 // redisDropInTitle is the plugin header of the Redis Object Cache plugin's
@@ -59,7 +62,7 @@ const objectCacheDropIn = "object-cache.php"
 // wantedPlugins returns the default plugins every site should have, in the
 // order they are installed and activated.
 func (s *Service) wantedPlugins() []string {
-	return []string{PluginRedisCache}
+	return []string{PluginNginxHelper, PluginRedisCache}
 }
 
 // wpPlugin is an entry of `wp plugin list --format=json`.
@@ -139,6 +142,9 @@ func (s *Service) configurePlugins(ctx context.Context, r *jobs.Run, siteID stri
 		}
 		r.Logf("Activated %s.", strings.Join(activate, ", "))
 	}
+	if err := s.configureNginxHelper(ctx, r, siteID, sp, slices.Contains(activate, PluginNginxHelper)); err != nil {
+		return err
+	}
 	return s.enableObjectCache(ctx, r, siteID, sp)
 }
 
@@ -182,6 +188,79 @@ func (s *Service) enableObjectCache(ctx context.Context, r *jobs.Run, siteID str
 	case dropin.Title != redisDropInTitle:
 		r.Warnf("The site has another object cache drop-in (%q); leaving it in place, so the platform's object cache isn't used.", dropin.Title)
 	}
+	return nil
+}
+
+// Nginx Helper's settings (§5.6).
+const (
+	nginxHelperOption = "rt_wp_nginx_helper_options"
+	// Nginx Helper gives administrators these capabilities when a user
+	// activates it. WP-CLI activates it without one, so the plugin skips
+	// that, and administrators would miss its Purge Cache button.
+	nginxHelperConfigCap = "Nginx Helper | Config"
+	nginxHelperPurgeCap  = "Nginx Helper | Purge cache"
+)
+
+// nginxHelperSettings are the Nginx Helper settings the platform needs:
+// purging on, for nginx's FastCGI cache, by deleting cache files. The files
+// are in the cache volume the php container shares with nginx, under
+// RT_WP_NGINX_HELPER_CACHE_PATH from wp-config.php, and nginx keys them the
+// way the plugin expects (images/README.md, "FastCGI page cache"). The
+// plugin's other settings (what to purge when) keep their defaults or the
+// site owner's choices.
+var nginxHelperSettings = map[string]any{
+	"enable_purge": 1,
+	"cache_method": "enable_fastcgi",
+	"purge_method": "unlink_files",
+}
+
+// configureNginxHelper applies nginxHelperSettings unless the site has
+// them, keeping the plugin's other settings. justActivated grants the
+// administrator capabilities the plugin's own activation would have.
+func (s *Service) configureNginxHelper(ctx context.Context, r *jobs.Run, siteID string, sp sitePlugins, justActivated bool) error {
+	if p, ok := sp.plugins[PluginNginxHelper]; !ok || !p.active() {
+		return nil
+	}
+	if justActivated {
+		if _, err := s.prov.ExecWPCLI(ctx, siteID, []string{"cap", "add", "administrator", nginxHelperConfigCap, nginxHelperPurgeCap}); err != nil {
+			return fmt.Errorf("granting administrators Nginx Helper's capabilities: %w", err)
+		}
+	}
+	current := map[string]any{}
+	out, err := s.prov.ExecWPCLI(ctx, siteID, []string{"option", "get", nginxHelperOption, "--format=json"})
+	var execErr *provisioner.ExecError
+	switch {
+	case errors.As(err, &execErr) && execErr.ExitCode == 1:
+		// The option doesn't exist yet: an activation through WP-CLI stores
+		// no defaults, and the plugin falls back to its own.
+	case err != nil:
+		return fmt.Errorf("reading Nginx Helper's settings: %w", err)
+	case strings.TrimSpace(out) != "":
+		dec := json.NewDecoder(strings.NewReader(out))
+		dec.UseNumber() // keep the other settings exactly as they are
+		if err := dec.Decode(&current); err != nil {
+			// Not an object: nothing worth keeping.
+			current = map[string]any{}
+		}
+	}
+	changed := false
+	for k, want := range nginxHelperSettings {
+		if got, ok := current[k]; !ok || fmt.Sprint(got) != fmt.Sprint(want) {
+			current[k] = want
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	value, err := json.Marshal(current)
+	if err != nil {
+		return fmt.Errorf("encoding Nginx Helper's settings: %w", err)
+	}
+	if _, err := s.prov.ExecWPCLI(ctx, siteID, []string{"option", "update", nginxHelperOption, string(value), "--format=json"}); err != nil {
+		return fmt.Errorf("configuring Nginx Helper: %w", err)
+	}
+	r.Logf("Configured Nginx Helper to purge the page cache.")
 	return nil
 }
 

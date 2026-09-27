@@ -425,6 +425,51 @@ func TestDeleteUser(t *testing.T) {
 	})
 }
 
+func TestFlushCache(t *testing.T) {
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		f := newFixture(t, db, 16)
+
+		// A site without a user has nothing to flush.
+		if err := f.m.FlushCache(ctx, testSiteID); err != nil {
+			t.Fatalf("FlushCache before create: %v", err)
+		}
+		if f.srv.calls != 0 {
+			t.Errorf("server calls = %d, want none", f.srv.calls)
+		}
+		ref, err := f.m.CreateUser(ctx, testSiteID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := f.checkServer(t, testSiteID, ref)
+		f.srv.data[c.Database] = 3
+		f.srv.data[c.Database+1] = 5 // another site's
+		f.srv.flushes = nil
+		if err := f.m.FlushCache(ctx, testSiteID); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := f.srv.data[c.Database]; ok || !slices.Equal(f.srv.flushes, []int{c.Database}) {
+			t.Errorf("flushes = %v, data %v; want database %d flushed", f.srv.flushes, f.srv.data, c.Database)
+		}
+		if f.srv.data[c.Database+1] != 5 {
+			t.Error("another database was flushed")
+		}
+		// The user is untouched.
+		f.checkServer(t, testSiteID, ref)
+
+		injected := errors.New("cache down")
+		f.srv.fail = func(op string) error {
+			if op == "flushDB" {
+				return injected
+			}
+			return nil
+		}
+		if err := f.m.FlushCache(ctx, testSiteID); !errors.Is(err, injected) {
+			t.Errorf("err = %v, want injected", err)
+		}
+	})
+}
+
 func TestReconcile(t *testing.T) {
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
 		ctx := context.Background()
@@ -564,6 +609,9 @@ func TestInvalidSiteIDTouchesNothing(t *testing.T) {
 		}
 		if err := f.m.DeleteUser(ctx, bad); !errors.Is(err, ErrInvalidSiteID) {
 			t.Errorf("DeleteUser err = %v, want ErrInvalidSiteID", err)
+		}
+		if err := f.m.FlushCache(ctx, bad); !errors.Is(err, ErrInvalidSiteID) {
+			t.Errorf("FlushCache err = %v, want ErrInvalidSiteID", err)
 		}
 		if f.srv.calls != 0 || f.count(t, "site_object_caches") != 0 {
 			t.Error("an invalid site ID reached the server or the state database")

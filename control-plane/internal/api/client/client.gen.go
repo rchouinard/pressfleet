@@ -1554,6 +1554,21 @@ type ClientInterface interface {
 	// Corresponds with POST /api/v1/sites/{site_id}/admin-credentials (the `RetrieveSiteAdminCredentials` operationId).
 	RetrieveSiteAdminCredentials(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// PurgeSiteCache Purge a site's caches
+	//
+	// Queues a job that empties the site's object cache (its database on
+	// the shared object cache server), then its page cache (the FastCGI
+	// cache nginx keeps), so the next requests are rendered afresh. The
+	// site keeps serving throughout and its status doesn't change; stopped
+	// sites are purged too. WordPress already purges the pages a change
+	// affects when content is published or edited (Nginx Helper); this is
+	// for everything else, such as a theme change or an edit made directly
+	// in the database. A site that is `provisioning`, `updating`, or
+	// `deleting`, or whose provisioning failed, returns `409`.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/cache/purge (the `PurgeSiteCache` operationId).
+	PurgeSiteCache(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// StartSite Start a stopped site
 	//
 	// Queues a job that starts the site's containers and waits for them to
@@ -2209,6 +2224,31 @@ func (c *Client) UpdateSite(ctx context.Context, siteID SiteID, body UpdateSiteJ
 // Corresponds with POST /api/v1/sites/{site_id}/admin-credentials (the `RetrieveSiteAdminCredentials` operationId).
 func (c *Client) RetrieveSiteAdminCredentials(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRetrieveSiteAdminCredentialsRequest(c.Server, siteID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PurgeSiteCache Purge a site's caches
+//
+// Queues a job that empties the site's object cache (its database on
+// the shared object cache server), then its page cache (the FastCGI
+// cache nginx keeps), so the next requests are rendered afresh. The
+// site keeps serving throughout and its status doesn't change; stopped
+// sites are purged too. WordPress already purges the pages a change
+// affects when content is published or edited (Nginx Helper); this is
+// for everything else, such as a theme change or an edit made directly
+// in the database. A site that is `provisioning`, `updating`, or
+// `deleting`, or whose provisioning failed, returns `409`.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/cache/purge (the `PurgeSiteCache` operationId).
+func (c *Client) PurgeSiteCache(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPurgeSiteCacheRequest(c.Server, siteID)
 	if err != nil {
 		return nil, err
 	}
@@ -3471,6 +3511,40 @@ func NewRetrieveSiteAdminCredentialsRequest(server string, siteID SiteID) (*http
 	return req, nil
 }
 
+// NewPurgeSiteCacheRequest constructs an http.Request for the PurgeSiteCache method
+func NewPurgeSiteCacheRequest(server string, siteID SiteID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/cache/purge", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewStartSiteRequest constructs an http.Request for the StartSite method
 func NewStartSiteRequest(server string, siteID SiteID) (*http.Request, error) {
 	var err error
@@ -4187,6 +4261,23 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/admin-credentials (the `RetrieveSiteAdminCredentials` operationId).
 	RetrieveSiteAdminCredentialsWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*RetrieveSiteAdminCredentialsResponse, error)
+
+	// PurgeSiteCacheWithResponse Purge a site's caches
+	//
+	// Queues a job that empties the site's object cache (its database on
+	// the shared object cache server), then its page cache (the FastCGI
+	// cache nginx keeps), so the next requests are rendered afresh. The
+	// site keeps serving throughout and its status doesn't change; stopped
+	// sites are purged too. WordPress already purges the pages a change
+	// affects when content is published or edited (Nginx Helper); this is
+	// for everything else, such as a theme change or an edit made directly
+	// in the database. A site that is `provisioning`, `updating`, or
+	// `deleting`, or whose provisioning failed, returns `409`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/cache/purge (the `PurgeSiteCache` operationId).
+	PurgeSiteCacheWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*PurgeSiteCacheResponse, error)
 
 	// StartSiteWithResponse Start a stopped site
 	//
@@ -5907,6 +5998,89 @@ func (r RetrieveSiteAdminCredentialsResponse) ContentType() string {
 	return ""
 }
 
+// PurgeSiteCacheResponse202Headers the declared response headers of an HTTP 202 response for PurgeSiteCache
+type PurgeSiteCacheResponse202Headers struct {
+	Location *string
+}
+
+type PurgeSiteCacheResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *JobAccepted
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *PurgeSiteCacheResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r PurgeSiteCacheResponse) GetJSON202() *JobAccepted {
+	return r.JSON202
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r PurgeSiteCacheResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r PurgeSiteCacheResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r PurgeSiteCacheResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r PurgeSiteCacheResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PurgeSiteCacheResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r PurgeSiteCacheResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PurgeSiteCacheResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PurgeSiteCacheResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PurgeSiteCacheResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // StartSiteResponse202Headers the declared response headers of an HTTP 202 response for StartSite
 type StartSiteResponse202Headers struct {
 	Location *string
@@ -7033,6 +7207,29 @@ func (c *ClientWithResponses) RetrieveSiteAdminCredentialsWithResponse(ctx conte
 		return nil, err
 	}
 	return ParseRetrieveSiteAdminCredentialsResponse(rsp)
+}
+
+// PurgeSiteCacheWithResponse Purge a site's caches
+//
+// Queues a job that empties the site's object cache (its database on
+// the shared object cache server), then its page cache (the FastCGI
+// cache nginx keeps), so the next requests are rendered afresh. The
+// site keeps serving throughout and its status doesn't change; stopped
+// sites are purged too. WordPress already purges the pages a change
+// affects when content is published or edited (Nginx Helper); this is
+// for everything else, such as a theme change or an edit made directly
+// in the database. A site that is `provisioning`, `updating`, or
+// `deleting`, or whose provisioning failed, returns `409`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/cache/purge (the `PurgeSiteCache` operationId).
+func (c *ClientWithResponses) PurgeSiteCacheWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*PurgeSiteCacheResponse, error) {
+	rsp, err := c.PurgeSiteCache(ctx, siteID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePurgeSiteCacheResponse(rsp)
 }
 
 // StartSiteWithResponse Start a stopped site
@@ -8568,6 +8765,80 @@ func ParseRetrieveSiteAdminCredentialsResponse(rsp *http.Response) (*RetrieveSit
 			headers.CacheControl = &value
 		}
 		response.Headers200 = &headers
+	}
+
+	return response, nil
+}
+
+// ParsePurgeSiteCacheResponse parses an HTTP response from a PurgeSiteCacheWithResponse call
+func ParsePurgeSiteCacheResponse(rsp *http.Response) (*PurgeSiteCacheResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PurgeSiteCacheResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest JobAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers PurgeSiteCacheResponse202Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
 	}
 
 	return response, nil

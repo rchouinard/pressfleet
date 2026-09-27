@@ -41,6 +41,7 @@ var operationActions = map[string]authz.Action{
 	"deleteSite":                   authz.DeleteSite,
 	"startSite":                    authz.StartSite,
 	"stopSite":                     authz.StopSite,
+	"purgeSiteCache":               authz.PurgeSiteCache,
 	"retrieveSiteAdminCredentials": authz.RetrieveSiteCredentials,
 
 	"listJobs": authz.ViewJobs,

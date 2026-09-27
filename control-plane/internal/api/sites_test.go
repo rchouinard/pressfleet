@@ -36,6 +36,7 @@ var implementedSiteOps = map[string]bool{
 	"deleteSite":                   true,
 	"startSite":                    true,
 	"stopSite":                     true,
+	"purgeSiteCache":               true,
 	"retrieveSiteAdminCredentials": true,
 }
 
@@ -449,12 +450,32 @@ func TestSiteManagementEndpoints(t *testing.T) {
 			}
 		}
 
+		// Cache purge: 202 with the job, which purges the page cache
+		// through the provisioner (and the object cache through the
+		// object cache manager).
+		w = do(t, h, request{authed: true, method: http.MethodPost, target: target + "/cache/purge"})
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("purge: %d %s", w.Code, w.Body)
+		}
+		if j := decodeJSON[gen.JobAccepted](t, w.Body.Bytes()).Job; j.Type != sites.PurgeCacheJobType || j.Target.ID != siteID ||
+			w.Header().Get("Location") != "/api/v1/jobs/"+j.ID {
+			t.Errorf("purge = %s", w.Body)
+		}
+		e.runJobs(t)
+		if s, _ := e.prov.Site(siteID); s.CachePurges != 1 {
+			t.Errorf("page cache purges = %d", s.CachePurges)
+		}
+		if got := get(); got.Status != gen.SiteStatusRunning {
+			t.Errorf("after the purge: status %s", got.Status)
+		}
+
 		// Missing sites, and sites being deleted.
 		missing := "/api/v1/sites/" + id.New()
 		for _, req := range []request{
 			{method: http.MethodPatch, target: missing, body: `{"php_version":"8.4"}`},
 			{method: http.MethodPost, target: missing + "/start"},
 			{method: http.MethodPost, target: missing + "/stop"},
+			{method: http.MethodPost, target: missing + "/cache/purge"},
 		} {
 			req.authed = true
 			if w := do(t, h, req); w.Code != http.StatusNotFound {
@@ -467,6 +488,7 @@ func TestSiteManagementEndpoints(t *testing.T) {
 		for _, req := range []request{
 			{method: http.MethodPatch, target: target, body: `{"php_version":"8.4"}`},
 			{method: http.MethodPost, target: target + "/start"},
+			{method: http.MethodPost, target: target + "/cache/purge"},
 		} {
 			req.authed = true
 			if w := do(t, h, req); w.Code != http.StatusConflict {

@@ -1,6 +1,11 @@
 {
   "plugins": [
     {
+      "slug": "nginx-helper",
+      "version": "2.4.1",
+      "sha256": "c4619efa705fc4b91efe734fcfe07d9d2034105186a6e3b69f3e2ecb39657a5b"
+    },
+    {
       "slug": "redis-cache",
       "version": "3.0.0",
       "sha256": "7a03342d3defbe94cac8d0470b42dc1a1c34331b19c47205df20ceccd3c8f54a"

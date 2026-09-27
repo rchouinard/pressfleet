@@ -1255,6 +1255,9 @@ type ServerInterface interface {
 	// RetrieveSiteAdminCredentials Retrieve the initial WordPress admin credentials (once)
 	// (POST /api/v1/sites/{site_id}/admin-credentials)
 	RetrieveSiteAdminCredentials(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// PurgeSiteCache Purge a site's caches
+	// (POST /api/v1/sites/{site_id}/cache/purge)
+	PurgeSiteCache(w http.ResponseWriter, r *http.Request, siteID SiteID)
 	// StartSite Start a stopped site
 	// (POST /api/v1/sites/{site_id}/start)
 	StartSite(w http.ResponseWriter, r *http.Request, siteID SiteID)
@@ -1998,6 +2001,32 @@ func (siw *ServerInterfaceWrapper) RetrieveSiteAdminCredentials(w http.ResponseW
 	handler.ServeHTTP(w, r)
 }
 
+// PurgeSiteCache operation middleware
+func (siw *ServerInterfaceWrapper) PurgeSiteCache(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PurgeSiteCache(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // StartSite operation middleware
 func (siw *ServerInterfaceWrapper) StartSite(w http.ResponseWriter, r *http.Request) {
 
@@ -2375,6 +2404,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/v1/sites/{site_id}", wrapper.UpdateSite)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/start", wrapper.StartSite)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/stop", wrapper.StopSite)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/cache/purge", wrapper.PurgeSiteCache)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/admin-credentials", wrapper.RetrieveSiteAdminCredentials)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs", wrapper.ListJobs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs/{job_id}", wrapper.GetJob)
@@ -4567,6 +4597,119 @@ func (response RetrieveSiteAdminCredentialsdefaultApplicationProblemPlusJSONResp
 	return err
 }
 
+type PurgeSiteCacheRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+}
+
+type PurgeSiteCacheResponseObject interface {
+	VisitPurgeSiteCacheResponse(w http.ResponseWriter) error
+}
+
+type PurgeSiteCache202ResponseHeaders struct {
+	Location *string
+}
+
+type PurgeSiteCache202JSONResponse struct {
+	Body    JobAccepted
+	Headers PurgeSiteCache202ResponseHeaders
+}
+
+func (response PurgeSiteCache202JSONResponse) VisitPurgeSiteCacheResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PurgeSiteCache401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response PurgeSiteCache401ApplicationProblemPlusJSONResponse) VisitPurgeSiteCacheResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PurgeSiteCache403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response PurgeSiteCache403ApplicationProblemPlusJSONResponse) VisitPurgeSiteCacheResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PurgeSiteCache404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response PurgeSiteCache404ApplicationProblemPlusJSONResponse) VisitPurgeSiteCacheResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PurgeSiteCache409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response PurgeSiteCache409ApplicationProblemPlusJSONResponse) VisitPurgeSiteCacheResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PurgeSiteCachedefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response PurgeSiteCachedefaultApplicationProblemPlusJSONResponse) VisitPurgeSiteCacheResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type StartSiteRequestObject struct {
 	SiteID SiteID `json:"site_id"`
 }
@@ -5450,6 +5593,9 @@ type StrictServerInterface interface {
 	// RetrieveSiteAdminCredentials Retrieve the initial WordPress admin credentials (once)
 	// (POST /api/v1/sites/{site_id}/admin-credentials)
 	RetrieveSiteAdminCredentials(ctx context.Context, request RetrieveSiteAdminCredentialsRequestObject) (RetrieveSiteAdminCredentialsResponseObject, error)
+	// PurgeSiteCache Purge a site's caches
+	// (POST /api/v1/sites/{site_id}/cache/purge)
+	PurgeSiteCache(ctx context.Context, request PurgeSiteCacheRequestObject) (PurgeSiteCacheResponseObject, error)
 	// StartSite Start a stopped site
 	// (POST /api/v1/sites/{site_id}/start)
 	StartSite(ctx context.Context, request StartSiteRequestObject) (StartSiteResponseObject, error)
@@ -6092,6 +6238,32 @@ func (sh *strictHandler) RetrieveSiteAdminCredentials(w http.ResponseWriter, r *
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RetrieveSiteAdminCredentialsResponseObject); ok {
 		if err := validResponse.VisitRetrieveSiteAdminCredentialsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PurgeSiteCache operation middleware
+func (sh *strictHandler) PurgeSiteCache(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request PurgeSiteCacheRequestObject
+
+	request.SiteID = siteID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PurgeSiteCache(ctx, request.(PurgeSiteCacheRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PurgeSiteCache")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PurgeSiteCacheResponseObject); ok {
+		if err := validResponse.VisitPurgeSiteCacheResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

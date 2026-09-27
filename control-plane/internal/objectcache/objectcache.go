@@ -26,6 +26,10 @@ type Manager interface {
 	// DeleteUser removes the site's user, its cached data, and its stored
 	// credentials. Deleting a user that does not exist succeeds.
 	DeleteUser(ctx context.Context, siteID string) error
+	// FlushCache empties the site's cache and nothing else, whatever the
+	// site's own configuration says. A site without a user has nothing
+	// cached, so flushing it succeeds.
+	FlushCache(ctx context.Context, siteID string) error
 }
 
 // KeyPrefix returns the prefix every key of the site must start with, as
