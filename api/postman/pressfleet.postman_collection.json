@@ -1395,6 +1395,57 @@
           ]
         },
         {
+          "id": "3407991b-ee8d-5968-a76e-19ddc81d3d12",
+          "name": "Set aliases",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/aliases",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "aliases"
+              ]
+            },
+            "description": "Replaces the aliases of a live site (send **Go live** first): each gets its own HTTP-01 certificate and a `301` to the primary domain; aliases no longer listed stop being served. No container is recreated, so the site serves throughout. New aliases get the go-live DNS check (`422` with the DNS problem type if they don't point at the host); set `skip_dns_check` to `true` on a development machine. `[]` removes every alias.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"aliases\": [\"{{alias_domain}}\"],\n  \"skip_dns_check\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 422) {",
+                  "    // The DNS check or validation failed; errors says why, per alias.",
+                  "    console.log(pm.response.json());",
+                  "}",
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "id": "6f0d3a52-2d1c-5b8e-9a41-7c3e5b0f1d27",
           "name": "Purge site cache",
           "request": {

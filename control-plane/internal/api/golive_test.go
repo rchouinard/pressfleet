@@ -142,7 +142,48 @@ func TestGoLiveEndpoint(t *testing.T) {
 			t.Errorf("audit results = %v", results)
 		}
 
+		// Aliases (#46): a new one is DNS-checked, then routed.
+		aliases := "/api/v1/sites/" + site.ID + "/aliases"
+		e.dns.wrong["shop.acme.example"] = "it does not resolve"
+		w = do(t, h, request{authed: true, method: http.MethodPut, target: aliases, body: `{"aliases":["acme.example","shop.acme.example"]}`})
+		if p := decodeProblem(t, w); w.Code != http.StatusUnprocessableEntity || p.Type != api.DNSCheckProblemType || len(p.Errors) != 1 {
+			t.Errorf("unresolved alias: %d %s", w.Code, w.Body)
+		}
+		delete(e.dns.wrong, "shop.acme.example")
+		w = do(t, h, request{authed: true, method: http.MethodPut, target: aliases, body: `{"aliases":["acme.example","shop.acme.example"]}`})
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("aliases: %d %s", w.Code, w.Body)
+		}
+		acc = decodeJSON[gen.SiteAccepted](t, w.Body.Bytes())
+		if !slices.Equal(acc.Site.Aliases, []string{"acme.example", "shop.acme.example"}) || acc.Job.Type != sites.AliasesJobType ||
+			w.Header().Get("Location") != "/api/v1/jobs/"+acc.Job.ID {
+			t.Errorf("aliases accepted = %s", w.Body)
+		}
+		e.runJobs(t)
+		if s, _ := e.prov.Site(site.ID); len(s.Config.Aliases) != 2 {
+			t.Errorf("provisioner aliases = %v", s.Config.Aliases)
+		}
+		if w := do(t, h, request{authed: true, method: http.MethodPut, target: aliases, body: `{"aliases":["www.acme.example"]}`}); w.Code != http.StatusUnprocessableEntity {
+			t.Errorf("the primary domain as alias: %d %s", w.Code, w.Body)
+		}
+		if w := do(t, h, request{authed: true, method: http.MethodPut, target: aliases, body: `{}`}); w.Code != http.StatusUnprocessableEntity && w.Code != http.StatusBadRequest {
+			t.Errorf("no aliases field: %d %s", w.Code, w.Body)
+		}
+		other, _, err := e.svc.Create(ctx, sites.NewSite{ClientGroupID: group.ID, Name: "Other", AdminEmail: "o@example.com", PHPVersion: "8.4"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.runJobs(t)
+		if w := do(t, h, request{authed: true, method: http.MethodPut, target: "/api/v1/sites/" + other.ID + "/aliases", body: `{"aliases":[]}`}); w.Code != http.StatusConflict {
+			t.Errorf("aliases of a site that isn't live: %d %s", w.Code, w.Body)
+		}
+
 		// Viewers can't.
+		if w := do(t, newHandler(t, api.Options{DB: db, Authenticator: &fakeAuth{principal: &auth.Principal{
+			UserID: "01j9zq3v6t8k4m2n5p7r9s1x3y", Role: store.RoleViewer, Method: auth.MethodSession, SessionID: "v",
+		}}, Sites: e.svc}), request{authed: true, method: http.MethodPut, target: aliases, body: `{"aliases":[]}`}); w.Code != http.StatusForbidden {
+			t.Errorf("viewer aliases: %d %s", w.Code, w.Body)
+		}
 		viewer := &auth.Principal{UserID: "01j9zq3v6t8k4m2n5p7r9s1x3y", Role: store.RoleViewer, Method: auth.MethodSession, SessionID: "v"}
 		hv := newHandler(t, api.Options{DB: db, Authenticator: &fakeAuth{principal: viewer}, Sites: e.svc})
 		if w := do(t, hv, request{authed: true, method: http.MethodPost, target: target, body: body}); w.Code != http.StatusForbidden {

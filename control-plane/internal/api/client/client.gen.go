@@ -613,7 +613,7 @@ type Job struct {
 
 	// Type What the job does. New types are added over time; treat unknown values as opaque.
 	//
-	// Examples: site.create, site.update, site.delete, site.start, site.stop, site.go_live
+	// Examples: site.create, site.update, site.delete, site.start, site.stop, site.go_live, site.aliases
 	Type string `json:"type"`
 
 	// UpdatedAt Examples: 2026-09-26T17:25:00Z
@@ -830,7 +830,7 @@ type Site struct {
 	// AdminCredentialsAvailable Whether the initial WordPress admin credentials can still be retrieved.
 	AdminCredentialsAvailable bool `json:"admin_credentials_available"`
 
-	// Aliases Additional domains that redirect to the primary domain, sorted. Empty until the site goes live.
+	// Aliases Additional domains that redirect to the primary domain, sorted. Empty until the site goes live; `PUT /api/v1/sites/{site_id}/aliases` changes them.
 	Aliases []string `json:"aliases"`
 
 	// ClientGroupID Opaque, server-assigned identifier.
@@ -932,6 +932,17 @@ type SiteAdminCredentials struct {
 	// Password The plaintext password. Shown only once.
 	Password string `json:"password"`
 	Username string `json:"username"`
+}
+
+// SiteAliases defines model for SiteAliases.
+type SiteAliases struct {
+	// Aliases The site's aliases from now on; an empty list removes them all.
+	//
+	// Examples: ["acme.example","shop.acme.example"]
+	Aliases []Domain `json:"aliases"`
+
+	// SkipDNSCheck Skip the DNS check of new aliases, for hosts behind a CDN or load balancer.
+	SkipDNSCheck *bool `json:"skip_dns_check,omitempty"`
 }
 
 // SiteCreate defines model for SiteCreate.
@@ -1275,6 +1286,9 @@ type CreateSiteJSONRequestBody = SiteCreate
 
 // UpdateSiteJSONRequestBody defines body for UpdateSite for application/json ContentType.
 type UpdateSiteJSONRequestBody = SiteUpdate
+
+// SetSiteAliasesJSONRequestBody defines body for SetSiteAliases for application/json ContentType.
+type SetSiteAliasesJSONRequestBody = SiteAliases
 
 // GoLiveSiteJSONRequestBody defines body for GoLiveSite for application/json ContentType.
 type GoLiveSiteJSONRequestBody = SiteGoLive
@@ -1669,6 +1683,60 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/admin-credentials (the `RetrieveSiteAdminCredentials` operationId).
 	RetrieveSiteAdminCredentials(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetSiteAliasesWithBody Replace a live site's aliases
+	//
+	// Replaces the aliases of a site that has gone live and queues a job
+	// that routes them (design doc §5.2). Each alias gets a certificate
+	// of its own with the ACME HTTP-01 challenge and answers with a
+	// permanent redirect (`301`) to the primary domain, keeping the path
+	// and query (with HSTS when the platform's security headers are on).
+	// Aliases no longer listed stop being served. The change takes effect
+	// within seconds of the job finishing, without recreating the site's
+	// containers, so the site keeps serving throughout. WordPress's
+	// content and caches aren't touched: aliases only redirect.
+	//
+	// New aliases get the same DNS check as go-live, and fail it the same
+	// way (`422` with the DNS problem type, nothing changed);
+	// `skip_dns_check` skips it. Aliases the site has already aren't
+	// checked again. The site's status is `updating` until the job has
+	// finished; if the job fails, the previous aliases are restored.
+	//
+	// A site that hasn't gone live returns `409`; so does one that is
+	// `provisioning`, `updating`, or `deleting`, or whose provisioning
+	// failed. A stopped site can change its aliases.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /api/v1/sites/{site_id}/aliases (the `SetSiteAliases` operationId).
+	SetSiteAliasesWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetSiteAliases Replace a live site's aliases
+	//
+	// Replaces the aliases of a site that has gone live and queues a job
+	// that routes them (design doc §5.2). Each alias gets a certificate
+	// of its own with the ACME HTTP-01 challenge and answers with a
+	// permanent redirect (`301`) to the primary domain, keeping the path
+	// and query (with HSTS when the platform's security headers are on).
+	// Aliases no longer listed stop being served. The change takes effect
+	// within seconds of the job finishing, without recreating the site's
+	// containers, so the site keeps serving throughout. WordPress's
+	// content and caches aren't touched: aliases only redirect.
+	//
+	// New aliases get the same DNS check as go-live, and fail it the same
+	// way (`422` with the DNS problem type, nothing changed);
+	// `skip_dns_check` skips it. Aliases the site has already aren't
+	// checked again. The site's status is `updating` until the job has
+	// finished; if the job fails, the previous aliases are restored.
+	//
+	// A site that hasn't gone live returns `409`; so does one that is
+	// `provisioning`, `updating`, or `deleting`, or whose provisioning
+	// failed. A stopped site can change its aliases.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /api/v1/sites/{site_id}/aliases (the `SetSiteAliases` operationId).
+	SetSiteAliases(ctx context.Context, siteID SiteID, body SetSiteAliasesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PurgeSiteCache Purge a site's caches
 	//
@@ -2521,6 +2589,80 @@ func (c *Client) UpdateSite(ctx context.Context, siteID SiteID, body UpdateSiteJ
 // Corresponds with POST /api/v1/sites/{site_id}/admin-credentials (the `RetrieveSiteAdminCredentials` operationId).
 func (c *Client) RetrieveSiteAdminCredentials(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRetrieveSiteAdminCredentialsRequest(c.Server, siteID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetSiteAliasesWithBody Replace a live site's aliases
+//
+// Replaces the aliases of a site that has gone live and queues a job
+// that routes them (design doc §5.2). Each alias gets a certificate
+// of its own with the ACME HTTP-01 challenge and answers with a
+// permanent redirect (`301`) to the primary domain, keeping the path
+// and query (with HSTS when the platform's security headers are on).
+// Aliases no longer listed stop being served. The change takes effect
+// within seconds of the job finishing, without recreating the site's
+// containers, so the site keeps serving throughout. WordPress's
+// content and caches aren't touched: aliases only redirect.
+//
+// New aliases get the same DNS check as go-live, and fail it the same
+// way (`422` with the DNS problem type, nothing changed);
+// `skip_dns_check` skips it. Aliases the site has already aren't
+// checked again. The site's status is `updating` until the job has
+// finished; if the job fails, the previous aliases are restored.
+//
+// A site that hasn't gone live returns `409`; so does one that is
+// `provisioning`, `updating`, or `deleting`, or whose provisioning
+// failed. A stopped site can change its aliases.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /api/v1/sites/{site_id}/aliases (the `SetSiteAliases` operationId).
+func (c *Client) SetSiteAliasesWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSiteAliasesRequestWithBody(c.Server, siteID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetSiteAliases Replace a live site's aliases
+//
+// Replaces the aliases of a site that has gone live and queues a job
+// that routes them (design doc §5.2). Each alias gets a certificate
+// of its own with the ACME HTTP-01 challenge and answers with a
+// permanent redirect (`301`) to the primary domain, keeping the path
+// and query (with HSTS when the platform's security headers are on).
+// Aliases no longer listed stop being served. The change takes effect
+// within seconds of the job finishing, without recreating the site's
+// containers, so the site keeps serving throughout. WordPress's
+// content and caches aren't touched: aliases only redirect.
+//
+// New aliases get the same DNS check as go-live, and fail it the same
+// way (`422` with the DNS problem type, nothing changed);
+// `skip_dns_check` skips it. Aliases the site has already aren't
+// checked again. The site's status is `updating` until the job has
+// finished; if the job fails, the previous aliases are restored.
+//
+// A site that hasn't gone live returns `409`; so does one that is
+// `provisioning`, `updating`, or `deleting`, or whose provisioning
+// failed. A stopped site can change its aliases.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /api/v1/sites/{site_id}/aliases (the `SetSiteAliases` operationId).
+func (c *Client) SetSiteAliases(ctx context.Context, siteID SiteID, body SetSiteAliasesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSiteAliasesRequest(c.Server, siteID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4021,6 +4163,53 @@ func NewRetrieveSiteAdminCredentialsRequest(server string, siteID SiteID) (*http
 	return req, nil
 }
 
+// NewSetSiteAliasesRequest calls the generic SetSiteAliases builder with application/json body
+func NewSetSiteAliasesRequest(server string, siteID SiteID, body SetSiteAliasesJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetSiteAliasesRequestWithBody(server, siteID, "application/json", bodyReader)
+}
+
+// NewSetSiteAliasesRequestWithBody constructs an http.Request for the SetSiteAliases method, with any body, and a specified content type
+func NewSetSiteAliasesRequestWithBody(server string, siteID SiteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/aliases", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewPurgeSiteCacheRequest constructs an http.Request for the PurgeSiteCache method
 func NewPurgeSiteCacheRequest(server string, siteID SiteID) (*http.Request, error) {
 	var err error
@@ -4917,6 +5106,60 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/admin-credentials (the `RetrieveSiteAdminCredentials` operationId).
 	RetrieveSiteAdminCredentialsWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*RetrieveSiteAdminCredentialsResponse, error)
+
+	// SetSiteAliasesWithBodyWithResponse Replace a live site's aliases
+	//
+	// Replaces the aliases of a site that has gone live and queues a job
+	// that routes them (design doc §5.2). Each alias gets a certificate
+	// of its own with the ACME HTTP-01 challenge and answers with a
+	// permanent redirect (`301`) to the primary domain, keeping the path
+	// and query (with HSTS when the platform's security headers are on).
+	// Aliases no longer listed stop being served. The change takes effect
+	// within seconds of the job finishing, without recreating the site's
+	// containers, so the site keeps serving throughout. WordPress's
+	// content and caches aren't touched: aliases only redirect.
+	//
+	// New aliases get the same DNS check as go-live, and fail it the same
+	// way (`422` with the DNS problem type, nothing changed);
+	// `skip_dns_check` skips it. Aliases the site has already aren't
+	// checked again. The site's status is `updating` until the job has
+	// finished; if the job fails, the previous aliases are restored.
+	//
+	// A site that hasn't gone live returns `409`; so does one that is
+	// `provisioning`, `updating`, or `deleting`, or whose provisioning
+	// failed. A stopped site can change its aliases.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v1/sites/{site_id}/aliases (the `SetSiteAliases` operationId).
+	SetSiteAliasesWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSiteAliasesResponse, error)
+
+	// SetSiteAliasesWithResponse Replace a live site's aliases
+	//
+	// Replaces the aliases of a site that has gone live and queues a job
+	// that routes them (design doc §5.2). Each alias gets a certificate
+	// of its own with the ACME HTTP-01 challenge and answers with a
+	// permanent redirect (`301`) to the primary domain, keeping the path
+	// and query (with HSTS when the platform's security headers are on).
+	// Aliases no longer listed stop being served. The change takes effect
+	// within seconds of the job finishing, without recreating the site's
+	// containers, so the site keeps serving throughout. WordPress's
+	// content and caches aren't touched: aliases only redirect.
+	//
+	// New aliases get the same DNS check as go-live, and fail it the same
+	// way (`422` with the DNS problem type, nothing changed);
+	// `skip_dns_check` skips it. Aliases the site has already aren't
+	// checked again. The site's status is `updating` until the job has
+	// finished; if the job fails, the previous aliases are restored.
+	//
+	// A site that hasn't gone live returns `409`; so does one that is
+	// `provisioning`, `updating`, or `deleting`, or whose provisioning
+	// failed. A stopped site can change its aliases.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v1/sites/{site_id}/aliases (the `SetSiteAliases` operationId).
+	SetSiteAliasesWithResponse(ctx context.Context, siteID SiteID, body SetSiteAliasesJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSiteAliasesResponse, error)
 
 	// PurgeSiteCacheWithResponse Purge a site's caches
 	//
@@ -6819,6 +7062,103 @@ func (r RetrieveSiteAdminCredentialsResponse) ContentType() string {
 	return ""
 }
 
+// SetSiteAliasesResponse202Headers the declared response headers of an HTTP 202 response for SetSiteAliases
+type SetSiteAliasesResponse202Headers struct {
+	Location *string
+}
+
+type SetSiteAliasesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *SiteAccepted
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableDomains
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *SetSiteAliasesResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r SetSiteAliasesResponse) GetJSON202() *SiteAccepted {
+	return r.JSON202
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r SetSiteAliasesResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r SetSiteAliasesResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r SetSiteAliasesResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r SetSiteAliasesResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r SetSiteAliasesResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r SetSiteAliasesResponse) GetApplicationProblemJSON422() *UnprocessableDomains {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SetSiteAliasesResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SetSiteAliasesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetSiteAliasesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetSiteAliasesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetSiteAliasesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // PurgeSiteCacheResponse202Headers the declared response headers of an HTTP 202 response for PurgeSiteCache
 type PurgeSiteCacheResponse202Headers struct {
 	Location *string
@@ -8324,6 +8664,72 @@ func (c *ClientWithResponses) RetrieveSiteAdminCredentialsWithResponse(ctx conte
 		return nil, err
 	}
 	return ParseRetrieveSiteAdminCredentialsResponse(rsp)
+}
+
+// SetSiteAliasesWithBodyWithResponse Replace a live site's aliases
+//
+// Replaces the aliases of a site that has gone live and queues a job
+// that routes them (design doc §5.2). Each alias gets a certificate
+// of its own with the ACME HTTP-01 challenge and answers with a
+// permanent redirect (`301`) to the primary domain, keeping the path
+// and query (with HSTS when the platform's security headers are on).
+// Aliases no longer listed stop being served. The change takes effect
+// within seconds of the job finishing, without recreating the site's
+// containers, so the site keeps serving throughout. WordPress's
+// content and caches aren't touched: aliases only redirect.
+//
+// New aliases get the same DNS check as go-live, and fail it the same
+// way (`422` with the DNS problem type, nothing changed);
+// `skip_dns_check` skips it. Aliases the site has already aren't
+// checked again. The site's status is `updating` until the job has
+// finished; if the job fails, the previous aliases are restored.
+//
+// A site that hasn't gone live returns `409`; so does one that is
+// `provisioning`, `updating`, or `deleting`, or whose provisioning
+// failed. A stopped site can change its aliases.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v1/sites/{site_id}/aliases (the `SetSiteAliases` operationId).
+func (c *ClientWithResponses) SetSiteAliasesWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSiteAliasesResponse, error) {
+	rsp, err := c.SetSiteAliasesWithBody(ctx, siteID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSiteAliasesResponse(rsp)
+}
+
+// SetSiteAliasesWithResponse Replace a live site's aliases
+//
+// Replaces the aliases of a site that has gone live and queues a job
+// that routes them (design doc §5.2). Each alias gets a certificate
+// of its own with the ACME HTTP-01 challenge and answers with a
+// permanent redirect (`301`) to the primary domain, keeping the path
+// and query (with HSTS when the platform's security headers are on).
+// Aliases no longer listed stop being served. The change takes effect
+// within seconds of the job finishing, without recreating the site's
+// containers, so the site keeps serving throughout. WordPress's
+// content and caches aren't touched: aliases only redirect.
+//
+// New aliases get the same DNS check as go-live, and fail it the same
+// way (`422` with the DNS problem type, nothing changed);
+// `skip_dns_check` skips it. Aliases the site has already aren't
+// checked again. The site's status is `updating` until the job has
+// finished; if the job fails, the previous aliases are restored.
+//
+// A site that hasn't gone live returns `409`; so does one that is
+// `provisioning`, `updating`, or `deleting`, or whose provisioning
+// failed. A stopped site can change its aliases.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v1/sites/{site_id}/aliases (the `SetSiteAliases` operationId).
+func (c *ClientWithResponses) SetSiteAliasesWithResponse(ctx context.Context, siteID SiteID, body SetSiteAliasesJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSiteAliasesResponse, error) {
+	rsp, err := c.SetSiteAliases(ctx, siteID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSiteAliasesResponse(rsp)
 }
 
 // PurgeSiteCacheWithResponse Purge a site's caches
@@ -10077,6 +10483,94 @@ func ParseRetrieveSiteAdminCredentialsResponse(rsp *http.Response) (*RetrieveSit
 			headers.CacheControl = &value
 		}
 		response.Headers200 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseSetSiteAliasesResponse parses an HTTP response from a SetSiteAliasesWithResponse call
+func ParseSetSiteAliasesResponse(rsp *http.Response) (*SetSiteAliasesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetSiteAliasesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest SiteAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableDomains
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers SetSiteAliasesResponse202Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
 	}
 
 	return response, nil

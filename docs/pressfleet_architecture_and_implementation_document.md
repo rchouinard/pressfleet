@@ -407,7 +407,7 @@ All long-running operations run as **Jobs**. API endpoints that start them retur
 5. **Cache Purge:** Purges the FastCGI page cache and the site's object cache.
 6. **Preview Redirect:** The preview domain (behind its noindex header and optional password) and the aliases permanently redirect to the primary domain.
 
-A go-live that fails before the URL update rolls back to the previous domains. Once the URL update has started it no longer rolls back, because reverting `wp search-replace` isn't safe; the site keeps its new domains, and going live again with the same domains finishes the update. Changing the primary domain later is another go-live; returning to the preview domain alone isn't supported.
+A go-live that fails before the URL update rolls back to the previous domains. Once the URL update has started it no longer rolls back, because reverting `wp search-replace` isn't safe; the site keeps its new domains, and going live again with the same domains finishes the update. Changing the primary domain later is another go-live; returning to the preview domain alone isn't supported. Aliases can be added and removed on their own at any time after go-live: new ones get the same DNS check, each alias gets its own certificate, and the change reroutes them without touching WordPress or interrupting the site.
 
 ### 5.3. Backup Workflow
 1. Triggered on schedule or on demand; runs as a Job in the control plane's worker pool.

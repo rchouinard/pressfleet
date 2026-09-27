@@ -246,6 +246,83 @@ func TestSiteGoLive(t *testing.T) {
 		waitIngress(t, hc, "https://"+preview+"/", nil, http.StatusMovedPermanently)
 	})
 
+	t.Run("alias changes apply without downtime", func(t *testing.T) {
+		const shop = "shop.golive.e2e.test"
+		before, err := siteProject.ServiceContainer(ctx, "nginx")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// A new alias gets the DNS check.
+		resp, err := p.Client.SetSiteAliasesWithResponse(ctx, site.ID, client.SetSiteAliasesJSONRequestBody{Aliases: []string{shop}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if prob := resp.ApplicationProblemJSON422; prob == nil || prob.Type != api.DNSCheckProblemType {
+			t.Fatalf("unresolved alias: status %d: %s", resp.StatusCode(), resp.Body)
+		}
+
+		// Request the primary domain continuously while the aliases change.
+		done := make(chan struct{})
+		failures := make(chan string, 1000)
+		var requests int
+		go func() {
+			defer close(failures)
+			for {
+				select {
+				case <-done:
+					return
+				default:
+				}
+				req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+goLivePrimary+"/", nil)
+				res, err := hc.Do(req)
+				requests++
+				switch {
+				case err != nil:
+					failures <- err.Error()
+				default:
+					_ = res.Body.Close()
+					if res.StatusCode != http.StatusOK {
+						failures <- res.Status
+					}
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+		}()
+		skip := true
+		resp, err = p.Client.SetSiteAliasesWithResponse(ctx, site.ID, client.SetSiteAliasesJSONRequestBody{
+			Aliases: []string{shop}, SkipDNSCheck: &skip,
+		})
+		if err != nil || resp.JSON202 == nil {
+			close(done)
+			t.Fatalf("set aliases: %v %s", err, resp.Body)
+		}
+		waitJob(t, p, resp.JSON202.Job.ID)
+		res, _ := waitIngress(t, hc, "https://"+shop+"/a?b=c", nil, http.StatusMovedPermanently)
+		waitIngress(t, hc, "https://"+goLiveAlias+"/", nil, http.StatusNotFound)
+		close(done)
+		var failed []string
+		for f := range failures {
+			failed = append(failed, f)
+		}
+		t.Logf("%d requests to the primary domain during the change", requests)
+		if len(failed) > 0 {
+			t.Errorf("%d of %d requests failed during the alias change: %q", len(failed), requests, failed)
+		}
+		if res.Header.Get("Location") != "https://"+goLivePrimary+"/a?b=c" || res.Header.Get("Strict-Transport-Security") == "" {
+			t.Errorf("new alias: Location %q, HSTS %q", res.Header.Get("Location"), res.Header.Get("Strict-Transport-Security"))
+		}
+		after, err := siteProject.ServiceContainer(ctx, "nginx")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if after.ID != before.ID {
+			t.Error("changing aliases recreated nginx")
+		}
+		if got := getSite(t, p, site.ID); len(got.Aliases) != 1 || got.Aliases[0] != shop || got.Status != client.SiteStatusRunning {
+			t.Errorf("site after the alias change: %+v", got)
+		}
+	})
+
 	t.Run("maintenance mode covers the custom domains", func(t *testing.T) {
 		set := func(enabled bool) {
 			resp, err := p.Client.SetSiteMaintenanceWithResponse(ctx, site.ID, client.SetSiteMaintenanceJSONRequestBody{Enabled: enabled})
@@ -255,7 +332,7 @@ func TestSiteGoLive(t *testing.T) {
 			waitJob(t, p, resp.JSON202.Job.ID)
 		}
 		set(true)
-		for _, host := range []string{goLivePrimary, goLiveAlias, preview} {
+		for _, host := range []string{goLivePrimary, "shop.golive.e2e.test", preview} {
 			waitIngress(t, hc, "https://"+host+"/", nil, http.StatusServiceUnavailable)
 		}
 		set(false)

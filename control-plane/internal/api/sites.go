@@ -220,6 +220,36 @@ func (h *Handlers) GoLiveSite(ctx context.Context, req gen.GoLiveSiteRequestObje
 	}, nil
 }
 
+// SetSiteAliases checks and saves a live site's new aliases and queues the
+// job that routes them (#46).
+func (h *Handlers) SetSiteAliases(ctx context.Context, req gen.SetSiteAliasesRequestObject) (gen.SetSiteAliasesResponseObject, error) {
+	p, err := h.authorize(ctx, authz.ManageSiteDomains, authz.Site(req.SiteID))
+	if err != nil {
+		return nil, err
+	}
+	if h.sites == nil {
+		return nil, errNoSites
+	}
+	b := deref(req.Body)
+	site, aliases, job, err := h.sites.SetAliases(ctx, req.SiteID, sites.SetAliases{
+		Aliases:         b.Aliases,
+		SkipDNSCheck:    deref(b.SkipDNSCheck),
+		CreatedByUserID: p.UserID,
+	})
+	if err != nil {
+		return nil, siteError(err)
+	}
+	j, err := jobResponse(job, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	location := jobLocation(job)
+	return gen.SetSiteAliases202JSONResponse{
+		Body:    gen.SiteAccepted{Site: siteResponse(site, aliases), Job: j},
+		Headers: gen.SetSiteAliases202ResponseHeaders{Location: &location},
+	}, nil
+}
+
 // DNSCheckProblemType is the problem type of a request whose domains
 // failed the DNS check (package domains). It links to the documentation
 // of the check.
@@ -411,6 +441,7 @@ func siteError(err error) error {
 		{sites.ErrCredentialsGone, ErrGone},
 		{sites.ErrNotProvisioned, ErrConflict},
 		{sites.ErrNotRunning, ErrConflict},
+		{sites.ErrNotLive, ErrConflict},
 	} {
 		if errors.Is(err, m.from) {
 			return fmt.Errorf("%w: %w", m.to, m.from)

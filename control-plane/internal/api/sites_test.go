@@ -38,6 +38,7 @@ var implementedSiteOps = map[string]bool{
 	"regenerateSitePreviewPassword": true,
 	"setSiteMaintenance":            true,
 	"goLiveSite":                    true,
+	"setSiteAliases":                true,
 	"deleteSite":                    true,
 	"startSite":                     true,
 	"stopSite":                      true,

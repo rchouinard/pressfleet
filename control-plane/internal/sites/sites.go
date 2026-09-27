@@ -92,6 +92,8 @@
 // rewrites WordPress's URLs to the primary domain, and purges the caches;
 // the preview domain then redirects to the primary domain. See golive.go,
 // which also describes what a failed go-live leaves behind.
+// [Service.SetAliases] changes a live site's aliases alone, with a
+// [AliasesJobType] job that only reroutes them (aliases.go).
 //
 // # Start and stop
 //
@@ -627,7 +629,7 @@ func (s *Service) TakeAdminCredentials(ctx context.Context, siteID string) (Admi
 func (s *Service) Handlers() []jobs.Handler {
 	return []jobs.Handler{
 		s.createHandler(), s.deleteHandler(), s.updateHandler(), s.startHandler(), s.stopHandler(),
-		s.reconcileHandler(), s.purgeCacheHandler(), s.maintenanceHandler(), s.goLiveHandler(),
+		s.reconcileHandler(), s.purgeCacheHandler(), s.maintenanceHandler(), s.goLiveHandler(), s.aliasesHandler(),
 	}
 }
 

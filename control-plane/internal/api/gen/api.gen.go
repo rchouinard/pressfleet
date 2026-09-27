@@ -613,7 +613,7 @@ type Job struct {
 
 	// Type What the job does. New types are added over time; treat unknown values as opaque.
 	//
-	// Examples: site.create, site.update, site.delete, site.start, site.stop, site.go_live
+	// Examples: site.create, site.update, site.delete, site.start, site.stop, site.go_live, site.aliases
 	Type string `json:"type"`
 
 	// UpdatedAt Examples: 2026-09-26T17:25:00Z
@@ -830,7 +830,7 @@ type Site struct {
 	// AdminCredentialsAvailable Whether the initial WordPress admin credentials can still be retrieved.
 	AdminCredentialsAvailable bool `json:"admin_credentials_available"`
 
-	// Aliases Additional domains that redirect to the primary domain, sorted. Empty until the site goes live.
+	// Aliases Additional domains that redirect to the primary domain, sorted. Empty until the site goes live; `PUT /api/v1/sites/{site_id}/aliases` changes them.
 	Aliases []string `json:"aliases"`
 
 	// ClientGroupID Opaque, server-assigned identifier.
@@ -932,6 +932,17 @@ type SiteAdminCredentials struct {
 	// Password The plaintext password. Shown only once.
 	Password string `json:"password"`
 	Username string `json:"username"`
+}
+
+// SiteAliases defines model for SiteAliases.
+type SiteAliases struct {
+	// Aliases The site's aliases from now on; an empty list removes them all.
+	//
+	// Examples: ["acme.example","shop.acme.example"]
+	Aliases []Domain `json:"aliases"`
+
+	// SkipDNSCheck Skip the DNS check of new aliases, for hosts behind a CDN or load balancer.
+	SkipDNSCheck *bool `json:"skip_dns_check,omitempty"`
 }
 
 // SiteCreate defines model for SiteCreate.
@@ -1276,6 +1287,9 @@ type CreateSiteJSONRequestBody = SiteCreate
 // UpdateSiteJSONRequestBody defines body for UpdateSite for application/json ContentType.
 type UpdateSiteJSONRequestBody = SiteUpdate
 
+// SetSiteAliasesJSONRequestBody defines body for SetSiteAliases for application/json ContentType.
+type SetSiteAliasesJSONRequestBody = SiteAliases
+
 // GoLiveSiteJSONRequestBody defines body for GoLiveSite for application/json ContentType.
 type GoLiveSiteJSONRequestBody = SiteGoLive
 
@@ -1353,6 +1367,9 @@ type ServerInterface interface {
 	// RetrieveSiteAdminCredentials Retrieve the initial WordPress admin credentials (once)
 	// (POST /api/v1/sites/{site_id}/admin-credentials)
 	RetrieveSiteAdminCredentials(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// SetSiteAliases Replace a live site's aliases
+	// (PUT /api/v1/sites/{site_id}/aliases)
+	SetSiteAliases(w http.ResponseWriter, r *http.Request, siteID SiteID)
 	// PurgeSiteCache Purge a site's caches
 	// (POST /api/v1/sites/{site_id}/cache/purge)
 	PurgeSiteCache(w http.ResponseWriter, r *http.Request, siteID SiteID)
@@ -2108,6 +2125,32 @@ func (siw *ServerInterfaceWrapper) RetrieveSiteAdminCredentials(w http.ResponseW
 	handler.ServeHTTP(w, r)
 }
 
+// SetSiteAliases operation middleware
+func (siw *ServerInterfaceWrapper) SetSiteAliases(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetSiteAliases(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PurgeSiteCache operation middleware
 func (siw *ServerInterfaceWrapper) PurgeSiteCache(w http.ResponseWriter, r *http.Request) {
 
@@ -2593,6 +2636,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/admin-credentials", wrapper.RetrieveSiteAdminCredentials)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/sites/{site_id}/maintenance", wrapper.SetSiteMaintenance)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/go-live", wrapper.GoLiveSite)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/sites/{site_id}/aliases", wrapper.SetSiteAliases)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/preview-password", wrapper.RegenerateSitePreviewPassword)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs", wrapper.ListJobs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs/{job_id}", wrapper.GetJob)
@@ -4787,6 +4831,152 @@ func (response RetrieveSiteAdminCredentialsdefaultApplicationProblemPlusJSONResp
 	return err
 }
 
+type SetSiteAliasesRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+	Body   *SetSiteAliasesJSONRequestBody
+}
+
+type SetSiteAliasesResponseObject interface {
+	VisitSetSiteAliasesResponse(w http.ResponseWriter) error
+}
+
+type SetSiteAliases202ResponseHeaders struct {
+	Location *string
+}
+
+type SetSiteAliases202JSONResponse struct {
+	Body    SiteAccepted
+	Headers SetSiteAliases202ResponseHeaders
+}
+
+func (response SetSiteAliases202JSONResponse) VisitSetSiteAliasesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteAliases400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteAliases400ApplicationProblemPlusJSONResponse) VisitSetSiteAliasesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteAliases401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteAliases401ApplicationProblemPlusJSONResponse) VisitSetSiteAliasesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteAliases403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteAliases403ApplicationProblemPlusJSONResponse) VisitSetSiteAliasesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteAliases404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteAliases404ApplicationProblemPlusJSONResponse) VisitSetSiteAliasesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteAliases409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteAliases409ApplicationProblemPlusJSONResponse) VisitSetSiteAliasesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteAliases422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableDomainsApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteAliases422ApplicationProblemPlusJSONResponse) VisitSetSiteAliasesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteAliasesdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response SetSiteAliasesdefaultApplicationProblemPlusJSONResponse) VisitSetSiteAliasesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type PurgeSiteCacheRequestObject struct {
 	SiteID SiteID `json:"site_id"`
 }
@@ -6192,6 +6382,9 @@ type StrictServerInterface interface {
 	// RetrieveSiteAdminCredentials Retrieve the initial WordPress admin credentials (once)
 	// (POST /api/v1/sites/{site_id}/admin-credentials)
 	RetrieveSiteAdminCredentials(ctx context.Context, request RetrieveSiteAdminCredentialsRequestObject) (RetrieveSiteAdminCredentialsResponseObject, error)
+	// SetSiteAliases Replace a live site's aliases
+	// (PUT /api/v1/sites/{site_id}/aliases)
+	SetSiteAliases(ctx context.Context, request SetSiteAliasesRequestObject) (SetSiteAliasesResponseObject, error)
 	// PurgeSiteCache Purge a site's caches
 	// (POST /api/v1/sites/{site_id}/cache/purge)
 	PurgeSiteCache(ctx context.Context, request PurgeSiteCacheRequestObject) (PurgeSiteCacheResponseObject, error)
@@ -6846,6 +7039,39 @@ func (sh *strictHandler) RetrieveSiteAdminCredentials(w http.ResponseWriter, r *
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RetrieveSiteAdminCredentialsResponseObject); ok {
 		if err := validResponse.VisitRetrieveSiteAdminCredentialsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetSiteAliases operation middleware
+func (sh *strictHandler) SetSiteAliases(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request SetSiteAliasesRequestObject
+
+	request.SiteID = siteID
+
+	var body SetSiteAliasesJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetSiteAliases(ctx, request.(SetSiteAliasesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetSiteAliases")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetSiteAliasesResponseObject); ok {
+		if err := validResponse.VisitSetSiteAliasesResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

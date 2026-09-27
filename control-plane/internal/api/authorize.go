@@ -47,6 +47,7 @@ var operationActions = map[string]authz.Action{
 	"regenerateSitePreviewPassword": authz.UpdateSite,
 	"setSiteMaintenance":            authz.SetSiteMaintenance,
 	"goLiveSite":                    authz.ManageSiteDomains,
+	"setSiteAliases":                authz.ManageSiteDomains,
 
 	"listJobs": authz.ViewJobs,
 	"getJob":   authz.ViewJobs,

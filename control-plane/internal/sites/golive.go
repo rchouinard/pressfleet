@@ -66,7 +66,8 @@ import (
 // Going live again with another primary domain moves the site there: the
 // old primary domain's URLs are rewritten too, and it stops being routed
 // unless it is listed as an alias. Going live again with the same primary
-// domain and other aliases changes the aliases. Going back to the preview
+// domain and other aliases changes the aliases, as does [Service.SetAliases]
+// (aliases.go) without touching WordPress. Going back to the preview
 // domain alone isn't supported.
 
 // GoLiveJobType switches a site to its primary domain.

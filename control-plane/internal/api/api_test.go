@@ -134,6 +134,7 @@ var sampleBodies = map[string]string{
 	"updateSite":         `{"php_version":"8.4","resources":{"memory_limit_mb":256}}`,
 	"setSiteMaintenance": `{"enabled":true}`,
 	"goLiveSite":         `{"primary_domain":"www.acme.example"}`,
+	"setSiteAliases":     `{"aliases":["acme.example"]}`,
 }
 
 func TestOpenAPIDocumentIsValid(t *testing.T) {

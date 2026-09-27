@@ -1076,6 +1076,64 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/sites/{site_id}/aliases:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    put:
+      operationId: setSiteAliases
+      tags: [sites]
+      summary: Replace a live site's aliases
+      description: |
+        Replaces the aliases of a site that has gone live and queues a job
+        that routes them (design doc §5.2). Each alias gets a certificate
+        of its own with the ACME HTTP-01 challenge and answers with a
+        permanent redirect (`301`) to the primary domain, keeping the path
+        and query (with HSTS when the platform's security headers are on).
+        Aliases no longer listed stop being served. The change takes effect
+        within seconds of the job finishing, without recreating the site's
+        containers, so the site keeps serving throughout. WordPress's
+        content and caches aren't touched: aliases only redirect.
+
+        New aliases get the same DNS check as go-live, and fail it the same
+        way (`422` with the DNS problem type, nothing changed);
+        `skip_dns_check` skips it. Aliases the site has already aren't
+        checked again. The site's status is `updating` until the job has
+        finished; if the job fails, the previous aliases are restored.
+
+        A site that hasn't gone live returns `409`; so does one that is
+        `provisioning`, `updating`, or `deleting`, or whose provisioning
+        failed. A stopped site can change its aliases.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SiteAliases"
+      responses:
+        "202":
+          description: The site with its new aliases, and the job that applies them.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableDomains"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/sites/{site_id}/preview-password:
     parameters:
       - $ref: "#/components/parameters/SiteID"
@@ -1889,7 +1947,7 @@ components:
             - type: "null"
         aliases:
           type: array
-          description: Additional domains that redirect to the primary domain, sorted. Empty until the site goes live.
+          description: Additional domains that redirect to the primary domain, sorted. Empty until the site goes live; `PUT /api/v1/sites/{site_id}/aliases` changes them.
           items:
             type: string
         php_version:
@@ -2019,6 +2077,23 @@ components:
             Skip the check that the domains resolve to this host, for hosts
             behind a CDN or load balancer. The certificates still need the
             domains to reach this host on port 80.
+
+    SiteAliases:
+      type: object
+      required: [aliases]
+      additionalProperties: false
+      properties:
+        aliases:
+          type: array
+          description: The site's aliases from now on; an empty list removes them all.
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/Domain"
+          examples: [["acme.example", "shop.acme.example"]]
+        skip_dns_check:
+          type: boolean
+          default: false
+          description: Skip the DNS check of new aliases, for hosts behind a CDN or load balancer.
 
     SiteMaintenance:
       type: object
@@ -2192,7 +2267,7 @@ components:
         type:
           type: string
           description: What the job does. New types are added over time; treat unknown values as opaque.
-          examples: ["site.create", "site.update", "site.delete", "site.start", "site.stop", "site.go_live"]
+          examples: ["site.create", "site.update", "site.delete", "site.start", "site.stop", "site.go_live", "site.aliases"]
         target:
           $ref: "#/components/schemas/JobTarget"
         state:
