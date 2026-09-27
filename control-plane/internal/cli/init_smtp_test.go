@@ -121,6 +121,7 @@ func TestInitSMTPInteractive(t *testing.T) {
 		"not an address",  // rejected
 		"wp@agency.example",
 		"", // no sender name
+		"", // no DNS provider
 		"yes",
 	}, "\n") + "\n"
 	r := e.run(answers, "--control-plane-image", "pressfleet-control-plane:test")

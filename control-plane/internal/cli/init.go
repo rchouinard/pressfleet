@@ -70,11 +70,13 @@ type initFlags struct {
 	confirmKeyStored   bool
 	adminPasswordStdin bool
 	controlPlaneImage  string
+	// acmeStaging is --acme-staging; acmeStagingSet says it was given.
+	acmeStaging    bool
+	acmeStagingSet bool
 }
 
-// initAnswers are the settings init collects. Later milestones add DNS
-// provider credentials, the backup repository, and alert channels here and
-// in initQuestions.
+// initAnswers are the settings init collects. Later milestones add the
+// backup repository and alert channels here and in initQuestions.
 type initAnswers struct {
 	DashboardDomain   string
 	PreviewBaseDomain string
@@ -85,6 +87,7 @@ type initAnswers struct {
 	smtpAnswers
 	ACMEEmail    string
 	ACMECAServer string
+	dnsAnswers
 }
 
 // initQuestion is one setting init collects: from its flag if given, else by
@@ -249,6 +252,7 @@ See docs/installation.md.`,
 			if fl := cmd.Flags().Lookup("data-dir"); fl.Changed {
 				given["data-dir"] = fl.Value.String()
 			}
+			f.acmeStagingSet = cmd.Flags().Changed("acme-staging")
 			return a.runInit(cmd.Context(), f, given)
 		},
 	}
@@ -267,6 +271,8 @@ See docs/installation.md.`,
 	fl.BoolVar(&f.skipPreflight, "skip-preflight", false, "install even if required host checks fail (development only)")
 	fl.StringVar(&f.controlPlaneImage, "control-plane-image", "",
 		"control plane image (development only; default: the image released with this CLI)")
+	fl.BoolVar(&f.acmeStaging, "acme-staging", false,
+		"get certificates from Let's Encrypt's staging environment, which browsers don't trust (also $PRESSFLEET_ACME_STAGING)")
 	return cmd
 }
 
@@ -334,6 +340,12 @@ func (i *installer) run(ctx context.Context, given map[string]string) error {
 	if err := answers.readSMTPPassword(); err != nil {
 		return err
 	}
+	if i.f.acmeStagingSet {
+		answers.ACMEStaging = i.f.acmeStaging
+	}
+	if err := answers.readDNSCredentials(); err != nil {
+		return err
+	}
 	var adminPassword redact.Secret
 	if i.f.adminPasswordStdin {
 		if adminPassword, err = i.readPassword(); err != nil {
@@ -362,10 +374,16 @@ func (i *installer) run(ctx context.Context, given map[string]string) error {
 	if err := answers.sealSMTPPassword(key); err != nil {
 		return err
 	}
+	if err := answers.sealDNSCredentials(key); err != nil {
+		return err
+	}
 	if err := i.writeConfig(answers); err != nil {
 		return err
 	}
 	if err := i.startPlatform(ctx, answers); err != nil {
+		return err
+	}
+	if err := i.recreateTraefik(ctx, answers); err != nil {
 		return err
 	}
 	generated := adminPassword == ""
@@ -381,7 +399,8 @@ func (i *installer) run(ctx context.Context, given map[string]string) error {
 	i.printf("  Config file:      %s\n", i.configPath)
 	i.printf("  Data directory:   %s\n", answers.DataDir)
 	i.printf("  Master key file:  %s (key ID %s)\n", answers.MasterKeyFile, key.ID())
-	i.printf("  Dashboard domain: %s\n", answers.DashboardDomain)
+	i.printf("  Dashboard:        https://%s/\n", answers.DashboardDomain)
+	i.printDNSSummary(answers)
 	if smtp := answers.smtpConfig(); smtp.Enabled() {
 		i.printf("  SMTP relay:       %s:%d (%s)\n", smtp.Host, smtp.EffectivePort(), smtp.Encryption)
 	}
@@ -420,6 +439,7 @@ func (i *installer) defaults() (initAnswers, error) {
 		smtpAnswers:       smtpDefaults(cfg.SMTP),
 		ACMEEmail:         cfg.ACME.Email,
 		ACMECAServer:      cfg.ACME.CAServer,
+		dnsAnswers:        dnsDefaults(cfg.ACME),
 	}
 	if a.MasterKeyFile == "" {
 		a.MasterKeyFile = filepath.Join(filepath.Dir(i.configPath), "master.key")
@@ -545,8 +565,7 @@ func (a initAnswers) config(base config.Config) config.Config {
 	base.PublicIP = a.PublicIP
 	base.MasterKeyFile = a.MasterKeyFile
 	base.SMTP = a.smtpConfig()
-	base.ACME.Email = a.ACMEEmail
-	base.ACME.CAServer = a.ACMECAServer
+	base.ACME = a.acmeConfig()
 	return base
 }
 
@@ -664,22 +683,6 @@ type fileConfig struct {
 	ACME *fileACMEConfig `yaml:"acme,omitempty"`
 }
 
-// fileACMEConfig is the acme section init writes, when any of it is set.
-type fileACMEConfig struct {
-	Email    string `yaml:"email,omitempty"`
-	CAServer string `yaml:"ca_server,omitempty"`
-}
-
-// acmeFileConfig returns the acme section for the config file, or nil if
-// every ACME setting keeps its default.
-func (a initAnswers) acmeFileConfig() *fileACMEConfig {
-	c := fileACMEConfig{Email: a.ACMEEmail, CAServer: a.ACMECAServer}
-	if c == (fileACMEConfig{}) {
-		return nil
-	}
-	return &c
-}
-
 const configHeader = `# PressFleet configuration, written by pressfleet init.
 # See docs/configuration.md for every setting.
 `
@@ -765,6 +768,7 @@ func (i *installer) startPlatform(ctx context.Context, a initAnswers) error {
 		return err
 	}
 	name := i.projectName()
+	acme := a.acmeConfig()
 	if err := platform.Render(dir, platform.Config{
 		ProjectName:         name,
 		DataDir:             a.DataDir,
@@ -776,7 +780,14 @@ func (i *installer) startPlatform(ctx context.Context, a initAnswers) error {
 		PreviewBaseDomain:   a.PreviewBaseDomain,
 		SMTP:                a.smtpConfig(),
 		DashboardDomain:     a.DashboardDomain,
-		ACME:                platform.ACMEConfig{Email: a.ACMEEmail, CAServer: a.ACMECAServer},
+		ACME: platform.ACMEConfig{
+			Email:          acme.Email,
+			CAServer:       acme.Directory(),
+			CACertificates: acme.CACertificates,
+			DNSProvider:    acme.DNSProvider,
+			DNSCredentials: acme.DNSCredentials,
+			DNSResolvers:   acme.DNSResolvers,
+		},
 	}); err != nil {
 		return err
 	}

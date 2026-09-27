@@ -73,3 +73,13 @@ certificatesResolvers:
       storage: /var/lib/traefik/acme.json
       httpChallenge:
         entryPoint: web
+  # Preview domains (<slug>.<preview base domain>).
+  acme-preview:
+    acme:
+      email: "ops@agency.example"
+      caServer: "https://acme-v02.api.letsencrypt.org/directory"
+      storage: /var/lib/traefik/acme.json
+      # No DNS provider: one certificate per preview domain, with HTTP-01,
+      # subject to Let's Encrypt's rate limits.
+      httpChallenge:
+        entryPoint: web

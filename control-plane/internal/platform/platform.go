@@ -66,7 +66,7 @@ const RedisAdminUser = "pressfleet"
 
 // LetsEncryptCAServer is the ACME directory Traefik uses unless
 // ACMEConfig.CAServer names another.
-const LetsEncryptCAServer = "https://acme-v02.api.letsencrypt.org/directory"
+const LetsEncryptCAServer = config.LetsEncryptDirectory
 
 // DefaultListen is the control plane's listen address inside its container.
 const DefaultListen = ":8080"
@@ -173,7 +173,24 @@ type ACMEConfig struct {
 	// account without one.
 	Email string
 	// CAServer is the ACME directory URL; empty means LetsEncryptCAServer.
+	// The host CLI resolves acme.staging to Let's Encrypt's staging
+	// directory (config.ACMEConfig.Directory).
 	CAServer string
+	// CACertificates is the host path of a PEM file of extra roots Traefik
+	// trusts for the ACME server, e.g. Pebble's test CA. Empty trusts the
+	// system roots only.
+	CACertificates string
+	// DNSProvider is the lego DNS provider code. When set, Traefik gets one
+	// wildcard certificate for the preview base domain with DNS-01, using
+	// the credentials the control plane decrypts for it (package ingress);
+	// otherwise each preview domain gets its own HTTP-01 certificate.
+	DNSProvider string
+	// DNSCredentials are the provider's credentials sealed with the master
+	// key (config.ACMEConfig.DNSCredentials), passed to the control plane.
+	DNSCredentials string
+	// DNSResolvers are the DNS servers (host:port) that DNS-01 propagation
+	// checks use; empty means the container's resolvers.
+	DNSResolvers []string
 }
 
 // withDefaults fills zero fields and validates the result.
@@ -243,11 +260,22 @@ func (c Config) withDefaults() (Config, error) {
 	if c.DashboardDomain != "" && !config.ValidDomain(c.DashboardDomain) {
 		errs = append(errs, fmt.Errorf("dashboard domain must be a domain name like fleet.example.com, got %q", c.DashboardDomain))
 	}
-	if err := config.CheckACMEEmail(c.ACME.Email); err != nil {
+	acme := config.ACMEConfig{
+		Email:          c.ACME.Email,
+		CAServer:       c.ACME.CAServer,
+		CACertificates: c.ACME.CACertificates,
+		DNSProvider:    c.ACME.DNSProvider,
+		DNSCredentials: c.ACME.DNSCredentials,
+		DNSResolvers:   c.ACME.DNSResolvers,
+	}
+	if err := acme.Validate(); err != nil {
 		errs = append(errs, err)
 	}
-	if err := config.CheckACMEServer(c.ACME.CAServer); err != nil {
-		errs = append(errs, err)
+	if c.ACME.CACertificates != "" && filepath.Clean(c.ACME.CACertificates) != c.ACME.CACertificates {
+		errs = append(errs, fmt.Errorf("ACME CA certificates file must be a clean absolute path, got %q", c.ACME.CACertificates))
+	}
+	if c.ACME.DNSProvider != "" && c.PreviewBaseDomain == "" {
+		errs = append(errs, errors.New("a DNS provider needs the preview base domain, which it gets the wildcard certificate for"))
 	}
 	if c.MariaDBRootPassword.Reveal() == "" {
 		errs = append(errs, errors.New("MariaDB root password is required"))
@@ -308,6 +336,12 @@ type templateData struct {
 	EntryPointInternal string
 	InternalPort       int
 	CertResolverHTTP   string
+
+	// DNS-01 (package ingress).
+	CertResolverPreview   string
+	PreviewWildcardRouter string
+	DNSCredentialsDir     string
+	DNSCredentialsReady   string
 }
 
 // output is one rendered file, relative to the project directory.
@@ -329,6 +363,9 @@ const (
 	RedisConfigFile           = "redis/valkey.conf"
 	RedisAdminPasswordSecret  = "secrets/redis_admin_password"
 	TraefikConfigFile         = "traefik/traefik.yaml"
+	// Rendered only with a DNS provider.
+	TraefikDynamicConfigFile = "traefik/dynamic.yaml"
+	TraefikEntrypointFile    = "traefik/entrypoint.sh"
 )
 
 // Render writes the platform Compose project into dir, normally
@@ -374,6 +411,11 @@ func Render(dir string, cfg Config) error {
 		EntryPointInternal:     ingress.EntryPointInternal,
 		InternalPort:           ingress.InternalPort,
 		CertResolverHTTP:       ingress.CertResolverHTTP,
+
+		CertResolverPreview:   ingress.CertResolverPreview,
+		PreviewWildcardRouter: ingress.PreviewWildcardRouter,
+		DNSCredentialsDir:     ingress.DNSCredentialsDir,
+		DNSCredentialsReady:   ingress.DNSCredentialsReady,
 	}
 	if cfg.SMTP.Enabled() {
 		data.SMTP = &cfg.SMTP
@@ -392,6 +434,20 @@ func Render(dir string, cfg Config) error {
 		{path: MariaDBRootPasswordSecret, secret: cfg.MariaDBRootPassword},
 		{path: RedisConfigFile, template: "valkey.conf.tmpl"},
 		{path: RedisAdminPasswordSecret, secret: cfg.RedisAdminPassword},
+	}
+	dnsFiles := []output{
+		{path: TraefikDynamicConfigFile, template: "traefik-dynamic.yaml.tmpl"},
+		{path: TraefikEntrypointFile, template: "traefik-entrypoint.sh.tmpl"},
+	}
+	if cfg.ACME.DNSProvider != "" {
+		outputs = append(outputs, dnsFiles...)
+	} else {
+		// Left over from rendering with a DNS provider before.
+		for _, o := range dnsFiles {
+			if err := os.Remove(filepath.Join(dir, o.path)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("removing %s: %w", o.path, err)
+			}
+		}
 	}
 	for _, o := range outputs {
 		var content []byte

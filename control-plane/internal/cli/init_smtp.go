@@ -127,7 +127,7 @@ var smtpInitQuestions = []initQuestion{
 
 // allInitQuestions returns every question init asks, in order.
 func allInitQuestions() []initQuestion {
-	return slices.Concat(initQuestions, smtpInitQuestions)
+	return slices.Concat(initQuestions, smtpInitQuestions, dnsInitQuestions)
 }
 
 // smtpDefaults prefills the SMTP answers from the environment or the

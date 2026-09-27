@@ -74,6 +74,11 @@ wordpress_security:            # install-wide; see "WordPress security set"
 acme:
   email: ops@agency.example   # optional
   # ca_server: https://acme-v02.api.letsencrypt.org/directory
+  # staging: false
+  dns_provider: cloudflare    # optional; see "Preview certificates"
+  dns_credentials: pfenc1:... # encrypted with the master key by pressfleet init
+  # dns_resolvers: ["1.1.1.1:53"]
+  # ca_certificates: /etc/pressfleet/pebble.minica.pem
 ```
 
 ## Settings
@@ -104,6 +109,11 @@ acme:
 | `redis.admin_password_file` | `PRESSFLEET_REDIS_ADMIN_PASSWORD_FILE` | | `/run/secrets/redis_admin_password` | File holding the admin password; a trailing newline is ignored. Must be an absolute path. The default is where the platform Compose project mounts the password `pressfleet init` generates. |
 | `acme.email` | `PRESSFLEET_ACME_EMAIL` | `--acme-email` (`init` only) | (unset) | Optional contact address of the ACME account Traefik registers, for important notices from the certificate authority. |
 | `acme.ca_server` | `PRESSFLEET_ACME_CA_SERVER` | `--acme-ca-server` (`init` only) | Let's Encrypt | ACME directory URL (`https://` only) of the certificate authority Traefik gets certificates from. Change it only to test against another CA, such as [Pebble](https://github.com/letsencrypt/pebble). |
+| `acme.staging` | `PRESSFLEET_ACME_STAGING` | `--acme-staging` (`init` only) | `false` | Use [Let's Encrypt's staging environment](https://letsencrypt.org/docs/staging-environment/): much higher rate limits, but browsers don't trust its certificates. For trying out an install. Can't be combined with `acme.ca_server`. |
+| `acme.ca_certificates` | `PRESSFLEET_ACME_CA_CERTIFICATES` | `--acme-ca-certificates` (`init` only) | (unset) | Absolute path on the host of a PEM file of extra root certificates Traefik trusts when talking to the ACME server, on top of the system's, e.g. Pebble's `pebble.minica.pem`. |
+| `acme.dns_provider` | `PRESSFLEET_ACME_DNS_PROVIDER` | `--dns-provider` (`init` only) | (unset) | [lego DNS provider](https://go-acme.github.io/lego/dns/) code, such as `cloudflare`, `route53`, or `digitalocean`. With it, Traefik gets one wildcard certificate for the preview base domain with the DNS-01 challenge; without it, each preview domain gets its own HTTP-01 certificate. Needs `preview_base_domain`. See [Preview certificates](#preview-certificates). |
+| `acme.dns_credentials` | `PRESSFLEET_ACME_DNS_CREDENTIALS` | `--dns-credentials-file` (`init` only) | (unset) | The DNS provider's credentials, encrypted with the master key (`pfenc1:...`). `pressfleet init` reads them from `--dns-credentials-file` and writes only the encrypted value; a plaintext value is rejected. The control plane decrypts them at startup and refuses to start if it can't. |
+| `acme.dns_resolvers` | `PRESSFLEET_ACME_DNS_RESOLVERS` (comma-separated) | `--acme-dns-resolvers` (`init` only) | the host's resolvers | DNS servers (`host:port`) Traefik asks to check that a DNS-01 challenge record has propagated. Set public resolvers such as `1.1.1.1:53` if the host's resolver answers from a stale cache or a split-horizon zone. |
 | `platform_project` | `PRESSFLEET_PLATFORM_PROJECT` | | `pressfleet` | Compose project name of the platform services. The control plane uses it to find the platform's MariaDB and object cache containers (`<project>-mariadb-1`, `<project>-redis-1`), which it connects to each site's network. The platform Compose project sets it for the control plane; change it only for a platform installed under another project name. |
 | `smtp.host` | `PRESSFLEET_SMTP_HOST` | `--smtp-host` (`init` only) | (unset) | SMTP relay every site sends email through (host name or IP address). Unset means sites send no email: the site images have no local mail server. See [Outbound email](#outbound-email). |
 | `smtp.port` | `PRESSFLEET_SMTP_PORT` | `--smtp-port` (`init` only) | by encryption | Relay port. Unset (`0`) means 587 for `starttls`, 465 for `tls`, and 25 for `none`. |
@@ -154,11 +164,39 @@ The `wordpress_security` settings are the platform's WordPress hardening (design
 
 Traefik is the platform's edge router (design doc §3). It publishes ports 80 and 443 (TCP, and UDP 443 for HTTP/3) on every interface of the host, and redirects every plain-HTTP request to HTTPS permanently, except ACME HTTP-01 challenges. HTTPS serves HTTP/1.1, HTTP/2, and HTTP/3, and advertises HTTP/3 with an `Alt-Svc` header.
 
-The dashboard domain is routed to the control plane. Its certificate comes from Let's Encrypt (or `acme.ca_server`) through the HTTP-01 challenge, so the domain must resolve to this host and port 80 must be reachable from the internet. Traefik keeps its ACME account and certificates in the platform's `traefik-acme` volume. A request for any other host name gets `404` and Traefik's self-signed default certificate.
+The dashboard domain is routed to the control plane. Its certificate comes from Let's Encrypt (or `acme.ca_server`, or Let's Encrypt's staging environment with `acme.staging`) through the HTTP-01 challenge, so the domain must resolve to this host and port 80 must be reachable from the internet. Traefik keeps its ACME account and certificates in the platform's `traefik-acme` volume. A request for any other host name gets `404` and Traefik's self-signed default certificate.
 
 Traefik learns routes from Docker container labels, but never touches the Docker socket: access to it is equivalent to root on the host (design doc §6). A socket proxy ([wollomatic/socket-proxy](https://github.com/wollomatic/socket-proxy)) mounts the socket read-only and forwards only the read-only requests Traefik's Docker provider makes (list and inspect containers, the event stream, the API version), and only from the Traefik container, over a network no other service joins. Everything else, including every write, container logs, and file downloads, is refused. Only the control plane has read-write access to the socket. Traefik only routes containers labelled `pressfleet.platform=<platform_project>`, so it ignores containers of anything else on the host.
 
 Traefik writes JSON access logs to its container log, which Docker rotates like every platform log, without request headers (they carry cookies and credentials). It serves Prometheus metrics at `http://traefik:8082/metrics` on the platform network; the port isn't published on the host.
+
+## Preview certificates
+
+Every site is reachable on `https://<slug>.<preview_base_domain>/` as soon as it is provisioned. Traefik gets certificates for preview domains in one of two ways (design doc §4.1):
+
+- **With a DNS provider** (`acme.dns_provider` and `acme.dns_credentials`, recommended): when Traefik starts, it gets one wildcard certificate for `*.<preview_base_domain>` (and the base domain itself) with the DNS-01 challenge, by creating a TXT record through the provider's API. Every preview domain, including those of sites created later, is then served with that certificate at once; nothing is issued per site, so Let's Encrypt's rate limits don't come into play. Traefik renews it before it expires.
+- **Without one**: each preview domain gets its own certificate with the HTTP-01 challenge the first time it is routed. That takes a few seconds per site, and is subject to Let's Encrypt's [rate limits](https://letsencrypt.org/docs/rate-limits/) (50 certificates per registered domain per week), which a busy agency can reach.
+
+`pressfleet init` asks for the provider and a credentials file. The file holds one `VARIABLE=value` line for each environment variable the provider reads, as listed on the provider's page in the [lego documentation](https://go-acme.github.io/lego/dns/); blank lines and `#` comments are ignored. For Cloudflare, with an API token that can edit the zone's DNS:
+
+```
+CF_DNS_API_TOKEN=...
+```
+
+Give the token the narrowest permissions the provider allows: it can change DNS records of the zone.
+
+### How the credentials are kept
+
+The credentials are encrypted with the master key everywhere PressFleet stores them, like the SMTP password: in the config file, in the platform Compose project, and in the data directory's backups. Only the control plane decrypts them, and only to hand them to Traefik:
+
+1. When the control plane starts, it decrypts them and writes one file per variable into a memory-only (tmpfs) Docker volume shared with Traefik, which mounts it read-only. No other service mounts it.
+2. Traefik's entrypoint waits for them (for up to 60 seconds, so a reboot that starts Traefik before the control plane doesn't stall site traffic), then starts Traefik with `<VARIABLE>_FILE` pointing at each file. Traefik's DNS client reads the files when it first needs the provider.
+
+So the plaintext is never written to disk, never appears in a container's configuration or environment (`docker inspect` shows only the `_FILE` paths), and disappears when the platform stops. The trade-off: while the platform runs, anyone who can read the volume on the host (root) or get into the control plane or Traefik container can read them, as they could read the master key; and Traefik holds them in memory, where a compromised Traefik could use them.
+
+To change the provider or its credentials, rerun `pressfleet init --force` with `--dns-provider` and `--dns-credentials-file`; init recreates Traefik so it reads the new ones. If the control plane can't decrypt the credentials, it refuses to start, and Traefik starts without them after its wait: sites stay up with the certificates Traefik already has, but it can't get new wildcard certificates.
+
+Testing against [Pebble](https://github.com/letsencrypt/pebble): point `acme.ca_server` at Pebble's directory and `acme.ca_certificates` at its `pebble.minica.pem`, and use a DNS provider that can write to Pebble's DNS server, such as lego's `exec` provider with a script that calls `pebble-challtestsrv`.
 
 ## Sessions and HTTPS
 
@@ -191,7 +229,7 @@ Admins can list and filter the log with `GET /api/v1/audit-events`. A daily job 
 
 > **Warning:** The master key is required to decrypt backup repository keys. If the host is lost and the master key was not saved elsewhere, **all backups are unrecoverable**. Store the key somewhere safe (e.g. a password manager), separate from the host and its backups.
 
-The platform master key encrypts every secret in the state database: site database and Redis passwords, backup repository keys, and DNS provider and S3 credentials. `pressfleet serve` refuses to start without it.
+The platform master key encrypts every secret in the state database: site database and Redis passwords, backup repository keys, and S3 credentials. It also encrypts the credentials `pressfleet init` writes to the config file: the SMTP password and the DNS provider credentials. `pressfleet serve` refuses to start without it.
 
 `pressfleet init` generates the key during installation. To make one by hand (for development, say), run `pressfleet key generate`. It prints a key like `pfmk1:` followed by 48 characters and doesn't touch the configuration or the state database:
 

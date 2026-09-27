@@ -32,6 +32,14 @@ services:
 {{- if .DashboardDomain }}
       PRESSFLEET_DASHBOARD_DOMAIN: {{ q .DashboardDomain }}
 {{- end }}
+{{- if .ACME.DNSProvider }}
+      # The control plane decrypts the DNS provider credentials (encrypted
+      # with the master key) for Traefik when it starts.
+      PRESSFLEET_ACME_DNS_PROVIDER: {{ q .ACME.DNSProvider }}
+{{- if .ACME.DNSCredentials }}
+      PRESSFLEET_ACME_DNS_CREDENTIALS: {{ q .ACME.DNSCredentials }}
+{{- end }}
+{{- end }}
 {{- if .SkipPreflight }}
       # Development/CI only: start even if required host checks fail.
       PRESSFLEET_SKIP_PREFLIGHT: "true"
@@ -69,6 +77,13 @@ services:
       - type: bind
         source: /var/run/docker.sock
         target: /var/run/docker.sock
+{{- if .ACME.DNSProvider }}
+      # The control plane decrypts the DNS provider credentials here for
+      # Traefik.
+      - type: volume
+        source: acme-dns-credentials
+        target: {{ q .DNSCredentialsDir }}
+{{- end }}
     secrets:
       - mariadb_root_password
       - master_key
@@ -178,7 +193,12 @@ services:
   # Docker socket itself (§6).
   {{ .TraefikService }}:
     image: {{ q .Images.Traefik }}
+{{- if .ACME.DNSProvider }}
+    # Waits for the DNS provider credentials, then starts Traefik.
+    entrypoint: ["/bin/sh", "/etc/traefik/entrypoint.sh"]
+{{- else }}
     command: ["traefik", "--configFile=/etc/traefik/traefik.yaml"]
+{{- end }}
     restart: unless-stopped
     ports:
       - "80:80/tcp"
@@ -189,11 +209,36 @@ services:
       # Lets the Go runtime collect garbage harder before the memory limit
       # is reached instead of being killed at it.
       GOMEMLIMIT: "{{ .TraefikGoMemLimitMB }}MiB"
+{{- if .ACME.CACertificates }}
+      # Extra roots to trust for the ACME server, on top of the system's.
+      LEGO_CA_CERTIFICATES: /etc/traefik/acme-ca.pem
+      LEGO_CA_SYSTEM_CERT_POOL: "true"
+{{- end }}
     volumes:
       - type: bind
         source: ./traefik/traefik.yaml
         target: /etc/traefik/traefik.yaml
         read_only: true
+{{- if .ACME.DNSProvider }}
+      - type: bind
+        source: ./traefik/dynamic.yaml
+        target: /etc/traefik/dynamic.yaml
+        read_only: true
+      - type: bind
+        source: ./traefik/entrypoint.sh
+        target: /etc/traefik/entrypoint.sh
+        read_only: true
+      - type: volume
+        source: acme-dns-credentials
+        target: {{ q .DNSCredentialsDir }}
+        read_only: true
+{{- end }}
+{{- if .ACME.CACertificates }}
+      - type: bind
+        source: {{ q .ACME.CACertificates }}
+        target: /etc/traefik/acme-ca.pem
+        read_only: true
+{{- end }}
       # ACME account keys and certificates (acme.json).
       - type: volume
         source: traefik-acme
@@ -273,6 +318,15 @@ networks:
 volumes:
   mariadb-data: {}
   traefik-acme: {}
+{{- if .ACME.DNSProvider }}
+  # Decrypted DNS provider credentials, in memory only: never written to
+  # disk, and gone when the platform stops.
+  acme-dns-credentials:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=1m,mode=0700"
+{{- end }}
 
 secrets:
   mariadb_root_password:

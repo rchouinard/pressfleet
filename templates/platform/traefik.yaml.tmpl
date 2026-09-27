@@ -62,16 +62,48 @@ providers:
     # sharing a Docker engine (as the tests do) never pick up each other's
     # routes.
     constraints: {{ yq .Constraint }}
+{{- if .ACME.DNSProvider }}
+  # The router that requests the preview wildcard certificate.
+  file:
+    filename: /etc/traefik/dynamic.yaml
+    watch: false
+{{- end }}
+
+{{- define "acme-account" }}
+{{- if .ACME.Email }}
+      email: {{ yq .ACME.Email }}
+{{- end }}
+      caServer: {{ yq .ACME.CAServer }}
+      storage: /var/lib/traefik/acme.json
+{{- end }}
 
 certificatesResolvers:
   # HTTP-01, one certificate per host name: the dashboard domain and, from
   # go-live on, sites' primary domains and aliases.
   {{ .CertResolverHTTP }}:
     acme:
-{{- if .ACME.Email }}
-      email: {{ yq .ACME.Email }}
-{{- end }}
-      caServer: {{ yq .ACME.CAServer }}
-      storage: /var/lib/traefik/acme.json
+{{- template "acme-account" . }}
       httpChallenge:
         entryPoint: {{ .EntryPointHTTP }}
+  # Preview domains (<slug>.<preview base domain>).
+  {{ .CertResolverPreview }}:
+    acme:
+{{- template "acme-account" . }}
+{{- if .ACME.DNSProvider }}
+      # One wildcard certificate for every preview domain, with DNS-01 (see
+      # dynamic.yaml). The provider's credentials come from the files the
+      # entrypoint names in <VARIABLE>_FILE variables.
+      dnsChallenge:
+        provider: {{ yq .ACME.DNSProvider }}
+{{- if .ACME.DNSResolvers }}
+        resolvers:
+{{- range .ACME.DNSResolvers }}
+          - {{ yq . }}
+{{- end }}
+{{- end }}
+{{- else }}
+      # No DNS provider: one certificate per preview domain, with HTTP-01,
+      # subject to Let's Encrypt's rate limits.
+      httpChallenge:
+        entryPoint: {{ .EntryPointHTTP }}
+{{- end }}

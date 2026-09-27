@@ -123,6 +123,11 @@ func (a *app) serveCommand() *cobra.Command {
 				return err
 			}
 			secretStore := secrets.NewStore(db, keys)
+			// Before serving, so Traefik, which waits for them, starts as
+			// soon as possible.
+			if err := a.syncDNSCredentials(cmd.Context(), keys); err != nil {
+				return err
+			}
 			// Neither the provisioner nor the MariaDB manager touches Docker
 			// or MariaDB until a job uses them, so serve starts (and passes
 			// /readyz) while either is down.

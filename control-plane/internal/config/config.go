@@ -204,8 +204,91 @@ func validHost(s string) bool {
 type ACMEConfig struct {
 	// Email is the contact address of the ACME account; optional.
 	Email string `yaml:"email"`
-	// CAServer is the ACME directory URL. Empty means Let's Encrypt.
+	// CAServer is the ACME directory URL. Empty means Let's Encrypt, or its
+	// staging environment with Staging.
 	CAServer string `yaml:"ca_server"`
+	// Staging uses Let's Encrypt's staging environment, whose certificates
+	// browsers don't trust but whose rate limits are far higher.
+	Staging bool `yaml:"staging"`
+	// CACertificates is a PEM file of extra root certificates to trust when
+	// talking to the ACME server, e.g. Pebble's test CA. It is a path on the
+	// host, mounted into Traefik.
+	CACertificates string `yaml:"ca_certificates"`
+	// DNSProvider is the lego DNS provider code (e.g. "cloudflare") used to
+	// obtain one wildcard certificate for the preview base domain with the
+	// DNS-01 challenge. Empty means each preview domain gets its own
+	// certificate with HTTP-01.
+	DNSProvider string `yaml:"dns_provider"`
+	// DNSCredentials are the DNS provider's credentials, VARIABLE=value
+	// lines (ingress.ParseDNSCredentials), encrypted with the master key
+	// under the name ACMEDNSCredentialsSetting ("pfenc1:..."), as pressfleet
+	// init writes them. The control plane decrypts them for Traefik.
+	DNSCredentials string `yaml:"dns_credentials"`
+	// DNSResolvers are the DNS servers (host:port) used to check that DNS-01
+	// challenge records have propagated. Empty means the host's resolvers.
+	DNSResolvers []string `yaml:"dns_resolvers"`
+}
+
+// ACMEDNSCredentialsSetting names acme.dns_credentials when it is sealed
+// with the master key (secrets.Keyring.SealSetting).
+const ACMEDNSCredentialsSetting = "acme.dns_credentials" //nolint:gosec // G101: a setting name, not a credential
+
+// ACME directories of Let's Encrypt.
+const (
+	LetsEncryptDirectory        = "https://acme-v02.api.letsencrypt.org/directory"
+	LetsEncryptStagingDirectory = "https://acme-staging-v02.api.letsencrypt.org/directory"
+)
+
+// Directory returns the ACME directory URL Traefik uses.
+func (a ACMEConfig) Directory() string {
+	switch {
+	case a.CAServer != "":
+		return a.CAServer
+	case a.Staging:
+		return LetsEncryptStagingDirectory
+	default:
+		return LetsEncryptDirectory
+	}
+}
+
+// dnsProvider matches lego DNS provider codes, such as "cloudflare",
+// "route53", or "ovh". The list of providers belongs to Traefik's release,
+// so an unknown code is only reported by Traefik.
+var dnsProvider = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+
+// Validate reports problems with the ACME settings.
+func (a ACMEConfig) Validate() error {
+	var errs []error
+	if err := CheckACMEEmail(a.Email); err != nil {
+		errs = append(errs, err)
+	}
+	if err := CheckACMEServer(a.CAServer); err != nil {
+		errs = append(errs, err)
+	}
+	if a.Staging && a.CAServer != "" {
+		errs = append(errs, errors.New("acme.staging and acme.ca_server can't both be set"))
+	}
+	if a.CACertificates != "" && !filepath.IsAbs(a.CACertificates) {
+		errs = append(errs, fmt.Errorf("acme.ca_certificates must be an absolute path, got %q", a.CACertificates))
+	}
+	if a.DNSProvider != "" && !dnsProvider.MatchString(a.DNSProvider) {
+		errs = append(errs, fmt.Errorf("acme.dns_provider must be a DNS provider code like cloudflare, got %q", a.DNSProvider))
+	}
+	if a.DNSCredentials != "" {
+		if !strings.HasPrefix(a.DNSCredentials, sealedSettingPrefix) {
+			// Not quoted back: it is probably plaintext credentials.
+			errs = append(errs, errors.New("acme.dns_credentials must be encrypted with the master key (pressfleet init writes it that way), not plaintext"))
+		}
+		if a.DNSProvider == "" {
+			errs = append(errs, errors.New("acme.dns_credentials needs acme.dns_provider"))
+		}
+	}
+	for _, r := range a.DNSResolvers {
+		if host, port, err := net.SplitHostPort(r); err != nil || host == "" || !validPort(port) {
+			errs = append(errs, fmt.Errorf("acme.dns_resolvers must be host:port addresses like 1.1.1.1:53, got %q", r))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // CheckACMEEmail validates acme.email, which may be empty.
@@ -402,6 +485,9 @@ var envVars = []struct {
 	{"PRESSFLEET_SMTP_FROM_NAME", func(c *Config) *string { return &c.SMTP.FromName }},
 	{"PRESSFLEET_ACME_EMAIL", func(c *Config) *string { return &c.ACME.Email }},
 	{"PRESSFLEET_ACME_CA_SERVER", func(c *Config) *string { return &c.ACME.CAServer }},
+	{"PRESSFLEET_ACME_CA_CERTIFICATES", func(c *Config) *string { return &c.ACME.CACertificates }},
+	{"PRESSFLEET_ACME_DNS_PROVIDER", func(c *Config) *string { return &c.ACME.DNSProvider }},
+	{"PRESSFLEET_ACME_DNS_CREDENTIALS", func(c *Config) *string { return &c.ACME.DNSCredentials }},
 }
 
 // envTrustedProxies sets http.trusted_proxies as a comma-separated list.
@@ -476,14 +562,31 @@ func ApplyEnv(cfg *Config, env LookupEnv) error {
 		cfg.SMTP.Port = n
 	}
 	if val, ok := env(envTrustedProxies); ok {
-		cfg.HTTP.TrustedProxies = nil
-		for p := range strings.SplitSeq(val, ",") {
-			if p = strings.TrimSpace(p); p != "" {
-				cfg.HTTP.TrustedProxies = append(cfg.HTTP.TrustedProxies, p)
-			}
+		cfg.HTTP.TrustedProxies = splitList(val)
+	}
+	if val, ok := env("PRESSFLEET_ACME_STAGING"); ok {
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("PRESSFLEET_ACME_STAGING must be true or false, got %q", val)
 		}
+		cfg.ACME.Staging = b
+	}
+	if val, ok := env("PRESSFLEET_ACME_DNS_RESOLVERS"); ok {
+		cfg.ACME.DNSResolvers = splitList(val)
 	}
 	return cfg.WordPressSecurity.applyEnv(env)
+}
+
+// splitList splits a comma-separated environment variable, dropping empty
+// items.
+func splitList(val string) []string {
+	var out []string
+	for p := range strings.SplitSeq(val, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func loadFile(cfg *Config, path string) error {
@@ -572,11 +675,11 @@ func (c Config) Validate() error {
 	if !filepath.IsAbs(c.Redis.AdminPasswordFile) {
 		errs = append(errs, fmt.Errorf("redis.admin_password_file must be an absolute path, got %q", c.Redis.AdminPasswordFile))
 	}
-	if err := CheckACMEEmail(c.ACME.Email); err != nil {
+	if err := c.ACME.Validate(); err != nil {
 		errs = append(errs, err)
 	}
-	if err := CheckACMEServer(c.ACME.CAServer); err != nil {
-		errs = append(errs, err)
+	if c.ACME.DNSProvider != "" && c.PreviewBaseDomain == "" {
+		errs = append(errs, errors.New("acme.dns_provider needs preview_base_domain: the DNS-01 challenge gets the preview wildcard certificate"))
 	}
 	if !composeProjectName.MatchString(c.PlatformProject) {
 		errs = append(errs, fmt.Errorf("platform_project must be a Compose project name (lowercase letters, digits, - and _), got %q", c.PlatformProject))

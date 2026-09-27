@@ -30,18 +30,25 @@ Run it as root (or a user in the `docker` group who can write `/etc/pressfleet` 
 | First admin's email address | `--admin-email` | | (required) |
 | Contact address for Let's Encrypt | `--acme-email` | `PRESSFLEET_ACME_EMAIL` | (unset) |
 | ACME directory of another CA (not prompted) | `--acme-ca-server` | `PRESSFLEET_ACME_CA_SERVER` | Let's Encrypt |
+| Let's Encrypt's staging environment (not prompted) | `--acme-staging` | `PRESSFLEET_ACME_STAGING` | off |
+| Extra roots to trust for the ACME server (not prompted) | `--acme-ca-certificates` | `PRESSFLEET_ACME_CA_CERTIFICATES` | (unset) |
 | SMTP relay host for site email | `--smtp-host` | `PRESSFLEET_SMTP_HOST` | (unset: sites send no email) |
 | SMTP encryption | `--smtp-encryption` | `PRESSFLEET_SMTP_ENCRYPTION` | `starttls` |
 | SMTP port | `--smtp-port` | `PRESSFLEET_SMTP_PORT` | 587, 465, or 25 by encryption |
 | SMTP user name | `--smtp-username` | `PRESSFLEET_SMTP_USERNAME` | (unset) |
 | File holding the SMTP password | `--smtp-password-file` | | (unset) |
 | Sender address and name for site email | `--smtp-from-email`, `--smtp-from-name` | `PRESSFLEET_SMTP_FROM_EMAIL`, `PRESSFLEET_SMTP_FROM_NAME` | WordPress's defaults |
+| DNS provider for a wildcard preview certificate | `--dns-provider` | `PRESSFLEET_ACME_DNS_PROVIDER` | (unset: one HTTP-01 certificate per preview domain) |
+| File with the DNS provider's credentials | `--dns-credentials-file` | | (unset) |
+| DNS servers for DNS-01 propagation checks (not prompted) | `--acme-dns-resolvers` | `PRESSFLEET_ACME_DNS_RESOLVERS` | the host's resolvers |
 
 The config file is written to `--config`, else `$PRESSFLEET_CONFIG`, else `/etc/pressfleet/pressfleet.yaml`. It holds the settings above; everything else keeps its [default](configuration.md#settings).
 
 The dashboard and preview domains must already resolve to this host: the preflight checks look up the dashboard domain and a random name under the preview base domain. Ports 80 and 443 must be free, and reachable from the internet for Let's Encrypt.
 
 The SMTP settings are optional; see [Outbound email](configuration.md#outbound-email). In interactive mode the other SMTP questions are only asked once a relay host is given. `init` reads the relay password from the first line of `--smtp-password-file`, encrypts it with the master key, and writes only the encrypted value to the config file.
+
+The DNS provider is optional but recommended; see [Preview certificates](configuration.md#preview-certificates). The credentials file is only asked for once a provider is given. `init` reads it (`VARIABLE=value` lines, as named in the lego documentation), encrypts it with the master key, and writes only the encrypted value to the config file; delete the file afterwards.
 
 Other flags:
 
@@ -116,8 +123,9 @@ The master key is printed on standard output (the line starting with `pfmk1:`); 
 - Reuses the MariaDB root password in `<data_dir>/platform/secrets/`, which MariaDB only reads when it initializes its data.
 - Keeps the encrypted SMTP password from the old config file unless `--smtp-password-file` gives a new one, after checking that the master key still decrypts it.
 - Reuses the object cache admin password in `<data_dir>/platform/secrets/redis_admin_password`, so the running control plane's password stays valid. The object cache server itself only gets its SHA-256 hash, in `<data_dir>/platform/redis/valkey.conf`.
+- Keeps the encrypted DNS provider credentials the same way unless `--dns-credentials-file` gives new ones, in which case it recreates Traefik so it reads them.
 - Leaves an existing admin user with the same email alone. To set a new password, run `pressfleet user reset-password` in the control plane container.
 
 ## Not yet collected
 
-The design (§4.1) also has `init` collect DNS provider credentials, the backup repository, and alert channels (the SMTP relay above is for site email; alert email settings are separate). Those settings arrive with the features that use them in later milestones.
+The design (§4.1) also has `init` collect the backup repository and alert channels (the SMTP relay above is for site email; alert email settings are separate). Those settings arrive with the features that use them in later milestones.
