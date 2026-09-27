@@ -5,10 +5,10 @@ PressFleet has three kinds of tests.
 | Kind | Command | Needs | Runs in CI |
 | --- | --- | --- | --- |
 | Unit | `make test` | A C compiler (race detector) | Every push and PR |
-| Docker | `make test-platform`, `make images-test` | Docker Engine with Compose v2 | `images-test` in the Images workflow |
+| Docker | `make test-platform`, `make images-test`, `PRESSFLEET_DOCKER_TESTS=1 go test ./...` | Docker Engine with Compose v2 | `images-test` in the Images workflow |
 | End to end | `make test-e2e` | Docker Engine with Compose v2 | Push to `main`, manual runs, and PRs labeled `e2e` |
 
-Unit tests never need Docker. Tests that do are skipped unless `PRESSFLEET_DOCKER_TESTS=1`. State database tests run against SQLite, and also against PostgreSQL when `PRESSFLEET_TEST_POSTGRES_DSN` is set.
+Unit tests never need Docker. Besides `make test-platform`, a few packages have Docker tests that start the pinned platform image they need, such as `sitedb/mariadb` and `objectcache/redis` (the object cache isolation test: one site can't read, list, or flush another's keys). Tests that do are skipped unless `PRESSFLEET_DOCKER_TESTS=1`. State database tests run against SQLite, and also against PostgreSQL when `PRESSFLEET_TEST_POSTGRES_DSN` is set.
 
 ## End-to-end tests
 
@@ -55,7 +55,7 @@ docker compose -p pf-<site-id> down --volumes   # for each site it created
 2. It checks that WordPress is installed and reached over HTTP (see below).
 3. It checks that the two sites can't reach each other. Each site's containers must be on its own network (`pf-<id>`) and no other. From each site's php container, the other site's containers must not resolve by container name, and their IPs must not answer on nginx's port 8080 or PHP-FPM's port 9000 (the connection times out). The service name `nginx` resolves to the site's own nginx. As positive controls, the site's own nginx, the platform MariaDB (`pf-mariadb:3306`), and the object cache (`pf-redis:6379`) must answer.
 4. It changes one site's PHP version, checks that the php container was recreated on the new image and nginx was left alone, then stops and starts the site (#28).
-5. It deletes both sites. It checks that no container, network, or volume with either project's label is left, that nothing is left under `sites/` and neither MariaDB nor the object cache is on a site network, that the site databases, users, and grants are gone from MariaDB, and that no secret, site, alias, database, or schedule row is left in the state database.
+5. It deletes both sites. It checks that no container, network, or volume with either project's label is left, that nothing is left under `sites/` and neither MariaDB nor the object cache is on a site network, that the site databases, users, and grants are gone from MariaDB and the site users from the object cache, and that no secret, site, alias, database, object cache, or schedule row is left in the state database.
 
 **"Reached over HTTP on the host" in M1.** The host can't route to a site until Traefik serves preview domains (M2). Until then, the test starts a throwaway client container on the host's Docker engine, attached to the site's network, the way Traefik will be (`compose.RunContainer`: curl from the site's php image, which is already on the host, running as nobody with a read-only root filesystem and no capabilities). It requests `http://nginx:8080/` with the preview domain as `Host` and expects `200` with the site's title and `wp-content` URLs. It requests `/wp-login.php` and expects WordPress's `302` to the HTTPS login page: only a trusted proxy's requests count as HTTPS, so the redirect shows WordPress answering. Once Traefik lands, this check should move to the host's own HTTP client.
 

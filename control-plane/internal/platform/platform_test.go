@@ -499,3 +499,15 @@ func TestRenderedRedis(t *testing.T) {
 		}
 	}
 }
+
+// The control plane's default object cache settings match the admin user
+// and secret the platform renders.
+func TestDefaultRedisSettings(t *testing.T) {
+	r := config.Default().Redis
+	if r.AdminUser != platform.RedisAdminUser {
+		t.Errorf("config default redis.admin_user = %q, want %q", r.AdminUser, platform.RedisAdminUser)
+	}
+	if r.AdminPasswordFile != "/run/secrets/redis_admin_password" || r.Address != "redis:6379" {
+		t.Errorf("config default redis = %+v", r)
+	}
+}

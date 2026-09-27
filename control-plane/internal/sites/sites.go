@@ -3,7 +3,7 @@
 // settings changes and start/stop (§5.5), and deletion. The API validates
 // and records a request in one transaction and queues a job; the job's
 // steps create, change, or remove the site's runtime resources through
-// provisioner.Provisioner and sitedb.Manager.
+// provisioner.Provisioner, sitedb.Manager, and objectcache.Manager.
 //
 // # Provisioning
 //
@@ -19,19 +19,21 @@
 //  1. prepare: check that the site still wants provisioning. Its Undo runs
 //     last in a rollback and records the failure (see below).
 //  2. create_database: sitedb.Manager.CreateDatabase. Undo drops it.
-//  3. start_stack: provisioner.CreateSite renders and starts the stack.
+//  3. create_object_cache: objectcache.Manager.CreateUser gives the site
+//     its object cache user (§5.1 step 4). Undo deletes it.
+//  4. start_stack: provisioner.CreateSite renders and starts the stack.
 //     Undo deletes it, with its volumes and rendered files.
-//  4. install_wordpress: `wp core install` with the preview URL, unless
+//  5. install_wordpress: `wp core install` with the preview URL, unless
 //     `wp core is-installed` says an earlier attempt already did.
-//  5. finish: set the status to running.
+//  6. finish: set the status to running.
 //
-// Every step is idempotent: the database manager and the provisioner
-// converge on retries, and the install checks first.
+// Every step is idempotent: the database and object cache managers and the
+// provisioner converge on retries, and the install checks first.
 //
 // # Failed provisioning
 //
-// When the job fails for good, the rollback removes the stack and the
-// database, deletes the site's salts and admin password secrets and its
+// When the job fails for good, the rollback removes the stack, the object
+// cache user, and the database, deletes the site's salts and admin password secrets and its
 // cron schedule, and sets the site's status to failed with the error in its
 // status message. The site row stays, rather than disappearing, so the user
 // sees what happened where they started it; DELETE removes it, and that job
@@ -42,8 +44,9 @@
 // [Service.Delete] sets the status to deleting and enqueues a
 // [DeleteJobType] job, whose steps remove the stack with its network,
 // volumes, and rendered files (provisioner.DeleteSite), the database, its
-// user and credentials (sitedb.Manager.DropDatabase), the salts and admin
-// password secrets, and finally the site row with its schedules. Each step
+// user and credentials (sitedb.Manager.DropDatabase), the object cache user,
+// its data and credentials (objectcache.Manager.DeleteUser), the salts and
+// admin password secrets, and finally the site row with its schedules. Each step
 // succeeds when there is nothing left to remove, so a retried or repeated
 // deletion converges. Deletion can't be rolled back: a job that gives up
 // marks the site failed, and deleting it again queues a new job.
@@ -135,6 +138,7 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
+	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
@@ -202,9 +206,11 @@ type Options struct {
 	// PreviewBaseDomain is config.Config.PreviewBaseDomain. Empty refuses
 	// site creation with ErrNoPreviewDomain.
 	PreviewBaseDomain string
-	// Provisioner and Databases are used by the job handlers.
-	Provisioner provisioner.Provisioner
-	Databases   sitedb.Manager
+	// Provisioner, Databases, and ObjectCaches are used by the job
+	// handlers.
+	Provisioner  provisioner.Provisioner
+	Databases    sitedb.Manager
+	ObjectCaches objectcache.Manager
 	// Logger defaults to discarding output.
 	Logger *slog.Logger
 	// Now defaults to time.Now; tests fix it for the catalog's support
@@ -223,6 +229,7 @@ type Service struct {
 	previewBase string
 	prov        provisioner.Provisioner
 	databases   sitedb.Manager
+	caches      objectcache.Manager
 	log         *slog.Logger
 	now         func() time.Time
 
@@ -244,6 +251,9 @@ func New(opts Options) (*Service, error) {
 	if opts.Databases == nil {
 		errs = append(errs, errors.New("a site database manager is required"))
 	}
+	if opts.ObjectCaches == nil {
+		errs = append(errs, errors.New("an object cache manager is required"))
+	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, fmt.Errorf("sites: %w", err)
 	}
@@ -254,6 +264,7 @@ func New(opts Options) (*Service, error) {
 		previewBase: strings.TrimSuffix(strings.ToLower(opts.PreviewBaseDomain), "."),
 		prov:        opts.Provisioner,
 		databases:   opts.Databases,
+		caches:      opts.ObjectCaches,
 		log:         opts.Logger,
 		now:         opts.Now,
 

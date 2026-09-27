@@ -29,9 +29,8 @@ import (
 //     the apply step's provisioner.UpdateSite re-renders the site, recreating
 //     only the containers whose configuration changed.
 //   - State outside the site's containers that must be put back at startup
-//     (for example a Redis ACL user after Redis restarted) is a step of its
-//     own: add it to reconcileSteps, before apply if the containers depend
-//     on it. Steps must be idempotent and cheap when nothing changed, since
+//     (such as the site's object cache user) is a step of its own: add it to
+//     reconcileSteps, before apply if the containers depend on it. Steps must be idempotent and cheap when nothing changed, since
 //     they run for every site on every start, and they should skip sites
 //     reconcileSite says to leave alone.
 
@@ -41,6 +40,7 @@ const ReconcileJobType = "site.reconcile"
 // Step names of the site.reconcile job. Keep them stable: a queued job
 // resumes by step name.
 const (
+	stepReconcileCache = "object_cache"
 	stepReconcileApply = "apply"
 )
 
@@ -49,10 +49,13 @@ func (s *Service) reconcileHandler() jobs.Handler {
 }
 
 // reconcileSteps are the site.reconcile job's steps, in order. Features
-// that need to restore per-site state at startup add theirs here.
+// that need to restore per-site state at startup add theirs here. The first
+// step carries failReconcile, so it runs last in a rollback whichever step
+// failed.
 func (s *Service) reconcileSteps() []jobs.Step {
 	return []jobs.Step{
-		{Name: stepReconcileApply, Do: s.reconcileApply, Undo: s.failReconcile},
+		{Name: stepReconcileCache, Do: s.reconcileObjectCache, Undo: s.failReconcile},
+		{Name: stepReconcileApply, Do: s.reconcileApply},
 	}
 }
 
@@ -135,6 +138,29 @@ func (s *Service) reconcileSite(ctx context.Context, r *jobs.Run) (store.Site, b
 		return site, false, nil
 	}
 	return site, true, nil
+}
+
+// reconcileObjectCache makes sure the site has its object cache user
+// (objectcache.Manager.CreateUser is idempotent, and cheap for a site that
+// has one), which gives sites provisioned before the object cache existed
+// theirs. The reference is kept for apply, which renders it into the site.
+// Users lost when the cache server restarts while the control plane runs
+// are restored by the object cache manager itself (objectcache/redis
+// Manager.Watch), not by this job, which only runs at startup.
+func (s *Service) reconcileObjectCache(ctx context.Context, r *jobs.Run) error {
+	site, ok, err := s.reconcileSite(ctx, r)
+	if err != nil || !ok {
+		return err
+	}
+	ref, err := s.caches.CreateUser(ctx, site.ID)
+	if err != nil {
+		return err
+	}
+	if err := r.Set(dataCacheSecretRef, ref); err != nil {
+		return err
+	}
+	r.Logf("The site's object cache user is in place.")
+	return nil
 }
 
 // reconcileApply re-renders the site with provisioner.UpdateSite, which

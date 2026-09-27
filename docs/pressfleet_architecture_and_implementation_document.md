@@ -391,7 +391,7 @@ All long-running operations run as **Jobs**. API endpoints that start them retur
 4. **Object Cache Credentials:** Creates the site's Redis ACL user, restricted to its own key prefix (§6).
 5. **Container Provisioning:** `Provisioner.CreateSite` creates the site network and renders the site's Compose project (`nginx` and `php` containers from the images for the selected PHP version and current WordPress core, `wp-content` and cache volumes, generated `wp-config.php`, Traefik labels for the preview domain, resource limits) and brings it up.
 6. **WordPress Installation:** Runs `wp core install` against the image's WordPress core with the preview domain as the site URL via `ExecWPCLI`.
-7. **Plugin Auto-Configuration:** Activates the default plugin stack: Nginx Helper, Redis Object Cache (configured with the site's ACL credentials, key prefix, and selective flush), and the WordPress security set configured for the install (§6.1).
+7. **Plugin Auto-Configuration:** Activates the default plugin stack: Nginx Helper, Redis Object Cache (configured with the site's ACL credentials, database, and key prefix), and the WordPress security set configured for the install (§6.1).
 8. **Preview Ready:** The site is immediately reachable over HTTPS on its preview domain. Preview domains send `X-Robots-Tag: noindex` to keep them out of search engines.
 
 **Preview password protection (optional):** For sensitive sites in development, a site's preview domain can require HTTP basic auth. It is off by default and turned on or off per site with `PATCH /api/v1/sites/{id}`.
@@ -471,8 +471,9 @@ All long-running operations run as **Jobs**. API endpoints that start them retur
 * **Resource limits:** Every site container has a memory reservation, a memory limit, and a CPU limit (§4.1 Capacity Target).
 * **Database:** Each site has its own MariaDB user with grants only on its own database.
 * **Redis (shared):**
-  * Each site has its own ACL user restricted to its own key prefix (`~<site-id>:*`).
-  * Dangerous and cross-tenant commands are denied to site users (`FLUSHALL`, `FLUSHDB`, `KEYS`, `CONFIG`, etc.). Sites use the Redis Object Cache plugin's selective (prefix-based) flush.
+  * Each site has its own ACL user restricted to its own key prefix (`~<site-id>:*`) and its own logical database (`db=<n>`, Valkey 9). The prefix alone isn't enough: `SCAN` takes no key argument, so it would list every site's key names (which include user logins and email addresses), and the Redis Object Cache plugin needs `SCAN` for its selective and group flushes. With a database per site, `SCAN`, `DBSIZE`, `RANDOMKEY`, and `FLUSHDB` only see the site's own keys.
+  * Dangerous and cross-tenant commands are denied to site users (`FLUSHALL`, `KEYS`, `CONFIG`, `MONITOR`, `CLIENT LIST`, `SWAPDB`, Pub/Sub, functions, etc.). `FLUSHDB` and `INFO` are allowed: the first only reaches the site's database, and the plugin requires the second.
+  * Site users live only in the server's memory; the control plane recreates them from the state database when it starts and whenever the server restarts.
   * Redis runs with a `maxmemory` limit and an LRU eviction policy. One busy site can evict others' cache entries; this is an accepted trade-off for lower resource usage, and eviction rates are monitored (§7).
 * **Backups:** Each client group's Restic repository has its own encryption key.
 * **Secrets:** Database passwords, Redis ACL passwords, preview basic auth passwords, Restic repository keys, DNS provider credentials, and S3 credentials are stored encrypted at rest in the control plane database using the platform master key, supplied via environment variable or file. Plaintext secrets are never logged. Losing the master key makes all backups unrecoverable; see the warning in §4.1.

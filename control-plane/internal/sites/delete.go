@@ -16,6 +16,7 @@ const (
 	stepMarkDeleting  = "mark_deleting"
 	stepDeleteStack   = "delete_stack"
 	stepDropDatabase  = "drop_database"
+	stepDeleteCache   = "delete_object_cache"
 	stepDeleteSecrets = "delete_secrets"
 	stepDeleteRecord  = "delete_record"
 )
@@ -87,6 +88,7 @@ func (s *Service) deleteHandler() jobs.Handler {
 			{Name: stepMarkDeleting, Do: s.markDeleting, Undo: s.failDeletion},
 			{Name: stepDeleteStack, Do: s.deleteStack},
 			{Name: stepDropDatabase, Do: s.dropDatabase},
+			{Name: stepDeleteCache, Do: s.deleteObjectCache},
 			{Name: stepDeleteSecrets, Do: s.deleteSecrets},
 			{Name: stepDeleteRecord, Do: s.deleteRecord},
 		},
@@ -119,8 +121,10 @@ func (s *Service) failDeletion(ctx context.Context, r *jobs.Run) error {
 }
 
 // deleteSecrets deletes the site's salts and admin password; the database
-// credentials went with the database (sitedb.Manager.DropDatabase), and the
-// rendered files with the stack (provisioner.DeleteSite).
+// credentials went with the database (sitedb.Manager.DropDatabase), the
+// object cache credentials with the cache user
+// (objectcache.Manager.DeleteUser), and the rendered files with the stack
+// (provisioner.DeleteSite).
 func (s *Service) deleteSecrets(ctx context.Context, r *jobs.Run) error {
 	siteID := r.Job().TargetID
 	err := s.db.InTx(ctx, func(q store.Querier) error {

@@ -330,19 +330,19 @@ func (s *Service) applyUpdate(ctx context.Context, r *jobs.Run) error {
 // converge applies the site's settings with provisioner.UpdateSite. A site
 // without containers can't be updated, so that is permanent.
 func (s *Service) converge(ctx context.Context, r *jobs.Run, site store.Site) (*provisioner.SiteStatus, error) {
-	// Ask first, so a missing stack doesn't make the database manager
-	// recreate a database for nothing.
+	// Ask first, so a missing stack doesn't make the database and object
+	// cache managers recreate a database and a user for nothing.
 	if _, err := s.prov.GetSite(ctx, site.ID); err != nil {
 		if errors.Is(err, provisioner.ErrSiteNotFound) {
 			return nil, jobs.Permanent(fmt.Errorf("the site has no containers: %w", err))
 		}
 		return nil, err
 	}
-	ref, err := s.dbSecretRef(ctx, r)
+	dbRef, cacheRef, err := s.secretRefs(ctx, r)
 	if err != nil {
 		return nil, err
 	}
-	cfg := SiteConfig(site, ref)
+	cfg := SiteConfig(site, dbRef, cacheRef)
 	if err := cfg.Validate(); err != nil {
 		return nil, jobs.Permanent(err)
 	}

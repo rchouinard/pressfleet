@@ -70,6 +70,7 @@ func TestLoadPrecedence(t *testing.T) {
 		Database: config.DatabaseConfig{Driver: "sqlite"},          // default
 		Jobs:     config.JobsConfig{Concurrency: 4},                // default
 		MariaDB:  config.Default().MariaDB,                         // default
+		Redis:    config.Default().Redis,                           // default
 		Audit:    config.AuditConfig{RetentionDays: 365},           // default
 		SMTP:     config.Default().SMTP,                            // default
 		// default
@@ -322,6 +323,52 @@ func TestMariaDBSettings(t *testing.T) {
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("Validate() with IPv6 address = %v", err)
+	}
+}
+
+func TestRedisSettings(t *testing.T) {
+	path := writeFile(t, "redis:\n  address: cache.internal:6380\n  admin_user: admin\n")
+	cfg, err := config.Load(path, env(map[string]string{"PRESSFLEET_REDIS_ADMIN_PASSWORD_FILE": "/run/secrets/other"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := config.RedisConfig{Address: "cache.internal:6380", AdminUser: "admin", AdminPasswordFile: "/run/secrets/other"}
+	if cfg.Redis != want {
+		t.Errorf("Redis = %+v, want %+v", cfg.Redis, want)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v", err)
+	}
+	cfg, err = config.Load(path, env(map[string]string{"PRESSFLEET_REDIS_ADDRESS": "[::1]:6379", "PRESSFLEET_REDIS_ADMIN_USER": "root"}))
+	if err != nil || cfg.Redis.Address != "[::1]:6379" || cfg.Redis.AdminUser != "root" {
+		t.Fatalf("Load = %+v, %v", cfg.Redis, err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() with IPv6 address = %v", err)
+	}
+}
+
+func TestValidateRedis(t *testing.T) {
+	tests := []struct {
+		name   string
+		modify func(*config.RedisConfig)
+		want   string
+	}{
+		{"no port", func(r *config.RedisConfig) { r.Address = "redis" }, "redis.address"},
+		{"no host", func(r *config.RedisConfig) { r.Address = ":6379" }, "redis.address"},
+		{"bad port", func(r *config.RedisConfig) { r.Address = "redis:0" }, "redis.address"},
+		{"empty user", func(r *config.RedisConfig) { r.AdminUser = "" }, "redis.admin_user"},
+		{"user with space", func(r *config.RedisConfig) { r.AdminUser = "press fleet" }, "redis.admin_user"},
+		{"relative password file", func(r *config.RedisConfig) { r.AdminPasswordFile = "secrets/pw" }, "redis.admin_password_file"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.Default()
+			tt.modify(&cfg.Redis)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("Validate() = %v, want error mentioning %s", err, tt.want)
+			}
+		})
 	}
 }
 

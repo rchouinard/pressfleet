@@ -23,8 +23,11 @@ func (e *env) assertGone(t *testing.T, siteID string) {
 	if _, ok := e.dbs.Data(siteID); ok {
 		t.Error("the database is still there")
 	}
-	// Every secret in these tests belongs to a site (the fake database
-	// manager stores none).
+	if e.cache.HasUser(siteID) {
+		t.Error("the object cache user is still there")
+	}
+	// Every secret in these tests belongs to a site (the fake database and
+	// object cache managers store none).
 	if n := e.count(t, "SELECT COUNT(*) FROM secrets"); n != 0 {
 		t.Errorf("%d secrets left", n)
 	}
@@ -71,7 +74,7 @@ func TestDeletion(t *testing.T) {
 		for _, s := range d.Steps {
 			steps = append(steps, s.Name)
 		}
-		if got := strings.Join(steps, ","); got != "mark_deleting,delete_stack,drop_database,delete_secrets,delete_record" {
+		if got := strings.Join(steps, ","); got != "mark_deleting,delete_stack,drop_database,delete_object_cache,delete_secrets,delete_record" {
 			t.Errorf("steps = %s", got)
 		}
 		e.assertGone(t, site.ID)

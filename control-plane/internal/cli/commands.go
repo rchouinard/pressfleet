@@ -18,6 +18,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
+	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache/redis"
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
@@ -59,6 +60,17 @@ func (a *app) siteRuntime(cat *catalog.Catalog, secretStore secrets.Store, keys 
 		return nil, nil, err
 	}
 	return prov, siteDBs, nil
+}
+
+// objectCaches returns the manager of site users on the shared object
+// cache. Like the MariaDB manager, it doesn't connect until it is used.
+func (a *app) objectCaches(secretStore secrets.Store, db *store.DB) (*redis.Manager, error) {
+	return redis.New(redis.Config{
+		Addr:         a.cfg.Redis.Address,
+		User:         a.cfg.Redis.AdminUser,
+		PasswordFile: a.cfg.Redis.AdminPasswordFile,
+		Databases:    platform.RedisDatabases,
+	}, db, secretStore, a.log.With("component", "objectcache"))
 }
 
 // envSkipPreflight is the environment equivalent of serve's --skip-preflight
@@ -123,6 +135,10 @@ func (a *app) serveCommand() *cobra.Command {
 				return err
 			}
 			defer func() { _ = siteDBs.Close() }()
+			caches, err := a.objectCaches(secretStore, db)
+			if err != nil {
+				return err
+			}
 			siteSvc, err := sites.New(sites.Options{
 				DB:                db,
 				Secrets:           secretStore,
@@ -130,6 +146,7 @@ func (a *app) serveCommand() *cobra.Command {
 				PreviewBaseDomain: a.cfg.PreviewBaseDomain,
 				Provisioner:       prov,
 				Databases:         siteDBs,
+				ObjectCaches:      caches,
 				Logger:            a.log.With("component", "sites"),
 			})
 			if err != nil {
@@ -197,6 +214,10 @@ func (a *app) serveCommand() *cobra.Command {
 				defer cancel()
 				siteSvc.ReattachSharedServices(ctx, prov)
 			})
+			// The object cache keeps site users only in memory: restore them
+			// now and whenever it restarts. (Sites created before it existed
+			// get theirs from their site.reconcile job.)
+			workers.Go(func() { caches.Watch(workersCtx) })
 
 			srv := httpserver.New(httpserver.Options{Addr: a.cfg.Listen, Handler: handler, Logger: a.log})
 			srvErr := srv.Run(cmd.Context())

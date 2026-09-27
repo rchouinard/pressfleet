@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache/objectcachetest"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
@@ -85,6 +86,11 @@ func TestUpdate(t *testing.T) {
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
 		e := newEnv(t, db)
 		site := e.running(t, "Upgrade")
+		// As if the site predated the object cache: the update gives it a
+		// user and passes the reference on.
+		if err := e.cache.DeleteUser(ctx, site.ID); err != nil {
+			t.Fatal(err)
+		}
 
 		saved, job, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{PHPVersion: ptr("8.3"), CPU: ptr("2"), MemoryLimitMB: ptr(1024)})
 		if err != nil {
@@ -115,6 +121,9 @@ func TestUpdate(t *testing.T) {
 		s, _ := e.prov.Site(site.ID)
 		if s.Config.PHPVersion != "8.3" || s.Config.Resources != (provisioner.ResourceLimits{CPU: "2", MemoryReservationMB: site.MemoryReservationMB, MemoryLimitMB: 1024}) {
 			t.Errorf("provisioner config = %+v", s.Config)
+		}
+		if !e.cache.HasUser(site.ID) || s.Config.RedisSecretRef != objectcachetest.SecretRef(site.ID) {
+			t.Errorf("object cache after update: user %v, ref %q", e.cache.HasUser(site.ID), s.Config.RedisSecretRef)
 		}
 
 		// A stopped site is updated and stays stopped.

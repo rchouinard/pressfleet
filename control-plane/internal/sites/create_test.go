@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/id"
+	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache/objectcachetest"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sitecron"
@@ -143,7 +144,7 @@ func TestProvisioning(t *testing.T) {
 		for _, s := range d.Steps {
 			steps = append(steps, s.Name)
 		}
-		if want := []string{"prepare", "create_database", "start_stack", "install_wordpress", "finish"}; !slices.Equal(steps, want) {
+		if want := []string{"prepare", "create_database", "create_object_cache", "start_stack", "install_wordpress", "finish"}; !slices.Equal(steps, want) {
 			t.Errorf("steps = %v", steps)
 		}
 		if got := e.site(t, site.ID); got.Status != store.SiteRunning || got.StatusMessage != "" {
@@ -157,11 +158,15 @@ func TestProvisioning(t *testing.T) {
 		}
 		cfg := rt.Config
 		if cfg.UID != site.UID || cfg.WPSaltsSecretRef != site.WPSaltsSecretRef || cfg.PreviewDomain != site.PreviewDomain ||
-			cfg.DBSecretRef == "" || cfg.PHPVersion != "8.4" || cfg.ClientGroupID != e.group {
+			cfg.DBSecretRef == "" || cfg.PHPVersion != "8.4" || cfg.ClientGroupID != e.group ||
+			cfg.RedisSecretRef != objectcachetest.SecretRef(site.ID) {
 			t.Errorf("site config = %+v", cfg)
 		}
 		if _, ok := e.dbs.Data(site.ID); !ok {
 			t.Error("no site database")
+		}
+		if !e.cache.HasUser(site.ID) {
+			t.Error("no object cache user")
 		}
 
 		// WordPress was installed once, at the preview URL, with the stored
@@ -265,8 +270,11 @@ func TestFailedProvisioningLeavesNothingBehind(t *testing.T) {
 		if _, ok := e.dbs.Data(site.ID); ok {
 			t.Error("the database is still there")
 		}
+		if e.cache.HasUser(site.ID) {
+			t.Error("the object cache user is still there")
+		}
 		// The salts and the admin password were the only secrets (the fake
-		// database manager stores none).
+		// database and object cache managers store none).
 		if n := e.count(t, "SELECT COUNT(*) FROM secrets"); n != 0 {
 			t.Errorf("%d secrets left", n)
 		}

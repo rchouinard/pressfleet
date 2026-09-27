@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache/objectcachetest"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
@@ -160,6 +161,59 @@ func TestReconcileFailureKeepsStatusAndRecordsError(t *testing.T) {
 		e.prov.Err = nil
 		if _, err := e.svc.Stop(ctx, site.ID, ""); err != nil {
 			t.Errorf("stop after a failed reconciliation: %v", err)
+		}
+	})
+}
+
+// Sites provisioned before the object cache existed get their user at
+// startup, and it reaches their containers.
+func TestReconcileCreatesObjectCacheUsers(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		e := newEnv(t, db)
+		site := e.running(t, "Old")
+		failed := e.running(t, "Failed")
+		e.setStatus(t, failed.ID, store.SiteFailed)
+		for _, id := range []string{site.ID, failed.ID} {
+			if err := e.cache.DeleteUser(ctx, id); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := e.svc.EnqueueReconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+		e.runJobs(t)
+		if !e.cache.HasUser(site.ID) {
+			t.Error("running site got no object cache user")
+		}
+		if s, _ := e.prov.Site(site.ID); s.Config.RedisSecretRef != objectcachetest.SecretRef(site.ID) {
+			t.Errorf("RedisSecretRef = %q", s.Config.RedisSecretRef)
+		}
+		if e.cache.HasUser(failed.ID) {
+			t.Error("failed site got an object cache user")
+		}
+
+		// If the user can't be created, the containers are left alone and
+		// the error is recorded.
+		if err := e.cache.DeleteUser(ctx, site.ID); err != nil {
+			t.Fatal(err)
+		}
+		e.cache.Err = func(op, _ string) error {
+			if op == "CreateUser" {
+				return errors.New("object cache unreachable")
+			}
+			return nil
+		}
+		before := e.updates()[site.ID]
+		if _, err := e.svc.EnqueueReconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+		e.runJobs(t)
+		if n := e.updates()[site.ID] - before; n != 0 {
+			t.Errorf("UpdateSite called %d times without an object cache user", n)
+		}
+		if got := e.site(t, site.ID); got.Status != store.SiteRunning || !strings.Contains(got.StatusMessage, "object cache unreachable") {
+			t.Errorf("site = %s %q", got.Status, got.StatusMessage)
 		}
 	})
 }

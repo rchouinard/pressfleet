@@ -14,6 +14,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/id"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
+	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache/objectcachetest"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/provisionertest"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
@@ -66,7 +67,7 @@ func newSiteEnv(t *testing.T, db *store.DB, previewBase string) *siteEnv {
 	}
 	e.svc, err = sites.New(sites.Options{
 		DB: db, Secrets: sec, Catalog: cat, PreviewBaseDomain: previewBase,
-		Provisioner: e.prov, Databases: e.dbs, Logger: storetest.Logger(),
+		Provisioner: e.prov, Databases: e.dbs, ObjectCaches: objectcachetest.New(), Logger: storetest.Logger(),
 	})
 	if err != nil {
 		t.Fatal(err)

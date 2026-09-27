@@ -17,14 +17,18 @@ import (
 const (
 	stepPrepare          = "prepare"
 	stepCreateDatabase   = "create_database"
+	stepCreateCache      = "create_object_cache"
 	stepStartStack       = "start_stack"
 	stepInstallWordPress = "install_wordpress"
 	stepFinish           = "finish"
 )
 
-// dataDBSecretRef is the job data key holding the site's database
-// credentials reference.
-const dataDBSecretRef = "db_secret_ref" //nolint:gosec // G101: a job data key, not a credential
+// Job data keys holding the references to the site's database and object
+// cache credentials.
+const (
+	dataDBSecretRef    = "db_secret_ref"    //nolint:gosec // G101: a job data key, not a credential
+	dataCacheSecretRef = "cache_secret_ref" //nolint:gosec // G101: a job data key, not a credential
+)
 
 // maxStatusMessage bounds the error text kept in a site's status message.
 const maxStatusMessage = 1000
@@ -35,6 +39,7 @@ func (s *Service) createHandler() jobs.Handler {
 		Steps: []jobs.Step{
 			{Name: stepPrepare, Do: s.prepareCreate, Undo: s.failProvisioning},
 			{Name: stepCreateDatabase, Do: s.createDatabase, Undo: s.dropDatabase},
+			{Name: stepCreateCache, Do: s.createObjectCache, Undo: s.deleteObjectCache},
 			{Name: stepStartStack, Do: s.startStack, Undo: s.deleteStack},
 			{Name: stepInstallWordPress, Do: s.installWordPress},
 			{Name: stepFinish, Do: s.finishCreate},
@@ -70,7 +75,7 @@ func (s *Service) prepareCreate(ctx context.Context, r *jobs.Run) error {
 }
 
 // failProvisioning is the last Undo of a failed site.create job: the steps
-// after it have removed the stack and the database. It deletes the secrets
+// after it have removed the stack, the object cache user, and the database. It deletes the secrets
 // and the cron schedule created with the site and marks the site failed,
 // unless another request has changed its status meanwhile (a deletion).
 func (s *Service) failProvisioning(ctx context.Context, r *jobs.Run) error {
@@ -147,8 +152,52 @@ func (s *Service) dbSecretRef(ctx context.Context, r *jobs.Run) (string, error) 
 	return s.databases.CreateDatabase(ctx, r.Job().TargetID)
 }
 
+func (s *Service) createObjectCache(ctx context.Context, r *jobs.Run) error {
+	ref, err := s.caches.CreateUser(ctx, r.Job().TargetID)
+	if err != nil {
+		return err
+	}
+	if err := r.Set(dataCacheSecretRef, ref); err != nil {
+		return err
+	}
+	r.Logf("Object cache user is ready.")
+	return nil
+}
+
+func (s *Service) deleteObjectCache(ctx context.Context, r *jobs.Run) error {
+	if err := s.caches.DeleteUser(ctx, r.Job().TargetID); err != nil {
+		return err
+	}
+	r.Logf("Deleted the object cache user and its cached data.")
+	return nil
+}
+
+// cacheSecretRef returns the reference create_object_cache stored, asking
+// the object cache manager again (it is idempotent) if the job has none.
+// For a site created before the object cache existed, that creates its
+// user.
+func (s *Service) cacheSecretRef(ctx context.Context, r *jobs.Run) (string, error) {
+	var ref string
+	if ok, err := r.Get(dataCacheSecretRef, &ref); err != nil || (ok && ref != "") {
+		return ref, err
+	}
+	return s.caches.CreateUser(ctx, r.Job().TargetID)
+}
+
+// secretRefs returns the site's database and object cache credential
+// references.
+func (s *Service) secretRefs(ctx context.Context, r *jobs.Run) (db, cache string, err error) {
+	if db, err = s.dbSecretRef(ctx, r); err != nil {
+		return "", "", err
+	}
+	if cache, err = s.cacheSecretRef(ctx, r); err != nil {
+		return "", "", err
+	}
+	return db, cache, nil
+}
+
 // SiteConfig returns the provisioner configuration of a site.
-func SiteConfig(site store.Site, dbSecretRef string) *provisioner.SiteConfig {
+func SiteConfig(site store.Site, dbSecretRef, cacheSecretRef string) *provisioner.SiteConfig {
 	return &provisioner.SiteConfig{
 		ID:            site.ID,
 		ClientGroupID: site.ClientGroupID,
@@ -163,6 +212,7 @@ func SiteConfig(site store.Site, dbSecretRef string) *provisioner.SiteConfig {
 			MemoryLimitMB:       site.MemoryLimitMB,
 		},
 		DBSecretRef:      dbSecretRef,
+		RedisSecretRef:   cacheSecretRef,
 		UID:              site.UID,
 		WPSaltsSecretRef: site.WPSaltsSecretRef,
 	}
@@ -176,11 +226,11 @@ func (s *Service) startStack(ctx context.Context, r *jobs.Run) error {
 	if err := abortIfDeleting(site); err != nil {
 		return err
 	}
-	ref, err := s.dbSecretRef(ctx, r)
+	dbRef, cacheRef, err := s.secretRefs(ctx, r)
 	if err != nil {
 		return err
 	}
-	cfg := SiteConfig(site, ref)
+	cfg := SiteConfig(site, dbRef, cacheRef)
 	if err := cfg.Validate(); err != nil {
 		// Retrying can't fix the site's own settings.
 		return jobs.Permanent(err)

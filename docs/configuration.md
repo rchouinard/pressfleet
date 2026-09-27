@@ -42,6 +42,10 @@ mariadb:
   address: mariadb:3306
   admin_user: root
   admin_password_file: /run/secrets/mariadb_root_password
+redis:
+  address: redis:6379
+  admin_user: pressfleet
+  admin_password_file: /run/secrets/redis_admin_password
 audit:
   retention_days: 365
 platform_project: pressfleet
@@ -92,6 +96,9 @@ wordpress_security:            # install-wide; see "WordPress security set"
 | `mariadb.admin_user` | `PRESSFLEET_MARIADB_ADMIN_USER` | | `root` | MariaDB account that creates and drops site databases and users. |
 | `mariadb.admin_password_file` | `PRESSFLEET_MARIADB_ADMIN_PASSWORD_FILE` | | `/run/secrets/mariadb_root_password` | File holding the admin password; a trailing newline is ignored. Must be an absolute path. The default is where the platform Compose project mounts the MariaDB root password secret. |
 | `audit.retention_days` | `PRESSFLEET_AUDIT_RETENTION_DAYS` | | `365` | How many days audit log events are kept, from 1 to 3660. A daily job deletes older events. See [Audit log](#audit-log). |
+| `redis.address` | `PRESSFLEET_REDIS_ADDRESS` | | `redis:6379` | `host:port` of the shared object cache server (Valkey), as seen from the control plane. See [Object cache](#object-cache). |
+| `redis.admin_user` | `PRESSFLEET_REDIS_ADMIN_USER` | | `pressfleet` | Object cache ACL user that creates and deletes site users. |
+| `redis.admin_password_file` | `PRESSFLEET_REDIS_ADMIN_PASSWORD_FILE` | | `/run/secrets/redis_admin_password` | File holding the admin password; a trailing newline is ignored. Must be an absolute path. The default is where the platform Compose project mounts the password `pressfleet init` generates. |
 | `platform_project` | `PRESSFLEET_PLATFORM_PROJECT` | | `pressfleet` | Compose project name of the platform services. The control plane uses it to find the platform's MariaDB and object cache containers (`<project>-mariadb-1`, `<project>-redis-1`), which it connects to each site's network. The platform Compose project sets it for the control plane; change it only for a platform installed under another project name. |
 | `smtp.host` | `PRESSFLEET_SMTP_HOST` | `--smtp-host` (`init` only) | (unset) | SMTP relay every site sends email through (host name or IP address). Unset means sites send no email: the site images have no local mail server. See [Outbound email](#outbound-email). |
 | `smtp.port` | `PRESSFLEET_SMTP_PORT` | `--smtp-port` (`init` only) | by encryption | Relay port. Unset (`0`) means 587 for `starttls`, 465 for `tls`, and 25 for `none`. |
@@ -243,3 +250,9 @@ Each site's database lives on the platform's shared MariaDB server. The control 
 The defaults match the platform Compose project, so installs made with `pressfleet init` need no MariaDB settings. The control plane connects only when it needs to, so `serve` starts even while MariaDB is down, and it re-reads the password file for every new connection.
 
 Sites reach MariaDB as `pf-mariadb` on their own network: the control plane connects the platform's MariaDB container (named after `platform_project`) to each site network. Docker drops those connections when it recreates the container, for example during an upgrade, so `serve` reconnects MariaDB to every site's network when it starts. It does so in the background and only logs failures, so a missing MariaDB or Docker doesn't stop the control plane from starting.
+
+## Object cache
+
+Sites share one object cache server, Valkey (Redis-compatible), capped at 256 MiB with least-recently-used eviction across all sites and no persistence. Its default user is disabled. The control plane connects as `redis.admin_user` and gives each site an ACL user `pf_<site-id>` with a random password, stored encrypted in the state database. A site user can only use keys starting with `<site-id>:` in a logical database of its own, and can't run commands that reach the server as a whole or other databases (`KEYS`, `FLUSHALL`, `CONFIG`, `MONITOR`, `CLIENT LIST`, Pub/Sub, functions, ...). It can `SCAN` and `FLUSHDB`, which only see its own database. The design and the reasons for it are in the documentation of package `control-plane/internal/objectcache/redis`.
+
+The server keeps site users only in memory, so the control plane restores them from the state database: when it starts, within about 10 seconds of noticing the server restarted, and every 10 minutes. The same pass removes site users that have no site. Sites created before the object cache existed get their users from the `site.reconcile` job queued for every site at startup (see [WordPress security set](#wordpress-security-set)). Sites reach the server as `pf-redis:6379` on their own network; the control plane connects it to site networks like MariaDB.

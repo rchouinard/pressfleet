@@ -11,6 +11,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/id"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
+	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache/objectcachetest"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/provisionertest"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
@@ -79,6 +80,7 @@ type env struct {
 	svc   *sites.Service
 	prov  *provisionertest.Fake
 	dbs   *sitedbtest.Fake
+	cache *objectcachetest.Fake
 	wp    *wordpress
 	sec   secrets.Store
 	pool  *jobs.Pool
@@ -97,11 +99,12 @@ func newEnvWith(t *testing.T, db *store.DB, previewBase string) *env {
 		t.Fatal(err)
 	}
 	e := &env{
-		db:   db,
-		prov: provisionertest.New(),
-		dbs:  sitedbtest.New(),
-		wp:   &wordpress{installed: map[string]bool{}, installs: map[string][][]string{}},
-		sec:  secrets.NewStore(db, secretstest.Keyring(t, 1)),
+		db:    db,
+		prov:  provisionertest.New(),
+		dbs:   sitedbtest.New(),
+		cache: objectcachetest.New(),
+		wp:    &wordpress{installed: map[string]bool{}, installs: map[string][][]string{}},
+		sec:   secrets.NewStore(db, secretstest.Keyring(t, 1)),
 	}
 	e.prov.WPCLI = e.wp.wpcli
 	e.svc, err = sites.New(sites.Options{
@@ -111,6 +114,7 @@ func newEnvWith(t *testing.T, db *store.DB, previewBase string) *env {
 		PreviewBaseDomain: previewBase,
 		Provisioner:       e.prov,
 		Databases:         e.dbs,
+		ObjectCaches:      e.cache,
 		Logger:            storetest.Logger(),
 		Now:               func() time.Time { return testNow },
 	})

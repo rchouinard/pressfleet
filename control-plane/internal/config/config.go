@@ -68,6 +68,9 @@ type Config struct {
 	// MariaDB is the admin connection to the shared MariaDB server that
 	// holds site databases.
 	MariaDB MariaDBConfig `yaml:"mariadb"`
+	// Redis is the admin connection to the shared object cache server
+	// (Valkey), where each site gets its own ACL user.
+	Redis RedisConfig `yaml:"redis"`
 	// Audit configures the audit log (§4.6).
 	Audit AuditConfig `yaml:"audit"`
 	// PlatformProject is the Compose project name of the platform services,
@@ -221,6 +224,19 @@ type MariaDBConfig struct {
 	AdminPasswordFile string `yaml:"admin_password_file"`
 }
 
+// RedisConfig configures the control plane's admin connection to the
+// shared object cache server.
+type RedisConfig struct {
+	// Address is the server's host:port as seen from the control plane.
+	Address string `yaml:"address"`
+	// AdminUser is the ACL user that creates and deletes site users.
+	AdminUser string `yaml:"admin_user"`
+	// AdminPasswordFile holds the admin user's password. The platform
+	// mounts it there as a Compose secret; the password itself is never
+	// part of the configuration.
+	AdminPasswordFile string `yaml:"admin_password_file"`
+}
+
 // Values of http.secure_cookies.
 const (
 	SecureCookiesAuto   = "auto"
@@ -306,6 +322,12 @@ func Default() Config {
 			AdminUser:         "root",
 			AdminPasswordFile: "/run/secrets/mariadb_root_password",
 		},
+		// platform.RedisAdminUser and the platform's Compose secret.
+		Redis: RedisConfig{
+			Address:           "redis:6379",
+			AdminUser:         "pressfleet",
+			AdminPasswordFile: "/run/secrets/redis_admin_password",
+		},
 		SMTP:              SMTPConfig{Encryption: SMTPEncryptionSTARTTLS},
 		WordPressSecurity: DefaultWordPressSecurity(),
 	}
@@ -332,6 +354,9 @@ var envVars = []struct {
 	{"PRESSFLEET_MARIADB_ADDRESS", func(c *Config) *string { return &c.MariaDB.Address }},
 	{"PRESSFLEET_MARIADB_ADMIN_USER", func(c *Config) *string { return &c.MariaDB.AdminUser }},
 	{"PRESSFLEET_MARIADB_ADMIN_PASSWORD_FILE", func(c *Config) *string { return &c.MariaDB.AdminPasswordFile }},
+	{"PRESSFLEET_REDIS_ADDRESS", func(c *Config) *string { return &c.Redis.Address }},
+	{"PRESSFLEET_REDIS_ADMIN_USER", func(c *Config) *string { return &c.Redis.AdminUser }},
+	{"PRESSFLEET_REDIS_ADMIN_PASSWORD_FILE", func(c *Config) *string { return &c.Redis.AdminPasswordFile }},
 	{"PRESSFLEET_PLATFORM_PROJECT", func(c *Config) *string { return &c.PlatformProject }},
 	{"PRESSFLEET_SMTP_HOST", func(c *Config) *string { return &c.SMTP.Host }},
 	{"PRESSFLEET_SMTP_USERNAME", func(c *Config) *string { return &c.SMTP.Username }},
@@ -499,6 +524,15 @@ func (c Config) Validate() error {
 	}
 	if !filepath.IsAbs(c.MariaDB.AdminPasswordFile) {
 		errs = append(errs, fmt.Errorf("mariadb.admin_password_file must be an absolute path, got %q", c.MariaDB.AdminPasswordFile))
+	}
+	if host, port, err := net.SplitHostPort(c.Redis.Address); err != nil || host == "" || !validPort(port) {
+		errs = append(errs, fmt.Errorf("redis.address must be host:port, like redis:6379, got %q", c.Redis.Address))
+	}
+	if c.Redis.AdminUser == "" || strings.ContainsAny(c.Redis.AdminUser, " \t\r\n") {
+		errs = append(errs, fmt.Errorf("redis.admin_user must be a user name without spaces, got %q", c.Redis.AdminUser))
+	}
+	if !filepath.IsAbs(c.Redis.AdminPasswordFile) {
+		errs = append(errs, fmt.Errorf("redis.admin_password_file must be an absolute path, got %q", c.Redis.AdminPasswordFile))
 	}
 	if !composeProjectName.MatchString(c.PlatformProject) {
 		errs = append(errs, fmt.Errorf("platform_project must be a Compose project name (lowercase letters, digits, - and _), got %q", c.PlatformProject))

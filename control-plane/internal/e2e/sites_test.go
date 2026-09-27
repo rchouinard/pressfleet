@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/client"
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/e2e"
+	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
@@ -212,6 +214,17 @@ func TestSiteCreateDelete(t *testing.T) {
 		for _, id := range []string{site.ID, other.Site.ID} {
 			if n := siteDatabase(t, p, id); n != (dbObjects{databases: 1, users: 1, grants: 1}) {
 				t.Errorf("site %s: %+v; want a database, a user, and its grant", id, n)
+			}
+		}
+	})
+
+	// Each site has its own object cache user (#38). What those users can
+	// reach is tested against the real server in objectcache/redis.
+	t.Run("object cache users exist", func(t *testing.T) {
+		users := cacheUsers(t, p)
+		for _, id := range []string{site.ID, other.Site.ID} {
+			if !slices.Contains(users, "pf_"+id) {
+				t.Errorf("site %s has no object cache user: %v", id, users)
 			}
 		}
 	})
@@ -416,6 +429,14 @@ func TestSiteCreateDelete(t *testing.T) {
 		}
 	})
 
+	t.Run("no object cache user is left", func(t *testing.T) {
+		for _, u := range cacheUsers(t, p) {
+			if strings.HasPrefix(u, "pf_") {
+				t.Errorf("object cache user %s is left", u)
+			}
+		}
+	})
+
 	// Last, because it stops the platform: the state database belongs to
 	// the control plane, so it is read once the control plane has stopped.
 	t.Run("no secrets or state are left", func(t *testing.T) {
@@ -430,7 +451,7 @@ func TestSiteCreateDelete(t *testing.T) {
 			t.Fatal(err)
 		}
 		db := storetest.OpenUnmigrated(t, store.Config{Driver: store.SQLite, SQLitePath: filepath.Join(stateDir, "pressfleet.db")})
-		for _, table := range []string{"secrets", "site_databases", "sites", "site_aliases", "schedules WHERE target_type = 'site'"} {
+		for _, table := range []string{"secrets", "site_databases", "site_object_caches", "sites", "site_aliases", "schedules WHERE target_type = 'site'"} {
 			var n int
 			if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&n); err != nil {
 				t.Fatal(err)
@@ -619,6 +640,27 @@ func waitJob(t *testing.T, p *e2e.Platform, jobID string) {
 		case <-time.After(2 * time.Second):
 		}
 	}
+}
+
+// cacheUsers lists the object cache's ACL users, as the admin. The
+// password, which the harness rendered into the data directory, goes to
+// valkey-cli over stdin, so it never reaches a command line.
+func cacheUsers(t *testing.T, p *e2e.Platform) []string {
+	t.Helper()
+	pw, err := os.ReadFile(filepath.Join(p.DataDir, "platform", platform.RedisAdminPasswordSecret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := p.Project.ExecInput(t.Context(), bytes.NewReader(append(pw, '\n')), "redis",
+		"valkey-cli", "--no-auth-warning", "--user", platform.RedisAdminUser, "--askpass", "-e", "ACL", "USERS")
+	if err != nil {
+		t.Fatalf("listing object cache users: %v", err)
+	}
+	users := strings.Fields(string(out))
+	if !slices.Contains(users, platform.RedisAdminUser) {
+		t.Fatalf("unexpected ACL USERS output %q", out)
+	}
+	return users
 }
 
 // dbObjects counts a site's objects on the platform MariaDB.
