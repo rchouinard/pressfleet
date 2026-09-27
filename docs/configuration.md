@@ -131,7 +131,7 @@ acme:
 | `wordpress_security.login_rate_limit.burst` | `PRESSFLEET_WORDPRESS_SECURITY_LOGIN_RATE_LIMIT_BURST` | | `10` | Requests above the rate allowed at once before `429`, from 0 to 100. |
 | `wordpress_security.disable_file_edit` | `PRESSFLEET_WORDPRESS_SECURITY_DISABLE_FILE_EDIT` | | `true` | Turn off the theme and plugin file editor (`DISALLOW_FILE_EDIT`). Updates keep working. |
 | `wordpress_security.headers` | `PRESSFLEET_WORDPRESS_SECURITY_HEADERS` | | `true` | Send `Referrer-Policy`, `X-Frame-Options`, and `Permissions-Policy` from every site. |
-| `wordpress_security.two_factor` | `PRESSFLEET_WORDPRESS_SECURITY_TWO_FACTOR` | | `off` | The Two Factor plugin: `off`, `optional` (installed; users opt in), or `required_for_admins`. Applies to sites provisioned from then on. |
+| `wordpress_security.two_factor` | `PRESSFLEET_WORDPRESS_SECURITY_TWO_FACTOR` | | `off` | The Two Factor plugin: `off`, `optional` (installed and activated; users opt in), or `required_for_admins` (also: every administrator must set up a second factor at their next login, including the one provisioning creates, and the plugin can't be deactivated). Reaches existing sites when the control plane restarts. Turning it off later stops requiring it but leaves the plugin installed. |
 | `wordpress_security.disable_application_passwords` | `PRESSFLEET_WORDPRESS_SECURITY_DISABLE_APPLICATION_PASSWORDS` | | `false` | Turn off WordPress application passwords. Off by default because integrations rely on them. |
 
 ## Outbound email

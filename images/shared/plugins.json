@@ -9,6 +9,11 @@
       "slug": "redis-cache",
       "version": "3.0.0",
       "sha256": "7a03342d3defbe94cac8d0470b42dc1a1c34331b19c47205df20ceccd3c8f54a"
+    },
+    {
+      "slug": "two-factor",
+      "version": "0.16.0",
+      "sha256": "449f004f43bcd87a5bdfa3d358758a4f301aa9fb7e8a46bf2f826d2e7463d0df"
     }
   ]
 }

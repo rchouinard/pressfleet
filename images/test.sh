@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test for the site images (issues #17, #18, #39, #40, #41, #47, #108, #109).
+# Smoke test for the site images (issues #17, #18, #39, #40, #41, #43, #47, #108, #109).
 #
 #   images/test.sh [php-version ...]     default: every PHP version images/matrix.sh builds
 #
@@ -150,6 +150,11 @@ define( 'PRESSFLEET_SMTP_FROM_NAME', 'PressFleet Sites' );
 if ( file_exists( __DIR__ . '/wp-content/pf-smoke-security.php' ) ) {
 	require __DIR__ . '/wp-content/pf-smoke-security.php';
 }
+// Written by the two-factor checks; a file of its own, since PHP-FPM's
+// OPcache would keep serving an earlier pf-smoke-security.php.
+if ( file_exists( __DIR__ . '/wp-content/pf-smoke-two-factor.php' ) ) {
+	require __DIR__ . '/wp-content/pf-smoke-two-factor.php';
+}
 if ( ! defined( 'ABSPATH' ) ) {
 	define( 'ABSPATH', __DIR__ . '/' );
 }
@@ -263,6 +268,10 @@ test_stack() {
 		"$("${cexec[@]}" wp eval --user=admin 'echo current_user_can("update_core") ? "yes" : "no";')"
 	check_eq "filesystem method is direct" "direct" \
 		"$("${cexec[@]}" wp eval 'require_once ABSPATH . "wp-admin/includes/file.php"; echo get_filesystem_method();')"
+	# Background (plugin and theme) updates still start from WP-Cron's
+	# version-check event, which no longer checks core.
+	check_eq "plugin and theme auto-updates still run" "started" \
+		"$("${cexec[@]}" wp eval 'remove_action( "wp_maybe_auto_update", "wp_maybe_auto_update" ); add_action( "wp_maybe_auto_update", function () { echo "started"; } ); define( "DOING_CRON", true ); do_action( "wp_version_check" );')"
 
 	# --- FastCGI page cache (#40) --------------------------------------------
 	# The first request for a page misses and stores it; bypass rules keep
@@ -474,6 +483,35 @@ test_stack() {
 		"$("${cexec[@]}" wp eval "echo is_wp_error( wp_authenticate( 'hasher', '$strong_pw' ) ) ? 'bad' : 'ok';")"
 	check_contains "argon2id: bcrypt hash upgraded at login" '$argon2id$' "$("${cexec[@]}" wp user get hasher --field=user_pass)"
 	"${cexec[@]}" rm -f wp-content/pf-smoke-security.php
+
+	# Two-factor required for administrators (#43). The bundled Two Factor
+	# plugin was installed above but never activated: the module keeps it
+	# active and enrols administrators at their next login. Requests use
+	# their own client IP, clear of the login rate limit checks below.
+	echo "<?php define( 'PRESSFLEET_REQUIRE_TWO_FACTOR', true );" |
+		docker exec -i "$php" sh -c 'cat > wp-content/pf-smoke-two-factor.php'
+	check "2fa: Two Factor is kept active" "${cexec[@]}" wp plugin is-active two-factor
+	"${cexec[@]}" wp plugin deactivate two-factor >/dev/null 2>&1 || true
+	check "2fa: deactivating Two Factor doesn't stick" "${cexec[@]}" wp plugin is-active two-factor
+	local tfa_check='echo pressfleet_two_factor_setup_required( get_user_by( "login", "admin" ) ) ? "yes" : "no";'
+	check_eq "2fa: the admin must set up a second factor" "yes" "$("${cexec[@]}" wp eval "$tfa_check")"
+	check_eq "2fa: no application passwords until then" "no" \
+		"$("${cexec[@]}" wp eval '$_SERVER["HTTPS"] = "on"; echo wp_is_application_passwords_available_for_user( get_user_by( "login", "admin" ) ) ? "yes" : "no";')"
+	local tfa_headers tfa_cookies tfa_ip='X-Forwarded-For: 198.51.100.20'
+	tfa_headers="$(curl -s -o /dev/null -D - -H "$tfa_ip" -b 'wordpress_test_cookie=WP%20Cookie%20check' \
+		-d "log=admin&pwd=$admin_password&wp-submit=Log+In&testcookie=1" "$base/wp-login.php" | tr -d '\r')"
+	check_contains "2fa: logging in lands on the two-factor settings" \
+		"location: $base/wp-admin/profile.php#two-factor-options" "$(tr '[:upper:]' '[:lower:]' <<<"$tfa_headers")"
+	tfa_cookies="$(sed -n 's/^[Ss]et-[Cc]ookie: \([^;]*\).*/\1/p' <<<"$tfa_headers" | paste -sd ';' -)"
+	check_eq "2fa: the dashboard sends them back there" "302 $base/wp-admin/profile.php#two-factor-options" \
+		"$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -H "$tfa_ip" -H "Cookie: $tfa_cookies" "$base/wp-admin/")"
+	check_contains "2fa: the profile says why" "requires two-factor authentication for administrators" \
+		"$(curl -s -H "$tfa_ip" -H "Cookie: $tfa_cookies" "$base/wp-admin/profile.php")"
+	"${cexec[@]}" wp eval 'Two_Factor_Core::enable_provider_for_user( get_user_by( "login", "admin" )->ID, "Two_Factor_Email" );'
+	check_eq "2fa: with a second factor the admin is done" "no" "$("${cexec[@]}" wp eval "$tfa_check")"
+	"${cexec[@]}" rm -f wp-content/pf-smoke-two-factor.php
+	"${cexec[@]}" wp plugin deactivate two-factor >/dev/null 2>&1 || true
+	check_not "2fa off: Two Factor can be deactivated" "${cexec[@]}" wp plugin is-active two-factor
 
 	# --- WordPress security set (§6.1), nginx ---------------------------------
 	# Security headers, on by default: on PHP pages, static files, and errors,

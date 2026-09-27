@@ -152,6 +152,7 @@ func (a *app) serveCommand() *cobra.Command {
 				Provisioner:       prov,
 				Databases:         siteDBs,
 				ObjectCaches:      caches,
+				TwoFactor:         a.cfg.WordPressSecurity.TwoFactor,
 				Logger:            a.log.With("component", "sites"),
 			})
 			if err != nil {

@@ -98,6 +98,10 @@ type Security struct {
 	// DisableApplicationPasswords turns on the module that disables
 	// application passwords.
 	DisableApplicationPasswords bool
+	// RequireTwoFactor turns on the module that makes administrators set up
+	// a second factor with the Two Factor plugin, which the control plane
+	// installs.
+	RequireTwoFactor bool
 }
 
 // Values of Security.PasswordHashing.
@@ -112,12 +116,13 @@ const (
 	ConstPasswordPolicyMinLength     = "PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH"
 	ConstPasswordHashing             = "PRESSFLEET_PASSWORD_HASHING"
 	ConstDisableApplicationPasswords = "PRESSFLEET_DISABLE_APPLICATION_PASSWORDS" //nolint:gosec // G101: a constant name, not a credential
+	ConstRequireTwoFactor            = "PRESSFLEET_REQUIRE_TWO_FACTOR"
 )
 
 // enabled reports whether any setting emits something.
 func (s Security) enabled() bool {
 	return s.DisallowFileEdit || s.BlockUserEnumeration || s.PasswordMinLength > 0 ||
-		s.PasswordHashing == HashArgon2id || s.DisableApplicationPasswords
+		s.PasswordHashing == HashArgon2id || s.DisableApplicationPasswords || s.RequireTwoFactor
 }
 
 // Redis is a site's connection to the shared object cache (§6) for the Redis
@@ -303,6 +308,9 @@ func Render(p Params) ([]byte, error) {
 		}
 		if sec.DisableApplicationPasswords {
 			w.define(ConstDisableApplicationPasswords, true)
+		}
+		if sec.RequireTwoFactor {
+			w.define(ConstRequireTwoFactor, true)
 		}
 		w.line("")
 	}

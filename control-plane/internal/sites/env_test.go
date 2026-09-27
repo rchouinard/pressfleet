@@ -66,6 +66,8 @@ type wpSite struct {
 	dropin  string            // title of object-cache.php, "" if none
 	options map[string]string // option -> JSON value
 	caps    []string          // capabilities added to administrator
+	// autoUpdates are the plugins whose auto-updates were turned on.
+	autoUpdates []string
 }
 
 func (w *wordpress) site(siteID string) *wpSite {
@@ -157,6 +159,9 @@ func (w *wordpress) wpcli(siteID string, args []string) (string, error) {
 	case len(args) > 3 && args[0] == "cap" && args[1] == "add" && args[2] == "administrator":
 		s.caps = append(s.caps, args[3:]...)
 		return "Success: Added.", nil
+	case len(args) > 3 && args[0] == "plugin" && args[1] == "auto-updates" && args[2] == "enable":
+		s.autoUpdates = append(s.autoUpdates, args[3:]...)
+		return "Success: Enabled.", nil
 	}
 	return "", nil
 }
@@ -195,7 +200,7 @@ func (w *wordpress) state(siteID string) wpSite {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	s := w.site(siteID)
-	return wpSite{plugins: maps.Clone(s.plugins), dropin: s.dropin, options: maps.Clone(s.options), caps: slices.Clone(s.caps)}
+	return wpSite{plugins: maps.Clone(s.plugins), dropin: s.dropin, options: maps.Clone(s.options), caps: slices.Clone(s.caps), autoUpdates: slices.Clone(s.autoUpdates)}
 }
 
 // edit changes the site's plugin state, as the site owner might.
@@ -222,7 +227,9 @@ func newEnv(t *testing.T, db *store.DB) *env {
 	return newEnvWith(t, db, testPreviewBase)
 }
 
-func newEnvWith(t *testing.T, db *store.DB, previewBase string) *env {
+// newEnvWith returns an env whose service has the given preview base
+// domain, after applying opts to its options.
+func newEnvWith(t *testing.T, db *store.DB, previewBase string, opts ...func(*sites.Options)) *env {
 	t.Helper()
 	cat, err := catalog.Parse([]byte(testManifest))
 	if err != nil {
@@ -240,7 +247,7 @@ func newEnvWith(t *testing.T, db *store.DB, previewBase string) *env {
 		sec: secrets.NewStore(db, secretstest.Keyring(t, 1)),
 	}
 	e.prov.WPCLI = e.wp.wpcli
-	e.svc, err = sites.New(sites.Options{
+	o := sites.Options{
 		DB:                db,
 		Secrets:           e.sec,
 		Catalog:           cat,
@@ -250,7 +257,11 @@ func newEnvWith(t *testing.T, db *store.DB, previewBase string) *env {
 		ObjectCaches:      e.cache,
 		Logger:            storetest.Logger(),
 		Now:               func() time.Time { return testNow },
-	})
+	}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	e.svc, err = sites.New(o)
 	if err != nil {
 		t.Fatal(err)
 	}

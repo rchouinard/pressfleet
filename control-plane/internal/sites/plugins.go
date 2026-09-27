@@ -23,8 +23,14 @@ import (
 // plugin from there with `wp plugin install <zip>`, so it needs no network
 // access and installs exactly what CI built and tested. Once installed, a
 // plugin is a regular plugin in wp-content: WordPress updates it like any
-// other (§5.6), and the platform never replaces a version the site already
-// has, so an update is never undone.
+// other (§5.6; the platform turns its auto-updates on when it installs it),
+// and the platform never replaces a version the site already has, so an
+// update is never undone.
+//
+// The stack is Nginx Helper and Redis Object Cache, plus Two Factor when the
+// WordPress security set's two_factor setting isn't off (§6.1). Required
+// two-factor is enforced by the platform must-use plugin, switched on in
+// wp-config.php by the driver, so it needs nothing here beyond the plugin.
 //
 // # Converging
 //
@@ -50,6 +56,11 @@ const BundledPluginDir = "/opt/pressfleet/plugins"
 const (
 	PluginNginxHelper = "nginx-helper"
 	PluginRedisCache  = "redis-cache"
+	// PluginTwoFactor is installed when the WordPress security set's
+	// two_factor setting isn't off (§6.1). When two-factor is required
+	// for administrators, the platform must-use plugin's two-factor module
+	// enforces it and keeps the plugin active.
+	PluginTwoFactor = "two-factor"
 )
 
 // redisDropInTitle is the plugin header of the Redis Object Cache plugin's
@@ -62,7 +73,13 @@ const objectCacheDropIn = "object-cache.php"
 // wantedPlugins returns the default plugins every site should have, in the
 // order they are installed and activated.
 func (s *Service) wantedPlugins() []string {
-	return []string{PluginNginxHelper, PluginRedisCache}
+	plugins := []string{PluginNginxHelper, PluginRedisCache}
+	if s.twoFactor {
+		// Turning two-factor off later leaves the plugin alone: the site
+		// may rely on it, or have installed it itself.
+		plugins = append(plugins, PluginTwoFactor)
+	}
+	return plugins
 }
 
 // wpPlugin is an entry of `wp plugin list --format=json`.
@@ -116,17 +133,18 @@ func (s *Service) configurePlugins(ctx context.Context, r *jobs.Run, siteID stri
 	if err != nil {
 		return err
 	}
-	var activate []string
+	var installed, activate []string
 	for _, slug := range s.wantedPlugins() {
 		p, ok := sp.plugins[slug]
 		if !ok {
-			installed, err := s.installBundledPlugin(ctx, r, siteID, slug)
+			ok, err := s.installBundledPlugin(ctx, r, siteID, slug)
 			if err != nil {
 				return err
 			}
-			if !installed {
+			if !ok {
 				continue
 			}
+			installed = append(installed, slug)
 			p = wpPlugin{Name: slug, Status: "inactive"}
 		}
 		if !p.active() {
@@ -141,6 +159,17 @@ func (s *Service) configurePlugins(ctx context.Context, r *jobs.Run, siteID stri
 			return fmt.Errorf("activating %s: %w", strings.Join(activate, ", "), err)
 		}
 		r.Logf("Activated %s.", strings.Join(activate, ", "))
+	}
+	// The bundled versions age with the image, so what the platform
+	// installs updates itself, security fixes included. Site owners may
+	// turn that off; a plugin that was already installed keeps its setting.
+	// That also means a retry wouldn't try again, so a failure is only a
+	// warning.
+	if len(installed) > 0 {
+		args := append([]string{"plugin", "auto-updates", "enable"}, installed...)
+		if _, err := s.prov.ExecWPCLI(ctx, siteID, args); err != nil {
+			r.Warnf("Couldn't turn on auto-updates for %s: %v", strings.Join(installed, ", "), err)
+		}
 	}
 	if err := s.configureNginxHelper(ctx, r, siteID, sp, slices.Contains(activate, PluginNginxHelper)); err != nil {
 		return err

@@ -3,6 +3,7 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -20,6 +21,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/e2e"
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
+	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
 )
@@ -247,6 +249,37 @@ func TestSiteCreateDelete(t *testing.T) {
 			if strings.Contains(status, "WP_REDIS_DATABASE: 0") {
 				t.Errorf("%s uses database 0:\n%s", sp.Name, status)
 			}
+		}
+	})
+
+	// The default plugin stack (#43): installed from the site image,
+	// active, and updating itself. Two-factor is off by default, so no Two
+	// Factor plugin.
+	t.Run("the default plugins are active", func(t *testing.T) {
+		out, err := siteProject.ExecService(ctx, "php", "wp", "plugin", "list", "--format=json",
+			"--fields=name,status,auto_update", "--skip-update-check")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var list []struct {
+			Name       string `json:"name"`
+			Status     string `json:"status"`
+			AutoUpdate string `json:"auto_update"`
+		}
+		if err := json.Unmarshal(out, &list); err != nil {
+			t.Fatalf("plugin list %s: %v", out, err)
+		}
+		got := map[string]string{}
+		for _, pl := range list {
+			got[pl.Name] = pl.Status + "/" + pl.AutoUpdate
+		}
+		for _, slug := range []string{sites.PluginNginxHelper, sites.PluginRedisCache} {
+			if got[slug] != "active/on" {
+				t.Errorf("%s is %q, want active with auto-updates on", slug, got[slug])
+			}
+		}
+		if s, ok := got[sites.PluginTwoFactor]; ok {
+			t.Errorf("%s is installed (%s) although two-factor is off", sites.PluginTwoFactor, s)
 		}
 	})
 

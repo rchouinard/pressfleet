@@ -149,6 +149,7 @@ import (
 	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
+	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
 	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
@@ -223,6 +224,10 @@ type Options struct {
 	Provisioner  provisioner.Provisioner
 	Databases    sitedb.Manager
 	ObjectCaches objectcache.Manager
+	// TwoFactor is the security set's two-factor setting
+	// (config.WordPressSecurityConfig.TwoFactor): unless it is
+	// config.TwoFactorOff or empty, sites get the Two Factor plugin.
+	TwoFactor string
 	// Logger defaults to discarding output.
 	Logger *slog.Logger
 	// Now defaults to time.Now; tests fix it for the catalog's support
@@ -242,6 +247,7 @@ type Service struct {
 	prov        provisioner.Provisioner
 	databases   sitedb.Manager
 	caches      objectcache.Manager
+	twoFactor   bool
 	log         *slog.Logger
 	now         func() time.Time
 
@@ -277,6 +283,7 @@ func New(opts Options) (*Service, error) {
 		prov:        opts.Provisioner,
 		databases:   opts.Databases,
 		caches:      opts.ObjectCaches,
+		twoFactor:   opts.TwoFactor != "" && opts.TwoFactor != config.TwoFactorOff,
 		log:         opts.Logger,
 		now:         opts.Now,
 

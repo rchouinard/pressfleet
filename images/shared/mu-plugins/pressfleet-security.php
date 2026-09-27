@@ -20,6 +20,7 @@ foreach (
 		'PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH'    => 'password-policy.php',
 		'PRESSFLEET_PASSWORD_HASHING'              => 'password-hashing.php',
 		'PRESSFLEET_DISABLE_APPLICATION_PASSWORDS' => 'application-passwords.php',
+		'PRESSFLEET_REQUIRE_TWO_FACTOR'            => 'two-factor.php',
 	) as $pressfleet_constant => $pressfleet_module
 ) {
 	if ( defined( $pressfleet_constant ) && constant( $pressfleet_constant ) ) {

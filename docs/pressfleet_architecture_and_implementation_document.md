@@ -495,7 +495,7 @@ PHP features are modules of the platform must-use plugin in the site images (`/o
 | **Login rate limiting:** per-IP request rate limit on `wp-login.php` | On | nginx `limit_req` |
 | **Disable the theme and plugin file editor** (`DISALLOW_FILE_EDIT`). Plugin and theme updates keep working. | On | `wp-config.php` |
 | **Security headers:** `Referrer-Policy`, `X-Frame-Options: SAMEORIGIN`, `Permissions-Policy`. HSTS on production domains only, without `includeSubDomains`, since a client's other subdomains may not serve HTTPS. | On | nginx; HSTS via a Traefik middleware on primary-domain routers |
-| **Two-factor authentication:** the WordPress.org [Two Factor](https://wordpress.org/plugins/two-factor/) plugin, installed during provisioning, optionally required for administrators | Off | Regular plugin (updated by WordPress) |
+| **Two-factor authentication:** the WordPress.org [Two Factor](https://wordpress.org/plugins/two-factor/) plugin, installed during provisioning, optionally required for administrators. When required, administrators without a second factor (including the one provisioning creates) are sent to set one up at their next login, and can't reach the rest of wp-admin or use application passwords until they have. | Off | Regular plugin (updated by WordPress); enforcement in the must-use plugin |
 | **Disable application passwords.** Left available by default because integrations rely on them. | Off | Must-use plugin |
 
 All-in-one security suites (Wordfence and similar) are deliberately excluded: their memory use conflicts with the capacity target, they expect to write to `wp-config.php`, `.user.ini`, and core files (all read-only here), and they duplicate platform features.

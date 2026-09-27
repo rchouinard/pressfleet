@@ -2,6 +2,7 @@ package e2e_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ import (
 // securityConstants prints the security set's wp-config.php constants as
 // PHP sees them, one "NAME=value" line each ("-" when undefined).
 const securityConstants = `foreach (array("DISALLOW_FILE_EDIT", "PRESSFLEET_BLOCK_USER_ENUMERATION", "PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH",
-	"PRESSFLEET_PASSWORD_HASHING", "PRESSFLEET_DISABLE_APPLICATION_PASSWORDS") as $c) {
+	"PRESSFLEET_PASSWORD_HASHING", "PRESSFLEET_DISABLE_APPLICATION_PASSWORDS", "PRESSFLEET_REQUIRE_TWO_FACTOR") as $c) {
 	echo $c, "=", defined($c) ? var_export(constant($c), true) : "-", "\n";
 }`
 
@@ -99,6 +100,7 @@ func TestSecuritySetReachesExistingSites(t *testing.T) {
 		"PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH=12",
 		"PRESSFLEET_PASSWORD_HASHING=-",
 		"PRESSFLEET_DISABLE_APPLICATION_PASSWORDS=-",
+		"PRESSFLEET_REQUIRE_TWO_FACTOR=-",
 	}, "\n"); got != want {
 		t.Errorf("constants after provisioning:\n%s\nwant:\n%s", got, want)
 	}
@@ -106,6 +108,15 @@ func TestSecuritySetReachesExistingSites(t *testing.T) {
 		t.Errorf("nginx environment after provisioning = %q, want %q", got, want)
 	}
 	phpBefore, nginxBefore := container("php"), container("nginx")
+	// Two-factor is off by default, so the site has no Two Factor plugin.
+	wp := func(args ...string) (string, error) {
+		t.Helper()
+		out, err := siteProject.ExecService(ctx, "php", append([]string{"wp"}, args...)...)
+		return strings.TrimSpace(string(out)), err
+	}
+	if _, err := wp("plugin", "is-installed", "two-factor"); err == nil {
+		t.Error("the Two Factor plugin is installed although two-factor is off")
+	}
 
 	p.Restart(t, map[string]string{
 		"PRESSFLEET_WORDPRESS_SECURITY_DISABLE_FILE_EDIT":             "false",
@@ -114,6 +125,7 @@ func TestSecuritySetReachesExistingSites(t *testing.T) {
 		"PRESSFLEET_WORDPRESS_SECURITY_DISABLE_APPLICATION_PASSWORDS": "true",
 		"PRESSFLEET_WORDPRESS_SECURITY_LOGIN_RATE_LIMIT_BURST":        "5",
 		"PRESSFLEET_WORDPRESS_SECURITY_HEADERS":                       "false",
+		"PRESSFLEET_WORDPRESS_SECURITY_TWO_FACTOR":                    "required_for_admins",
 	})
 	waitJob(t, p, reconcileJob(t, p, site.ID))
 
@@ -123,6 +135,7 @@ func TestSecuritySetReachesExistingSites(t *testing.T) {
 		"PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH=16",
 		"PRESSFLEET_PASSWORD_HASHING='argon2id'",
 		"PRESSFLEET_DISABLE_APPLICATION_PASSWORDS=true",
+		"PRESSFLEET_REQUIRE_TWO_FACTOR=true",
 	}, "\n"); got != want {
 		t.Errorf("constants after the restart:\n%s\nwant:\n%s", got, want)
 	}
@@ -134,6 +147,19 @@ func TestSecuritySetReachesExistingSites(t *testing.T) {
 	}
 	if container("nginx") == nginxBefore {
 		t.Error("nginx was not recreated")
+	}
+	// Required two-factor (#43): reconciling installed and activated the
+	// Two Factor plugin, and the administrator provisioning created must
+	// now set up a second factor.
+	if _, err := wp("plugin", "is-active", "two-factor"); err != nil {
+		t.Errorf("the Two Factor plugin isn't active after requiring two-factor: %v", err)
+	}
+	admin, err := wp("user", "list", "--role=administrator", "--field=user_login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := wp("eval", fmt.Sprintf(`echo pressfleet_two_factor_setup_required( get_user_by( "login", %q ) ) ? "yes" : "no";`, admin)); err != nil || got != "yes" {
+		t.Errorf("administrator %s must set up two-factor = %q (%v), want yes", admin, got, err)
 	}
 	if got := getSite(t, p, site.ID); got.Status != client.SiteStatusRunning {
 		t.Errorf("site after reconciling: %+v", got)

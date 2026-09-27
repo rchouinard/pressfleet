@@ -61,8 +61,9 @@ Notes:
 
 - denies the `update_core` capability to everyone (hides the core section of Dashboard > Updates, update links, and footer nags);
 - short-circuits the core update check (`pre_site_transient_update_core`), so WordPress never contacts api.wordpress.org about core;
-- removes the core update nag and background core updates, and turns the core version-check cron event into a no-op;
-- removes Site Health's background-updates test, which would flag the intentional setup.
+- removes the core update nag and background core updates, and stops the version-check cron event from checking core;
+- removes Site Health's background-updates test, which would flag the intentional setup;
+- keeps plugin and theme auto-updates working: WordPress starts background updates from the version-check cron event it no longer uses for core, so the plugin starts them from that event itself.
 
 Plugin and theme updates are unaffected.
 
@@ -77,6 +78,7 @@ Plugin and theme updates are unaffected.
 | `password-policy.php` | `PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH` (integer) | Rejects new passwords shorter than the minimum or on the common-password list (`common-passwords.txt`: the NCSC's 100,000 most used passwords, from Have I Been Pwned via SecLists, of 8 or more characters, compared case-insensitively). Checked on profile save, Users > Add New, the password reset form, the REST API (`400 rest_weak_password`), and WP-CLI (`wp user create`, `wp user update --user_pass`, `wp core install`). Existing passwords keep working. |
 | `password-hashing.php` | `PRESSFLEET_PASSWORD_HASHING` (`'argon2id'`) | Hashes new passwords with Argon2id through `wp_hash_password_algorithm` instead of WordPress's bcrypt. Existing hashes still verify and are rehashed at the user's next login. PHP's default Argon2id cost uses about 64 MiB per hash, outside `memory_limit` but inside the container's memory. |
 | `application-passwords.php` | `PRESSFLEET_DISABLE_APPLICATION_PASSWORDS` | Disables application passwords (`wp_is_application_passwords_available`). |
+| `two-factor.php` | `PRESSFLEET_REQUIRE_TWO_FACTOR` | Requires administrators (users who can `manage_options`) to use the [Two Factor](https://wordpress.org/plugins/two-factor/) plugin, which the control plane installs. The plugin counts as active whenever it is installed (deactivating it has no effect, and its Deactivate link is replaced by a note). An administrator without a second factor is enrolled at their next login: logging in lands on their profile's Two-Factor Options, every other wp-admin screen redirects there with a notice until a provider is set up, and application passwords are unavailable to them meanwhile. AJAX and the REST API are left alone, since setting up a provider uses them. The administrator provisioning creates is covered like any other: its one-time password goes to whoever creates the site, who sets up the second factor at first login. Without the plugin (deleted) nothing is enforced and administrators see a warning; the control plane reinstalls it when it next reconciles the site. |
 
 ## Default plugins
 

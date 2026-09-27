@@ -54,9 +54,21 @@ add_filter( 'auto_update_core', '__return_false' );
 add_filter( 'send_core_update_notification_email', '__return_false' );
 
 // The wp_version_check cron event stays scheduled (core would reschedule it
-// on the next request) but does nothing.
+// on the next request) but doesn't check for core releases.
 remove_action( 'admin_init', '_maybe_update_core' );
 remove_action( 'wp_version_check', 'wp_version_check' );
+
+// WordPress starts background updates, plugin and theme auto-updates
+// included, at the end of that check, so start them from the event here.
+// Core stays out of them (auto_update_core above).
+add_action(
+	'wp_version_check',
+	static function () {
+		if ( wp_doing_cron() && ! doing_action( 'wp_maybe_auto_update' ) ) {
+			do_action( 'wp_maybe_auto_update' );
+		}
+	}
+);
 
 add_action(
 	'admin_init',

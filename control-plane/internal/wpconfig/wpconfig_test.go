@@ -54,7 +54,7 @@ func fullParams() Params {
 	}
 	p.Security = Security{
 		DisallowFileEdit: true, BlockUserEnumeration: true, PasswordMinLength: 12,
-		PasswordHashing: HashArgon2id, DisableApplicationPasswords: true,
+		PasswordHashing: HashArgon2id, DisableApplicationPasswords: true, RequireTwoFactor: true,
 	}
 	p.Constants = []Constant{
 		{Name: "WP_DEBUG", Value: false},
@@ -152,6 +152,7 @@ func TestRenderSecurity(t *testing.T) {
 		"define( 'PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH', ",
 		"define( 'PRESSFLEET_PASSWORD_HASHING', ",
 		"define( 'PRESSFLEET_DISABLE_APPLICATION_PASSWORDS', true );",
+		"define( 'PRESSFLEET_REQUIRE_TWO_FACTOR', true );",
 	}
 	for _, tc := range []struct {
 		name string
@@ -164,7 +165,8 @@ func TestRenderSecurity(t *testing.T) {
 		{"user enumeration", Security{BlockUserEnumeration: true}, all[1:2]},
 		{"password policy", Security{PasswordMinLength: 14}, []string{"define( 'PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH', 14 );"}},
 		{"argon2id", Security{PasswordHashing: HashArgon2id}, []string{"define( 'PRESSFLEET_PASSWORD_HASHING', 'argon2id' );"}},
-		{"application passwords", Security{DisableApplicationPasswords: true}, all[4:]},
+		{"application passwords", Security{DisableApplicationPasswords: true}, all[4:5]},
+		{"two-factor", Security{RequireTwoFactor: true}, all[5:]},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := testParams()

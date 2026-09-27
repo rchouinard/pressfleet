@@ -84,6 +84,7 @@ define( 'PRESSFLEET_BLOCK_USER_ENUMERATION', true );
 define( 'PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH', 12 );
 define( 'PRESSFLEET_PASSWORD_HASHING', 'argon2id' );
 define( 'PRESSFLEET_DISABLE_APPLICATION_PASSWORDS', true );
+define( 'PRESSFLEET_REQUIRE_TWO_FACTOR', true );
 
 // ** Site constants ** //
 define( 'WP_DEBUG', false );

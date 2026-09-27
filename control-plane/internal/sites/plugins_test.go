@@ -9,7 +9,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
+	"github.com/rchouinard/pressfleet/control-plane/internal/config"
+	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
@@ -46,7 +50,7 @@ func TestDefaultPluginsAreBundled(t *testing.T) {
 		}
 		pinned[p.Slug] = true
 	}
-	for _, slug := range []string{sites.PluginNginxHelper, sites.PluginRedisCache} {
+	for _, slug := range []string{sites.PluginNginxHelper, sites.PluginRedisCache, sites.PluginTwoFactor} {
 		if !pinned[slug] {
 			t.Errorf("%s is not in images/shared/plugins.json", slug)
 		}
@@ -91,6 +95,7 @@ func TestProvisioningInstallsDefaultPlugins(t *testing.T) {
 			bundleCheck(sites.PluginNginxHelper), install(sites.PluginNginxHelper),
 			bundleCheck(sites.PluginRedisCache), install(sites.PluginRedisCache),
 			"plugin activate " + sites.PluginNginxHelper + " " + sites.PluginRedisCache,
+			"plugin auto-updates enable " + sites.PluginNginxHelper + " " + sites.PluginRedisCache,
 			nginxHelperCaps, getNginxHelper, setNginxHelper(nginxHelperFresh),
 			"redis enable",
 		}
@@ -151,7 +156,8 @@ func TestReconcilePlugins(t *testing.T) {
 			},
 			wantCalls: []string{
 				listPlugins, bundleCheck(sites.PluginRedisCache), install(sites.PluginRedisCache),
-				"plugin activate " + sites.PluginRedisCache, getNginxHelper, "redis enable",
+				"plugin activate " + sites.PluginRedisCache, "plugin auto-updates enable " + sites.PluginRedisCache,
+				getNginxHelper, "redis enable",
 			},
 			want: wpSite{plugins: allActive(), dropin: redisDropIn},
 		},
@@ -239,6 +245,80 @@ func TestReconcilePlugins(t *testing.T) {
 			})
 		})
 	}
+}
+
+// TestTwoFactorPlugin checks that the Two Factor plugin joins the default
+// stack whenever the security set's two_factor setting isn't off, and that
+// turning the setting off leaves an installed plugin alone (#43).
+func TestTwoFactorPlugin(t *testing.T) {
+	for _, tt := range []struct {
+		mode string
+		want bool
+	}{
+		{config.TwoFactorOff, false},
+		{"", false},
+		{config.TwoFactorOptional, true},
+		{config.TwoFactorRequiredForAdmins, true},
+	} {
+		t.Run("mode "+tt.mode, func(t *testing.T) {
+			storetest.Run(t, func(t *testing.T, db *store.DB) {
+				e := newEnvWith(t, db, testPreviewBase, func(o *sites.Options) { o.TwoFactor = tt.mode })
+				site := e.running(t, "Two Factor")
+				st := e.wp.state(site.ID)
+				if got := st.plugins[sites.PluginTwoFactor] == "active"; got != tt.want {
+					t.Errorf("Two Factor active = %v, want %v (plugins %v)", got, tt.want, st.plugins)
+				}
+				if got := slices.Contains(st.autoUpdates, sites.PluginTwoFactor); got != tt.want {
+					t.Errorf("Two Factor auto-updates on = %v, want %v", got, tt.want)
+				}
+			})
+		})
+	}
+
+	// A site that got the plugin keeps it when two-factor is turned off.
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		e := newEnvWith(t, db, testPreviewBase, func(o *sites.Options) { o.TwoFactor = config.TwoFactorRequiredForAdmins })
+		site := e.running(t, "Was Required")
+		off, err := sites.New(sites.Options{
+			DB: db, Secrets: e.sec, Catalog: mustCatalog(t), PreviewBaseDomain: testPreviewBase,
+			Provisioner: e.prov, Databases: e.dbs, ObjectCaches: e.cache, Logger: storetest.Logger(),
+			TwoFactor: config.TwoFactorOff,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		pool := jobs.NewPool(db, jobs.Options{Logger: storetest.Logger(), Backoff: func(int) time.Duration { return 0 }, Secrets: e.sec})
+		for _, h := range off.Handlers() {
+			if err := pool.Register(h); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := off.EnqueueReconcile(ctx); err != nil {
+			t.Fatal(err)
+		}
+		for {
+			ran, err := pool.RunNext(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !ran {
+				break
+			}
+		}
+		if got := e.wp.state(site.ID).plugins[sites.PluginTwoFactor]; got != "active" {
+			t.Errorf("Two Factor after turning two-factor off = %q, want it left active", got)
+		}
+	})
+}
+
+func mustCatalog(t *testing.T) *catalog.Catalog {
+	t.Helper()
+	cat, err := catalog.Parse([]byte(testManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cat
 }
 
 func TestReconcilePluginsSkipsStoppedSites(t *testing.T) {

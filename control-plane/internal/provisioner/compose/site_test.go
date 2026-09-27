@@ -465,6 +465,31 @@ func TestRenderSiteNginxSecurity(t *testing.T) {
 	}
 }
 
+// TestRenderSiteTwoFactor checks that only required two-factor turns on the
+// must-use plugin module that enforces it; optional two-factor is just the
+// plugin, which package sites installs (#43).
+func TestRenderSiteTwoFactor(t *testing.T) {
+	const constant = "define( 'PRESSFLEET_REQUIRE_TWO_FACTOR', true );"
+	for mode, want := range map[string]bool{
+		config.TwoFactorOff:               false,
+		config.TwoFactorOptional:          false,
+		config.TwoFactorRequiredForAdmins: true,
+	} {
+		t.Run(mode, func(t *testing.T) {
+			in := testSiteRender()
+			in.Security.TwoFactor = mode
+			dir, _ := renderSite(t, in)
+			raw, err := os.ReadFile(filepath.Join(dir, compose.SiteWPConfigFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Contains(string(raw), constant); got != want {
+				t.Errorf("wp-config.php defines PRESSFLEET_REQUIRE_TWO_FACTOR = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
 func TestSiteProjectName(t *testing.T) {
 	if got := compose.SiteProjectName(testSiteID); got != "pf-"+testSiteID {
 		t.Errorf("SiteProjectName = %q", got)

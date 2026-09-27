@@ -258,6 +258,9 @@ func wpSecurity(s config.WordPressSecurityConfig) wpconfig.Security {
 		DisallowFileEdit:            s.DisableFileEdit,
 		BlockUserEnumeration:        s.BlockUserEnumeration,
 		DisableApplicationPasswords: s.DisableApplicationPasswords,
+		// Optional two-factor needs nothing here: the control plane just
+		// installs the Two Factor plugin (package sites).
+		RequireTwoFactor: s.TwoFactor == config.TwoFactorRequiredForAdmins,
 	}
 	if s.PasswordPolicy.Enabled {
 		sec.PasswordMinLength = s.PasswordPolicy.MinLength
