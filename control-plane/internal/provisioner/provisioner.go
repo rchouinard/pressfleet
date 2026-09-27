@@ -70,8 +70,10 @@ type SiteConfig struct {
 	// WPSaltsSecretRef references the site's WordPress keys and salts, stored
 	// in the format of wpconfig.MarshalSalts.
 	WPSaltsSecretRef string
-	// RedisSecretRef references the site's Redis ACL credentials. Empty until
-	// the shared Redis service exists (M2).
+	// RedisSecretRef references the site's object cache credentials, stored
+	// in the format of objectcache.MarshalCredentials. The driver renders
+	// them into the Redis Object Cache plugin's settings; empty leaves the
+	// site without them.
 	RedisSecretRef string
 }
 

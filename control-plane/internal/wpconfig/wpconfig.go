@@ -120,15 +120,21 @@ func (s Security) enabled() bool {
 		s.PasswordHashing == HashArgon2id || s.DisableApplicationPasswords
 }
 
-// Redis is a site's connection to the shared Redis server (§6): an ACL user
-// restricted to the site's key prefix.
+// Redis is a site's connection to the shared object cache (§6) for the Redis
+// Object Cache plugin: an ACL user restricted to the site's own logical
+// database and key prefix (package objectcache/redis documents the settings
+// the plugin needs with those users).
 type Redis struct {
 	Host     string
 	Port     int
 	Username string
 	Password redact.Secret
+	// Database is the site's logical database (WP_REDIS_DATABASE). It must
+	// not be 0: the plugin only selects a database other than 0, and the
+	// ACL user may use no other.
+	Database int
 	// Prefix is prepended to every key (WP_REDIS_PREFIX); it must match the
-	// ACL user's key pattern.
+	// ACL user's key pattern (objectcache.KeyPrefix), colon included.
 	Prefix string
 }
 
@@ -246,13 +252,24 @@ func Render(p Params) ([]byte, error) {
 
 	if r := p.Redis; r != nil {
 		w.line("// ** Object cache (Redis Object Cache plugin) ** //")
+		w.define("WP_REDIS_CLIENT", "phpredis")
 		w.define("WP_REDIS_HOST", r.Host)
 		w.define("WP_REDIS_PORT", r.Port)
-		w.line("// ACL user and password (§6).")
+		w.line("// The site's own ACL user and logical database (§6). The array form")
+		w.line("// passes the user name with the password.")
 		w.line("define( 'WP_REDIS_PASSWORD', array( " + literal(r.Username) + ", " + literal(r.Password.Reveal()) + " ) );")
+		w.define("WP_REDIS_DATABASE", r.Database)
+		w.line("// Must match the ACL user's key pattern, colon included.")
 		w.define("WP_REDIS_PREFIX", r.Prefix)
-		w.line("// The ACL denies FLUSHDB; flush only this site's keys.")
-		w.define("WP_REDIS_SELECTIVE_FLUSH", true)
+		w.line("// The database holds only this site's keys, so a flush is a FLUSHDB")
+		w.line("// rather than a script scanning the keyspace for the prefix.")
+		w.define("WP_REDIS_SELECTIVE_FLUSH", false)
+		w.line("// phpredis is built with igbinary: smaller entries in the shared cache.")
+		w.define("WP_REDIS_IGBINARY", true)
+		w.line("// The platform monitors the cache (§7); the plugin's per-request metrics")
+		w.line("// would take memory every site shares.")
+		w.define("WP_REDIS_DISABLE_METRICS", true)
+		w.define("WP_REDIS_DISABLE_BANNERS", true)
 		w.line("")
 	}
 
@@ -329,6 +346,9 @@ func (p *Params) validate() error {
 		}
 		if r.Port < 1 || r.Port > 65535 {
 			errs = append(errs, errors.New("redis: port must be 1-65535"))
+		}
+		if r.Database < 1 {
+			errs = append(errs, errors.New("redis: database must be at least 1"))
 		}
 	}
 	if m := p.SMTP; m != nil {

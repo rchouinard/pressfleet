@@ -13,6 +13,7 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
+	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
@@ -55,7 +56,8 @@ type ImageResolver interface {
 type ProvisionerConfig struct {
 	// Layout locates the site directories the projects are rendered into.
 	Layout config.Layout
-	// Secrets resolves SiteConfig's DBSecretRef and WPSaltsSecretRef.
+	// Secrets resolves SiteConfig's DBSecretRef, WPSaltsSecretRef, and
+	// RedisSecretRef.
 	Secrets SecretReader
 	// Images resolves SiteConfig's PHPVersion and WPCoreVersion.
 	Images ImageResolver
@@ -292,11 +294,40 @@ func (p *Provisioner) siteRender(ctx context.Context, cfg *provisioner.SiteConfi
 	if err != nil {
 		return SiteRender{}, fmt.Errorf("reading WordPress salts: %w", err)
 	}
+	redis, err := p.siteRedis(ctx, cfg.RedisSecretRef)
+	if err != nil {
+		return SiteRender{}, err
+	}
 	return SiteRender{
 		Site:     cfg,
 		Images:   SiteImages{PHP: images.PHP, Nginx: images.Nginx},
-		WPConfig: wpconfig.Params{DB: creds, Salts: salts, SMTP: p.smtp},
+		WPConfig: wpconfig.Params{DB: creds, Salts: salts, Redis: redis, SMTP: p.smtp},
 		Security: p.security,
+	}, nil
+}
+
+// siteRedis resolves the site's object cache credentials into the Redis
+// Object Cache plugin's settings. A site without a reference (only tests
+// create one now) gets no object cache settings.
+func (p *Provisioner) siteRedis(ctx context.Context, ref string) (*wpconfig.Redis, error) {
+	if ref == "" {
+		return nil, nil
+	}
+	secret, err := p.secrets.Get(ctx, secrets.Ref(ref))
+	if err != nil {
+		return nil, fmt.Errorf("reading object cache credentials: %w", err)
+	}
+	creds, err := objectcache.UnmarshalCredentials(secret)
+	if err != nil {
+		return nil, fmt.Errorf("reading object cache credentials: %w", err)
+	}
+	return &wpconfig.Redis{
+		Host:     RedisAlias,
+		Port:     RedisPort,
+		Username: creds.Username,
+		Password: creds.Password,
+		Database: creds.Database,
+		Prefix:   creds.KeyPrefix,
 	}, nil
 }
 

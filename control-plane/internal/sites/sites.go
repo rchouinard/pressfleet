@@ -25,10 +25,14 @@
 //     Undo deletes it, with its volumes and rendered files.
 //  5. install_wordpress: `wp core install` with the preview URL, unless
 //     `wp core is-installed` says an earlier attempt already did.
-//  6. finish: set the status to running.
+//  6. configure_plugins: install the default plugin stack from the site
+//     image, activate it, and configure it, such as enabling the object
+//     cache drop-in (§5.1 step 7; see plugins.go).
+//  7. finish: set the status to running.
 //
 // Every step is idempotent: the database and object cache managers and the
-// provisioner converge on retries, and the install checks first.
+// provisioner converge on retries, and the install and plugin steps check
+// first.
 //
 // # Failed provisioning
 //
@@ -93,7 +97,8 @@
 // reaches sites nobody touches, [Service.EnqueueReconcile] queues a
 // [ReconcileJobType] job per site when the control plane starts; its steps
 // re-render running and stopped sites with provisioner.UpdateSite, which
-// recreates only what changed. See reconcile.go for how other features hook
+// recreates only what changed, and converge running sites' default plugin
+// stack. See reconcile.go for how other features hook
 // in. A reconciliation that gives up leaves the site's status alone unless
 // its containers are no longer running or stopped, and records the error in
 // the status message.

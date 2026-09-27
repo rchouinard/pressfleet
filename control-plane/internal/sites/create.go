@@ -42,6 +42,7 @@ func (s *Service) createHandler() jobs.Handler {
 			{Name: stepCreateCache, Do: s.createObjectCache, Undo: s.deleteObjectCache},
 			{Name: stepStartStack, Do: s.startStack, Undo: s.deleteStack},
 			{Name: stepInstallWordPress, Do: s.installWordPress},
+			{Name: stepConfigurePlugins, Do: s.configureCreatedSitePlugins},
 			{Name: stepFinish, Do: s.finishCreate},
 		},
 	}

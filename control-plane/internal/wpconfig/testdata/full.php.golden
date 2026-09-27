@@ -48,13 +48,24 @@ define( 'RT_WP_NGINX_HELPER_CACHE_PATH', '/var/cache/pressfleet/fastcgi' );
 // in the database (§5.2).
 
 // ** Object cache (Redis Object Cache plugin) ** //
+define( 'WP_REDIS_CLIENT', 'phpredis' );
 define( 'WP_REDIS_HOST', 'pf-redis' );
 define( 'WP_REDIS_PORT', 6379 );
-// ACL user and password (§6).
-define( 'WP_REDIS_PASSWORD', array( 'site-01jabc', 'redis\'pw' ) );
+// The site's own ACL user and logical database (§6). The array form
+// passes the user name with the password.
+define( 'WP_REDIS_PASSWORD', array( 'pf_01jabc', 'redis\'pw' ) );
+define( 'WP_REDIS_DATABASE', 7 );
+// Must match the ACL user's key pattern, colon included.
 define( 'WP_REDIS_PREFIX', '01jabc:' );
-// The ACL denies FLUSHDB; flush only this site's keys.
-define( 'WP_REDIS_SELECTIVE_FLUSH', true );
+// The database holds only this site's keys, so a flush is a FLUSHDB
+// rather than a script scanning the keyspace for the prefix.
+define( 'WP_REDIS_SELECTIVE_FLUSH', false );
+// phpredis is built with igbinary: smaller entries in the shared cache.
+define( 'WP_REDIS_IGBINARY', true );
+// The platform monitors the cache (§7); the plugin's per-request metrics
+// would take memory every site shares.
+define( 'WP_REDIS_DISABLE_METRICS', true );
+define( 'WP_REDIS_DISABLE_BANNERS', true );
 
 // ** Outbound email ** //
 define( 'PRESSFLEET_SMTP_HOST', 'smtp.example.com' );

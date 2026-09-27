@@ -47,7 +47,7 @@ func testParams() Params {
 func fullParams() Params {
 	p := testParams()
 	p.TablePrefix = "wp_x7_"
-	p.Redis = &Redis{Host: "pf-redis", Port: 6379, Username: "site-01jabc", Password: "redis'pw", Prefix: "01jabc:"}
+	p.Redis = &Redis{Host: "pf-redis", Port: 6379, Username: "pf_01jabc", Password: "redis'pw", Database: 7, Prefix: "01jabc:"}
 	p.SMTP = &SMTP{
 		Host: "smtp.example.com", Port: 587, Username: "mailer", Password: `smtp\pw`,
 		Encryption: "tls", FromEmail: "noreply@example.com", FromName: "Acme's Site",
@@ -315,6 +315,7 @@ func TestRenderInvalid(t *testing.T) {
 		"nil value":           {func(p *Params) { p.Constants = []Constant{{Name: "X"}} }, "must be a string, bool, or int"},
 		"redis incomplete":    {func(p *Params) { p.Redis = &Redis{Host: "pf-redis", Port: 6379, Password: secret} }, "redis: host, username"},
 		"redis port":          {func(p *Params) { r := fullParams().Redis; r.Port = 0; p.Redis = r }, "redis: port"},
+		"redis database":      {func(p *Params) { r := fullParams().Redis; r.Database = 0; p.Redis = r }, "redis: database"},
 		"smtp no host":        {func(p *Params) { p.SMTP = &SMTP{Port: 25, Password: secret} }, "smtp: host is required"},
 		"smtp bad encryption": {func(p *Params) { s := fullParams().SMTP; s.Encryption = "starttls"; p.SMTP = s }, "smtp: encryption"},
 		"reserved file edit":  {func(p *Params) { p.Constants = []Constant{{Name: "DISALLOW_FILE_EDIT", Value: false}} }, "set by the platform"},

@@ -2,6 +2,8 @@ package sites_test
 
 import (
 	"context"
+	"encoding/json"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -38,15 +40,39 @@ const testManifest = `{
 }`
 
 // wordpress simulates WordPress in the fake provisioner's php containers:
-// `core is-installed` fails with exit code 1 until `core install` ran.
+// `core is-installed` fails with exit code 1 until `core install` ran, and
+// the plugin commands of the default plugin stack act on a per-site plugin
+// list.
 type wordpress struct {
 	mu        sync.Mutex
 	installed map[string]bool
 	installs  map[string][][]string
+	sites     map[string]*wpSite
+	// calls records every other WP-CLI call per site.
+	calls map[string][][]string
 	// failInstall, if set, is returned by `core install` (after installing,
 	// if installAnyway is set).
 	failInstall   error
 	installAnyway bool
+	// unbundled lists plugins the site image doesn't bundle.
+	unbundled map[string]bool
+	// failCommand, if set, is consulted for every plugin-related call.
+	failCommand func(args []string) error
+}
+
+// wpSite is a simulated site's plugin state.
+type wpSite struct {
+	plugins map[string]string // slug -> status
+	dropin  string            // title of object-cache.php, "" if none
+}
+
+func (w *wordpress) site(siteID string) *wpSite {
+	s, ok := w.sites[siteID]
+	if !ok {
+		s = &wpSite{plugins: map[string]string{"akismet": "inactive"}}
+		w.sites[siteID] = s
+	}
+	return s
 }
 
 func (w *wordpress) wpcli(siteID string, args []string) (string, error) {
@@ -66,13 +92,100 @@ func (w *wordpress) wpcli(siteID string, args []string) (string, error) {
 		w.installed[siteID] = true
 		return "Success: WordPress installed successfully.", w.failInstall
 	}
+	w.calls[siteID] = append(w.calls[siteID], slices.Clone(args))
+	if w.failCommand != nil {
+		if err := w.failCommand(args); err != nil {
+			return "", err
+		}
+	}
+	s := w.site(siteID)
+	switch {
+	case len(args) > 1 && args[0] == "plugin" && args[1] == "list":
+		list := []map[string]string{{"name": "pressfleet", "status": "must-use", "title": "PressFleet Platform"}}
+		for _, slug := range slices.Sorted(maps.Keys(s.plugins)) {
+			list = append(list, map[string]string{"name": slug, "status": s.plugins[slug], "title": slug})
+		}
+		if s.dropin != "" {
+			list = append(list, map[string]string{"name": "object-cache.php", "status": "dropin", "title": s.dropin})
+		}
+		b, err := json.Marshal(list)
+		return string(b), err
+	case len(args) == 2 && args[0] == "eval" && strings.Contains(args[1], "is_readable"):
+		slug, ok := bundledSlug(args[1])
+		if !ok || w.unbundled[slug] {
+			return "no", nil
+		}
+		return "yes", nil
+	case len(args) == 3 && args[0] == "plugin" && args[1] == "install":
+		slug, ok := bundledSlug(args[2])
+		if !ok || w.unbundled[slug] {
+			return "", &provisioner.ExecError{ExitCode: 1, Stderr: "Error: No plugins installed."}
+		}
+		if _, ok := s.plugins[slug]; ok {
+			return "", &provisioner.ExecError{ExitCode: 1, Stderr: "Error: Destination folder already exists."}
+		}
+		s.plugins[slug] = "inactive"
+		return "Success: Installed 1 of 1 plugins.", nil
+	case len(args) > 2 && args[0] == "plugin" && args[1] == "activate":
+		for _, slug := range args[2:] {
+			if _, ok := s.plugins[slug]; !ok {
+				return "", &provisioner.ExecError{ExitCode: 1, Stderr: "Error: The '" + slug + "' plugin could not be found."}
+			}
+			s.plugins[slug] = "active"
+		}
+		return "Success: Activated.", nil
+	case slices.Equal(args, []string{"redis", "enable"}):
+		if s.plugins[sites.PluginRedisCache] != "active" {
+			return "", &provisioner.ExecError{ExitCode: 1, Stderr: "Error: 'redis' is not a registered wp command."}
+		}
+		s.dropin = "Redis Object Cache Drop-In"
+		return "Success: Object cache enabled.", nil
+	}
 	return "", nil
+}
+
+// bundledSlug extracts the slug from a path under sites.BundledPluginDir.
+func bundledSlug(s string) (string, bool) {
+	_, rest, ok := strings.Cut(s, sites.BundledPluginDir+"/")
+	if !ok {
+		return "", false
+	}
+	slug, _, ok := strings.Cut(rest, ".zip")
+	return slug, ok
 }
 
 func (w *wordpress) installCalls(siteID string) [][]string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return slices.Clone(w.installs[siteID])
+}
+
+// pluginCalls returns the site's WP-CLI calls other than the core install
+// commands, each joined with spaces, and forgets them.
+func (w *wordpress) pluginCalls(siteID string) []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var out []string
+	for _, c := range w.calls[siteID] {
+		out = append(out, strings.Join(c, " "))
+	}
+	delete(w.calls, siteID)
+	return out
+}
+
+// state returns a copy of the site's plugin state.
+func (w *wordpress) state(siteID string) wpSite {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	s := w.site(siteID)
+	return wpSite{plugins: maps.Clone(s.plugins), dropin: s.dropin}
+}
+
+// edit changes the site's plugin state, as the site owner might.
+func (w *wordpress) edit(siteID string, fn func(*wpSite)) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	fn(w.site(siteID))
 }
 
 type env struct {
@@ -103,8 +216,11 @@ func newEnvWith(t *testing.T, db *store.DB, previewBase string) *env {
 		prov:  provisionertest.New(),
 		dbs:   sitedbtest.New(),
 		cache: objectcachetest.New(),
-		wp:    &wordpress{installed: map[string]bool{}, installs: map[string][][]string{}},
-		sec:   secrets.NewStore(db, secretstest.Keyring(t, 1)),
+		wp: &wordpress{
+			installed: map[string]bool{}, installs: map[string][][]string{},
+			sites: map[string]*wpSite{}, calls: map[string][][]string{}, unbundled: map[string]bool{},
+		},
+		sec: secrets.NewStore(db, secretstest.Keyring(t, 1)),
 	}
 	e.prov.WPCLI = e.wp.wpcli
 	e.svc, err = sites.New(sites.Options{

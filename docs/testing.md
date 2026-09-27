@@ -56,7 +56,7 @@ docker compose -p pf-<site-id> down --volumes   # for each site it created
 `TestSiteCreateDelete` automates the M1 "done when" ([roadmap](roadmap.md), design doc §8 Phase 1) on one platform:
 
 1. It creates two sites through the API, each in its own client group, and waits for both to be provisioned.
-2. It checks that WordPress is installed and reached over HTTP (see below).
+2. It checks that WordPress is installed and reached over HTTP (see below), and that `wp redis status` reports each site's object cache connected through the Redis Object Cache plugin's drop-in, as the site's own user and database (#39).
 3. It checks that the two sites can't reach each other. Each site's containers must be on its own network (`pf-<id>`) and no other. From each site's php container, the other site's containers must not resolve by container name, and their IPs must not answer on nginx's port 8080 or PHP-FPM's port 9000 (the connection times out). The service name `nginx` resolves to the site's own nginx. As positive controls, the site's own nginx, the platform MariaDB (`pf-mariadb:3306`), and the object cache (`pf-redis:6379`) must answer.
 4. It changes one site's PHP version, checks that the php container was recreated on the new image and nginx was left alone, then stops and starts the site (#28).
 5. It deletes both sites. It checks that no container, network, or volume with either project's label is left, that nothing is left under `sites/` and neither MariaDB nor the object cache is on a site network, that the site databases, users, and grants are gone from MariaDB and the site users from the object cache, and that no secret, site, alias, database, object cache, or schedule row is left in the state database.

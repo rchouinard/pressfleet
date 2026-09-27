@@ -144,7 +144,7 @@ func TestProvisioning(t *testing.T) {
 		for _, s := range d.Steps {
 			steps = append(steps, s.Name)
 		}
-		if want := []string{"prepare", "create_database", "create_object_cache", "start_stack", "install_wordpress", "finish"}; !slices.Equal(steps, want) {
+		if want := []string{"prepare", "create_database", "create_object_cache", "start_stack", "install_wordpress", "configure_plugins", "finish"}; !slices.Equal(steps, want) {
 			t.Errorf("steps = %v", steps)
 		}
 		if got := e.site(t, site.ID); got.Status != store.SiteRunning || got.StatusMessage != "" {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
+	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
@@ -314,6 +315,46 @@ func TestCreateSite(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantCommands(t, f.docker, upWait)
+}
+
+// TestObjectCacheSettings checks that a site's object cache credentials
+// reach wp-config.php as the Redis Object Cache plugin's settings (#39), and
+// that a reference the provisioner can't resolve fails the render.
+func TestObjectCacheSettings(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	creds, err := objectcache.MarshalCredentials(objectcache.Credentials{
+		Username: "pf_" + testSiteID, Password: `cache'pw\`, Database: 42, KeyPrefix: objectcache.KeyPrefix(testSiteID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sec["cache-ref"] = creds
+	f.cfg.RedisSecretRef = "cache-ref"
+	if _, err := f.prov.CreateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	wpConfig, err := os.ReadFile(filepath.Join(f.siteDir(t), compose.SiteWPConfigFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"define( 'WP_REDIS_HOST', 'pf-redis' );",
+		"define( 'WP_REDIS_PORT', 6379 );",
+		`define( 'WP_REDIS_PASSWORD', array( 'pf_` + testSiteID + `', 'cache\'pw\\' ) );`,
+		"define( 'WP_REDIS_DATABASE', 42 );",
+		"define( 'WP_REDIS_PREFIX', '" + testSiteID + ":' );",
+		"define( 'WP_REDIS_SELECTIVE_FLUSH', false );",
+	} {
+		if !strings.Contains(string(wpConfig), want) {
+			t.Errorf("wp-config.php lacks %s", want)
+		}
+	}
+
+	f.cfg.RedisSecretRef = "missing-ref"
+	if _, err := f.prov.UpdateSite(ctx, f.cfg); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("update with an unknown object cache reference: %v", err)
+	}
 }
 
 func TestUpdateSiteRecreatesPHPWhenWPConfigChanges(t *testing.T) {

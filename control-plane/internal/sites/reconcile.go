@@ -28,6 +28,9 @@ import (
 //     code here: give it to the driver as install-wide configuration, and
 //     the apply step's provisioner.UpdateSite re-renders the site, recreating
 //     only the containers whose configuration changed.
+//   - State inside WordPress (plugins, their settings) is converged with
+//     WP-CLI by the plugins step (plugins.go), after apply so it sees the
+//     re-rendered wp-config.php.
 //   - State outside the site's containers that must be put back at startup
 //     (such as the site's object cache user) is a step of its own: add it to
 //     reconcileSteps, before apply if the containers depend on it. Steps must be idempotent and cheap when nothing changed, since
@@ -42,6 +45,7 @@ const ReconcileJobType = "site.reconcile"
 const (
 	stepReconcileCache = "object_cache"
 	stepReconcileApply = "apply"
+	// stepReconcilePlugins ("plugins") is in plugins.go.
 )
 
 func (s *Service) reconcileHandler() jobs.Handler {
@@ -56,6 +60,7 @@ func (s *Service) reconcileSteps() []jobs.Step {
 	return []jobs.Step{
 		{Name: stepReconcileCache, Do: s.reconcileObjectCache, Undo: s.failReconcile},
 		{Name: stepReconcileApply, Do: s.reconcileApply},
+		{Name: stepReconcilePlugins, Do: s.reconcilePlugins},
 	}
 }
 

@@ -1,6 +1,6 @@
 # site-php
 
-PHP-FPM with WordPress core, WP-CLI, and the platform must-use plugins. Published as `ghcr.io/rchouinard/pressfleet/site-php:php<PHP>-wp<WP>` for every supported PHP branch. The runtime contract (paths, environment variables, ports, UID, health checks) is in [../README.md](../README.md#runtime-contract).
+PHP-FPM with WordPress core, WP-CLI, the platform must-use plugins, and the default plugins' release zips. Published as `ghcr.io/rchouinard/pressfleet/site-php:php<PHP>-wp<WP>` for every supported PHP branch. The runtime contract (paths, environment variables, ports, UID, health checks) is in [../README.md](../README.md#runtime-contract).
 
 ```sh
 docker build -f images/site-php/Dockerfile \
@@ -77,6 +77,10 @@ Plugin and theme updates are unaffected.
 | `password-policy.php` | `PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH` (integer) | Rejects new passwords shorter than the minimum or on the common-password list (`common-passwords.txt`: the NCSC's 100,000 most used passwords, from Have I Been Pwned via SecLists, of 8 or more characters, compared case-insensitively). Checked on profile save, Users > Add New, the password reset form, the REST API (`400 rest_weak_password`), and WP-CLI (`wp user create`, `wp user update --user_pass`, `wp core install`). Existing passwords keep working. |
 | `password-hashing.php` | `PRESSFLEET_PASSWORD_HASHING` (`'argon2id'`) | Hashes new passwords with Argon2id through `wp_hash_password_algorithm` instead of WordPress's bcrypt. Existing hashes still verify and are rehashed at the user's next login. PHP's default Argon2id cost uses about 64 MiB per hash, outside `memory_limit` but inside the container's memory. |
 | `application-passwords.php` | `PRESSFLEET_DISABLE_APPLICATION_PASSWORDS` | Disables application passwords (`wp_is_application_passwords_available`). |
+
+## Default plugins
+
+The release zips of the platform's default plugins, pinned with their SHA-256 in [../shared/plugins.json](../shared/plugins.json), are verified in a build stage and copied to `/opt/pressfleet/plugins`. The control plane installs them into `wp-content` from there; see [../README.md](../README.md#default-plugins).
 
 ## WP-CLI
 

@@ -13,11 +13,24 @@ ARG PHP_VERSION
 ARG DEBIAN_SUITE=trixie
 
 # ---------------------------------------------------------------------------
-# WordPress core download and verification (shared with site-nginx).
-FROM debian:${DEBIAN_SUITE}-slim AS wordpress
+# Download tools for the WordPress and plugin stages.
+FROM debian:${DEBIAN_SUITE}-slim AS fetch
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends ca-certificates curl jq \
 	&& rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# Default plugins (shared/plugins.json), verified against their pinned
+# SHA-256. Provisioning installs them into wp-content from the image, so it
+# needs no network access (images/README.md, "Default plugins").
+FROM fetch AS plugins
+COPY shared/fetch-plugins.sh /usr/local/bin/fetch-plugins
+COPY shared/plugins.json /tmp/plugins.json
+RUN sh /usr/local/bin/fetch-plugins /tmp/plugins.json /out
+
+# ---------------------------------------------------------------------------
+# WordPress core download and verification (shared with site-nginx).
+FROM fetch AS wordpress
 ARG WP_VERSION
 ARG WP_SHA1=""
 COPY shared/fetch-wordpress.sh /usr/local/bin/fetch-wordpress
@@ -102,6 +115,7 @@ COPY site-php/healthcheck.sh /usr/local/bin/pressfleet-healthcheck
 COPY --from=wordpress --chown=root:root /out/wordpress /var/www/wordpress
 COPY --from=wordpress --chown=root:root /out/wp-content-skel /opt/pressfleet/wp-content-skel
 COPY --chown=root:root shared/mu-plugins /opt/pressfleet/mu-plugins
+COPY --from=plugins --chown=root:root /out /opt/pressfleet/plugins
 RUN set -eux; \
 	chmod -R u=rwX,go=rX /var/www/wordpress /opt/pressfleet; \
 	chmod 1777 /var/www/wordpress/wp-content; \

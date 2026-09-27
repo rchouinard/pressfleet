@@ -32,6 +32,9 @@ const (
 // DefaultDBHost is the DB_HOST sites use unless SiteRender overrides it.
 const DefaultDBHost = MariaDBAlias + ":3306"
 
+// RedisPort is the object cache's port under RedisAlias.
+const RedisPort = 6379
+
 // Files RenderSite writes into a site's directory.
 const (
 	SiteComposeFile  = "compose.yaml"

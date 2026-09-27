@@ -44,7 +44,8 @@
 //	                  the plugin appends "<table prefix>:<group>:<key>")
 //
 // WP_REDIS_SELECTIVE_FLUSH may be on or off: both work, and with a database
-// per site off is simpler and faster (FLUSHDB instead of a SCAN script).
+// per site off is simpler and faster (FLUSHDB instead of a SCAN script), so
+// package wpconfig renders it off.
 // WP_REDIS_UNFLUSHABLE_GROUPS must stay unset: with selective flush on, the
 // plugin passes ":<group>:" strings as script KEYS, which fall outside the
 // key pattern and make every flush fail. WP_REDIS_CLUSTER, WP_REDIS_SERVERS,

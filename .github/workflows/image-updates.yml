@@ -1,9 +1,10 @@
 name: Image updates
 
-# Checks php.net and wordpress.org for new WordPress releases and PHP branch
-# support changes (images/update-manifest.sh) and proposes the new
-# images/manifest.json as a pull request on the automation/image-manifest
-# branch. Merging it triggers the Images workflow, which builds and pushes the
+# Checks php.net and wordpress.org for new WordPress releases, PHP branch
+# support changes, and new releases of the default plugins the site-php image
+# bundles (images/update-manifest.sh), and proposes the new
+# images/manifest.json and images/shared/plugins.json as a pull request on the
+# automation/image-manifest branch. Merging it triggers the Images workflow, which builds and pushes the
 # new site images. The weekly rebuild of the current matrix lives in the Images
 # workflow's schedule.
 #
@@ -52,7 +53,7 @@ jobs:
         name: Check upstream versions
         run: |
           images/update-manifest.sh >"$RUNNER_TEMP/summary.md"
-          if git diff --quiet -- images/manifest.json; then
+          if git diff --quiet -- images/manifest.json images/shared/plugins.json; then
             echo "changed=false" >>"$GITHUB_OUTPUT"
             echo "Manifest is up to date." >>"$GITHUB_STEP_SUMMARY"
           else
@@ -68,13 +69,13 @@ jobs:
             echo
             cat "$RUNNER_TEMP/summary.md"
             echo
-            echo "Merging builds and pushes the new site images (Images workflow). Sources: php.net/releases/branches.php, api.wordpress.org/core/version-check/1.7/."
+            echo "Merging builds and pushes the new site images (Images workflow). Sources: php.net/releases/branches.php, api.wordpress.org/core/version-check/1.7/, api.wordpress.org/plugins/info/1.2/."
           } >"$body"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
-          printf '%s\n\n' "$TITLE" | cat - "$RUNNER_TEMP/summary.md" | git commit -q -F - -- images/manifest.json
+          printf '%s\n\n' "$TITLE" | cat - "$RUNNER_TEMP/summary.md" | git commit -q -F - -- images/manifest.json images/shared/plugins.json
           # The branch always holds one commit on top of the current main.
           git push --force origin "$BRANCH"
 

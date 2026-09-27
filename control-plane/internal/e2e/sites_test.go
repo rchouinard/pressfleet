@@ -229,6 +229,27 @@ func TestSiteCreateDelete(t *testing.T) {
 		}
 	})
 
+	// Provisioning installs the Redis Object Cache plugin from the site
+	// image, configured with the site's own user and database, and enables
+	// its drop-in (#39).
+	t.Run("the object cache is connected", func(t *testing.T) {
+		for _, sp := range []compose.Project{siteProject, otherProject} {
+			out, err := sp.ExecService(ctx, "php", "wp", "redis", "status")
+			if err != nil {
+				t.Fatalf("%s: wp redis status: %v", sp.Name, err)
+			}
+			status := string(out)
+			for _, want := range []string{"Status: Connected", "Drop-in: Valid", "Client: PhpRedis", `WP_REDIS_PASSWORD: ["pf_`} {
+				if !strings.Contains(status, want) {
+					t.Errorf("%s: wp redis status lacks %q:\n%s", sp.Name, want, status)
+				}
+			}
+			if strings.Contains(status, "WP_REDIS_DATABASE: 0") {
+				t.Errorf("%s uses database 0:\n%s", sp.Name, status)
+			}
+		}
+	})
+
 	// Two sites can't reach each other over the network (§6): a site's
 	// containers are only on its own network, and from one site's php
 	// container the other site's containers neither resolve by name nor

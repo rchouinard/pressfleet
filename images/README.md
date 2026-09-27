@@ -4,14 +4,14 @@ Container images for site stacks (design doc §4.1, §5.5):
 
 | Image | Tag | Contents |
 | --- | --- | --- |
-| [`site-php`](site-php/README.md) | `ghcr.io/rchouinard/pressfleet/site-php:php<PHP>-wp<WP>` (e.g. `php8.4-wp7.1.2`) | PHP-FPM, WordPress core, WP-CLI, platform mu-plugins |
+| [`site-php`](site-php/README.md) | `ghcr.io/rchouinard/pressfleet/site-php:php<PHP>-wp<WP>` (e.g. `php8.4-wp7.1.2`) | PHP-FPM, WordPress core, WP-CLI, platform mu-plugins, default plugin zips |
 | [`site-nginx`](site-nginx/README.md) | `ghcr.io/rchouinard/pressfleet/site-nginx:wp<WP>` (e.g. `wp7.1.2`) | nginx with the platform's WordPress config, the same WordPress core, platform mu-plugins |
 
 `<PHP>` is a PHP minor branch (`8.4`), `<WP>` a full WordPress release (`7.1.2`). A site's two containers must always use the same `<WP>`.
 
 ## Version manifest
 
-[`manifest.json`](manifest.json) is the single source of truth for which site images exist. The Makefile, [`test.sh`](test.sh), the CI workflows, and the control plane (package `control-plane/internal/catalog`, which embeds it through [`images.go`](images.go)) all read it; shell users go through [`matrix.sh`](matrix.sh).
+[`manifest.json`](manifest.json) is the single source of truth for which site images exist. (The plugins the php image bundles are pinned separately, in [`shared/plugins.json`](shared/plugins.json): see [Default plugins](#default-plugins).) The Makefile, [`test.sh`](test.sh), the CI workflows, and the control plane (package `control-plane/internal/catalog`, which embeds it through [`images.go`](images.go)) all read it; shell users go through [`matrix.sh`](matrix.sh).
 
 ```json
 {
@@ -35,7 +35,7 @@ Container images for site stacks (design doc §4.1, §5.5):
 
 The build matrix is every WordPress version (latest and pinned) times every PHP branch that is not past end of life, plus one `site-nginx` per WordPress version. Image digests are not in the manifest: the weekly rebuild moves tags to new digests, and the control plane resolves digests from the registry when it checks for image updates (#58).
 
-The scheduled [Image updates workflow](../.github/workflows/image-updates.yml) runs [`update-manifest.sh`](update-manifest.sh) daily and opens a pull request when php.net or wordpress.org report changes. Merging it publishes the new images.
+The scheduled [Image updates workflow](../.github/workflows/image-updates.yml) runs [`update-manifest.sh`](update-manifest.sh) daily and opens a pull request when php.net or wordpress.org report changes, including new releases of the bundled plugins (`shared/plugins.json`). Merging it publishes the new images.
 
 ## Publishing
 
@@ -95,6 +95,7 @@ nginx finds PHP-FPM at `PHP_FPM_HOST:PHP_FPM_PORT` (default `php:9000`), so the 
 | `/var/cache/pressfleet/fastcgi` | volume root; image mount point is `root 1777` | **named volume** `cache`, read-write in both | FastCGI page cache (#40), written by nginx as the site UID. PHP (Nginx Helper, #41) purges it by deleting files. See [FastCGI page cache](#fastcgi-page-cache). |
 | `/tmp` | writable | tmpfs recommended | PHP upload staging, sessions, WP-CLI cache; nginx rendered config and temp files. Not persistent. |
 | `/opt/pressfleet/wp-content-skel` | `root`, read-only | image, php only | The release's bundled `wp-content` (default themes, Akismet, Hello Dolly), used to seed an empty volume. |
+| `/opt/pressfleet/plugins` | `root`, read-only | image, php only | Release zips of the platform's default plugins (`<slug>.zip`) and the `plugins.json` they were built from. The control plane installs them into `wp-content` at provisioning. See [Default plugins](#default-plugins). |
 
 **wp-content permissions.** Docker gives a new, empty named volume the mode of the image's mount point, so a fresh `wp-content` or `cache` volume is `1777` and writable by whatever UID the stack runs as. The control plane may instead `chown <uid>:<gid>` and `chmod 0755` the volume root before first start; the images work either way.
 
@@ -122,6 +123,7 @@ require_once ABSPATH . 'wp-settings.php';
 - **WordPress security set (§6.1), optional.** Each module of the platform must-use plugin runs only when its constant is defined with a true value (see [site-php/README.md](site-php/README.md#security-set-modules)): `PRESSFLEET_BLOCK_USER_ENUMERATION` (`true`), `PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH` (an integer, at least 8: the common-password list holds nothing shorter), `PRESSFLEET_PASSWORD_HASHING` (`'argon2id'`; leave it undefined for WordPress's bcrypt), and `PRESSFLEET_DISABLE_APPLICATION_PASSWORDS` (`true`). `DISALLOW_FILE_EDIT` is WordPress's own.
 - **HTTPS behind Traefik needs no wp-config code.** nginx sets the FastCGI `HTTPS=on` parameter (and `REQUEST_SCHEME`, `SERVER_PORT=443`, `HTTP_X_FORWARDED_PROTO`) when a trusted proxy (`NGINX_TRUSTED_PROXIES`) sends `X-Forwarded-Proto: https`, so `is_ssl()` works natively. Untrusted clients cannot spoof it: the raw header never reaches PHP. `REMOTE_ADDR` is already the real client IP.
 - The FastCGI cache path for Nginx Helper (#41) is `/var/cache/pressfleet/fastcgi` (`RT_WP_NGINX_HELPER_CACHE_PATH`). See [FastCGI page cache](#fastcgi-page-cache).
+- **Object cache** (#39): the Redis Object Cache plugin's `WP_REDIS_*` constants (host, port, `WP_REDIS_PASSWORD` as `array( user, password )`, `WP_REDIS_DATABASE`, `WP_REDIS_PREFIX`, and so on). The control plane renders them from the site's object cache credentials; package `objectcache/redis` documents the values its ACL users need. The image's phpredis is built with igbinary, so `WP_REDIS_IGBINARY` works.
 - Do not use `getenv()` for site settings: the FPM pool runs with `clear_env = yes`, so container environment variables are not visible to PHP.
 - **Outbound email** (#47) is configured by these optional constants, read by the platform mu-plugin `pressfleet-smtp.php`. Without `PRESSFLEET_SMTP_HOST` the plugin does nothing (and PHP's `mail()` has no mail server to hand messages to).
 
@@ -195,6 +197,18 @@ nginx caches PHP responses for anonymous visitors (#40, §5.6) when `NGINX_FASTC
 | Stale | while a page is being refreshed, and when PHP errors, times out, or returns `500`/`503` |
 
 This matches Nginx Helper's file-based purge (`unlink_files`), which computes `md5(scheme . "GET" . host . path)` of a page's URL under `RT_WP_NGINX_HELPER_CACHE_PATH` with `levels=1:2`, and purges everything by deleting all files below the path. nginx treats a deleted cache file as a miss. The key uses the host the visitor asked for, so a page is cached (and must be purged) separately for each domain that serves it rather than redirecting.
+
+### Default plugins
+
+The php image bundles the platform's default WordPress plugins (design doc §5.1 step 7) as release zips under `/opt/pressfleet/plugins`. [`shared/plugins.json`](shared/plugins.json) pins each one's WordPress.org slug, version, and the SHA-256 of `downloads.wordpress.org/plugin/<slug>.<version>.zip`; the build ([`shared/fetch-plugins.sh`](shared/fetch-plugins.sh)) fails if a download doesn't match. The scheduled [Image updates workflow](../.github/workflows/image-updates.yml) moves the pins to new releases.
+
+| Plugin | Purpose |
+| --- | --- |
+| [Redis Object Cache](https://wordpress.org/plugins/redis-cache/) (`redis-cache`) | Object cache on the platform's shared Valkey server, through its `object-cache.php` drop-in (#39) |
+
+The control plane installs a plugin with `wp plugin install /opt/pressfleet/plugins/<slug>.zip` when the site doesn't have it, activates it, and configures it (package `sites`, `plugins.go`), at provisioning and whenever the control plane starts. Installing from the image needs no network access and gets exactly the version CI tested. After that the plugin is an ordinary plugin in `wp-content`: WordPress updates it like any other, and the control plane never replaces a version the site already has.
+
+Why not load them from the image, like the must-use plugins? The object cache drop-in has to live in `wp-content`, and the plugins would then only change with image rollouts, while their own releases (security fixes included) reach sites through WordPress's updates.
 
 ### Health and status endpoints
 

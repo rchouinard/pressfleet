@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test for the site images (issues #17, #18, #40, #47, #108, #109).
+# Smoke test for the site images (issues #17, #18, #39, #40, #47, #108, #109).
 #
 #   images/test.sh [php-version ...]     default: every PHP version images/matrix.sh builds
 #
@@ -243,6 +243,15 @@ test_stack() {
 	check "phpredis built with igbinary" "${cexec[@]}" php -r 'exit(defined("Redis::SERIALIZER_IGBINARY") ? 0 : 1);'
 	check "wp core install" "${cexec[@]}" wp core install --url="$base" --title="PressFleet smoke test" \
 		--admin_user=admin --admin_password="$admin_password" --admin_email=admin@example.com --skip-email
+
+	# --- Default plugins (#39) ------------------------------------------------
+	# The image bundles the versions shared/plugins.json pins, and they install
+	# from the image, as provisioning does, without WordPress.org.
+	local slug version
+	while read -r slug version; do
+		check "bundled plugin $slug installs from the image" "${cexec[@]}" wp plugin install "/opt/pressfleet/plugins/$slug.zip"
+		check_eq "bundled plugin $slug is $version" "$version" "$("${cexec[@]}" wp plugin get "$slug" --field=version 2>&1)"
+	done < <(jq -r '.plugins[] | "\(.slug) \(.version)"' "$here/shared/plugins.json")
 
 	# --- Platform mu-plugin ---------------------------------------------------
 	check_contains "mu-plugin listed as must-use" "pressfleet" \

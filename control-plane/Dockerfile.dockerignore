@@ -5,9 +5,11 @@
 !control-plane/
 !templates/
 !api/
-# The site image manifest, embedded for package catalog.
+# The site image manifest, embedded for package catalog, and the plugins the
+# site-php image bundles, embedded for package sites' tests.
 !images/images.go
 !images/manifest.json
+!images/shared/plugins.json
 control-plane/Dockerfile*
 **/testdata/
 **/*_test.go
