@@ -219,11 +219,13 @@ services:
         source: ./traefik/traefik.yaml
         target: /etc/traefik/traefik.yaml
         read_only: true
-{{- if .ACME.DNSProvider }}
+      # File provider configuration, including the maintenance routes the
+      # control plane writes (it has the data directory mounted).
       - type: bind
-        source: ./traefik/dynamic.yaml
-        target: /etc/traefik/dynamic.yaml
+        source: ./{{ .DynamicConfigSource }}
+        target: {{ q .DynamicConfigDir }}
         read_only: true
+{{- if .ACME.DNSProvider }}
       - type: bind
         source: ./traefik/entrypoint.sh
         target: /etc/traefik/entrypoint.sh
@@ -264,6 +266,36 @@ services:
       retries: 3
       start_period: 30s
       start_interval: 2s
+    logging: *logging
+
+  # The page Traefik shows for sites in maintenance mode (design doc §5.4):
+  # 503 with Retry-After on every path. It is the control plane image
+  # running a static page server, with no data, secrets, Docker socket, or
+  # writable filesystem, so public traffic for a site under maintenance
+  # never reaches the control plane itself.
+  {{ .MaintenanceHost }}:
+    image: {{ q .Images.ControlPlane }}
+    command: ["maintenance-page", "--listen", ":{{ .MaintenancePort }}"]
+    restart: unless-stopped
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      GOMEMLIMIT: "{{ .MaintenanceGoMemLimitMB }}MiB"
+    networks:
+      - platform
+    deploy:
+      resources:
+        limits:
+          memory: {{ .MaintenanceMemoryMB }}M
+    healthcheck:
+      test: ["CMD", "pressfleet", "maintenance-page", "--check", "--listen", ":{{ .MaintenancePort }}"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+      start_interval: 1s
     logging: *logging
 
   # Traefik's only way to the Docker API: read-only requests for exactly the

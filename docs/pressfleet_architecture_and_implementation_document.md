@@ -421,7 +421,7 @@ All long-running operations run as **Jobs**. API endpoints that start them retur
 
 ### 5.4. Restore Workflow
 1. Takes an automatic **pre-restore snapshot** of the target site so the restore itself can be rolled back.
-2. Enables maintenance mode via `Provisioner.SetMaintenance` (Traefik serves a maintenance page).
+2. Enables maintenance mode via `Provisioner.SetMaintenance` (Traefik serves a maintenance page). In the Compose driver, higher-priority routes in Traefik's file provider send the site's domains to a static maintenance page service, so the page doesn't depend on the site's containers; the site record keeps the flag so re-renders preserve it.
 3. Restores `wp-content` and the DB dump from the chosen snapshot.
 4. Imports the DB dump via `DatabaseManager.Import`. If the snapshot was taken on a newer WordPress core version than the target site is running, the site is first moved to an image with at least that core version (a database schema cannot be safely run on an older core).
 5. If the target domain differs from the snapshot's source (e.g., restoring into a different site), runs `wp search-replace` via WP-CLI.

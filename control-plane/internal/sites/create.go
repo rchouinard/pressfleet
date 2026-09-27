@@ -217,6 +217,7 @@ func SiteConfig(site store.Site, dbSecretRef, cacheSecretRef string) *provisione
 		UID:              site.UID,
 		WPSaltsSecretRef: site.WPSaltsSecretRef,
 		PreviewAuth:      previewAuth(site),
+		Maintenance:      site.Maintenance,
 	}
 }
 

@@ -62,12 +62,13 @@ providers:
     # sharing a Docker engine (as the tests do) never pick up each other's
     # routes.
     constraints: {{ yq .Constraint }}
-{{- if .ACME.DNSProvider }}
-  # The router that requests the preview wildcard certificate.
+  # The maintenance page service, the router that requests the preview
+  # wildcard certificate (with a DNS provider), and the maintenance routes
+  # of sites in maintenance mode, which the control plane writes and removes
+  # while Traefik runs.
   file:
-    filename: /etc/traefik/dynamic.yaml
-    watch: false
-{{- end }}
+    directory: {{ yq .DynamicConfigDir }}
+    watch: true
 
 {{- define "acme-account" }}
 {{- if .ACME.Email }}
@@ -91,7 +92,7 @@ certificatesResolvers:
 {{- template "acme-account" . }}
 {{- if .ACME.DNSProvider }}
       # One wildcard certificate for every preview domain, with DNS-01 (see
-      # dynamic.yaml). The provider's credentials come from the files the
+      # dynamic/platform.yaml). The provider's credentials come from the files the
       # entrypoint names in <VARIABLE>_FILE variables.
       dnsChallenge:
         provider: {{ yq .ACME.DNSProvider }}

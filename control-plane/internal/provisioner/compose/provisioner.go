@@ -27,10 +27,6 @@ import (
 // with them; stubbing them now would only hide which parts are missing.
 var _ provisioner.Provisioner = (*Provisioner)(nil)
 
-// ErrNotImplemented is returned by Provisioner methods whose feature has not
-// been built yet (SetMaintenance, #44).
-var ErrNotImplemented = fmt.Errorf("compose: not implemented yet: %w", errors.ErrUnsupported)
-
 // ErrSharedServiceUnavailable means a platform container that sites depend
 // on, such as MariaDB, does not exist, so a site network can't be attached
 // to it.
@@ -83,6 +79,11 @@ type ProvisionerConfig struct {
 	// only tests that don't need routing do that.
 	TraefikContainer string
 	PlatformProject  string
+	// TraefikDynamicDir is the directory of Traefik's file provider
+	// (platform.TraefikDynamicDir in the platform directory), where
+	// SetMaintenance puts sites' maintenance routes. Empty makes maintenance
+	// mode unavailable (ErrMaintenanceUnavailable); only tests do that.
+	TraefikDynamicDir string
 	// Docker runs the docker CLI; nil means DockerExec. Tests inject a fake.
 	Docker ExecFunc
 	// Logger receives lifecycle events; nil discards them.
@@ -121,6 +122,7 @@ type Provisioner struct {
 	waitTimeout time.Duration
 	smtp        *wpconfig.SMTP
 	platform    string // ProvisionerConfig.PlatformProject
+	routesDir   string // ProvisionerConfig.TraefikDynamicDir
 
 	wpcliDocker    ExecFunc // docker, but with bounded output
 	wpcliTimeout   time.Duration
@@ -139,6 +141,9 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 	var errs []error
 	if cfg.Layout.Root == "" || !filepath.IsAbs(cfg.Layout.Root) {
 		errs = append(errs, fmt.Errorf("data directory %q must be absolute", cfg.Layout.Root))
+	}
+	if cfg.TraefikDynamicDir != "" && !filepath.IsAbs(cfg.TraefikDynamicDir) {
+		errs = append(errs, fmt.Errorf("traefik file provider directory %q must be absolute", cfg.TraefikDynamicDir))
 	}
 	if cfg.Secrets == nil {
 		errs = append(errs, errors.New("a secret reader is required"))
@@ -176,6 +181,7 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 		waitTimeout:    cfg.WaitTimeout,
 		smtp:           cfg.SMTP,
 		platform:       cfg.PlatformProject,
+		routesDir:      cfg.TraefikDynamicDir,
 		wpcliDocker:    cfg.Docker,
 		wpcliTimeout:   cfg.WPCLITimeout,
 		wpcliMaxOutput: cfg.WPCLIMaxOutput,
@@ -260,6 +266,15 @@ func (p *Provisioner) converge(ctx context.Context, cfg *provisioner.SiteConfig,
 		return fmt.Errorf("site %s: %w", cfg.ID, err)
 	}
 
+	// Maintenance mode goes on before containers are recreated, so
+	// visitors see the maintenance page rather than errors, and comes off
+	// only once they are up and healthy.
+	if cfg.Maintenance {
+		if _, err := p.applyMaintenance(cfg.ID, true); err != nil {
+			return fmt.Errorf("site %s: %w", cfg.ID, err)
+		}
+	}
+
 	proj := p.project(cfg.ID)
 	stale, err := p.phpStale(ctx, proj, dir, res.WPConfigChanged)
 	if err != nil {
@@ -278,6 +293,11 @@ func (p *Provisioner) converge(ctx context.Context, cfg *provisioner.SiteConfig,
 	// so connecting after the wait is fine.
 	if err := p.attachShared(ctx, cfg.ID); err != nil {
 		return fmt.Errorf("site %s: %w", cfg.ID, err)
+	}
+	if !cfg.Maintenance {
+		if _, err := p.applyMaintenance(cfg.ID, false); err != nil {
+			return fmt.Errorf("site %s: %w", cfg.ID, err)
+		}
 	}
 	return nil
 }
@@ -455,6 +475,9 @@ func (p *Provisioner) DeleteSite(ctx context.Context, siteID string) error {
 	if err != nil {
 		return fmt.Errorf("delete site: %w: %w", ErrInvalidSite, err)
 	}
+	if _, err := p.applyMaintenance(siteID, false); err != nil {
+		return fmt.Errorf("delete site %s: %w", siteID, err)
+	}
 	// Docker refuses to remove a network that containers are still
 	// connected to, and the platform containers are not part of the project.
 	if err := p.detachShared(ctx, siteID); err != nil {
@@ -470,11 +493,6 @@ func (p *Provisioner) DeleteSite(ctx context.Context, siteID string) error {
 	}
 	p.log.InfoContext(ctx, "site deleted", "site_id", siteID)
 	return nil
-}
-
-// SetMaintenance is not implemented yet (#44).
-func (p *Provisioner) SetMaintenance(context.Context, string, bool) error {
-	return fmt.Errorf("set maintenance: %w", ErrNotImplemented)
 }
 
 // PurgeCache empties the site's FastCGI page cache by deleting everything

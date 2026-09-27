@@ -223,8 +223,8 @@ func TestRenderedCompose(t *testing.T) {
 	if file.Name != "pftest" {
 		t.Errorf("name = %q", file.Name)
 	}
-	if len(file.Services) != 5 {
-		t.Errorf("services = %d, want 5", len(file.Services))
+	if len(file.Services) != 6 {
+		t.Errorf("services = %d, want 6", len(file.Services))
 	}
 	// Every service is on the platform network except the socket proxy,
 	// which only Traefik can reach.
@@ -234,6 +234,7 @@ func TestRenderedCompose(t *testing.T) {
 		"redis":         {"platform"},
 		"traefik":       {"platform", "socket-proxy"},
 		"socket-proxy":  {"socket-proxy"},
+		"maintenance":   {"platform"},
 	}
 	if !file.Networks["socket-proxy"].Internal {
 		t.Error("socket-proxy network is not internal")
@@ -270,11 +271,30 @@ func TestRenderedCompose(t *testing.T) {
 	if want := map[string]bool{"control-plane": false, "socket-proxy": true}; !maps.Equal(socketMounts, want) {
 		t.Errorf("docker socket mounts (service: read-only) = %v, want %v", socketMounts, want)
 	}
-	for _, name := range []string{"traefik", "socket-proxy"} {
+	for _, name := range []string{"traefik", "socket-proxy", "maintenance"} {
 		svc := file.Services[name]
 		if !svc.ReadOnly || !slices.Equal(svc.CapDrop, []string{"ALL"}) {
 			t.Errorf("%s: read_only = %v, cap_drop = %v", name, svc.ReadOnly, svc.CapDrop)
 		}
+	}
+	// The maintenance page service (#44) runs the control plane image with
+	// nothing mounted: no data, secrets, or Docker socket.
+	if m := file.Services["maintenance"]; m.Image != cfg.Images.ControlPlane || len(m.Volumes) != 0 || len(m.Environment) != 1 {
+		t.Errorf("maintenance service = %+v", m)
+	}
+	// Traefik reads the file provider directory, where the control plane
+	// writes maintenance routes, read-only.
+	dynamic := false
+	for _, v := range file.Services["traefik"].Volumes {
+		if v.Source == "./"+platform.TraefikDynamicDir && v.Target == "/etc/traefik/dynamic" && v.ReadOnly {
+			dynamic = true
+		}
+	}
+	if !dynamic {
+		t.Errorf("traefik doesn't mount %s: %+v", platform.TraefikDynamicDir, file.Services["traefik"].Volumes)
+	}
+	if fi, err := os.Stat(filepath.Join(dir, platform.TraefikDynamicDir)); err != nil || fi.Mode().Perm() != 0o755 {
+		t.Errorf("%s: %v, %v; want mode 0755", platform.TraefikDynamicDir, fi, err)
 	}
 	tr := file.Services["traefik"]
 	if want := []string{"80:80/tcp", "443:443/tcp", "443:443/udp"}; !slices.Equal(tr.Ports, want) {
@@ -574,7 +594,10 @@ type traefikConfig struct {
 			ExposedByDefault bool `yaml:"exposedByDefault"`
 			Constraints      string
 		}
-		File *struct{ Filename string }
+		File *struct {
+			Directory string
+			Watch     bool
+		}
 	}
 	CertificatesResolvers map[string]struct {
 		ACME struct {

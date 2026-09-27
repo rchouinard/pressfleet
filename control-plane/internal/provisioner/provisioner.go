@@ -82,6 +82,13 @@ type SiteConfig struct {
 	// the edge router needs, and it isn't secret enough to need resolving
 	// by the driver.
 	PreviewAuth *BasicAuth
+	// Maintenance sends the site's visitors to the platform's maintenance
+	// page instead of the site (§5.4). [Provisioner.SetMaintenance] switches
+	// it on its own, quickly; this field is the same state as part of the
+	// desired configuration, so that CreateSite and UpdateSite (including
+	// the startup re-render) keep it. Callers of SetMaintenance must pass
+	// the same value here afterwards, or the next update undoes it.
+	Maintenance bool
 }
 
 // BasicAuth is one HTTP basic auth credential.
@@ -246,7 +253,14 @@ type Provisioner interface {
 	// StopSite stops a running site without removing data. Returns
 	// ErrSiteNotFound if absent.
 	StopSite(ctx context.Context, siteID string) error
-	// SetMaintenance enables or disables the platform maintenance page.
+	// SetMaintenance enables or disables the platform maintenance page for
+	// all of the site's domains (§5.4): visitors get 503 with Retry-After.
+	// It takes effect within seconds, touches nothing else of the site, and
+	// works whether the site's containers are running, stopped, or being
+	// recreated; WP-CLI (ExecWPCLI) keeps working. It is the primitive that
+	// restores and rollouts build on. SiteConfig.Maintenance must agree, or
+	// the next UpdateSite reverts it. Returns ErrSiteNotFound if the site
+	// was never rendered.
 	SetMaintenance(ctx context.Context, siteID string, enabled bool) error
 	// ExecWPCLI runs WP-CLI in the site's PHP container as the site's user
 	// and returns its stdout. args are passed as argv, never through a shell.

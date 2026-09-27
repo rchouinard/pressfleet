@@ -185,6 +185,12 @@ A site's preview domain can ask for HTTP basic auth, for sensitive sites in deve
 - Traefik checks the credentials and removes the `Authorization` header before the request reaches WordPress, so the header can't be mistaken for an application password.
 - The platform's own work doesn't go through the preview domain: WP-Cron and other tasks run WP-CLI in the site's containers, cache purges use the filesystem, and Traefik answers ACME HTTP-01 challenges on port 80 before any router.
 
+### Maintenance mode
+
+`PUT /api/v1/sites/{id}/maintenance` with `{"enabled": true}` (Operators and Admins) puts every domain of a site on the platform's maintenance page: `503 Service Unavailable`, `Retry-After: 120`, `Cache-Control: no-store`, and a small self-contained page. Restores and core rollouts (M3) use the same mechanism. It takes effect a couple of seconds after the job has run, stays on across updates, restarts, and the control plane's startup reconciliation, and is turned off with `{"enabled": false}`. WP-CLI, and so WP-Cron, keeps working.
+
+The page is served by the platform's `maintenance` service: the control plane image running `pressfleet maintenance-page`, with no data directory, secrets, or Docker socket, a read-only filesystem, and a 24 MiB memory limit. For a site in maintenance mode, the control plane writes a file into Traefik's file provider directory, `<data_dir>/platform/traefik/dynamic/`, with a higher-priority router for each of the site's domains that points at that service; it removes the file to end maintenance mode. Because these routes don't come from the site's containers, the page stays up while they are stopped or recreated. Installs rendered before this directory existed need their platform re-rendered (`pressfleet upgrade`) before maintenance mode works.
+
 ## Preview certificates
 
 Every site is reachable on `https://<slug>.<preview_base_domain>/` as soon as it is provisioned. Traefik gets certificates for preview domains in one of two ways (design doc §4.1):

@@ -838,6 +838,10 @@ type Site struct {
 	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
 	ID ID `json:"id"`
 
+	// Maintenance Whether the site is in maintenance mode: its domains answer with
+	// the platform's maintenance page (design doc §5.4).
+	Maintenance bool `json:"maintenance"`
+
 	// Name Examples: Acme marketing site
 	Name string `json:"name"`
 
@@ -952,6 +956,12 @@ type SiteList struct {
 
 	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
 	NextCursor *NextCursor `json:"next_cursor"`
+}
+
+// SiteMaintenance defines model for SiteMaintenance.
+type SiteMaintenance struct {
+	// Enabled `true` shows the maintenance page on every domain of the site; `false` serves the site again.
+	Enabled bool `json:"enabled"`
 }
 
 // SiteRuntime The live state of the site's containers, observed when the site was
@@ -1230,6 +1240,9 @@ type CreateSiteJSONRequestBody = SiteCreate
 // UpdateSiteJSONRequestBody defines body for UpdateSite for application/json ContentType.
 type UpdateSiteJSONRequestBody = SiteUpdate
 
+// SetSiteMaintenanceJSONRequestBody defines body for SetSiteMaintenance for application/json ContentType.
+type SetSiteMaintenanceJSONRequestBody = SiteMaintenance
+
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody = UserCreate
 
@@ -1304,6 +1317,9 @@ type ServerInterface interface {
 	// PurgeSiteCache Purge a site's caches
 	// (POST /api/v1/sites/{site_id}/cache/purge)
 	PurgeSiteCache(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// SetSiteMaintenance Turn maintenance mode on or off
+	// (PUT /api/v1/sites/{site_id}/maintenance)
+	SetSiteMaintenance(w http.ResponseWriter, r *http.Request, siteID SiteID)
 	// RegenerateSitePreviewPassword Generate a new preview password (shown once)
 	// (POST /api/v1/sites/{site_id}/preview-password)
 	RegenerateSitePreviewPassword(w http.ResponseWriter, r *http.Request, siteID SiteID)
@@ -2076,6 +2092,32 @@ func (siw *ServerInterfaceWrapper) PurgeSiteCache(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// SetSiteMaintenance operation middleware
+func (siw *ServerInterfaceWrapper) SetSiteMaintenance(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetSiteMaintenance(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RegenerateSitePreviewPassword operation middleware
 func (siw *ServerInterfaceWrapper) RegenerateSitePreviewPassword(w http.ResponseWriter, r *http.Request) {
 
@@ -2481,6 +2523,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/stop", wrapper.StopSite)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/cache/purge", wrapper.PurgeSiteCache)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/admin-credentials", wrapper.RetrieveSiteAdminCredentials)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/sites/{site_id}/maintenance", wrapper.SetSiteMaintenance)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/preview-password", wrapper.RegenerateSitePreviewPassword)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs", wrapper.ListJobs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs/{job_id}", wrapper.GetJob)
@@ -4786,6 +4829,152 @@ func (response PurgeSiteCachedefaultApplicationProblemPlusJSONResponse) VisitPur
 	return err
 }
 
+type SetSiteMaintenanceRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+	Body   *SetSiteMaintenanceJSONRequestBody
+}
+
+type SetSiteMaintenanceResponseObject interface {
+	VisitSetSiteMaintenanceResponse(w http.ResponseWriter) error
+}
+
+type SetSiteMaintenance202ResponseHeaders struct {
+	Location *string
+}
+
+type SetSiteMaintenance202JSONResponse struct {
+	Body    SiteAccepted
+	Headers SetSiteMaintenance202ResponseHeaders
+}
+
+func (response SetSiteMaintenance202JSONResponse) VisitSetSiteMaintenanceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteMaintenance400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteMaintenance400ApplicationProblemPlusJSONResponse) VisitSetSiteMaintenanceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteMaintenance401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteMaintenance401ApplicationProblemPlusJSONResponse) VisitSetSiteMaintenanceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteMaintenance403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteMaintenance403ApplicationProblemPlusJSONResponse) VisitSetSiteMaintenanceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteMaintenance404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteMaintenance404ApplicationProblemPlusJSONResponse) VisitSetSiteMaintenanceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteMaintenance409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteMaintenance409ApplicationProblemPlusJSONResponse) VisitSetSiteMaintenanceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteMaintenance422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteMaintenance422ApplicationProblemPlusJSONResponse) VisitSetSiteMaintenanceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteMaintenancedefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response SetSiteMaintenancedefaultApplicationProblemPlusJSONResponse) VisitSetSiteMaintenanceResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type RegenerateSitePreviewPasswordRequestObject struct {
 	SiteID SiteID `json:"site_id"`
 }
@@ -5789,6 +5978,9 @@ type StrictServerInterface interface {
 	// PurgeSiteCache Purge a site's caches
 	// (POST /api/v1/sites/{site_id}/cache/purge)
 	PurgeSiteCache(ctx context.Context, request PurgeSiteCacheRequestObject) (PurgeSiteCacheResponseObject, error)
+	// SetSiteMaintenance Turn maintenance mode on or off
+	// (PUT /api/v1/sites/{site_id}/maintenance)
+	SetSiteMaintenance(ctx context.Context, request SetSiteMaintenanceRequestObject) (SetSiteMaintenanceResponseObject, error)
 	// RegenerateSitePreviewPassword Generate a new preview password (shown once)
 	// (POST /api/v1/sites/{site_id}/preview-password)
 	RegenerateSitePreviewPassword(ctx context.Context, request RegenerateSitePreviewPasswordRequestObject) (RegenerateSitePreviewPasswordResponseObject, error)
@@ -6460,6 +6652,39 @@ func (sh *strictHandler) PurgeSiteCache(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PurgeSiteCacheResponseObject); ok {
 		if err := validResponse.VisitPurgeSiteCacheResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetSiteMaintenance operation middleware
+func (sh *strictHandler) SetSiteMaintenance(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request SetSiteMaintenanceRequestObject
+
+	request.SiteID = siteID
+
+	var body SetSiteMaintenanceJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetSiteMaintenance(ctx, request.(SetSiteMaintenanceRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetSiteMaintenance")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetSiteMaintenanceResponseObject); ok {
+		if err := validResponse.VisitSetSiteMaintenanceResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

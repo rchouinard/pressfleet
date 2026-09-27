@@ -178,9 +178,11 @@ services:
         source: ./traefik/traefik.yaml
         target: /etc/traefik/traefik.yaml
         read_only: true
+      # File provider configuration, including the maintenance routes the
+      # control plane writes (it has the data directory mounted).
       - type: bind
-        source: ./traefik/dynamic.yaml
-        target: /etc/traefik/dynamic.yaml
+        source: ./traefik/dynamic
+        target: "/etc/traefik/dynamic"
         read_only: true
       - type: bind
         source: ./traefik/entrypoint.sh
@@ -219,6 +221,36 @@ services:
       retries: 3
       start_period: 30s
       start_interval: 2s
+    logging: *logging
+
+  # The page Traefik shows for sites in maintenance mode (design doc §5.4):
+  # 503 with Retry-After on every path. It is the control plane image
+  # running a static page server, with no data, secrets, Docker socket, or
+  # writable filesystem, so public traffic for a site under maintenance
+  # never reaches the control plane itself.
+  maintenance:
+    image: "ghcr.io/rchouinard/pressfleet/control-plane:v1.2.3"
+    command: ["maintenance-page", "--listen", ":8080"]
+    restart: unless-stopped
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      GOMEMLIMIT: "18MiB"
+    networks:
+      - platform
+    deploy:
+      resources:
+        limits:
+          memory: 24M
+    healthcheck:
+      test: ["CMD", "pressfleet", "maintenance-page", "--check", "--listen", ":8080"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+      start_interval: 1s
     logging: *logging
 
   # Traefik's only way to the Docker API: read-only requests for exactly the

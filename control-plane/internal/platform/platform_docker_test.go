@@ -120,7 +120,7 @@ func TestPlatformUp(t *testing.T) {
 			t.Fatalf("Redis container is %s, want %s", redis.Name, platform.RedisContainer(cfg.ProjectName))
 		}
 		if db.Health == "healthy" && redis.Health == "healthy" && cp.State == "running" &&
-			tr.Health == "healthy" && state["socket-proxy"].Health == "healthy" {
+			tr.Health == "healthy" && state["socket-proxy"].Health == "healthy" && state["maintenance"].Health == "healthy" {
 			cpHealth = cp.Health
 			break
 		}
@@ -146,6 +146,7 @@ func TestPlatformUp(t *testing.T) {
 		"control-plane": platform.DefaultControlPlaneMemoryMB,
 		"redis":         platform.DefaultRedisMaxMemoryMB + platform.RedisOverheadMB,
 		"traefik":       platform.DefaultTraefikMemoryMB,
+		"maintenance":   platform.MaintenanceMemoryMB,
 	} {
 		got := exec(service, "cat", "/sys/fs/cgroup/memory.max")
 		if want := strconv.Itoa(mb * 1024 * 1024); got != want {
@@ -222,7 +223,7 @@ func TestPlatformUp(t *testing.T) {
 		t.Errorf("control plane's Redis admin password = %q", got)
 	}
 	exec("control-plane", "test", "-f", platform.MasterKeySecretPath)
-	if got := exec("control-plane", "docker", "compose", "--project-name", cfg.ProjectName, "ps", "--quiet"); len(strings.Fields(got)) != 5 {
+	if got := exec("control-plane", "docker", "compose", "--project-name", cfg.ProjectName, "ps", "--quiet"); len(strings.Fields(got)) != 6 {
 		t.Errorf("docker compose ps inside the control plane listed %q", got)
 	}
 

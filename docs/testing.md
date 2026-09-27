@@ -73,7 +73,10 @@ The test can't read a site's project directory: the control plane runs as root a
 
 `TestSitePreview` provisions one site and checks its preview domain through `p.IngressClient`:
 
-- **Password protection (#107).** With protection on, the preview domain answers `401` (with `X-Robots-Tag: noindex`) without credentials or with a wrong password, and `200` with the generated ones, including the REST API (Traefik strips the `Authorization` header). `http://<preview>/.well-known/acme-challenge/<token>` gets Traefik's own `404`, so HTTP-01 challenges are answered before protection, and WP-CLI (WP-Cron's path) works. The plaintext password must not appear in the nginx container's labels (which hold its bcrypt hash), the platform's or site's container logs, or the site, jobs, and audit log API responses. Regenerating the password makes only the new one work; turning protection off opens the domain again. Deleting the site at the end runs through its job.
+- **Password protection (#107).** With protection on, the preview domain answers `401` (with `X-Robots-Tag: noindex`) without credentials or with a wrong password, and `200` with the generated ones, including the REST API (Traefik strips the `Authorization` header). `http://<preview>/.well-known/acme-challenge/<token>` gets Traefik's own `404`, so HTTP-01 challenges are answered before protection, and WP-CLI (WP-Cron's path) works. The plaintext password must not appear in the nginx container's labels (which hold its bcrypt hash), the platform's or site's container logs, or the site, jobs, and audit log API responses. Regenerating the password makes only the new one work; turning protection off opens the domain again.
+- **Maintenance mode (#44).** With maintenance mode on, the preview domain answers `503` with `Retry-After` and the maintenance page (the test logs how long that took), also after the site is stopped and started again, and WP-CLI still works in the site. Turning it off serves the site again.
+
+Deleting the site at the end runs through its job.
 
 ### Writing a test
 

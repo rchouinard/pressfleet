@@ -62,6 +62,13 @@ providers:
     # sharing a Docker engine (as the tests do) never pick up each other's
     # routes.
     constraints: "Label(`pressfleet.platform`, `pressfleet`)"
+  # The maintenance page service, the router that requests the preview
+  # wildcard certificate (with a DNS provider), and the maintenance routes
+  # of sites in maintenance mode, which the control plane writes and removes
+  # while Traefik runs.
+  file:
+    directory: "/etc/traefik/dynamic"
+    watch: true
 
 certificatesResolvers:
   # HTTP-01, one certificate per host name: the dashboard domain and, from

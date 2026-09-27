@@ -35,12 +35,13 @@ var implementedSiteOps = map[string]bool{
 	"createSite":                    true,
 	"getSite":                       true,
 	"updateSite":                    true,
+	"regenerateSitePreviewPassword": true,
+	"setSiteMaintenance":            true,
 	"deleteSite":                    true,
 	"startSite":                     true,
 	"stopSite":                      true,
 	"purgeSiteCache":                true,
 	"retrieveSiteAdminCredentials":  true,
-	"regenerateSitePreviewPassword": true,
 }
 
 func orEmpty(s *string) string {
@@ -488,6 +489,33 @@ func TestSiteManagementEndpoints(t *testing.T) {
 			}
 		}
 		patchPreview(`{"enabled":false}`)
+
+		// Maintenance mode (#44).
+		for _, enabled := range []bool{true, false} {
+			body := `{"enabled":false}`
+			if enabled {
+				body = `{"enabled":true}`
+			}
+			w := do(t, h, request{authed: true, method: http.MethodPut, target: target + "/maintenance", body: body})
+			if w.Code != http.StatusAccepted {
+				t.Fatalf("maintenance %v: %d %s", enabled, w.Code, w.Body)
+			}
+			acc := decodeJSON[gen.SiteAccepted](t, w.Body.Bytes())
+			if acc.Site.Maintenance != enabled || acc.Site.Status != gen.SiteStatusRunning || acc.Job.Type != sites.MaintenanceJobType ||
+				w.Header().Get("Location") != "/api/v1/jobs/"+acc.Job.ID {
+				t.Errorf("maintenance %v = %s", enabled, w.Body)
+			}
+			e.runJobs(t)
+			if s, _ := e.prov.Site(siteID); s.Maintenance != enabled {
+				t.Errorf("provisioner maintenance = %v, want %v", s.Maintenance, enabled)
+			}
+			if got := get(); got.Maintenance != enabled {
+				t.Errorf("get: maintenance = %v", got.Maintenance)
+			}
+		}
+		if w := do(t, h, request{authed: true, method: http.MethodPut, target: target + "/maintenance", body: `{}`}); w.Code != http.StatusUnprocessableEntity {
+			t.Errorf("maintenance without enabled: %d %s", w.Code, w.Body)
+		}
 
 		// Validation.
 		for _, tt := range []struct{ name, body, field string }{

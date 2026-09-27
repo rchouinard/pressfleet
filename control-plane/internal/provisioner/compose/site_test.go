@@ -357,8 +357,8 @@ func TestRenderSiteFileModesAndRerender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 2 {
-		t.Errorf("site dir has %d entries, want 2 (temporary files left behind?)", len(entries))
+	if len(entries) != 3 {
+		t.Errorf("site dir has %d entries, want 3 (temporary files left behind?)", len(entries))
 	}
 }
 

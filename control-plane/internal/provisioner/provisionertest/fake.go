@@ -133,6 +133,7 @@ func (f *Fake) CreateSite(_ context.Context, cfg *provisioner.SiteConfig) (*prov
 		f.sites[cfg.ID] = s
 	}
 	s.Config = *cfg
+	s.Maintenance = cfg.Maintenance
 	s.Phase = provisioner.SiteRunning
 	return status(s), nil
 }
@@ -152,6 +153,8 @@ func (f *Fake) UpdateSite(_ context.Context, cfg *provisioner.SiteConfig) (*prov
 		return nil, err
 	}
 	s.Config = *cfg
+	// Like the Compose driver, the config's maintenance flag wins.
+	s.Maintenance = cfg.Maintenance
 	return status(s), nil
 }
 

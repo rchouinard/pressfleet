@@ -78,7 +78,10 @@ func waitIngress(t *testing.T, hc *http.Client, url string, header http.Header, 
 //     password is in no label, log, or API response but the one that
 //     generated it;
 //  2. regenerates the password: only the new one works;
-//  3. turns protection off: the preview domain is open again.
+//  3. turns protection off: the preview domain is open again;
+//  4. turns maintenance mode (#44) on and off: 503 with Retry-After and the
+//     maintenance page, also while the site is stopped, with WP-CLI still
+//     working, then the site again.
 func TestSitePreview(t *testing.T) {
 	projectDir := t.TempDir()
 	var siteProject compose.Project
@@ -255,6 +258,55 @@ func TestSitePreview(t *testing.T) {
 			t.Errorf("disabling returned credentials")
 		}
 		waitIngress(t, hc, previewURL, nil, http.StatusOK)
+	})
+
+	// Maintenance mode (#44): the domain answers 503 with Retry-After and
+	// the maintenance page within seconds, also while the site is stopped,
+	// WP-CLI keeps working, and turning it off serves the site again.
+	setMaintenance := func(t *testing.T, enabled bool) {
+		t.Helper()
+		resp, err := p.Client.SetSiteMaintenanceWithResponse(ctx, site.ID, client.SetSiteMaintenanceJSONRequestBody{Enabled: enabled})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.JSON202 == nil || resp.JSON202.Site.Maintenance != enabled {
+			t.Fatalf("set maintenance %v: status %d: %s", enabled, resp.StatusCode(), resp.Body)
+		}
+		waitJob(t, p, resp.JSON202.Job.ID)
+	}
+	t.Run("maintenance mode", func(t *testing.T) {
+		start := time.Now()
+		setMaintenance(t, true)
+		resp, page := waitIngress(t, hc, previewURL+"?x=1", nil, http.StatusServiceUnavailable)
+		t.Logf("maintenance page after %s", time.Since(start).Round(100*time.Millisecond))
+		if resp.Header.Get("Retry-After") == "" || !strings.Contains(page, "Down for maintenance") {
+			t.Errorf("maintenance response: %v\n%.300s", resp.Header, page)
+		}
+		if out, err := siteProject.ExecService(ctx, "php", "wp", "core", "is-installed"); err != nil {
+			t.Errorf("WP-CLI in maintenance mode: %v: %s", err, out)
+		}
+		// The page doesn't depend on the site's containers.
+		stop, err := p.Client.StopSiteWithResponse(ctx, site.ID)
+		if err != nil || stop.JSON202 == nil {
+			t.Fatalf("stop: %v %s", err, stop.Body)
+		}
+		waitJob(t, p, stop.JSON202.Job.ID)
+		if resp, _ := ingressGet(t, hc, previewURL, nil); resp.StatusCode != http.StatusServiceUnavailable {
+			t.Errorf("stopped site in maintenance mode: status %d", resp.StatusCode)
+		}
+		startResp, err := p.Client.StartSiteWithResponse(ctx, site.ID)
+		if err != nil || startResp.JSON202 == nil {
+			t.Fatalf("start: %v %s", err, startResp.Body)
+		}
+		waitJob(t, p, startResp.JSON202.Job.ID)
+		if resp, _ := ingressGet(t, hc, previewURL, nil); resp.StatusCode != http.StatusServiceUnavailable {
+			t.Errorf("restarted site in maintenance mode: status %d", resp.StatusCode)
+		}
+
+		start = time.Now()
+		setMaintenance(t, false)
+		waitIngress(t, hc, previewURL, nil, http.StatusOK)
+		t.Logf("site back after %s", time.Since(start).Round(100*time.Millisecond))
 	})
 
 	deleted, err := p.Client.DeleteSiteWithResponse(ctx, site.ID)

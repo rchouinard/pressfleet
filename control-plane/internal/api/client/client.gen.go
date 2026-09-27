@@ -838,6 +838,10 @@ type Site struct {
 	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
 	ID ID `json:"id"`
 
+	// Maintenance Whether the site is in maintenance mode: its domains answer with
+	// the platform's maintenance page (design doc §5.4).
+	Maintenance bool `json:"maintenance"`
+
 	// Name Examples: Acme marketing site
 	Name string `json:"name"`
 
@@ -952,6 +956,12 @@ type SiteList struct {
 
 	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
 	NextCursor *NextCursor `json:"next_cursor"`
+}
+
+// SiteMaintenance defines model for SiteMaintenance.
+type SiteMaintenance struct {
+	// Enabled `true` shows the maintenance page on every domain of the site; `false` serves the site again.
+	Enabled bool `json:"enabled"`
 }
 
 // SiteRuntime The live state of the site's containers, observed when the site was
@@ -1229,6 +1239,9 @@ type CreateSiteJSONRequestBody = SiteCreate
 
 // UpdateSiteJSONRequestBody defines body for UpdateSite for application/json ContentType.
 type UpdateSiteJSONRequestBody = SiteUpdate
+
+// SetSiteMaintenanceJSONRequestBody defines body for SetSiteMaintenance for application/json ContentType.
+type SetSiteMaintenanceJSONRequestBody = SiteMaintenance
 
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody = UserCreate
@@ -1632,6 +1645,42 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/cache/purge (the `PurgeSiteCache` operationId).
 	PurgeSiteCache(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetSiteMaintenanceWithBody Turn maintenance mode on or off
+	//
+	// Records whether the site is in maintenance mode and queues a job
+	// that applies it (design doc §5.4). In maintenance mode, every domain
+	// of the site answers `503 Service Unavailable` with `Retry-After` and
+	// the platform's maintenance page, served by the edge router without
+	// the site's containers; WP-CLI and other platform tasks keep working.
+	// The change takes effect a few seconds after the job has finished,
+	// and stays across updates and restarts until it is turned off. The
+	// site's `status` doesn't change. If the job fails, the previous
+	// setting is restored. A site that is `provisioning`, `updating`, or
+	// `deleting`, or whose provisioning failed, returns `409`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /api/v1/sites/{site_id}/maintenance (the `SetSiteMaintenance` operationId).
+	SetSiteMaintenanceWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetSiteMaintenance Turn maintenance mode on or off
+	//
+	// Records whether the site is in maintenance mode and queues a job
+	// that applies it (design doc §5.4). In maintenance mode, every domain
+	// of the site answers `503 Service Unavailable` with `Retry-After` and
+	// the platform's maintenance page, served by the edge router without
+	// the site's containers; WP-CLI and other platform tasks keep working.
+	// The change takes effect a few seconds after the job has finished,
+	// and stays across updates and restarts until it is turned off. The
+	// site's `status` doesn't change. If the job fails, the previous
+	// setting is restored. A site that is `provisioning`, `updating`, or
+	// `deleting`, or whose provisioning failed, returns `409`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /api/v1/sites/{site_id}/maintenance (the `SetSiteMaintenance` operationId).
+	SetSiteMaintenance(ctx context.Context, siteID SiteID, body SetSiteMaintenanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RegenerateSitePreviewPassword Generate a new preview password (shown once)
 	//
@@ -2346,6 +2395,62 @@ func (c *Client) RetrieveSiteAdminCredentials(ctx context.Context, siteID SiteID
 // Corresponds with POST /api/v1/sites/{site_id}/cache/purge (the `PurgeSiteCache` operationId).
 func (c *Client) PurgeSiteCache(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPurgeSiteCacheRequest(c.Server, siteID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetSiteMaintenanceWithBody Turn maintenance mode on or off
+//
+// Records whether the site is in maintenance mode and queues a job
+// that applies it (design doc §5.4). In maintenance mode, every domain
+// of the site answers `503 Service Unavailable` with `Retry-After` and
+// the platform's maintenance page, served by the edge router without
+// the site's containers; WP-CLI and other platform tasks keep working.
+// The change takes effect a few seconds after the job has finished,
+// and stays across updates and restarts until it is turned off. The
+// site's `status` doesn't change. If the job fails, the previous
+// setting is restored. A site that is `provisioning`, `updating`, or
+// `deleting`, or whose provisioning failed, returns `409`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /api/v1/sites/{site_id}/maintenance (the `SetSiteMaintenance` operationId).
+func (c *Client) SetSiteMaintenanceWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSiteMaintenanceRequestWithBody(c.Server, siteID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetSiteMaintenance Turn maintenance mode on or off
+//
+// Records whether the site is in maintenance mode and queues a job
+// that applies it (design doc §5.4). In maintenance mode, every domain
+// of the site answers `503 Service Unavailable` with `Retry-After` and
+// the platform's maintenance page, served by the edge router without
+// the site's containers; WP-CLI and other platform tasks keep working.
+// The change takes effect a few seconds after the job has finished,
+// and stays across updates and restarts until it is turned off. The
+// site's `status` doesn't change. If the job fails, the previous
+// setting is restored. A site that is `provisioning`, `updating`, or
+// `deleting`, or whose provisioning failed, returns `409`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /api/v1/sites/{site_id}/maintenance (the `SetSiteMaintenance` operationId).
+func (c *Client) SetSiteMaintenance(ctx context.Context, siteID SiteID, body SetSiteMaintenanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSiteMaintenanceRequest(c.Server, siteID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3667,6 +3772,53 @@ func NewPurgeSiteCacheRequest(server string, siteID SiteID) (*http.Request, erro
 	return req, nil
 }
 
+// NewSetSiteMaintenanceRequest calls the generic SetSiteMaintenance builder with application/json body
+func NewSetSiteMaintenanceRequest(server string, siteID SiteID, body SetSiteMaintenanceJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetSiteMaintenanceRequestWithBody(server, siteID, "application/json", bodyReader)
+}
+
+// NewSetSiteMaintenanceRequestWithBody constructs an http.Request for the SetSiteMaintenance method, with any body, and a specified content type
+func NewSetSiteMaintenanceRequestWithBody(server string, siteID SiteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/maintenance", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewRegenerateSitePreviewPasswordRequest constructs an http.Request for the RegenerateSitePreviewPassword method
 func NewRegenerateSitePreviewPasswordRequest(server string, siteID SiteID) (*http.Request, error) {
 	var err error
@@ -4452,6 +4604,42 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/cache/purge (the `PurgeSiteCache` operationId).
 	PurgeSiteCacheWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*PurgeSiteCacheResponse, error)
+
+	// SetSiteMaintenanceWithBodyWithResponse Turn maintenance mode on or off
+	//
+	// Records whether the site is in maintenance mode and queues a job
+	// that applies it (design doc §5.4). In maintenance mode, every domain
+	// of the site answers `503 Service Unavailable` with `Retry-After` and
+	// the platform's maintenance page, served by the edge router without
+	// the site's containers; WP-CLI and other platform tasks keep working.
+	// The change takes effect a few seconds after the job has finished,
+	// and stays across updates and restarts until it is turned off. The
+	// site's `status` doesn't change. If the job fails, the previous
+	// setting is restored. A site that is `provisioning`, `updating`, or
+	// `deleting`, or whose provisioning failed, returns `409`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v1/sites/{site_id}/maintenance (the `SetSiteMaintenance` operationId).
+	SetSiteMaintenanceWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSiteMaintenanceResponse, error)
+
+	// SetSiteMaintenanceWithResponse Turn maintenance mode on or off
+	//
+	// Records whether the site is in maintenance mode and queues a job
+	// that applies it (design doc §5.4). In maintenance mode, every domain
+	// of the site answers `503 Service Unavailable` with `Retry-After` and
+	// the platform's maintenance page, served by the edge router without
+	// the site's containers; WP-CLI and other platform tasks keep working.
+	// The change takes effect a few seconds after the job has finished,
+	// and stays across updates and restarts until it is turned off. The
+	// site's `status` doesn't change. If the job fails, the previous
+	// setting is restored. A site that is `provisioning`, `updating`, or
+	// `deleting`, or whose provisioning failed, returns `409`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v1/sites/{site_id}/maintenance (the `SetSiteMaintenance` operationId).
+	SetSiteMaintenanceWithResponse(ctx context.Context, siteID SiteID, body SetSiteMaintenanceJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSiteMaintenanceResponse, error)
 
 	// RegenerateSitePreviewPasswordWithResponse Generate a new preview password (shown once)
 	//
@@ -6272,6 +6460,103 @@ func (r PurgeSiteCacheResponse) ContentType() string {
 	return ""
 }
 
+// SetSiteMaintenanceResponse202Headers the declared response headers of an HTTP 202 response for SetSiteMaintenance
+type SetSiteMaintenanceResponse202Headers struct {
+	Location *string
+}
+
+type SetSiteMaintenanceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *SiteAccepted
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *SetSiteMaintenanceResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r SetSiteMaintenanceResponse) GetJSON202() *SiteAccepted {
+	return r.JSON202
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r SetSiteMaintenanceResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r SetSiteMaintenanceResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r SetSiteMaintenanceResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r SetSiteMaintenanceResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r SetSiteMaintenanceResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r SetSiteMaintenanceResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SetSiteMaintenanceResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SetSiteMaintenanceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetSiteMaintenanceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetSiteMaintenanceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetSiteMaintenanceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // RegenerateSitePreviewPasswordResponse202Headers the declared response headers of an HTTP 202 response for RegenerateSitePreviewPassword
 type RegenerateSitePreviewPasswordResponse202Headers struct {
 	CacheControl *string
@@ -7523,6 +7808,54 @@ func (c *ClientWithResponses) PurgeSiteCacheWithResponse(ctx context.Context, si
 		return nil, err
 	}
 	return ParsePurgeSiteCacheResponse(rsp)
+}
+
+// SetSiteMaintenanceWithBodyWithResponse Turn maintenance mode on or off
+//
+// Records whether the site is in maintenance mode and queues a job
+// that applies it (design doc §5.4). In maintenance mode, every domain
+// of the site answers `503 Service Unavailable` with `Retry-After` and
+// the platform's maintenance page, served by the edge router without
+// the site's containers; WP-CLI and other platform tasks keep working.
+// The change takes effect a few seconds after the job has finished,
+// and stays across updates and restarts until it is turned off. The
+// site's `status` doesn't change. If the job fails, the previous
+// setting is restored. A site that is `provisioning`, `updating`, or
+// `deleting`, or whose provisioning failed, returns `409`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v1/sites/{site_id}/maintenance (the `SetSiteMaintenance` operationId).
+func (c *ClientWithResponses) SetSiteMaintenanceWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSiteMaintenanceResponse, error) {
+	rsp, err := c.SetSiteMaintenanceWithBody(ctx, siteID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSiteMaintenanceResponse(rsp)
+}
+
+// SetSiteMaintenanceWithResponse Turn maintenance mode on or off
+//
+// Records whether the site is in maintenance mode and queues a job
+// that applies it (design doc §5.4). In maintenance mode, every domain
+// of the site answers `503 Service Unavailable` with `Retry-After` and
+// the platform's maintenance page, served by the edge router without
+// the site's containers; WP-CLI and other platform tasks keep working.
+// The change takes effect a few seconds after the job has finished,
+// and stays across updates and restarts until it is turned off. The
+// site's `status` doesn't change. If the job fails, the previous
+// setting is restored. A site that is `provisioning`, `updating`, or
+// `deleting`, or whose provisioning failed, returns `409`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v1/sites/{site_id}/maintenance (the `SetSiteMaintenance` operationId).
+func (c *ClientWithResponses) SetSiteMaintenanceWithResponse(ctx context.Context, siteID SiteID, body SetSiteMaintenanceJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSiteMaintenanceResponse, error) {
+	rsp, err := c.SetSiteMaintenance(ctx, siteID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSiteMaintenanceResponse(rsp)
 }
 
 // RegenerateSitePreviewPasswordWithResponse Generate a new preview password (shown once)
@@ -9147,6 +9480,94 @@ func ParsePurgeSiteCacheResponse(rsp *http.Response) (*PurgeSiteCacheResponse, e
 	switch {
 	case rsp.StatusCode == 202:
 		var headers PurgeSiteCacheResponse202Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseSetSiteMaintenanceResponse parses an HTTP response from a SetSiteMaintenanceWithResponse call
+func ParseSetSiteMaintenanceResponse(rsp *http.Response) (*SetSiteMaintenanceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetSiteMaintenanceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest SiteAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers SetSiteMaintenanceResponse202Headers
 		if values := rsp.Header.Values("Location"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {

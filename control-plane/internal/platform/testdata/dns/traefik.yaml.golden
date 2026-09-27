@@ -62,10 +62,13 @@ providers:
     # sharing a Docker engine (as the tests do) never pick up each other's
     # routes.
     constraints: "Label(`pressfleet.platform`, `pressfleet`)"
-  # The router that requests the preview wildcard certificate.
+  # The maintenance page service, the router that requests the preview
+  # wildcard certificate (with a DNS provider), and the maintenance routes
+  # of sites in maintenance mode, which the control plane writes and removes
+  # while Traefik runs.
   file:
-    filename: /etc/traefik/dynamic.yaml
-    watch: false
+    directory: "/etc/traefik/dynamic"
+    watch: true
 
 certificatesResolvers:
   # HTTP-01, one certificate per host name: the dashboard domain and, from
@@ -84,7 +87,7 @@ certificatesResolvers:
       caServer: "https://pebble:14000/dir"
       storage: /var/lib/traefik/acme.json
       # One wildcard certificate for every preview domain, with DNS-01 (see
-      # dynamic.yaml). The provider's credentials come from the files the
+      # dynamic/platform.yaml). The provider's credentials come from the files the
       # entrypoint names in <VARIABLE>_FILE variables.
       dnsChallenge:
         provider: "cloudflare"

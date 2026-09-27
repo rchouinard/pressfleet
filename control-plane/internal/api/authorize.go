@@ -45,6 +45,7 @@ var operationActions = map[string]authz.Action{
 	"retrieveSiteAdminCredentials": authz.RetrieveSiteCredentials,
 	// Preview password protection is a site setting (design doc §4.6).
 	"regenerateSitePreviewPassword": authz.UpdateSite,
+	"setSiteMaintenance":            authz.SetSiteMaintenance,
 
 	"listJobs": authz.ViewJobs,
 	"getJob":   authz.ViewJobs,

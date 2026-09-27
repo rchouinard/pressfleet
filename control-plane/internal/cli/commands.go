@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strconv"
@@ -46,6 +47,7 @@ func (a *app) siteRuntime(cat *catalog.Catalog, secretStore secrets.Store, keys 
 		RedisContainer:    platform.RedisContainer(a.cfg.PlatformProject),
 		TraefikContainer:  platform.TraefikContainer(a.cfg.PlatformProject),
 		PlatformProject:   a.cfg.PlatformProject,
+		TraefikDynamicDir: filepath.Join(a.cfg.Layout().PlatformDir(), platform.TraefikDynamicDir),
 		WordPressSecurity: a.cfg.WordPressSecurity,
 		Logger:            a.log.With("component", "provisioner"),
 		SMTP:              smtp,

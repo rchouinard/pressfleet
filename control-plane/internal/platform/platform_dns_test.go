@@ -85,7 +85,7 @@ func TestPreviewCertResolver(t *testing.T) {
 			http.CAServer != preview.CAServer || http.Storage != preview.Storage || http.HTTPChallenge.EntryPoint != ingress.EntryPointHTTP {
 			t.Errorf("resolvers: http %+v, preview %+v", http, preview)
 		}
-		if tr.Providers.File == nil || tr.Providers.File.Filename != "/etc/traefik/dynamic.yaml" {
+		if tr.Providers.File == nil || tr.Providers.File.Directory != "/etc/traefik/dynamic" || !tr.Providers.File.Watch {
 			t.Errorf("file provider = %+v", tr.Providers.File)
 		}
 
@@ -147,13 +147,20 @@ func TestPreviewCertResolver(t *testing.T) {
 		if preview.DNSChallenge != nil || preview.HTTPChallenge.EntryPoint != ingress.EntryPointHTTP {
 			t.Errorf("preview resolver = %+v", preview)
 		}
-		if tr.Providers.File != nil {
-			t.Errorf("file provider without a DNS provider: %+v", tr.Providers.File)
+		// The file provider is there for the maintenance page (#44), but
+		// has no wildcard router.
+		if tr.Providers.File == nil || tr.Providers.File.Directory != "/etc/traefik/dynamic" {
+			t.Errorf("file provider = %+v", tr.Providers.File)
 		}
-		for _, f := range []string{platform.TraefikDynamicConfigFile, platform.TraefikEntrypointFile} {
-			if _, err := os.Stat(filepath.Join(dir, f)); !errors.Is(err, os.ErrNotExist) {
-				t.Errorf("%s rendered without a DNS provider: %v", f, err)
-			}
+		raw, err := os.ReadFile(filepath.Join(dir, platform.TraefikDynamicConfigFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(raw, []byte(ingress.PreviewWildcardRouter)) || !bytes.Contains(raw, []byte(ingress.MaintenanceService+":")) {
+			t.Errorf("%s without a DNS provider:\n%s", platform.TraefikDynamicConfigFile, raw)
+		}
+		if _, err := os.Stat(filepath.Join(dir, platform.TraefikEntrypointFile)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s rendered without a DNS provider: %v", platform.TraefikEntrypointFile, err)
 		}
 	})
 }
@@ -244,10 +251,12 @@ func TestRenderSwitchesOffDNS(t *testing.T) {
 	if err := platform.Render(dir, testConfig()); err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range []string{platform.TraefikDynamicConfigFile, platform.TraefikEntrypointFile} {
-		if _, err := os.Stat(filepath.Join(dir, f)); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("%s left behind after re-rendering without a DNS provider: %v", f, err)
-		}
+	if _, err := os.Stat(filepath.Join(dir, platform.TraefikEntrypointFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("%s left behind after re-rendering without a DNS provider: %v", platform.TraefikEntrypointFile, err)
+	}
+	if raw, err := os.ReadFile(filepath.Join(dir, platform.TraefikDynamicConfigFile)); err != nil ||
+		bytes.Contains(raw, []byte(ingress.PreviewWildcardRouter)) {
+		t.Errorf("%s after re-rendering without a DNS provider: %v\n%s", platform.TraefikDynamicConfigFile, err, raw)
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, platform.ComposeFile))
 	if err != nil {

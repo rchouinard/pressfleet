@@ -160,6 +160,35 @@ func (h *Handlers) UpdateSite(ctx context.Context, req gen.UpdateSiteRequestObje
 	return out, nil
 }
 
+// SetSiteMaintenance records whether the site is in maintenance mode and
+// queues the job that applies it.
+func (h *Handlers) SetSiteMaintenance(ctx context.Context, req gen.SetSiteMaintenanceRequestObject) (gen.SetSiteMaintenanceResponseObject, error) {
+	p, err := h.authorize(ctx, authz.SetSiteMaintenance, authz.Site(req.SiteID))
+	if err != nil {
+		return nil, err
+	}
+	if h.sites == nil {
+		return nil, errNoSites
+	}
+	site, job, err := h.sites.SetMaintenance(ctx, req.SiteID, deref(req.Body).Enabled, p.UserID)
+	if err != nil {
+		return nil, siteError(err)
+	}
+	_, aliases, err := h.sites.Get(ctx, site.ID)
+	if err != nil {
+		return nil, siteError(err)
+	}
+	j, err := jobResponse(job, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	location := jobLocation(job)
+	return gen.SetSiteMaintenance202JSONResponse{
+		Body:    gen.SiteAccepted{Site: siteResponse(site, aliases), Job: j},
+		Headers: gen.SetSiteMaintenance202ResponseHeaders{Location: &location},
+	}, nil
+}
+
 // RegenerateSitePreviewPassword replaces the site's preview password and
 // returns the new one, once, with the job that applies it.
 func (h *Handlers) RegenerateSitePreviewPassword(ctx context.Context, req gen.RegenerateSitePreviewPasswordRequestObject) (gen.RegenerateSitePreviewPasswordResponseObject, error) {
@@ -361,6 +390,7 @@ func siteResponse(s store.Site, aliases []string) gen.Site {
 		URL:                       &url,
 		AdminCredentialsAvailable: s.AdminPasswordSecretRef != "",
 		PreviewProtection:         gen.PreviewProtection{Enabled: s.PreviewProtection},
+		Maintenance:               s.Maintenance,
 		CreatedAt:                 s.CreatedAt,
 		UpdatedAt:                 s.UpdatedAt,
 	}

@@ -217,6 +217,8 @@ type fixture struct {
 	layout config.Layout
 	cfg    *provisioner.SiteConfig
 	sec    memSecrets
+	// routesDir stands in for Traefik's file provider directory.
+	routesDir string
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -228,9 +230,14 @@ func newFixture(t *testing.T) *fixture {
 	sec := memSecrets{}
 	dbRef, saltsRef := siteSecrets(t, sec, testSiteID, sitedb.Credentials{Database: "site_db", Username: "site_user", Password: testDBSecret})
 	docker := newFakeDocker(t)
+	routesDir := filepath.Join(layout.PlatformDir(), "traefik", "dynamic")
+	if err := os.MkdirAll(routesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	prov, err := compose.NewProvisioner(compose.ProvisionerConfig{
-		Layout:  layout,
-		Secrets: sec,
+		Layout:            layout,
+		TraefikDynamicDir: routesDir,
+		Secrets:           sec,
 		Images: imageMap{
 			"8.4": {PHP: "site-php:php8.4-wp7.1.2", Nginx: "site-nginx:wp7.1.2"},
 			"8.3": {PHP: "site-php:php8.3-wp7.1.2", Nginx: "site-nginx:wp7.1.2"},
@@ -243,7 +250,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	cfg := testSiteRender().Site
 	cfg.DBSecretRef, cfg.WPSaltsSecretRef = dbRef, saltsRef
-	return &fixture{docker: docker, prov: prov, layout: layout, cfg: cfg, sec: sec}
+	return &fixture{docker: docker, prov: prov, layout: layout, cfg: cfg, sec: sec, routesDir: routesDir}
 }
 
 func (f *fixture) siteDir(t *testing.T) string {
@@ -676,14 +683,6 @@ func TestInvalidSiteID(t *testing.T) {
 	}
 	if len(f.docker.calls) != 0 {
 		t.Errorf("ran docker for invalid IDs: %q", f.docker.calls)
-	}
-}
-
-func TestNotImplemented(t *testing.T) {
-	f := newFixture(t)
-	ctx := context.Background()
-	if err := f.prov.SetMaintenance(ctx, testSiteID, true); !errors.Is(err, errors.ErrUnsupported) {
-		t.Errorf("SetMaintenance = %v", err)
 	}
 }
 

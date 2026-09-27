@@ -73,8 +73,11 @@ type Site struct {
 	PreviewUsername          string
 	PreviewPasswordHash      string
 	PreviewPasswordSecretRef string
-	CreatedAt                time.Time
-	UpdatedAt                time.Time
+	// Maintenance means the site's visitors get the platform's maintenance
+	// page (§5.4).
+	Maintenance bool
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // Sites reads and writes sites.
@@ -91,7 +94,7 @@ func NewSites(q Querier) Sites {
 const siteColumns = "id, client_group_id, name, slug, status, status_message, preview_domain, primary_domain, " +
 	"php_version, wp_core_version, wp_core_pinned, enable_cache, cpu_limit, memory_reservation_mb, memory_limit_mb, " +
 	"uid, wp_salts_secret_ref, admin_username, admin_email, admin_password_secret_ref, " +
-	"preview_protection, preview_username, preview_password_hash, preview_password_secret_ref, created_at, updated_at"
+	"preview_protection, preview_username, preview_password_hash, preview_password_secret_ref, maintenance, created_at, updated_at"
 
 func scanSite(s scanner) (Site, error) {
 	var (
@@ -103,7 +106,7 @@ func scanSite(s scanner) (Site, error) {
 		&site.CPULimit, &site.MemoryReservationMB, &site.MemoryLimitMB, &site.UID, &site.WPSaltsSecretRef,
 		&site.AdminUsername, &site.AdminEmail, &site.AdminPasswordSecretRef,
 		&site.PreviewProtection, &site.PreviewUsername, &site.PreviewPasswordHash, &site.PreviewPasswordSecretRef,
-		&site.CreatedAt, &site.UpdatedAt)
+		&site.Maintenance, &site.CreatedAt, &site.UpdatedAt)
 	site.PrimaryDomain = primary.String
 	return site, err
 }
@@ -120,13 +123,13 @@ func (r Sites) Create(ctx context.Context, s *Site) error {
 	created.CreatedAt = now()
 	created.UpdatedAt = created.CreatedAt
 	_, err := r.q.ExecContext(ctx, "INSERT INTO sites ("+siteColumns+") VALUES "+
-		"("+placeholders(26)+")",
+		"("+placeholders(27)+")",
 		created.ID, created.ClientGroupID, created.Name, created.Slug, string(created.Status), created.StatusMessage,
 		created.PreviewDomain, nullString(created.PrimaryDomain), created.PHPVersion, created.WPCoreVersion,
 		created.WPCorePinned, created.EnableCache, created.CPULimit, created.MemoryReservationMB, created.MemoryLimitMB,
 		created.UID, created.WPSaltsSecretRef, created.AdminUsername, created.AdminEmail, created.AdminPasswordSecretRef,
 		created.PreviewProtection, created.PreviewUsername, created.PreviewPasswordHash, created.PreviewPasswordSecretRef,
-		created.CreatedAt, created.UpdatedAt)
+		created.Maintenance, created.CreatedAt, created.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create site: %w", err)
 	}
@@ -323,6 +326,19 @@ func (r Sites) SetPreviewPassword(ctx context.Context, siteID, secretRef, hash s
 	return r.exec(ctx, "set preview password of site "+siteID,
 		"UPDATE sites SET preview_password_secret_ref = ?, preview_password_hash = ?, updated_at = ? WHERE id = ?",
 		secretRef, hash, now(), siteID)
+}
+
+// SetMaintenance records whether the site is in maintenance mode. If from
+// is given, only a site whose flag is currently from changes. It reports
+// whether the site changed; a missing site is not an error.
+func (r Sites) SetMaintenance(ctx context.Context, siteID string, enabled bool, from ...bool) (bool, error) {
+	query := "UPDATE sites SET maintenance = ?, updated_at = ? WHERE id = ?"
+	args := []any{enabled, now(), siteID}
+	if len(from) > 0 {
+		query += " AND maintenance = ?"
+		args = append(args, from[0])
+	}
+	return r.exec(ctx, "set maintenance of site "+siteID, query, args...)
 }
 
 // SlugTaken reports whether a site already uses the slug or the preview

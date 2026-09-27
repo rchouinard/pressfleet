@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Down for maintenance</title>
+<style>
+  :root { color-scheme: light dark; --fg: #1d2327; --muted: #50575e; --bg: #f6f7f7; --card: #fff; --accent: #2271b1; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg: #f0f0f1; --muted: #a7aaad; --bg: #1d2327; --card: #2c3338; --accent: #72aee6; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    padding: 24px; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  main {
+    max-width: 480px; width: 100%; padding: 40px 32px; background: var(--card);
+    border-radius: 12px; box-shadow: 0 1px 3px rgba(0, 0, 0, .12); text-align: center;
+  }
+  .mark { width: 56px; height: 56px; margin: 0 auto 20px; }
+  h1 { margin: 0 0 12px; font-size: 1.5rem; line-height: 1.3; }
+  p { margin: 0; color: var(--muted); }
+  footer { margin-top: 32px; font-size: .8125rem; color: var(--muted); }
+  footer b { color: var(--accent); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <svg class="mark" viewBox="0 0 56 56" aria-hidden="true">
+    <circle cx="28" cy="28" r="26" fill="none" stroke="currentColor" stroke-opacity=".15" stroke-width="4"/>
+    <path d="M28 14v16l10 6" fill="none" stroke="#2271b1" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+  <h1>Down for maintenance</h1>
+  <p>This site is being worked on and will be back shortly. Please try again in a few minutes.</p>
+  <footer>Hosted with <b>PressFleet</b></footer>
+</main>
+</body>
+</html>

@@ -79,6 +79,12 @@
 // containers can't be reverted either is the site marked failed; its record
 // then holds the previous settings, which a new PATCH can retry from.
 //
+// # Maintenance mode
+//
+// [Service.SetMaintenance] records the site's maintenance flag and queues a
+// [MaintenanceJobType] job that puts its domains on the platform's
+// maintenance page, or takes them off; see maintenance.go.
+//
 // # Start and stop
 //
 // [Service.Start] and [Service.Stop] enqueue [StartJobType] and
@@ -598,7 +604,7 @@ func (s *Service) TakeAdminCredentials(ctx context.Context, siteID string) (Admi
 func (s *Service) Handlers() []jobs.Handler {
 	return []jobs.Handler{
 		s.createHandler(), s.deleteHandler(), s.updateHandler(), s.startHandler(), s.stopHandler(),
-		s.reconcileHandler(), s.purgeCacheHandler(),
+		s.reconcileHandler(), s.purgeCacheHandler(), s.maintenanceHandler(),
 	}
 }
 

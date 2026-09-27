@@ -102,9 +102,10 @@ type RenderResult struct {
 	WPConfigChanged bool
 }
 
-// RenderSite writes the site's Compose project (compose.yaml) and its
-// wp-config.php into dir, normally config.Layout.SiteDir. Re-rendering is
-// safe: a file whose content is unchanged is left alone.
+// RenderSite writes the site's Compose project (compose.yaml), its
+// wp-config.php, and its maintenance routes (SiteMaintenanceFile) into dir,
+// normally config.Layout.SiteDir. Re-rendering is safe: a file whose
+// content is unchanged is left alone.
 //
 // # File modes and ownership
 //
@@ -154,6 +155,11 @@ func RenderSite(dir string, in SiteRender) (RenderResult, error) {
 		return res, fmt.Errorf("rendering %s: %w", SiteComposeFile, err)
 	}
 
+	routes, err := maintenanceRoutes(in.Site)
+	if err != nil {
+		return res, fmt.Errorf("rendering %s: %w", SiteMaintenanceFile, err)
+	}
+
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return res, fmt.Errorf("creating %s: %w", dir, err)
 	}
@@ -167,6 +173,11 @@ func RenderSite(dir string, in SiteRender) (RenderResult, error) {
 		return res, err
 	}
 	if res.ComposeChanged, err = replaceFile(filepath.Join(dir, SiteComposeFile), composeFile.Bytes(), 0o644, -1); err != nil {
+		return res, err
+	}
+	// Kept up to date for SetMaintenance, whether or not the site is in
+	// maintenance mode (maintenance.go).
+	if _, err := replaceFile(filepath.Join(dir, SiteMaintenanceFile), routes, 0o644, -1); err != nil {
 		return res, err
 	}
 	return res, nil

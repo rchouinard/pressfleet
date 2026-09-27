@@ -132,3 +132,31 @@ func SiteName(siteID string, suffixes ...string) string {
 // NginxPort is the port of a site's nginx container that Traefik forwards
 // requests to (images/README.md).
 const NginxPort = 8080
+
+// Maintenance mode (design doc §5.4). The platform runs a maintenance page
+// service (package maintenance) that Traefik knows as MaintenanceService
+// from its file provider. While a site is in maintenance mode, the Compose
+// driver writes a file there with a twin of each of the site's routers:
+// the same rule, TLS, and entry point, named router name plus
+// SuffixMaintenance, with MaintenancePriority so it wins over the router
+// it mirrors, and MaintenanceService as its service. The twins don't
+// depend on the site's containers, so the page stays up while they are
+// stopped or recreated, and removing the file restores the site's own
+// routers at once.
+const (
+	// MaintenanceService is the Traefik service of the maintenance page,
+	// defined by the platform in Traefik's file provider.
+	MaintenanceService = "pf-maintenance"
+	// MaintenanceHost and MaintenancePort are where Traefik reaches the
+	// maintenance page service on the platform network (its Compose
+	// service name).
+	MaintenanceHost = "maintenance"
+	MaintenancePort = 8080
+	// SuffixMaintenance is appended to a router's name to name its
+	// maintenance twin.
+	SuffixMaintenance = "maintenance"
+	// MaintenancePriority is the priority of maintenance routers. Traefik
+	// gives routers without one the length of their rule, so this is above
+	// every site router.
+	MaintenancePriority = 100000
+)

@@ -940,6 +940,55 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/sites/{site_id}/maintenance:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    put:
+      operationId: setSiteMaintenance
+      tags: [sites]
+      summary: Turn maintenance mode on or off
+      description: |
+        Records whether the site is in maintenance mode and queues a job
+        that applies it (design doc §5.4). In maintenance mode, every domain
+        of the site answers `503 Service Unavailable` with `Retry-After` and
+        the platform's maintenance page, served by the edge router without
+        the site's containers; WP-CLI and other platform tasks keep working.
+        The change takes effect a few seconds after the job has finished,
+        and stays across updates and restarts until it is turned off. The
+        site's `status` doesn't change. If the job fails, the previous
+        setting is restored. A site that is `provisioning`, `updating`, or
+        `deleting`, or whose provisioning failed, returns `409`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SiteMaintenance"
+      responses:
+        "202":
+          description: The site with the recorded setting, and the job that applies it.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/sites/{site_id}/preview-password:
     parameters:
       - $ref: "#/components/parameters/SiteID"
@@ -1710,6 +1759,7 @@ components:
         - wp_core_pinned
         - resources
         - preview_protection
+        - maintenance
         - status
         - parent_site_id
         - admin_credentials_available
@@ -1755,6 +1805,11 @@ components:
           $ref: "#/components/schemas/ResourceLimits"
         preview_protection:
           $ref: "#/components/schemas/PreviewProtection"
+        maintenance:
+          type: boolean
+          description: |
+            Whether the site is in maintenance mode: its domains answer with
+            the platform's maintenance page (design doc §5.4).
         status:
           $ref: "#/components/schemas/SiteStatus"
         status_message:
@@ -1828,6 +1883,15 @@ components:
           $ref: "#/components/schemas/Job"
         preview_credentials:
           $ref: "#/components/schemas/PreviewCredentials"
+
+    SiteMaintenance:
+      type: object
+      required: [enabled]
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+          description: "`true` shows the maintenance page on every domain of the site; `false` serves the site again."
 
     PreviewProtection:
       type: object

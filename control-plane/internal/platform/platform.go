@@ -38,12 +38,14 @@ const ProjectName = "pressfleet"
 // Memory limits from the §4.1 capacity budget. The control plane shares its
 // 256 MiB budget line with Traefik, which gets the remaining 64 MiB (it
 // uses about 25 MiB idle). The socket proxy, a small Go program serving one
-// client, uses about 11 MiB and comes on top, out of the headroom line.
+// client, uses about 11 MiB and comes on top, out of the headroom line, as
+// does the maintenance page service, which serves one static page.
 const (
 	DefaultMariaDBMemoryMB      = 768
 	DefaultControlPlaneMemoryMB = 192
 	DefaultTraefikMemoryMB      = 64
 	DefaultSocketProxyMemoryMB  = 24
+	MaintenanceMemoryMB         = 24
 )
 
 // Object cache sizing. The §4.1 budget line is the cache's maxmemory; the
@@ -337,6 +339,15 @@ type templateData struct {
 	InternalPort       int
 	CertResolverHTTP   string
 
+	// File provider and maintenance page (package ingress).
+	DynamicConfigDir        string // in the Traefik container
+	DynamicConfigSource     string // TraefikDynamicDir
+	MaintenanceService      string
+	MaintenanceHost         string
+	MaintenancePort         int
+	MaintenanceMemoryMB     int
+	MaintenanceGoMemLimitMB int
+
 	// DNS-01 (package ingress).
 	CertResolverPreview   string
 	PreviewWildcardRouter string
@@ -363,10 +374,23 @@ const (
 	RedisConfigFile           = "redis/valkey.conf"
 	RedisAdminPasswordSecret  = "secrets/redis_admin_password"
 	TraefikConfigFile         = "traefik/traefik.yaml"
+	// TraefikDynamicDir is the directory of Traefik's file provider. Render
+	// writes TraefikDynamicConfigFile into it; the control plane adds and
+	// removes the maintenance routes of sites (package ingress), so it
+	// must be readable by Traefik, which runs without CAP_DAC_OVERRIDE,
+	// and holds nothing secret.
+	TraefikDynamicDir        = "traefik/dynamic"
+	TraefikDynamicConfigFile = TraefikDynamicDir + "/platform.yaml"
 	// Rendered only with a DNS provider.
-	TraefikDynamicConfigFile = "traefik/dynamic.yaml"
-	TraefikEntrypointFile    = "traefik/entrypoint.sh"
+	TraefikEntrypointFile = "traefik/entrypoint.sh"
 )
+
+// legacyTraefikDynamicConfigFile is where the file provider's configuration
+// was before it moved into TraefikDynamicDir. Render removes it.
+const legacyTraefikDynamicConfigFile = "traefik/dynamic.yaml"
+
+// traefikDynamicConfigDir is where Traefik sees TraefikDynamicDir.
+const traefikDynamicConfigDir = "/etc/traefik/dynamic"
 
 // Render writes the platform Compose project into dir, normally
 // config.Layout.PlatformDir(). It is safe to run again: every file is
@@ -412,6 +436,14 @@ func Render(dir string, cfg Config) error {
 		InternalPort:           ingress.InternalPort,
 		CertResolverHTTP:       ingress.CertResolverHTTP,
 
+		DynamicConfigDir:        traefikDynamicConfigDir,
+		DynamicConfigSource:     TraefikDynamicDir,
+		MaintenanceService:      ingress.MaintenanceService,
+		MaintenanceHost:         ingress.MaintenanceHost,
+		MaintenancePort:         ingress.MaintenancePort,
+		MaintenanceMemoryMB:     MaintenanceMemoryMB,
+		MaintenanceGoMemLimitMB: MaintenanceMemoryMB * 3 / 4,
+
 		CertResolverPreview:   ingress.CertResolverPreview,
 		PreviewWildcardRouter: ingress.PreviewWildcardRouter,
 		DNSCredentialsDir:     ingress.DNSCredentialsDir,
@@ -431,13 +463,16 @@ func Render(dir string, cfg Config) error {
 		{path: ComposeFile, template: "compose.yaml.tmpl"},
 		{path: MariaDBConfigFile, template: "mariadb.cnf.tmpl"},
 		{path: TraefikConfigFile, template: "traefik.yaml.tmpl"},
+		{path: TraefikDynamicConfigFile, template: "traefik-dynamic.yaml.tmpl"},
 		{path: MariaDBRootPasswordSecret, secret: cfg.MariaDBRootPassword},
 		{path: RedisConfigFile, template: "valkey.conf.tmpl"},
 		{path: RedisAdminPasswordSecret, secret: cfg.RedisAdminPassword},
 	}
 	dnsFiles := []output{
-		{path: TraefikDynamicConfigFile, template: "traefik-dynamic.yaml.tmpl"},
 		{path: TraefikEntrypointFile, template: "traefik-entrypoint.sh.tmpl"},
+	}
+	if err := os.Remove(filepath.Join(dir, legacyTraefikDynamicConfigFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("removing %s: %w", legacyTraefikDynamicConfigFile, err)
 	}
 	if cfg.ACME.DNSProvider != "" {
 		outputs = append(outputs, dnsFiles...)
@@ -465,6 +500,11 @@ func Render(dir string, cfg Config) error {
 		if err := writeFile(filepath.Join(dir, o.path), content, mode); err != nil {
 			return err
 		}
+	}
+	// writeFile creates directories 0700; Traefik must be able to list this
+	// one (see TraefikDynamicDir).
+	if err := os.Chmod(filepath.Join(dir, TraefikDynamicDir), 0o755); err != nil { //nolint:gosec // G302: Traefik must list it, and it holds nothing secret
+		return fmt.Errorf("making %s readable: %w", TraefikDynamicDir, err)
 	}
 	return nil
 }

@@ -123,15 +123,16 @@ func samplePath(path string) string {
 
 // sampleBodies are minimal valid request bodies for operations that take one.
 var sampleBodies = map[string]string{
-	"login":             `{"email":"a@example.com","password":"x"}`,
-	"createApiToken":    `{"name":"ci","scope":"read-only","expires_at":null}`,
-	"createUser":        `{"email":"a@example.com","password":"correct horse battery","role":"viewer"}`,
-	"changePassword":    `{"current_password":"wrong","new_password":"correct horse battery"}`,
-	"updateUser":        `{"role":"operator"}`,
-	"createClientGroup": `{"name":"Acme"}`,
-	"updateClientGroup": `{"notes":"hello"}`,
-	"createSite":        `{"client_group_id":"abc123","name":"Acme","admin_email":"a@example.com"}`,
-	"updateSite":        `{"php_version":"8.4","resources":{"memory_limit_mb":256}}`,
+	"login":              `{"email":"a@example.com","password":"x"}`,
+	"createApiToken":     `{"name":"ci","scope":"read-only","expires_at":null}`,
+	"createUser":         `{"email":"a@example.com","password":"correct horse battery","role":"viewer"}`,
+	"changePassword":     `{"current_password":"wrong","new_password":"correct horse battery"}`,
+	"updateUser":         `{"role":"operator"}`,
+	"createClientGroup":  `{"name":"Acme"}`,
+	"updateClientGroup":  `{"notes":"hello"}`,
+	"createSite":         `{"client_group_id":"abc123","name":"Acme","admin_email":"a@example.com"}`,
+	"updateSite":         `{"php_version":"8.4","resources":{"memory_limit_mb":256}}`,
+	"setSiteMaintenance": `{"enabled":true}`,
 }
 
 func TestOpenAPIDocumentIsValid(t *testing.T) {
