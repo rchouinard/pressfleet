@@ -68,6 +68,11 @@ type ProvisionerConfig struct {
 	// configuration rather than part of SiteConfig because there are no
 	// per-site overrides. The zero value turns every feature off.
 	WordPressSecurity config.WordPressSecurityConfig
+	// RedisContainer is the platform object cache container
+	// (platform.RedisContainer), connected to each site network under
+	// RedisAlias. Empty leaves sites without an object cache; only tests
+	// that don't need one do that.
+	RedisContainer string
 	// Docker runs the docker CLI; nil means DockerExec. Tests inject a fake.
 	Docker ExecFunc
 	// Logger receives lifecycle events; nil discards them.
@@ -112,7 +117,7 @@ type Provisioner struct {
 }
 
 // sharedService is a platform container that joins every site network under
-// a fixed alias. Traefik and Redis join this list in M2.
+// a fixed alias. Traefik joins this list in M2.
 type sharedService struct {
 	container string
 	alias     string
@@ -142,11 +147,15 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 	if err := errors.Join(errs...); err != nil {
 		return nil, fmt.Errorf("compose provisioner: %w", err)
 	}
+	shared := []sharedService{{container: cfg.MariaDBContainer, alias: MariaDBAlias}}
+	if cfg.RedisContainer != "" {
+		shared = append(shared, sharedService{container: cfg.RedisContainer, alias: RedisAlias})
+	}
 	p := &Provisioner{
 		layout:         cfg.Layout,
 		secrets:        cfg.Secrets,
 		images:         cfg.Images,
-		shared:         []sharedService{{container: cfg.MariaDBContainer, alias: MariaDBAlias}},
+		shared:         shared,
 		security:       cfg.WordPressSecurity,
 		docker:         cfg.Docker,
 		log:            cfg.Logger,
@@ -372,11 +381,11 @@ func (p *Provisioner) StopSite(ctx context.Context, siteID string) error {
 	return nil
 }
 
-// AttachSharedServices connects the platform services (MariaDB) to an
-// existing site's network. Docker drops a container's connections to other
-// projects' networks when it recreates the container, so after the platform
-// MariaDB is recreated (e.g. by an upgrade) running sites can't reach their
-// database until this runs; the control plane calls it for every site at
+// AttachSharedServices connects the platform services (MariaDB, the object
+// cache) to an existing site's network. Docker drops a container's
+// connections to other projects' networks when it recreates the container,
+// so after a platform service is recreated (e.g. by an upgrade) running
+// sites can't reach it until this runs; the control plane calls it for every site at
 // startup. It returns provisioner.ErrSiteNotFound if the site has no
 // containers.
 func (p *Provisioner) AttachSharedServices(ctx context.Context, siteID string) error {

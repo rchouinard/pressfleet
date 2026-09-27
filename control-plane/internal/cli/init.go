@@ -716,12 +716,17 @@ func (i *installer) startPlatform(ctx context.Context, a initAnswers) error {
 	if err != nil {
 		return err
 	}
+	redisPassword, err := redisAdminPassword(dir)
+	if err != nil {
+		return err
+	}
 	name := i.projectName()
 	if err := platform.Render(dir, platform.Config{
 		ProjectName:         name,
 		DataDir:             a.DataDir,
 		Images:              images,
 		MariaDBRootPassword: password,
+		RedisAdminPassword:  redisPassword,
 		MasterKeyFile:       a.MasterKeyFile,
 		SkipPreflight:       i.f.skipPreflight,
 		PreviewBaseDomain:   a.PreviewBaseDomain,
@@ -760,6 +765,28 @@ func mariaDBRootPassword(dir string) (redact.Secret, error) {
 		return redact.Secret(strings.ToLower(rand.Text())), nil
 	default:
 		return "", fmt.Errorf("reading the MariaDB root password: %w", err)
+	}
+}
+
+// redisAdminPassword returns the object cache admin password already
+// rendered into dir, or a new one. Reusing it keeps the password the
+// running control plane holds valid: the server only reads its config file,
+// which carries the password's hash, when it starts.
+//
+// Unlike site credentials, it is not stored encrypted in the state
+// database: the host CLI never touches that database (§4.7), and the server
+// needs the password before the control plane runs. Like the MariaDB root
+// password, it lives in a 0600 Compose secret that only the control plane
+// container mounts.
+func redisAdminPassword(dir string) (redact.Secret, error) {
+	data, err := os.ReadFile(filepath.Join(dir, platform.RedisAdminPasswordSecret)) //nolint:gosec // G304: a file in the data directory
+	switch {
+	case err == nil && strings.TrimSpace(string(data)) != "":
+		return redact.Secret(strings.TrimSpace(string(data))), nil
+	case err == nil || errors.Is(err, fs.ErrNotExist):
+		return redact.Secret(rand.Text()), nil
+	default:
+		return "", fmt.Errorf("reading the Redis admin password: %w", err)
 	}
 }
 

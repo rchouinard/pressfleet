@@ -69,6 +69,7 @@ services:
     secrets:
       - mariadb_root_password
       - master_key
+      - redis_admin_password
     networks:
       - platform
     deploy:
@@ -119,6 +120,44 @@ services:
       start_interval: 2s
     logging: *logging
 
+  # The shared object cache: Valkey, a Redis-compatible server
+  # (images.yaml). The control plane connects it to each site network under
+  # the alias pf-redis.
+  redis:
+    image: {{ q .Images.Redis }}
+    command: ["valkey-server", "/etc/valkey/valkey.conf"]
+    restart: unless-stopped
+    # The image's own user; running as it from the start skips the
+    # entrypoint's chown and privilege drop, so no capabilities are needed.
+    user: "999:999"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # Nothing is persisted (see valkey.conf), so the working directory is a
+    # small tmpfs rather than a volume.
+    tmpfs:
+      - /data:size=8m,mode=0700,uid=999,gid=999
+    volumes:
+      - type: bind
+        source: ./redis/valkey.conf
+        target: /etc/valkey/valkey.conf
+        read_only: true
+    networks:
+      - platform
+    deploy:
+      resources:
+        limits:
+          memory: {{ .RedisMemoryMB }}M
+    healthcheck:
+      test: ["CMD", "valkey-cli", "--no-auth-warning", "--user", "healthcheck", "--pass", "nopass", "-e", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+      start_interval: 1s
+    logging: *logging
+
 networks:
   platform: {}
 
@@ -128,6 +167,10 @@ volumes:
 secrets:
   mariadb_root_password:
     file: ./secrets/mariadb_root_password
+  # Only the control plane gets the object cache admin password; the server
+  # itself only knows its hash (redis/valkey.conf).
+  redis_admin_password:
+    file: ./secrets/redis_admin_password
   # The platform master key stays where the operator keeps it, outside the
   # data directory and its backups (§4.1); it is only mounted, never copied.
   master_key:

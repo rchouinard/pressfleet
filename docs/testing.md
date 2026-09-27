@@ -14,7 +14,7 @@ Unit tests never need Docker. Tests that do are skipped unless `PRESSFLEET_DOCKE
 
 The end-to-end tests live in `control-plane/internal/e2e`. For each test, the harness:
 
-1. Renders the platform project (control plane and MariaDB) into a temporary data directory, under a unique Compose project name (`pfe2e-<random>`), with a throwaway master key outside the data directory. Host preflight checks are skipped.
+1. Renders the platform project (control plane, MariaDB, and the object cache) into a temporary data directory, under a unique Compose project name (`pfe2e-<random>`), with a throwaway master key outside the data directory. Host preflight checks are skipped.
 2. Adds a `compose.override.yaml` that publishes the control plane on an ephemeral `127.0.0.1` port. The real platform never publishes it.
 3. Starts the project and waits until the containers are healthy and `GET /readyz` returns `200`.
 4. Creates an admin user with `pressfleet user create --password-stdin` inside the control plane container, then logs in.
@@ -28,7 +28,7 @@ When the test ends, pass or fail, the harness runs `docker compose down --volume
 mise exec -- make test-e2e
 ```
 
-This builds the control plane image as `pressfleet-control-plane:e2e`, runs the tests against it with verbose output, and removes the image afterwards. The first run also pulls MariaDB.
+This builds the control plane image as `pressfleet-control-plane:e2e`, runs the tests against it with verbose output, and removes the image afterwards. The first run also pulls MariaDB and Valkey.
 
 To run the tests against an image you already built, for example to rerun one test:
 
@@ -38,7 +38,7 @@ PRESSFLEET_DOCKER_TESTS=1 PRESSFLEET_TEST_CONTROL_PLANE_IMAGE=pressfleet-control
   go test -count=1 -v -run TestAPI ./control-plane/internal/e2e/
 ```
 
-The tests work with Docker Engine on Linux and with Docker Desktop. If a run is killed before its cleanup can run, remove what it left. Remove the platform first: its MariaDB keeps the site networks in use.
+The tests work with Docker Engine on Linux and with Docker Desktop. If a run is killed before its cleanup can run, remove what it left. Remove the platform first: its MariaDB and object cache keep the site networks in use.
 
 ```sh
 docker compose -p pfe2e-<random> down --volumes
@@ -53,9 +53,9 @@ docker compose -p pf-<site-id> down --volumes   # for each site it created
 
 1. It creates two sites through the API, each in its own client group, and waits for both to be provisioned.
 2. It checks that WordPress is installed and reached over HTTP (see below).
-3. It checks that the two sites can't reach each other. Each site's containers must be on its own network (`pf-<id>`) and no other. From each site's php container, the other site's containers must not resolve by container name, and their IPs must not answer on nginx's port 8080 or PHP-FPM's port 9000 (the connection times out). The service name `nginx` resolves to the site's own nginx. As positive controls, the site's own nginx and the platform MariaDB (`pf-mariadb:3306`) must answer.
+3. It checks that the two sites can't reach each other. Each site's containers must be on its own network (`pf-<id>`) and no other. From each site's php container, the other site's containers must not resolve by container name, and their IPs must not answer on nginx's port 8080 or PHP-FPM's port 9000 (the connection times out). The service name `nginx` resolves to the site's own nginx. As positive controls, the site's own nginx, the platform MariaDB (`pf-mariadb:3306`), and the object cache (`pf-redis:6379`) must answer.
 4. It changes one site's PHP version, checks that the php container was recreated on the new image and nginx was left alone, then stops and starts the site (#28).
-5. It deletes both sites. It checks that no container, network, or volume with either project's label is left, that nothing is left under `sites/` and MariaDB is on no site network, that the site databases, users, and grants are gone from MariaDB, and that no secret, site, alias, database, or schedule row is left in the state database.
+5. It deletes both sites. It checks that no container, network, or volume with either project's label is left, that nothing is left under `sites/` and neither MariaDB nor the object cache is on a site network, that the site databases, users, and grants are gone from MariaDB, and that no secret, site, alias, database, or schedule row is left in the state database.
 
 **"Reached over HTTP on the host" in M1.** The host can't route to a site until Traefik serves preview domains (M2). Until then, the test starts a throwaway client container on the host's Docker engine, attached to the site's network, the way Traefik will be (`compose.RunContainer`: curl from the site's php image, which is already on the host, running as nobody with a read-only root filesystem and no capabilities). It requests `http://nginx:8080/` with the preview domain as `Host` and expects `200` with the site's title and `wp-content` URLs. It requests `/wp-login.php` and expects WordPress's `302` to the HTTPS login page: only a trusted proxy's requests count as HTTPS, so the redirect shows WordPress answering. Once Traefik lands, this check should move to the host's own HTTP client.
 

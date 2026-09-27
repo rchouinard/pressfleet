@@ -42,6 +42,7 @@ func (a *app) siteRuntime(cat *catalog.Catalog, secretStore secrets.Store, keys 
 		Secrets:           secretStore,
 		Images:            cat,
 		MariaDBContainer:  platform.MariaDBContainer(a.cfg.PlatformProject),
+		RedisContainer:    platform.RedisContainer(a.cfg.PlatformProject),
 		WordPressSecurity: a.cfg.WordPressSecurity,
 		Logger:            a.log.With("component", "provisioner"),
 		SMTP:              smtp,
@@ -189,7 +190,8 @@ func (a *app) serveCommand() *cobra.Command {
 			workers.Go(func() { _ = pool.Run(workersCtx) })
 			workers.Go(func() { _ = scheduler.Run(workersCtx) })
 			// Best effort and in the background: a platform upgrade may have
-			// recreated MariaDB, disconnecting it from every site network.
+			// recreated MariaDB or the object cache, disconnecting them from
+			// every site network.
 			workers.Go(func() {
 				ctx, cancel := context.WithTimeout(workersCtx, reattachTimeout)
 				defer cancel()

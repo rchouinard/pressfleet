@@ -72,7 +72,7 @@ type Config struct {
 	Audit AuditConfig `yaml:"audit"`
 	// PlatformProject is the Compose project name of the platform services,
 	// which names their containers: the provisioner connects the
-	// platform's MariaDB container to each site network.
+	// platform's MariaDB and object cache containers to each site network.
 	PlatformProject string `yaml:"platform_project"`
 	// SMTP is the relay sites send email through (§5.6).
 	SMTP SMTPConfig `yaml:"smtp"`

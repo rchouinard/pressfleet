@@ -39,7 +39,7 @@ const jobTimeout = 6 * time.Minute
 //     itself can't reach a site until Traefik routes preview domains (M2),
 //     which is when this check should move to the host's own HTTP client;
 //  3. checks that the two sites can't reach each other's containers by
-//     name or IP, while each reaches the platform MariaDB;
+//     name or IP, while each reaches the platform MariaDB and object cache;
 //  4. changes a site's PHP version and stops and starts it (#28);
 //  5. deletes both sites and checks that no containers, networks, volumes,
 //     rendered files, databases, database users or grants, secrets, or
@@ -219,9 +219,9 @@ func TestSiteCreateDelete(t *testing.T) {
 	// Two sites can't reach each other over the network (§6): a site's
 	// containers are only on its own network, and from one site's php
 	// container the other site's containers neither resolve by name nor
-	// answer on their IPs, while its own nginx and the platform MariaDB
-	// (connected to every site network under its alias) do. Both
-	// directions are checked.
+	// answer on their IPs, while its own nginx and the platform MariaDB and
+	// object cache (connected to every site network under their aliases)
+	// do. Both directions are checked.
 	t.Run("sites can't reach each other", func(t *testing.T) {
 		a := siteNetwork(t, siteProject)
 		b := siteNetwork(t, otherProject)
@@ -231,6 +231,7 @@ func TestSiteCreateDelete(t *testing.T) {
 				"nginx:8080",
 				dir.from.ips["nginx"] + ":8080",
 				compose.MariaDBAlias + ":3306",
+				compose.RedisAlias + ":6379",
 				// The other site, by container name and by IP.
 				dir.to.names["nginx"] + ":8080",
 				dir.to.names["php"] + ":9000",
@@ -240,7 +241,7 @@ func TestSiteCreateDelete(t *testing.T) {
 			from := dir.from.project.Name
 			for i, r := range results {
 				t.Logf("from %s: %s open=%v ip=%q %s", from, r.target, r.open, r.ip, r.detail)
-				if want := i < 3; r.open != want {
+				if want := i < 4; r.open != want {
 					t.Errorf("from %s: %s open = %v, want %v (%s)", from, r.target, r.open, want, r.detail)
 				}
 			}
@@ -248,7 +249,7 @@ func TestSiteCreateDelete(t *testing.T) {
 			if results[0].ip != dir.from.ips["nginx"] {
 				t.Errorf("from %s: nginx resolves to %q, want its own nginx %s", from, results[0].ip, dir.from.ips["nginx"])
 			}
-			for _, r := range results[3:5] {
+			for _, r := range results[4:6] {
 				if r.ip != "" {
 					t.Errorf("from %s: %s resolves to %s", from, r.target, r.ip)
 				}
@@ -393,14 +394,16 @@ func TestSiteCreateDelete(t *testing.T) {
 		for _, e := range entries {
 			t.Errorf("left in the sites directory: %s", e.Name())
 		}
-		// The platform MariaDB is on no site network any more.
-		mariadb, err := p.Project.ServiceContainer(ctx, "mariadb")
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, sp := range siteProjects {
-			if _, ok := mariadb.Networks[sp.Name]; ok {
-				t.Errorf("MariaDB is still on %s", sp.Name)
+		// The platform services are on no site network any more.
+		for _, service := range []string{"mariadb", "redis"} {
+			c, err := p.Project.ServiceContainer(ctx, service)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, sp := range siteProjects {
+				if _, ok := c.Networks[sp.Name]; ok {
+					t.Errorf("%s is still on %s", service, sp.Name)
+				}
 			}
 		}
 	})

@@ -457,6 +457,11 @@ func TestInitForceReusesKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	redisPWFile := filepath.Join(e.dataDir, "platform", platform.RedisAdminPasswordSecret)
+	redisPW, err := os.ReadFile(redisPWFile)
+	if err != nil || len(redisPW) == 0 {
+		t.Fatalf("Redis admin password: %q, %v", redisPW, err)
+	}
 
 	// Reinstalling with --force keeps the key and the MariaDB password, and
 	// leaves the existing admin alone.
@@ -478,6 +483,9 @@ func TestInitForceReusesKey(t *testing.T) {
 	}
 	if pw2, _ := os.ReadFile(pwFile); string(pw2) != string(pw) {
 		t.Error("MariaDB root password changed")
+	}
+	if pw2, _ := os.ReadFile(redisPWFile); string(pw2) != string(redisPW) {
+		t.Error("Redis admin password changed")
 	}
 	if !strings.Contains(r.stdout, "already exists; left unchanged") || strings.Contains(r.stdout, "Admin password:") {
 		t.Errorf("stdout:\n%s", r.stdout)

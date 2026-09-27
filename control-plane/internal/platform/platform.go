@@ -1,6 +1,7 @@
 // Package platform renders the platform services Compose project: the
-// control plane and MariaDB now, Traefik, Redis, and VictoriaMetrics in later
-// milestones (design doc §4.1).
+// control plane, MariaDB, and the object cache (Redis protocol, served by
+// Valkey) now, Traefik and VictoriaMetrics in later milestones (design doc
+// §4.1).
 //
 // The host CLI renders the project from templates embedded in its binary
 // (package templates) into <data_dir>/platform/. Rendered files are never
@@ -9,6 +10,8 @@ package platform
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +39,24 @@ const (
 	DefaultControlPlaneMemoryMB = 192
 )
 
+// Object cache sizing. The §4.1 budget line is the cache's maxmemory; the
+// container limit adds headroom for the server itself, client buffers, and
+// allocator fragmentation, which maxmemory doesn't count.
+const (
+	DefaultRedisMaxMemoryMB = 256
+	RedisOverheadMB         = 64
+)
+
+// RedisDatabases is the number of logical databases of the object cache.
+// Each site gets its own (database 0 stays unused), so it bounds the number
+// of sites, far above the ~250 site networks a host's address pool allows
+// (§4.1).
+const RedisDatabases = 1024
+
+// RedisAdminUser is the object cache ACL user the control plane manages
+// sites with; config.Config's redis.admin_user defaults to it.
+const RedisAdminUser = "pressfleet"
+
 // DefaultListen is the control plane's listen address inside its container.
 const DefaultListen = ":8080"
 
@@ -46,6 +67,7 @@ var ErrInvalidConfig = errors.New("platform: invalid config")
 type Images struct {
 	ControlPlane string
 	MariaDB      string
+	Redis        string
 }
 
 // DefaultImages returns the images pinned for this release: third-party
@@ -59,6 +81,7 @@ func DefaultImages(version string) (Images, error) {
 	var list struct {
 		ControlPlane string `yaml:"control-plane"`
 		MariaDB      string `yaml:"mariadb"`
+		Redis        string `yaml:"redis"`
 	}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
@@ -68,7 +91,7 @@ func DefaultImages(version string) (Images, error) {
 	if version == "" {
 		return Images{}, fmt.Errorf("%w: control plane version is required", ErrInvalidConfig)
 	}
-	return Images{ControlPlane: list.ControlPlane + ":" + version, MariaDB: list.MariaDB}, nil
+	return Images{ControlPlane: list.ControlPlane + ":" + version, MariaDB: list.MariaDB, Redis: list.Redis}, nil
 }
 
 // Config is everything needed to render the platform project.
@@ -88,6 +111,13 @@ type Config struct {
 	MariaDBMemoryMB      int
 	// MariaDBRootPassword is written to secrets/mariadb_root_password.
 	MariaDBRootPassword redact.Secret
+	// RedisMaxMemoryMB is the object cache's maxmemory; zero means
+	// DefaultRedisMaxMemoryMB.
+	RedisMaxMemoryMB int
+	// RedisAdminPassword is the password of RedisAdminUser, written to
+	// secrets/redis_admin_password for the control plane. The object cache
+	// server only gets its SHA-256 hash.
+	RedisAdminPassword redact.Secret
 	// MasterKeyFile is the host path of the platform master key file. It is
 	// given to the control plane as a Compose secret and must be outside
 	// DataDir, which is backed up (§4.1). The key itself never passes
@@ -121,19 +151,25 @@ func (c Config) withDefaults() (Config, error) {
 	if c.MariaDBMemoryMB == 0 {
 		c.MariaDBMemoryMB = DefaultMariaDBMemoryMB
 	}
+	if c.RedisMaxMemoryMB == 0 {
+		c.RedisMaxMemoryMB = DefaultRedisMaxMemoryMB
+	}
 
 	var errs []error
 	if !filepath.IsAbs(c.DataDir) || filepath.Clean(c.DataDir) != c.DataDir {
 		errs = append(errs, fmt.Errorf("data dir must be a clean absolute path, got %q", c.DataDir))
 	}
-	if c.Images.ControlPlane == "" || c.Images.MariaDB == "" {
-		errs = append(errs, errors.New("control plane and MariaDB images are required"))
+	if c.Images.ControlPlane == "" || c.Images.MariaDB == "" || c.Images.Redis == "" {
+		errs = append(errs, errors.New("control plane, MariaDB, and Redis images are required"))
 	}
 	if c.ControlPlaneMemoryMB < 64 {
 		errs = append(errs, fmt.Errorf("control plane memory must be at least 64 MiB, got %d", c.ControlPlaneMemoryMB))
 	}
 	if c.MariaDBMemoryMB < 512 {
 		errs = append(errs, fmt.Errorf("MariaDB memory must be at least 512 MiB, got %d", c.MariaDBMemoryMB))
+	}
+	if c.RedisMaxMemoryMB < 32 {
+		errs = append(errs, fmt.Errorf("the object cache's maxmemory must be at least 32 MiB, got %d", c.RedisMaxMemoryMB))
 	}
 	if !filepath.IsAbs(c.MasterKeyFile) || filepath.Clean(c.MasterKeyFile) != c.MasterKeyFile {
 		errs = append(errs, fmt.Errorf("master key file must be a clean absolute path, got %q", c.MasterKeyFile))
@@ -153,6 +189,13 @@ func (c Config) withDefaults() (Config, error) {
 		// The MariaDB entrypoint reads the secret file as a single line.
 		errs = append(errs, errors.New("MariaDB root password must not contain line breaks"))
 	}
+	if c.RedisAdminPassword.Reveal() == "" {
+		errs = append(errs, errors.New("the object cache admin password is required"))
+	}
+	if strings.ContainsAny(c.RedisAdminPassword.Reveal(), "\r\n") {
+		// The control plane reads the secret file as a single line.
+		errs = append(errs, errors.New("the object cache admin password must not contain line breaks"))
+	}
 	if err := errors.Join(errs...); err != nil {
 		return c, fmt.Errorf("%w: %w", ErrInvalidConfig, err)
 	}
@@ -161,20 +204,27 @@ func (c Config) withDefaults() (Config, error) {
 
 // templateData is what the templates see. It deliberately has no plaintext
 // secrets: credentials go only into files under secrets/, or are sealed with
-// the master key (SMTP.Password).
+// the master key (SMTP.Password). The object cache admin password's SHA-256
+// hash is not a secret: it can't be used to authenticate, and the password
+// is 130 random bits, so the hash can't be reversed.
 type templateData struct {
-	ProjectName          string
-	DataDir              string
-	Listen               string
-	Images               Images
-	ControlPlaneMemoryMB int
-	MariaDBMemoryMB      int
-	MariaDBBufferPoolMB  int
-	MasterKeyFile        string
-	MasterKeySecretPath  string
-	SkipPreflight        bool
-	PreviewBaseDomain    string
-	SMTP                 *config.SMTPConfig // nil when outbound email is off
+	ProjectName            string
+	DataDir                string
+	Listen                 string
+	Images                 Images
+	ControlPlaneMemoryMB   int
+	MariaDBMemoryMB        int
+	MariaDBBufferPoolMB    int
+	RedisMaxMemoryMB       int
+	RedisMemoryMB          int
+	RedisDatabases         int
+	RedisAdminUser         string
+	RedisAdminPasswordHash string
+	MasterKeyFile          string
+	MasterKeySecretPath    string
+	SkipPreflight          bool
+	PreviewBaseDomain      string
+	SMTP                   *config.SMTPConfig // nil when outbound email is off
 }
 
 // output is one rendered file, relative to the project directory.
@@ -193,12 +243,15 @@ const (
 	ComposeFile               = "compose.yaml"
 	MariaDBConfigFile         = "mariadb/pressfleet.cnf"
 	MariaDBRootPasswordSecret = "secrets/mariadb_root_password"
+	RedisConfigFile           = "redis/valkey.conf"
+	RedisAdminPasswordSecret  = "secrets/redis_admin_password"
 )
 
 // Render writes the platform Compose project into dir, normally
 // config.Layout.PlatformDir(). It is safe to run again: every file is
 // replaced atomically. Secret files get mode 0600; other files 0644 because
-// the MariaDB server must be able to read its config file.
+// the MariaDB and object cache servers, which don't run as the owner, must
+// be able to read their config files.
 func Render(dir string, cfg Config) error {
 	cfg, err := cfg.withDefaults()
 	if err != nil {
@@ -212,10 +265,16 @@ func Render(dir string, cfg Config) error {
 		ControlPlaneMemoryMB: cfg.ControlPlaneMemoryMB,
 		MariaDBMemoryMB:      cfg.MariaDBMemoryMB,
 		MariaDBBufferPoolMB:  bufferPoolMB(cfg.MariaDBMemoryMB),
-		MasterKeyFile:        cfg.MasterKeyFile,
-		MasterKeySecretPath:  MasterKeySecretPath,
-		SkipPreflight:        cfg.SkipPreflight,
-		PreviewBaseDomain:    cfg.PreviewBaseDomain,
+		RedisMaxMemoryMB:     cfg.RedisMaxMemoryMB,
+		RedisMemoryMB:        cfg.RedisMaxMemoryMB + RedisOverheadMB,
+		RedisDatabases:       RedisDatabases,
+		RedisAdminUser:       RedisAdminUser,
+		// ACL passwords are hashed over the exact bytes a client sends.
+		RedisAdminPasswordHash: sha256Hex(cfg.RedisAdminPassword),
+		MasterKeyFile:          cfg.MasterKeyFile,
+		MasterKeySecretPath:    MasterKeySecretPath,
+		SkipPreflight:          cfg.SkipPreflight,
+		PreviewBaseDomain:      cfg.PreviewBaseDomain,
 	}
 	if cfg.SMTP.Enabled() {
 		data.SMTP = &cfg.SMTP
@@ -230,6 +289,8 @@ func Render(dir string, cfg Config) error {
 		{path: ComposeFile, template: "compose.yaml.tmpl"},
 		{path: MariaDBConfigFile, template: "mariadb.cnf.tmpl"},
 		{path: MariaDBRootPasswordSecret, secret: cfg.MariaDBRootPassword},
+		{path: RedisConfigFile, template: "valkey.conf.tmpl"},
+		{path: RedisAdminPasswordSecret, secret: cfg.RedisAdminPassword},
 	}
 	for _, o := range outputs {
 		var content []byte
@@ -259,6 +320,13 @@ func MariaDBContainer(projectName string) string {
 	return projectName + "-mariadb-1"
 }
 
+// RedisContainer is the name of the object cache container of the platform
+// project called projectName. Like MariaDB, the Compose provisioner connects
+// it to each site network.
+func RedisContainer(projectName string) string {
+	return projectName + "-redis-1"
+}
+
 // Project returns the Compose project for a rendered platform directory.
 func Project(dir string) compose.Project {
 	return compose.Project{Name: ProjectName, Dir: dir}
@@ -268,6 +336,13 @@ func Project(dir string) compose.Project {
 // 128 MiB chunk size that MariaDB would otherwise round to itself.
 func bufferPoolMB(memoryMB int) int {
 	return max(128, memoryMB/2/128*128)
+}
+
+// sha256Hex returns the hex SHA-256 of s, the form of an ACL "#<hash>"
+// password rule.
+func sha256Hex(s redact.Secret) string {
+	sum := sha256.Sum256([]byte(s.Reveal()))
+	return hex.EncodeToString(sum[:])
 }
 
 // quote renders s as a double-quoted YAML scalar. JSON string syntax is valid

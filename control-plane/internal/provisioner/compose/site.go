@@ -26,7 +26,7 @@ import (
 const (
 	MariaDBAlias = "pf-mariadb"
 	TraefikAlias = "pf-traefik" // M2
-	RedisAlias   = "pf-redis"   // M2
+	RedisAlias   = "pf-redis"
 )
 
 // DefaultDBHost is the DB_HOST sites use unless SiteRender overrides it.

@@ -2,11 +2,15 @@ package platform_test
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -18,7 +22,10 @@ import (
 
 var update = flag.Bool("update", false, "rewrite golden files in testdata/")
 
-const testPassword = "s3cret-$root-\"pw\""
+const (
+	testPassword      = "s3cret-$root-\"pw\""
+	testRedisPassword = "r3dis-admin-pw"
+)
 
 func testConfig() platform.Config {
 	return platform.Config{
@@ -26,8 +33,10 @@ func testConfig() platform.Config {
 		Images: platform.Images{
 			ControlPlane: "ghcr.io/rchouinard/pressfleet/control-plane:v1.2.3",
 			MariaDB:      "docker.io/library/mariadb:12.3.3@sha256:2f4f46f80e7251990bfdc601ae3f7f2964ddb4dc1868f7deca699fc1ece8c35e",
+			Redis:        "docker.io/valkey/valkey:9.1.2@sha256:ac9c858b86dc81f3482d53a9d854547379a5f41e012500f839ab257c399063e0",
 		},
 		MariaDBRootPassword: testPassword,
+		RedisAdminPassword:  testRedisPassword,
 		MasterKeyFile:       "/etc/pressfleet/master.key",
 		PreviewBaseDomain:   "preview.agency.example",
 	}
@@ -47,6 +56,7 @@ func TestRenderGolden(t *testing.T) {
 	for _, tc := range []struct{ file, golden string }{
 		{platform.ComposeFile, "compose.yaml.golden"},
 		{platform.MariaDBConfigFile, "pressfleet.cnf.golden"},
+		{platform.RedisConfigFile, "valkey.conf.golden"},
 	} {
 		got, err := os.ReadFile(filepath.Join(dir, tc.file))
 		if err != nil {
@@ -78,11 +88,20 @@ func TestRenderFileModesAndSecrets(t *testing.T) {
 	if string(secret) != testPassword {
 		t.Errorf("secret file = %q", secret)
 	}
+	secret, err = os.ReadFile(filepath.Join(dir, platform.RedisAdminPasswordSecret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(secret) != testRedisPassword {
+		t.Errorf("Redis secret file = %q", secret)
+	}
 
 	for path, want := range map[string]os.FileMode{
 		platform.ComposeFile:               0o644,
 		platform.MariaDBConfigFile:         0o644,
 		platform.MariaDBRootPasswordSecret: 0o600,
+		platform.RedisConfigFile:           0o644,
+		platform.RedisAdminPasswordSecret:  0o600,
 		"secrets":                          0o700 | os.ModeDir,
 	} {
 		info, err := os.Stat(filepath.Join(dir, path))
@@ -94,17 +113,20 @@ func TestRenderFileModesAndSecrets(t *testing.T) {
 		}
 	}
 
-	// The password must only appear in the secret file.
+	// Each password must only appear in its secret file.
 	err = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || strings.HasSuffix(path, platform.MariaDBRootPasswordSecret) {
+		if err != nil || d.IsDir() {
 			return err
 		}
 		content, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		if bytes.Contains(content, []byte("s3cret")) {
+		if !strings.HasSuffix(path, platform.MariaDBRootPasswordSecret) && bytes.Contains(content, []byte("s3cret")) {
 			t.Errorf("%s contains the root password", path)
+		}
+		if !strings.HasSuffix(path, platform.RedisAdminPasswordSecret) && bytes.Contains(content, []byte(testRedisPassword)) {
+			t.Errorf("%s contains the Redis admin password", path)
 		}
 		return nil
 	})
@@ -139,8 +161,8 @@ func TestRenderReplacesLooseSecretFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 {
-		t.Errorf("secrets dir has %d entries, want 1", len(entries))
+	if len(entries) != 2 {
+		t.Errorf("secrets dir has %d entries, want 2", len(entries))
 	}
 }
 
@@ -187,8 +209,8 @@ func TestRenderedCompose(t *testing.T) {
 	if file.Name != "pftest" {
 		t.Errorf("name = %q", file.Name)
 	}
-	if len(file.Services) != 2 {
-		t.Errorf("services = %d, want 2", len(file.Services))
+	if len(file.Services) != 3 {
+		t.Errorf("services = %d, want 3", len(file.Services))
 	}
 	socketUsers := 0
 	for name, svc := range file.Services {
@@ -278,6 +300,10 @@ func TestRenderInvalidConfig(t *testing.T) {
 		"unclean data dir":  func(c *platform.Config) { c.DataDir = "/var/lib/pressfleet/" },
 		"no images":         func(c *platform.Config) { c.Images = platform.Images{} },
 		"no password":       func(c *platform.Config) { c.MariaDBRootPassword = "" },
+		"no redis password": func(c *platform.Config) { c.RedisAdminPassword = "" },
+		"multiline redis":   func(c *platform.Config) { c.RedisAdminPassword = "a\nb" },
+		"tiny redis":        func(c *platform.Config) { c.RedisMaxMemoryMB = 16 },
+		"no redis image":    func(c *platform.Config) { c.Images.Redis = "" },
 		"multiline pw":      func(c *platform.Config) { c.MariaDBRootPassword = "a\nb" },
 		"tiny mariadb":      func(c *platform.Config) { c.MariaDBMemoryMB = 128 },
 		"tiny cp":           func(c *platform.Config) { c.ControlPlaneMemoryMB = 16 },
@@ -315,8 +341,10 @@ func TestDefaultImages(t *testing.T) {
 	}
 	// Third-party images must be pinned as tag@sha256:digest (§4.7).
 	pinned := regexp.MustCompile(`^[a-z0-9./-]+:[0-9A-Za-z._-]+@sha256:[0-9a-f]{64}$`)
-	if !pinned.MatchString(images.MariaDB) {
-		t.Errorf("mariadb image not pinned by digest: %q", images.MariaDB)
+	for name, img := range map[string]string{"mariadb": images.MariaDB, "redis": images.Redis} {
+		if !pinned.MatchString(img) {
+			t.Errorf("%s image not pinned by digest: %q", name, img)
+		}
 	}
 	if _, err := platform.DefaultImages(""); !errors.Is(err, platform.ErrInvalidConfig) {
 		t.Errorf("empty version: err = %v", err)
@@ -396,5 +424,78 @@ func TestProject(t *testing.T) {
 	p := platform.Project("/var/lib/pressfleet/platform")
 	if p.Name != platform.ProjectName || p.Dir != "/var/lib/pressfleet/platform" {
 		t.Errorf("project = %+v", p)
+	}
+}
+
+// TestRenderedRedis checks the object cache's properties that matter for
+// isolation and the memory budget (§4.1, §6).
+func TestRenderedRedis(t *testing.T) {
+	cfg := testConfig()
+	cfg.RedisMaxMemoryMB = 128
+	dir := render(t, cfg)
+
+	raw, err := os.ReadFile(filepath.Join(dir, platform.ComposeFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file struct {
+		Services map[string]struct {
+			Image    string
+			User     string
+			ReadOnly bool     `yaml:"read_only"`
+			CapDrop  []string `yaml:"cap_drop"`
+			Secrets  []string
+			Deploy   struct {
+				Resources struct {
+					Limits struct{ Memory string }
+				}
+			}
+		}
+		Secrets map[string]struct{ File string }
+	}
+	if err := yaml.Unmarshal(raw, &file); err != nil {
+		t.Fatal(err)
+	}
+	redis, ok := file.Services["redis"]
+	if !ok {
+		t.Fatal("no redis service")
+	}
+	if redis.Image != cfg.Images.Redis || redis.User != "999:999" || !redis.ReadOnly ||
+		len(redis.CapDrop) != 1 || redis.CapDrop[0] != "ALL" {
+		t.Errorf("redis service = %+v", redis)
+	}
+	// maxmemory plus the fixed overhead.
+	if redis.Deploy.Resources.Limits.Memory != "192M" {
+		t.Errorf("redis memory limit = %q", redis.Deploy.Resources.Limits.Memory)
+	}
+	// Only the control plane gets the admin password.
+	if len(redis.Secrets) != 0 {
+		t.Errorf("redis secrets = %v", redis.Secrets)
+	}
+	if !slices.Contains(file.Services["control-plane"].Secrets, "redis_admin_password") ||
+		file.Secrets["redis_admin_password"].File != "./"+platform.RedisAdminPasswordSecret {
+		t.Errorf("control plane secrets = %v, secrets = %+v", file.Services["control-plane"].Secrets, file.Secrets)
+	}
+	if got := platform.RedisContainer("pftest"); got != "pftest-redis-1" {
+		t.Errorf("Redis container = %q", got)
+	}
+
+	conf, err := os.ReadFile(filepath.Join(dir, platform.RedisConfigFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte(testRedisPassword))
+	for _, want := range []string{
+		"maxmemory 128mb",
+		"maxmemory-policy allkeys-lru",
+		`save ""`,
+		"appendonly no",
+		"databases " + strconv.Itoa(platform.RedisDatabases),
+		"user default off resetpass resetkeys resetchannels -@all",
+		"user " + platform.RedisAdminUser + " on #" + hex.EncodeToString(sum[:]) + " ~* &* alldbs +@all",
+	} {
+		if !regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(want) + `$`).Match(conf) {
+			t.Errorf("valkey.conf lacks %q:\n%s", want, conf)
+		}
 	}
 }

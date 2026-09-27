@@ -123,6 +123,7 @@ func Start(t *testing.T) *Platform {
 		DataDir:             layout.Root,
 		Images:              images,
 		MariaDBRootPassword: redact.Secret(randomToken(26)),
+		RedisAdminPassword:  redact.Secret(randomToken(26)),
 		MasterKeyFile:       keyFile,
 		// Development machines and CI runners often lack Docker address pools.
 		SkipPreflight:     true,

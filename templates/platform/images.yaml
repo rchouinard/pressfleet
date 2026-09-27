@@ -7,8 +7,13 @@
 #
 #   docker buildx imagetools inspect mariadb:<tag>   # use the linux/amd64 "Name"
 #
-# Traefik, Redis, and VictoriaMetrics join this list in later milestones.
+# Traefik and VictoriaMetrics join this list in later milestones.
 mariadb: docker.io/library/mariadb:12.3.3@sha256:2f4f46f80e7251990bfdc601ae3f7f2964ddb4dc1868f7deca699fc1ece8c35e
+
+# The object cache ("redis" throughout PressFleet) is Valkey, the
+# BSD-licensed fork of Redis. 9.0 or later is required: per-site isolation
+# relies on its per-database ACL rules (db=<n>), which Redis doesn't have.
+redis: docker.io/valkey/valkey:9.1.2@sha256:ac9c858b86dc81f3482d53a9d854547379a5f41e012500f839ab257c399063e0
 
 # The control plane image is published by the same release as the host CLI,
 # so its digest can't be known when the CLI is built. It is referenced as

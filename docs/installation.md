@@ -7,7 +7,7 @@
 3. Runs the install [preflight checks](configuration.md#preflight-checks), the same ones `pressfleet doctor` runs, and stops if a required check fails.
 4. Generates the platform master key, prints it once with the warning below, and waits for you to confirm that you have stored it off-host.
 5. Writes the master key file (mode `0600`) and the config file.
-6. Renders the platform Compose project into `<data_dir>/platform/` and starts it, waiting until MariaDB and the control plane report healthy. The first start pulls the images and can take a few minutes.
+6. Renders the platform Compose project into `<data_dir>/platform/` and starts it, waiting until MariaDB, the object cache (Valkey), and the control plane report healthy. The first start pulls the images and can take a few minutes.
 7. Creates the first admin user by running `pressfleet user create` inside the control plane container, and prints the generated password once. The host CLI never touches the state database itself.
 
 Run it as root (or a user in the `docker` group who can write `/etc/pressfleet` and the data directory).
@@ -112,6 +112,7 @@ The master key is printed on standard output (the line starting with `pfmk1:`); 
 - Saves the previous config file as `pressfleet.yaml.bak` and writes a new one, prefilling its defaults from the old one.
 - Reuses the MariaDB root password in `<data_dir>/platform/secrets/`, which MariaDB only reads when it initializes its data.
 - Keeps the encrypted SMTP password from the old config file unless `--smtp-password-file` gives a new one, after checking that the master key still decrypts it.
+- Reuses the object cache admin password in `<data_dir>/platform/secrets/redis_admin_password`, so the running control plane's password stays valid. The object cache server itself only gets its SHA-256 hash, in `<data_dir>/platform/redis/valkey.conf`.
 - Leaves an existing admin user with the same email alone. To set a new password, run `pressfleet user reset-password` in the control plane container.
 
 ## Not yet collected
