@@ -57,6 +57,17 @@ Done when: a site can be created in a client group via the API, reached over HTT
 | [#103](https://github.com/rchouinard/pressfleet/issues/103) | Authorization: roles and permission checks | P0 | M | #13 |
 | [#104](https://github.com/rchouinard/pressfleet/issues/104) | Audit log for state-changing actions | P1 | M | #103, #14 |
 
+**Status: complete (2026-09-27).** All issues are closed and the E2E workflow automates the "done when" criteria. Until Traefik lands in M2, "reached over HTTP on the host" means an HTTP client container on the host's Docker engine, attached to the site network (see [testing.md](testing.md)); M2 moves this check to the host itself.
+
+Follow-ups carried out of M1:
+
+- Pass `dashboard_domain` to the control plane container and narrow `NGINX_TRUSTED_PROXIES` to the site subnet (with Traefik, M2).
+- Attach Traefik and Redis to site networks alongside MariaDB (M2); the provisioner keeps a list of shared services for this.
+- Record the actor's email on audit events so they stay readable after a user is deleted (needs a migration).
+- Prune expired sessions, job history, and state database backups on a schedule.
+- Give `pressfleet user create` a structured "user exists" exit code; `init --force` matches stderr today.
+- Move igbinary off its release candidate once 3.2.17 is out.
+
 ### M2: Ingress, Caching & Domains
 
 Goal: every site is served over HTTPS with page and object caching, and can go live on its own domain.
@@ -217,5 +228,7 @@ Planning surfaced these items, which the design document doesn't yet cover. Each
 - **Unphased features:** WordPress core rollout (§5.5) is placed in M3 ([#57](https://github.com/rchouinard/pressfleet/issues/57)) because it needs backups. WP-Cron triggering (§5.6) is in M1 ([#30](https://github.com/rchouinard/pressfleet/issues/30)) and SMTP relay setup is in M2 ([#47](https://github.com/rchouinard/pressfleet/issues/47)).
 
 ## Where to start
+
+M1 is complete; continue with M2, starting from its P0 issues. Original guidance:
 
 Begin with [#1](https://github.com/rchouinard/pressfleet/issues/1) (repo scaffolding). After it lands, CI ([#2](https://github.com/rchouinard/pressfleet/issues/2)), core interfaces ([#3](https://github.com/rchouinard/pressfleet/issues/3)), the CLI skeleton ([#4](https://github.com/rchouinard/pressfleet/issues/4)), and the `site-php` image ([#17](https://github.com/rchouinard/pressfleet/issues/17)) can proceed in parallel.
