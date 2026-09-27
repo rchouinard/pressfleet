@@ -76,6 +76,10 @@ type ProvisionerConfig struct {
 	// WPCLIMaxOutput is the most standard output ExecWPCLI keeps, in bytes;
 	// zero means DefaultWPCLIMaxOutput.
 	WPCLIMaxOutput int
+	// SMTP is the platform's outbound email relay, rendered into every
+	// site's wp-config.php for the platform mu-plugin (§5.6). Nil means
+	// sites send no email.
+	SMTP *wpconfig.SMTP
 }
 
 // Provisioner is the Compose implementation of provisioner.Provisioner. Each
@@ -94,6 +98,7 @@ type Provisioner struct {
 	docker      ExecFunc
 	log         *slog.Logger
 	waitTimeout time.Duration
+	smtp        *wpconfig.SMTP
 
 	wpcliDocker    ExecFunc // docker, but with bounded output
 	wpcliTimeout   time.Duration
@@ -139,6 +144,7 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 		docker:         cfg.Docker,
 		log:            cfg.Logger,
 		waitTimeout:    cfg.WaitTimeout,
+		smtp:           cfg.SMTP,
 		wpcliDocker:    cfg.Docker,
 		wpcliTimeout:   cfg.WPCLITimeout,
 		wpcliMaxOutput: cfg.WPCLIMaxOutput,
@@ -273,7 +279,7 @@ func (p *Provisioner) siteRender(ctx context.Context, cfg *provisioner.SiteConfi
 	return SiteRender{
 		Site:     cfg,
 		Images:   SiteImages{PHP: images.PHP, Nginx: images.Nginx},
-		WPConfig: wpconfig.Params{DB: creds, Salts: salts},
+		WPConfig: wpconfig.Params{DB: creds, Salts: salts, SMTP: p.smtp},
 	}, nil
 }
 

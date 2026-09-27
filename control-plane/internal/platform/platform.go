@@ -100,6 +100,11 @@ type Config struct {
 	// site's preview domain from it (config.Config.PreviewBaseDomain).
 	// Empty leaves it unset, and site creation is refused until it is set.
 	PreviewBaseDomain string
+	// SMTP is passed to the control plane, which renders it into every
+	// site's wp-config.php (config.Config.SMTP). Its password is sealed with
+	// the master key, so the rendered project never holds it in plaintext.
+	// A zero value (no host) leaves outbound email off.
+	SMTP config.SMTPConfig
 }
 
 // withDefaults fills zero fields and validates the result.
@@ -138,6 +143,9 @@ func (c Config) withDefaults() (Config, error) {
 	if c.PreviewBaseDomain != "" && !config.ValidDomain(c.PreviewBaseDomain) {
 		errs = append(errs, fmt.Errorf("preview base domain must be a domain name like preview.example.com, got %q", c.PreviewBaseDomain))
 	}
+	if err := c.SMTP.Validate(); err != nil {
+		errs = append(errs, err)
+	}
 	if c.MariaDBRootPassword.Reveal() == "" {
 		errs = append(errs, errors.New("MariaDB root password is required"))
 	}
@@ -151,8 +159,9 @@ func (c Config) withDefaults() (Config, error) {
 	return c, nil
 }
 
-// templateData is what the templates see. It deliberately has no secrets:
-// credentials go only into files under secrets/.
+// templateData is what the templates see. It deliberately has no plaintext
+// secrets: credentials go only into files under secrets/, or are sealed with
+// the master key (SMTP.Password).
 type templateData struct {
 	ProjectName          string
 	DataDir              string
@@ -165,6 +174,7 @@ type templateData struct {
 	MasterKeySecretPath  string
 	SkipPreflight        bool
 	PreviewBaseDomain    string
+	SMTP                 *config.SMTPConfig // nil when outbound email is off
 }
 
 // output is one rendered file, relative to the project directory.
@@ -206,6 +216,9 @@ func Render(dir string, cfg Config) error {
 		MasterKeySecretPath:  MasterKeySecretPath,
 		SkipPreflight:        cfg.SkipPreflight,
 		PreviewBaseDomain:    cfg.PreviewBaseDomain,
+	}
+	if cfg.SMTP.Enabled() {
+		data.SMTP = &cfg.SMTP
 	}
 	tmpl, err := template.New("").Option("missingkey=error").Funcs(template.FuncMap{"q": quote}).
 		ParseFS(templates.Platform(), "*.tmpl")

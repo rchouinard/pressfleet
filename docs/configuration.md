@@ -45,6 +45,14 @@ mariadb:
 audit:
   retention_days: 365
 platform_project: pressfleet
+smtp:                    # optional; without a host, sites send no email
+  host: smtp.mailgun.org
+  port: 587              # default: 587 for starttls, 465 for tls, 25 for none
+  encryption: starttls   # starttls, tls, none
+  username: postmaster@mg.agency.example
+  password: pfenc1:...   # encrypted with the master key by pressfleet init
+  from_email: sites@agency.example
+  from_name: Agency Sites
 ```
 
 ## Settings
@@ -71,6 +79,24 @@ platform_project: pressfleet
 | `mariadb.admin_password_file` | `PRESSFLEET_MARIADB_ADMIN_PASSWORD_FILE` | | `/run/secrets/mariadb_root_password` | File holding the admin password; a trailing newline is ignored. Must be an absolute path. The default is where the platform Compose project mounts the MariaDB root password secret. |
 | `audit.retention_days` | `PRESSFLEET_AUDIT_RETENTION_DAYS` | | `365` | How many days audit log events are kept, from 1 to 3660. A daily job deletes older events. See [Audit log](#audit-log). |
 | `platform_project` | `PRESSFLEET_PLATFORM_PROJECT` | | `pressfleet` | Compose project name of the platform services. The control plane uses it to find the platform's MariaDB container (`<project>-mariadb-1`), which it connects to each site's network. The platform Compose project sets it for the control plane; change it only for a platform installed under another project name. |
+| `smtp.host` | `PRESSFLEET_SMTP_HOST` | `--smtp-host` (`init` only) | (unset) | SMTP relay every site sends email through (host name or IP address). Unset means sites send no email: the site images have no local mail server. See [Outbound email](#outbound-email). |
+| `smtp.port` | `PRESSFLEET_SMTP_PORT` | `--smtp-port` (`init` only) | by encryption | Relay port. Unset (`0`) means 587 for `starttls`, 465 for `tls`, and 25 for `none`. |
+| `smtp.encryption` | `PRESSFLEET_SMTP_ENCRYPTION` | `--smtp-encryption` (`init` only) | `starttls` | `starttls` (a plain connection upgraded with STARTTLS, which is required), `tls` (TLS from the start, "SMTPS"), or `none` (no TLS, for a relay on the same host or network). |
+| `smtp.username` | `PRESSFLEET_SMTP_USERNAME` | `--smtp-username` (`init` only) | (unset) | Relay login. Leave it and `smtp.password` unset for a relay that doesn't require one. |
+| `smtp.password` | `PRESSFLEET_SMTP_PASSWORD` | `--smtp-password-file` (`init` only) | (unset) | Relay password, encrypted with the master key (`pfenc1:...`). `pressfleet init` reads the plaintext from `--smtp-password-file` and writes only the encrypted value; a plaintext value is rejected. The control plane decrypts it at startup and refuses to start if it can't. |
+| `smtp.from_email` | `PRESSFLEET_SMTP_FROM_EMAIL` | `--smtp-from-email` (`init` only) | (unset) | Sender address that replaces WordPress's default `wordpress@<site domain>`, which relays usually refuse. It is also the envelope sender of every message. |
+| `smtp.from_name` | `PRESSFLEET_SMTP_FROM_NAME` | `--smtp-from-name` (`init` only) | (unset) | Sender name that replaces WordPress's default, "WordPress". |
+
+## Outbound email
+
+Sites send email (password resets, notifications, form submissions) through one SMTP relay configured for the whole platform (design doc §5.6): a transactional email service such as Mailgun, Postmark, or Amazon SES, or your own mail server. `pressfleet init` collects the `smtp.*` settings and passes them to the control plane, which writes them into every site's generated `wp-config.php` as `PRESSFLEET_SMTP_*` constants. The platform must-use plugin `pressfleet-smtp.php` in the site images configures WordPress's mailer from them; without `smtp.host` it does nothing, and sites can't send email.
+
+The relay password is encrypted with the master key everywhere PressFleet stores it: in the config file, in the platform Compose project, and in the data directory's backups. It is decrypted only by the control plane, which renders it into each site's `wp-config.php`, next to the site's database password: that file is readable only by the site's UID and mounted read-only into the site's `php` container (never into `nginx`).
+
+- **Sender.** With `smtp.from_email` set, messages WordPress would send as `wordpress@<site domain>` use it instead, and every message uses it as the envelope sender, so bounces go to the platform's domain. A From address chosen by a plugin (WooCommerce's store address, say) is kept; the relay must accept it.
+- **Per-site mail.** The plugin configures the mailer early, so a site that installs its own mail plugin, for example to use a client's own provider, overrides it.
+- **Changes.** The settings are read when the control plane starts. Rerun `pressfleet init --force` to change them; a site picks up new settings the next time its `wp-config.php` is rendered.
+- **Failures.** A message the relay refuses is logged to the site's `php` container log (`docker logs`), with the relay's error.
 
 ## Sessions and HTTPS
 

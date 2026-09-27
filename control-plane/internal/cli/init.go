@@ -82,6 +82,7 @@ type initAnswers struct {
 	DataDir           string
 	MasterKeyFile     string
 	AdminEmail        string
+	smtpAnswers
 }
 
 // initQuestion is one setting init collects: from its flag if given, else by
@@ -101,6 +102,9 @@ type initQuestion struct {
 	// check validates an answer given the answers so far; nil accepts
 	// anything.
 	check func(value string, a *initAnswers) error
+	// skip, if set, says not to prompt for the question given the answers
+	// so far. A flag or the environment still answers it.
+	skip func(a *initAnswers) bool
 }
 
 // initQuestions are asked in order.
@@ -227,7 +231,7 @@ See docs/installation.md.`,
 		},
 	}
 	fl := cmd.Flags()
-	for _, q := range initQuestions {
+	for _, q := range allInitQuestions() {
 		if q.usage != "" {
 			flagValues[q.flag] = fl.String(q.flag, "", q.usage)
 		}
@@ -305,6 +309,9 @@ func (i *installer) run(ctx context.Context, given map[string]string) error {
 	if err := i.ask(&answers, given); err != nil {
 		return err
 	}
+	if err := answers.readSMTPPassword(); err != nil {
+		return err
+	}
 	var adminPassword redact.Secret
 	if i.f.adminPasswordStdin {
 		if adminPassword, err = i.readPassword(); err != nil {
@@ -330,6 +337,9 @@ func (i *installer) run(ctx context.Context, given map[string]string) error {
 	if err != nil {
 		return err
 	}
+	if err := answers.sealSMTPPassword(key); err != nil {
+		return err
+	}
 	if err := i.writeConfig(answers); err != nil {
 		return err
 	}
@@ -350,6 +360,9 @@ func (i *installer) run(ctx context.Context, given map[string]string) error {
 	i.printf("  Data directory:   %s\n", answers.DataDir)
 	i.printf("  Master key file:  %s (key ID %s)\n", answers.MasterKeyFile, key.ID())
 	i.printf("  Dashboard domain: %s\n", answers.DashboardDomain)
+	if smtp := answers.smtpConfig(); smtp.Enabled() {
+		i.printf("  SMTP relay:       %s:%d (%s)\n", smtp.Host, smtp.EffectivePort(), smtp.Encryption)
+	}
 	i.printf("  Admin user:       %s\n", auth.NormalizeEmail(answers.AdminEmail))
 	if created && generated {
 		i.printf("  Admin password:   %s\n\nStore the admin password now; it can't be shown again.\n", adminPassword.Reveal())
@@ -382,6 +395,7 @@ func (i *installer) defaults() (initAnswers, error) {
 		PublicIP:          cfg.PublicIP,
 		DataDir:           cfg.DataDir,
 		MasterKeyFile:     cfg.MasterKeyFile,
+		smtpAnswers:       smtpDefaults(cfg.SMTP),
 	}
 	if a.MasterKeyFile == "" {
 		a.MasterKeyFile = filepath.Join(filepath.Dir(i.configPath), "master.key")
@@ -391,7 +405,7 @@ func (i *installer) defaults() (initAnswers, error) {
 
 // ask fills answers from the given flag values, prompts, or defaults.
 func (i *installer) ask(answers *initAnswers, given map[string]string) error {
-	for _, q := range initQuestions {
+	for _, q := range allInitQuestions() {
 		field := q.field(answers)
 		if v, ok := given[q.flag]; ok {
 			if err := q.validate(v, answers); err != nil {
@@ -404,6 +418,9 @@ func (i *installer) ask(answers *initAnswers, given map[string]string) error {
 			if err := q.validate(*field, answers); err != nil {
 				return fmt.Errorf("--%s: %w", q.flag, err)
 			}
+			continue
+		}
+		if q.skip != nil && q.skip(answers) {
 			continue
 		}
 		for {
@@ -503,6 +520,7 @@ func (a initAnswers) config(base config.Config) config.Config {
 	base.PreviewBaseDomain = a.PreviewBaseDomain
 	base.PublicIP = a.PublicIP
 	base.MasterKeyFile = a.MasterKeyFile
+	base.SMTP = a.smtpConfig()
 	return base
 }
 
@@ -614,6 +632,9 @@ type fileConfig struct {
 	PreviewBaseDomain string `yaml:"preview_base_domain"`
 	PublicIP          string `yaml:"public_ip,omitempty"`
 	MasterKeyFile     string `yaml:"master_key_file"`
+
+	// SMTP is only written when a relay is configured.
+	SMTP *fileSMTP `yaml:"smtp,omitempty"`
 }
 
 const configHeader = `# PressFleet configuration, written by pressfleet init.
@@ -630,6 +651,7 @@ func (i *installer) writeConfig(a initAnswers) error {
 		PreviewBaseDomain: a.PreviewBaseDomain,
 		PublicIP:          a.PublicIP,
 		MasterKeyFile:     a.MasterKeyFile,
+		SMTP:              a.smtpFileConfig(),
 	})
 	if err != nil {
 		return err
@@ -703,6 +725,7 @@ func (i *installer) startPlatform(ctx context.Context, a initAnswers) error {
 		MasterKeyFile:       a.MasterKeyFile,
 		SkipPreflight:       i.f.skipPreflight,
 		PreviewBaseDomain:   a.PreviewBaseDomain,
+		SMTP:                a.smtpConfig(),
 	}); err != nil {
 		return err
 	}

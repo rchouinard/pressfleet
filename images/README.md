@@ -122,6 +122,15 @@ require_once ABSPATH . 'wp-settings.php';
 - **HTTPS behind Traefik needs no wp-config code.** nginx sets the FastCGI `HTTPS=on` parameter (and `REQUEST_SCHEME`, `SERVER_PORT=443`, `HTTP_X_FORWARDED_PROTO`) when a trusted proxy (`NGINX_TRUSTED_PROXIES`) sends `X-Forwarded-Proto: https`, so `is_ssl()` works natively. Untrusted clients cannot spoof it: the raw header never reaches PHP. `REMOTE_ADDR` is already the real client IP.
 - The FastCGI cache path for Nginx Helper (#41) is `/var/cache/pressfleet/fastcgi` (`RT_WP_NGINX_HELPER_CACHE_PATH`). See [FastCGI page cache](#fastcgi-page-cache).
 - Do not use `getenv()` for site settings: the FPM pool runs with `clear_env = yes`, so container environment variables are not visible to PHP.
+- **Outbound email** (#47) is configured by these optional constants, read by the platform mu-plugin `pressfleet-smtp.php`. Without `PRESSFLEET_SMTP_HOST` the plugin does nothing (and PHP's `mail()` has no mail server to hand messages to).
+
+  | Constant | Type | Meaning |
+  | --- | --- | --- |
+  | `PRESSFLEET_SMTP_HOST` | string | Relay host |
+  | `PRESSFLEET_SMTP_PORT` | int | Relay port |
+  | `PRESSFLEET_SMTP_ENCRYPTION` | string | PHPMailer's `SMTPSecure`: `tls` (STARTTLS), `ssl` (TLS from the start), or `''` (no TLS; opportunistic STARTTLS is turned off too) |
+  | `PRESSFLEET_SMTP_USERNAME`, `PRESSFLEET_SMTP_PASSWORD` | string | Relay login; an empty user name means no authentication |
+  | `PRESSFLEET_SMTP_FROM_EMAIL`, `PRESSFLEET_SMTP_FROM_NAME` | string | Replace WordPress's default sender (`wordpress@<domain>`, "WordPress"); the address is also the envelope sender. Empty keeps the default. |
 
 ### Environment variables
 

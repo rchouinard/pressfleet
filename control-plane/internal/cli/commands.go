@@ -32,13 +32,18 @@ import (
 const reattachTimeout = 5 * time.Minute
 
 // siteRuntime returns the Compose provisioner and the site database manager.
-func (a *app) siteRuntime(cat *catalog.Catalog, secretStore secrets.Store, db *store.DB) (*compose.Provisioner, *mariadb.Manager, error) {
+func (a *app) siteRuntime(cat *catalog.Catalog, secretStore secrets.Store, keys *secrets.Keyring, db *store.DB) (*compose.Provisioner, *mariadb.Manager, error) {
+	smtp, err := siteSMTP(a.cfg.SMTP, keys)
+	if err != nil {
+		return nil, nil, err
+	}
 	prov, err := compose.NewProvisioner(compose.ProvisionerConfig{
 		Layout:           a.cfg.Layout(),
 		Secrets:          secretStore,
 		Images:           cat,
 		MariaDBContainer: platform.MariaDBContainer(a.cfg.PlatformProject),
 		Logger:           a.log.With("component", "provisioner"),
+		SMTP:             smtp,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -111,7 +116,7 @@ func (a *app) serveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			prov, siteDBs, err := a.siteRuntime(cat, secretStore, db)
+			prov, siteDBs, err := a.siteRuntime(cat, secretStore, keys, db)
 			if err != nil {
 				return err
 			}

@@ -28,10 +28,18 @@ Run it as root (or a user in the `docker` group who can write `/etc/pressfleet` 
 | Data directory | `--data-dir` | `PRESSFLEET_DATA_DIR` | `/var/lib/pressfleet` |
 | Master key file | `--master-key-file` | `PRESSFLEET_MASTER_KEY_FILE` | `master.key` next to the config file |
 | First admin's email address | `--admin-email` | | (required) |
+| SMTP relay host for site email | `--smtp-host` | `PRESSFLEET_SMTP_HOST` | (unset: sites send no email) |
+| SMTP encryption | `--smtp-encryption` | `PRESSFLEET_SMTP_ENCRYPTION` | `starttls` |
+| SMTP port | `--smtp-port` | `PRESSFLEET_SMTP_PORT` | 587, 465, or 25 by encryption |
+| SMTP user name | `--smtp-username` | `PRESSFLEET_SMTP_USERNAME` | (unset) |
+| File holding the SMTP password | `--smtp-password-file` | | (unset) |
+| Sender address and name for site email | `--smtp-from-email`, `--smtp-from-name` | `PRESSFLEET_SMTP_FROM_EMAIL`, `PRESSFLEET_SMTP_FROM_NAME` | WordPress's defaults |
 
 The config file is written to `--config`, else `$PRESSFLEET_CONFIG`, else `/etc/pressfleet/pressfleet.yaml`. It holds the settings above; everything else keeps its [default](configuration.md#settings).
 
 The dashboard and preview domains must already resolve to this host: the preflight checks look up the dashboard domain and a random name under the preview base domain.
+
+The SMTP settings are optional; see [Outbound email](configuration.md#outbound-email). In interactive mode the other SMTP questions are only asked once a relay host is given. `init` reads the relay password from the first line of `--smtp-password-file`, encrypts it with the master key, and writes only the encrypted value to the config file.
 
 Other flags:
 
@@ -103,8 +111,9 @@ The master key is printed on standard output (the line starting with `pfmk1:`); 
 - Never replaces the master key. It reuses the existing key file (and still asks you to confirm the key is stored off-host). If the file isn't a valid key, `init` stops; move it aside yourself if you really mean to start over, knowing that secrets encrypted with the old key become unreadable.
 - Saves the previous config file as `pressfleet.yaml.bak` and writes a new one, prefilling its defaults from the old one.
 - Reuses the MariaDB root password in `<data_dir>/platform/secrets/`, which MariaDB only reads when it initializes its data.
+- Keeps the encrypted SMTP password from the old config file unless `--smtp-password-file` gives a new one, after checking that the master key still decrypts it.
 - Leaves an existing admin user with the same email alone. To set a new password, run `pressfleet user reset-password` in the control plane container.
 
 ## Not yet collected
 
-The design (§4.1) also has `init` collect DNS provider credentials, the backup repository, and alert channels. Those settings arrive with the features that use them in later milestones.
+The design (§4.1) also has `init` collect DNS provider credentials, the backup repository, and alert channels (the SMTP relay above is for site email; alert email settings are separate). Those settings arrive with the features that use them in later milestones.

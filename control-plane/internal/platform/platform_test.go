@@ -335,6 +335,55 @@ func TestRenderWithoutPreviewBaseDomain(t *testing.T) {
 	}
 }
 
+// The SMTP settings reach the control plane's environment intact, and only
+// when a relay is configured.
+func TestRenderSMTP(t *testing.T) {
+	envOf := func(cfg platform.Config) map[string]string {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join(render(t, cfg), platform.ComposeFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var f struct {
+			Services map[string]struct{ Environment map[string]string }
+		}
+		if err := yaml.Unmarshal(raw, &f); err != nil {
+			t.Fatal(err)
+		}
+		return f.Services["control-plane"].Environment
+	}
+	for name := range envOf(testConfig()) {
+		if strings.HasPrefix(name, "PRESSFLEET_SMTP_") {
+			t.Errorf("%s rendered without a relay", name)
+		}
+	}
+
+	for _, smtp := range []config.SMTPConfig{
+		{Host: "smtp.example.com", Port: 2525, Username: "relay", Password: "pfenc1:0123:c2VhbGVk",
+			Encryption: "tls", FromEmail: "sites@agency.example", FromName: `Agency "$ites"`},
+		{Host: "10.0.0.5", Encryption: "none"},
+	} {
+		cfg := testConfig()
+		cfg.SMTP = smtp
+		env := envOf(cfg)
+		got := config.Default()
+		// Compose turns the template's escaped "$$" back into "$".
+		lookup := func(k string) (string, bool) { v, ok := env[k]; return strings.ReplaceAll(v, "$$", "$"), ok }
+		if err := config.ApplyEnv(&got, lookup); err != nil {
+			t.Fatal(err)
+		}
+		if got.SMTP != smtp {
+			t.Errorf("SMTP read back from the environment = %+v, want %+v", got.SMTP, smtp)
+		}
+	}
+
+	cfg := testConfig()
+	cfg.SMTP = config.SMTPConfig{Host: "smtp.example.com", Encryption: "starttls", Username: "relay", Password: "plaintext"}
+	if err := platform.Render(t.TempDir(), cfg); !errors.Is(err, platform.ErrInvalidConfig) {
+		t.Errorf("plaintext SMTP password: err = %v, want ErrInvalidConfig", err)
+	}
+}
+
 // The control plane's default platform_project matches the project name
 // the host CLI installs the platform under.
 func TestDefaultPlatformProject(t *testing.T) {

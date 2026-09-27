@@ -12,6 +12,7 @@ import (
 	"io"
 	"io/fs"
 	"net"
+	"net/mail"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -73,6 +74,121 @@ type Config struct {
 	// which names their containers: the provisioner connects the
 	// platform's MariaDB container to each site network.
 	PlatformProject string `yaml:"platform_project"`
+	// SMTP is the relay sites send email through (§5.6).
+	SMTP SMTPConfig `yaml:"smtp"`
+}
+
+// Values of smtp.encryption.
+const (
+	SMTPEncryptionSTARTTLS = "starttls" // plain connection upgraded with STARTTLS (required)
+	SMTPEncryptionTLS      = "tls"      // TLS from the start (SMTPS)
+	SMTPEncryptionNone     = "none"     // no TLS, e.g. a relay on the same host or network
+)
+
+// SMTPPasswordSetting names smtp.password when it is sealed with the master
+// key (secrets.Keyring.SealSetting); the name is authenticated with the
+// ciphertext.
+const SMTPPasswordSetting = "smtp.password"
+
+// sealedSettingPrefix starts every value made by secrets.Keyring.SealSetting.
+// Validate only checks the shape; the control plane decrypts it at startup.
+const sealedSettingPrefix = "pfenc1:"
+
+// SMTPConfig is the SMTP relay sites send email through. Without a host,
+// sites send no email: the site images have no local mail transfer agent.
+type SMTPConfig struct {
+	// Host is the relay's host name or IP address. Empty disables outbound
+	// email.
+	Host string `yaml:"host"`
+	// Port is the relay's port; 0 means the standard port for Encryption
+	// (see EffectivePort).
+	Port int `yaml:"port"`
+	// Username and Password authenticate with the relay; leave both empty
+	// for a relay that doesn't require authentication.
+	Username string `yaml:"username"`
+	// Password is encrypted with the master key under the name
+	// SMTPPasswordSetting ("pfenc1:..."), as pressfleet init writes it, so
+	// neither the config file nor the rendered platform project holds it in
+	// plaintext.
+	Password string `yaml:"password"`
+	// Encryption is SMTPEncryptionSTARTTLS (the default), SMTPEncryptionTLS,
+	// or SMTPEncryptionNone.
+	Encryption string `yaml:"encryption"`
+	// FromEmail and FromName replace WordPress's default sender
+	// (wordpress@<site domain>), which relays usually refuse. Empty keeps
+	// WordPress's default.
+	FromEmail string `yaml:"from_email"`
+	FromName  string `yaml:"from_name"`
+}
+
+// Enabled reports whether sites send email through the relay.
+func (s SMTPConfig) Enabled() bool { return s.Host != "" }
+
+// EffectivePort returns Port, or the standard port for Encryption if Port
+// is 0.
+func (s SMTPConfig) EffectivePort() int {
+	if s.Port != 0 {
+		return s.Port
+	}
+	switch s.Encryption {
+	case SMTPEncryptionTLS:
+		return 465
+	case SMTPEncryptionNone:
+		return 25
+	default:
+		return 587
+	}
+}
+
+// Validate reports every problem with the SMTP settings, or nil.
+func (s SMTPConfig) Validate() error {
+	var errs []error
+	if !s.Enabled() {
+		if s.Port != 0 || s.Username != "" || s.Password != "" || s.FromEmail != "" || s.FromName != "" {
+			errs = append(errs, errors.New("smtp.host is required when other smtp settings are set"))
+		}
+		return errors.Join(errs...)
+	}
+	if !validHost(s.Host) {
+		errs = append(errs, fmt.Errorf("smtp.host must be a host name or IP address, got %q", s.Host))
+	}
+	if s.Port < 0 || s.Port > 65535 {
+		errs = append(errs, fmt.Errorf("smtp.port must be between 1 and 65535, got %d", s.Port))
+	}
+	switch s.Encryption {
+	case SMTPEncryptionSTARTTLS, SMTPEncryptionTLS, SMTPEncryptionNone:
+	default:
+		errs = append(errs, fmt.Errorf("smtp.encryption must be %q, %q, or %q, got %q",
+			SMTPEncryptionSTARTTLS, SMTPEncryptionTLS, SMTPEncryptionNone, s.Encryption))
+	}
+	if (s.Username == "") != (s.Password == "") {
+		errs = append(errs, errors.New("smtp.username and smtp.password must be set together"))
+	}
+	if strings.ContainsAny(s.Username, "\r\n") {
+		errs = append(errs, errors.New("smtp.username must not contain line breaks"))
+	}
+	if s.Password != "" && !strings.HasPrefix(s.Password, sealedSettingPrefix) {
+		// The value is not quoted back: it is probably a plaintext password.
+		errs = append(errs, errors.New("smtp.password must be encrypted with the master key (pressfleet init writes it that way), not plaintext"))
+	}
+	if s.FromEmail != "" {
+		if a, err := mail.ParseAddress(s.FromEmail); err != nil || a.Address != s.FromEmail {
+			errs = append(errs, fmt.Errorf("smtp.from_email must be an email address like wordpress@agency.example, got %q", s.FromEmail))
+		}
+	}
+	if strings.ContainsAny(s.FromName, "\r\n") {
+		errs = append(errs, errors.New("smtp.from_name must not contain line breaks"))
+	}
+	return errors.Join(errs...)
+}
+
+// validHost accepts an IP address or a host name, including a single-label
+// name such as a relay container on a Docker network.
+func validHost(s string) bool {
+	if _, err := netip.ParseAddr(s); err == nil {
+		return true
+	}
+	return ValidDomain(s) || (!strings.Contains(s, ".") && ValidDomain(s+".local"))
 }
 
 // AuditConfig configures the audit log.
@@ -188,6 +304,7 @@ func Default() Config {
 			AdminUser:         "root",
 			AdminPasswordFile: "/run/secrets/mariadb_root_password",
 		},
+		SMTP: SMTPConfig{Encryption: SMTPEncryptionSTARTTLS},
 	}
 }
 
@@ -213,6 +330,12 @@ var envVars = []struct {
 	{"PRESSFLEET_MARIADB_ADMIN_USER", func(c *Config) *string { return &c.MariaDB.AdminUser }},
 	{"PRESSFLEET_MARIADB_ADMIN_PASSWORD_FILE", func(c *Config) *string { return &c.MariaDB.AdminPasswordFile }},
 	{"PRESSFLEET_PLATFORM_PROJECT", func(c *Config) *string { return &c.PlatformProject }},
+	{"PRESSFLEET_SMTP_HOST", func(c *Config) *string { return &c.SMTP.Host }},
+	{"PRESSFLEET_SMTP_USERNAME", func(c *Config) *string { return &c.SMTP.Username }},
+	{"PRESSFLEET_SMTP_PASSWORD", func(c *Config) *string { return &c.SMTP.Password }},
+	{"PRESSFLEET_SMTP_ENCRYPTION", func(c *Config) *string { return &c.SMTP.Encryption }},
+	{"PRESSFLEET_SMTP_FROM_EMAIL", func(c *Config) *string { return &c.SMTP.FromEmail }},
+	{"PRESSFLEET_SMTP_FROM_NAME", func(c *Config) *string { return &c.SMTP.FromName }},
 }
 
 // envTrustedProxies sets http.trusted_proxies as a comma-separated list.
@@ -278,6 +401,13 @@ func ApplyEnv(cfg *Config, env LookupEnv) error {
 			return fmt.Errorf("PRESSFLEET_AUDIT_RETENTION_DAYS must be a whole number, got %q", val)
 		}
 		cfg.Audit.RetentionDays = n
+	}
+	if val, ok := env("PRESSFLEET_SMTP_PORT"); ok {
+		n, err := strconv.Atoi(val)
+		if err != nil {
+			return fmt.Errorf("PRESSFLEET_SMTP_PORT must be a whole number, got %q", val)
+		}
+		cfg.SMTP.Port = n
 	}
 	if val, ok := env(envTrustedProxies); ok {
 		cfg.HTTP.TrustedProxies = nil
@@ -369,6 +499,9 @@ func (c Config) Validate() error {
 	}
 	if !composeProjectName.MatchString(c.PlatformProject) {
 		errs = append(errs, fmt.Errorf("platform_project must be a Compose project name (lowercase letters, digits, - and _), got %q", c.PlatformProject))
+	}
+	if err := c.SMTP.Validate(); err != nil {
+		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }

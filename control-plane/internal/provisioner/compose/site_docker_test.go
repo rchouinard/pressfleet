@@ -242,6 +242,92 @@ func TestSiteUp(t *testing.T) {
 		t.Errorf("after recreating php, PF_TEST_INT = %q, want 8", got)
 	}
 
+	testSiteMail(t, p, dir, in, docker, exec)
+}
+
+// testSiteMail checks outbound email (#47) on TestSiteUp's site: without a
+// relay the platform mu-plugin stays out of the way; once the site is
+// re-rendered with one (a Mailpit container on the site network), a password
+// reset requested over HTTP is delivered through it.
+func testSiteMail(t *testing.T, p compose.Project, dir string, in compose.SiteRender,
+	docker func(...string) string, exec func(string, ...string) string,
+) {
+	t.Helper()
+	hooked := `echo has_action( "phpmailer_init" ) ? "yes" : "no";`
+	if got := exec("php", "wp", "eval", hooked); got != "no" {
+		t.Errorf("without a relay, phpmailer_init hooked = %q, want no", got)
+	}
+
+	const smtpPassword = `re'lay\pw"1`
+	mailpit := p.Name + "-testmail"
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		// Before the site's own cleanup: the site network can't be removed
+		// while Mailpit is on it.
+		if _, err := compose.DockerExec(ctx, nil, "rm", "--force", mailpit); err != nil {
+			t.Errorf("removing mailpit: %v", err)
+		}
+	})
+	docker("run", "--detach", "--name", mailpit, "--network", p.Name, "--network-alias", "mailpit",
+		"--label", "pressfleet.test=true",
+		"--env", "MP_SMTP_AUTH=relay:"+smtpPassword, "--env", "MP_SMTP_AUTH_ALLOW_INSECURE=1",
+		envOr("PRESSFLEET_TEST_MAILPIT_IMAGE", "axllent/mailpit:v1.31"))
+
+	in.WPConfig.SMTP = &wpconfig.SMTP{
+		Host: "mailpit", Port: 1025, Username: "relay", Password: smtpPassword,
+		FromEmail: "sites@pressfleet.test", FromName: "PressFleet Sites",
+	}
+	if _, err := compose.RenderSite(dir, in); err != nil {
+		t.Fatal(err)
+	}
+	docker("compose", "--project-name", p.Name, "--project-directory", dir, "up", "--detach", "--wait", "--force-recreate", "php")
+	if got := exec("php", "wp", "eval", hooked); got != "yes" {
+		t.Fatalf("with a relay, phpmailer_init hooked = %q, want yes", got)
+	}
+
+	// Request the reset the way a visitor does. nginx may take a few
+	// seconds to resolve the recreated php container.
+	for deadline := time.Now().Add(30 * time.Second); ; {
+		_, err := p.Exec(context.Background(), "nginx", "wget", "-q", "-O", "/dev/null",
+			"--post-data", "user_login=admin", "http://127.0.0.1:8080/wp-login.php?action=lostpassword")
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("requesting a password reset: %v", err)
+		}
+		time.Sleep(time.Second)
+	}
+
+	type address struct{ Name, Address string }
+	var inbox struct {
+		Total    int
+		Messages []struct {
+			Subject string
+			From    address
+			To      []address
+		}
+	}
+	for deadline := time.Now().Add(20 * time.Second); ; {
+		raw := exec("php", "php", "-r", `echo file_get_contents("http://mailpit:8025/api/v1/messages");`)
+		if err := json.Unmarshal([]byte(raw), &inbox); err != nil {
+			t.Fatalf("mailpit messages %q: %v", raw, err)
+		}
+		if inbox.Total > 0 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if inbox.Total != 1 {
+		t.Fatalf("mailpit received %d messages, want 1 (php logs: %s)", inbox.Total,
+			docker("logs", "--tail", "20", p.Name+"-php-1"))
+	}
+	m := inbox.Messages[0]
+	if !strings.Contains(m.Subject, "Password Reset") || len(m.To) != 1 || m.To[0].Address != "admin@example.com" ||
+		m.From != (address{"PressFleet Sites", "sites@pressfleet.test"}) {
+		t.Errorf("message = %+v, want the admin's password reset from the platform sender", m)
+	}
 }
 
 func envOr(name, fallback string) string {

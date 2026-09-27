@@ -71,6 +71,7 @@ func TestLoadPrecedence(t *testing.T) {
 		Jobs:     config.JobsConfig{Concurrency: 4},                // default
 		MariaDB:  config.Default().MariaDB,                         // default
 		Audit:    config.AuditConfig{RetentionDays: 365},           // default
+		SMTP:     config.Default().SMTP,                            // default
 		// default
 		PlatformProject: "pressfleet",
 	}
@@ -345,6 +346,94 @@ func TestPlatformProjectSetting(t *testing.T) {
 		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "platform_project") {
 			t.Errorf("Validate(%q) = %v, want a platform_project error", bad, err)
 		}
+	}
+}
+
+func TestSMTPSettings(t *testing.T) {
+	if got := config.Default().SMTP; got.Enabled() || got.Encryption != config.SMTPEncryptionSTARTTLS {
+		t.Errorf("default smtp = %+v, want disabled with starttls", got)
+	}
+	path := writeFile(t, "smtp:\n  host: smtp.example.com\n  username: relay\n  password: pfenc1:abc:ZGVm\n  from_email: sites@agency.example\n")
+	cfg, err := config.Load(path, env(map[string]string{
+		"PRESSFLEET_SMTP_PORT":       "2525",
+		"PRESSFLEET_SMTP_ENCRYPTION": "none",
+		"PRESSFLEET_SMTP_FROM_NAME":  "Agency Sites",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := config.SMTPConfig{
+		Host: "smtp.example.com", Port: 2525, Username: "relay", Password: "pfenc1:abc:ZGVm",
+		Encryption: "none", FromEmail: "sites@agency.example", FromName: "Agency Sites",
+	}
+	if cfg.SMTP != want {
+		t.Errorf("SMTP = %+v, want %+v", cfg.SMTP, want)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v", err)
+	}
+	if _, err := config.Load(path, env(map[string]string{"PRESSFLEET_SMTP_PORT": "smtp"})); err == nil {
+		t.Error("non-numeric PRESSFLEET_SMTP_PORT accepted")
+	}
+}
+
+func TestSMTPEffectivePort(t *testing.T) {
+	for _, tc := range []struct {
+		port       int
+		encryption string
+		want       int
+	}{
+		{0, config.SMTPEncryptionSTARTTLS, 587},
+		{0, config.SMTPEncryptionTLS, 465},
+		{0, config.SMTPEncryptionNone, 25},
+		{2525, config.SMTPEncryptionTLS, 2525},
+	} {
+		s := config.SMTPConfig{Host: "relay", Port: tc.port, Encryption: tc.encryption}
+		if got := s.EffectivePort(); got != tc.want {
+			t.Errorf("EffectivePort(%d, %s) = %d, want %d", tc.port, tc.encryption, got, tc.want)
+		}
+	}
+}
+
+func TestValidateSMTP(t *testing.T) {
+	valid := func(s *config.SMTPConfig) {
+		s.Host = "smtp.example.com"
+		s.Username = "relay"
+		s.Password = "pfenc1:abc:ZGVm"
+	}
+	tests := []struct {
+		name   string
+		modify func(*config.SMTPConfig)
+		want   string // empty: valid
+	}{
+		{"disabled", func(*config.SMTPConfig) {}, ""},
+		{"full", valid, ""},
+		{"no auth", func(s *config.SMTPConfig) { s.Host = "10.0.0.5" }, ""},
+		{"container name", func(s *config.SMTPConfig) { s.Host = "mailpit"; s.Encryption = "none" }, ""},
+		{"settings without host", func(s *config.SMTPConfig) { s.Username = "relay" }, "smtp.host is required"},
+		{"bad host", func(s *config.SMTPConfig) { valid(s); s.Host = "smtp://relay" }, "smtp.host"},
+		{"bad port", func(s *config.SMTPConfig) { valid(s); s.Port = 70000 }, "smtp.port"},
+		{"bad encryption", func(s *config.SMTPConfig) { valid(s); s.Encryption = "ssl" }, "smtp.encryption"},
+		{"username only", func(s *config.SMTPConfig) { valid(s); s.Password = "" }, "set together"},
+		{"plaintext password", func(s *config.SMTPConfig) { valid(s); s.Password = "hunter2" }, "encrypted with the master key"},
+		{"bad from email", func(s *config.SMTPConfig) { valid(s); s.FromEmail = "Sites <s@example.com>" }, "smtp.from_email"},
+		{"from name line break", func(s *config.SMTPConfig) { valid(s); s.FromName = "a\r\nBcc: x@example.com" }, "smtp.from_name"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.Default()
+			tt.modify(&cfg.SMTP)
+			err := cfg.Validate()
+			switch {
+			case tt.want == "" && err != nil:
+				t.Errorf("Validate() = %v, want nil", err)
+			case tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)):
+				t.Errorf("Validate() = %v, want error mentioning %q", err, tt.want)
+			}
+			if err != nil && strings.Contains(err.Error(), "hunter2") {
+				t.Errorf("error %q reveals the password", err)
+			}
+		})
 	}
 }
 

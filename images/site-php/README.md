@@ -66,6 +66,8 @@ Notes:
 
 Plugin and theme updates are unaffected.
 
+[../shared/mu-plugins/pressfleet-smtp.php](../shared/mu-plugins/pressfleet-smtp.php) sends site email through the platform's SMTP relay (#47, §5.6), configured by the `PRESSFLEET_SMTP_*` constants in `wp-config.php` ([runtime contract](../README.md#wp-configphp-requirements)). It configures PHPMailer on `phpmailer_init` at priority 1, so a site's own mail plugin can still override it; replaces WordPress's default sender with `PRESSFLEET_SMTP_FROM_EMAIL`/`_FROM_NAME`; sets a 15 s SMTP timeout; and logs delivery failures to stderr. Without `PRESSFLEET_SMTP_HOST` it does nothing.
+
 ## WP-CLI
 
 WP-CLI 2.12.0 at `/usr/local/bin/wp`, verified against the SHA-512 published with the release.

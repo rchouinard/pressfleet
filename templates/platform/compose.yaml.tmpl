@@ -33,6 +33,25 @@ services:
       # Development/CI only: start even if required host checks fail.
       PRESSFLEET_SKIP_PREFLIGHT: "true"
 {{- end }}
+{{- with .SMTP }}
+      # The relay sites send email through (§5.6). The password is encrypted
+      # with the master key; the control plane decrypts it at startup.
+      PRESSFLEET_SMTP_HOST: {{ q .Host }}
+{{- if .Port }}
+      PRESSFLEET_SMTP_PORT: {{ q (print .Port) }}
+{{- end }}
+      PRESSFLEET_SMTP_ENCRYPTION: {{ q .Encryption }}
+{{- if .Username }}
+      PRESSFLEET_SMTP_USERNAME: {{ q .Username }}
+      PRESSFLEET_SMTP_PASSWORD: {{ q .Password }}
+{{- end }}
+{{- if .FromEmail }}
+      PRESSFLEET_SMTP_FROM_EMAIL: {{ q .FromEmail }}
+{{- end }}
+{{- if .FromName }}
+      PRESSFLEET_SMTP_FROM_NAME: {{ q .FromName }}
+{{- end }}
+{{- end }}
     volumes:
       # The data directory is mounted at the same absolute path as on the host.
       # The control plane starts helper containers (backups, restores) that

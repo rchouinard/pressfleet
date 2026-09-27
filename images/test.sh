@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test for the site images (issues #17, #18, #40).
+# Smoke test for the site images (issues #17, #18, #40, #47).
 #
 #   images/test.sh [php-version ...]     default: every PHP version images/matrix.sh builds
 #
@@ -7,7 +7,8 @@
 # both site containers on a throwaway network (read-only root filesystems, no
 # capabilities, non-root site UID, named wp-content and cache volumes, a minimal read-only
 # wp-config.php), installs WordPress with WP-CLI, and checks the runtime
-# contract from images/README.md. Everything it creates is removed on exit;
+# contract from images/README.md, with a Mailpit container standing in for the
+# platform's SMTP relay. Everything it creates is removed on exit;
 # the built images are kept.
 #
 # Environment:
@@ -17,6 +18,7 @@
 #                    must be in the manifest, e.g. a pinned version)
 #   SITE_UID=10001   UID:GID the site containers run as
 #   MARIADB_IMAGE    database image (default mariadb:11.8)
+#   MAILPIT_IMAGE    SMTP relay stand-in (default axllent/mailpit:v1.31)
 #   VERBOSE=1        print the tail of the site container logs
 set -euo pipefail
 
@@ -28,6 +30,7 @@ WP_SHA1="$("$matrix" sha1 "$WP_VERSION")"
 registry="${IMAGE_REPO:-$("$matrix" registry)}"
 site_uid="${SITE_UID:-10001}"
 mariadb_image="${MARIADB_IMAGE:-mariadb:11.8}"
+mailpit_image="${MAILPIT_IMAGE:-axllent/mailpit:v1.31}"
 run_id="pf-imgtest-$$"
 label="io.pressfleet.imgtest=$run_id"
 nginx_image="$registry/site-nginx:wp$WP_VERSION"
@@ -113,6 +116,7 @@ if [ "${SKIP_BUILD:-0}" != 1 ]; then
 fi
 
 db_password="$(head -c 18 /dev/urandom | base64 | tr -d '/+=')"
+smtp_password="$(head -c 18 /dev/urandom | base64 | tr -d '/+=')"
 admin_password="$(head -c 18 /dev/urandom | base64 | tr -d '/+=')"
 
 # Minimal stand-in for the control plane's generated wp-config.php (#21),
@@ -134,6 +138,13 @@ define( 'WPMU_PLUGIN_URL', '/_pressfleet/mu-plugins' );
 define( 'FS_METHOD', 'direct' );
 define( 'WP_AUTO_UPDATE_CORE', false );
 define( 'DISABLE_WP_CRON', true );
+define( 'PRESSFLEET_SMTP_HOST', 'mailpit' );
+define( 'PRESSFLEET_SMTP_PORT', 1025 );
+define( 'PRESSFLEET_SMTP_USERNAME', 'relay' );
+define( 'PRESSFLEET_SMTP_PASSWORD', '$smtp_password' );
+define( 'PRESSFLEET_SMTP_ENCRYPTION', '' );
+define( 'PRESSFLEET_SMTP_FROM_EMAIL', 'sites@pressfleet.test' );
+define( 'PRESSFLEET_SMTP_FROM_NAME', 'PressFleet Sites' );
 if ( ! defined( 'ABSPATH' ) ) {
 	define( 'ABSPATH', __DIR__ . '/' );
 }
@@ -156,7 +167,7 @@ test_stack() {
 	local php_version="$1"
 	local php_image="$registry/site-php:php$php_version-wp$WP_VERSION"
 	local p="$run_id-php${php_version//./}"
-	local net="$p" php="$p-php" nginx="$p-nginx" db="$p-db"
+	local net="$p" php="$p-php" nginx="$p-nginx" db="$p-db" mailpit="$p-mailpit"
 	local wp_content="$p-wp-content" cache="$p-cache"
 	local user="$site_uid:$site_uid"
 	# The hardened settings the Compose templates are expected to use.
@@ -173,6 +184,11 @@ test_stack() {
 		-e MARIADB_USER=wordpress -e "MARIADB_PASSWORD=$db_password" \
 		--health-cmd 'healthcheck.sh --connect --innodb_initialized' --health-interval 2s \
 		"$mariadb_image" >/dev/null
+
+	# The SMTP relay stand-in, requiring the credentials from wp-config.php.
+	docker run -d --label "$label" --name "$mailpit" --network "$net" --network-alias mailpit \
+		-e "MP_SMTP_AUTH=relay:$smtp_password" -e MP_SMTP_AUTH_ALLOW_INSECURE=1 \
+		-p 127.0.0.1::8025 "$mailpit_image" >/dev/null
 
 	docker run -d --label "$label" --name "$php" --network "$net" --network-alias php \
 		--user "$user" "${hardening[@]}" \
@@ -276,6 +292,28 @@ test_stack() {
 	check_not "invalid NGINX_FASTCGI_CACHE is rejected" docker run --rm --label "$label" --user "$user" \
 		"${hardening[@]}" -e NGINX_FASTCGI_CACHE=maybe "$nginx_image" true
 
+	# --- Outbound email through the SMTP relay (#47) ------------------------
+	# A password reset requested over HTTP arrives at the relay, from the
+	# platform's sender address.
+	check_eq "SMTP mu-plugin hooks PHPMailer" "yes" \
+		"$("${cexec[@]}" wp eval 'echo has_action("phpmailer_init") ? "yes" : "no";')"
+	local mailpit_api messages
+	mailpit_api="http://127.0.0.1:$(docker port "$mailpit" 8025/tcp | head -n 1 | sed 's/.*://')/api/v1"
+	check_eq "password reset request accepted" "302" \
+		"$(curl -s -o /dev/null -w '%{http_code}' -d 'user_login=admin&wp-submit=Get+New+Password' "$base/wp-login.php?action=lostpassword")"
+	messages=""
+	for _ in $(seq 20); do
+		messages="$(curl -fsS "$mailpit_api/messages" 2>/dev/null || true)"
+		[ "$(jq -r '.total // 0' <<<"$messages" 2>/dev/null)" -gt 0 ] 2>/dev/null && break
+		sleep 0.5
+	done
+	check_contains "password reset email delivered via the relay" "Password Reset" \
+		"$(jq -r '.messages[].Subject' <<<"$messages" 2>/dev/null)"
+	check_eq "reset email sent to the admin" "admin@example.com" \
+		"$(jq -r '.messages[0].To[0].Address' <<<"$messages" 2>/dev/null)"
+	check_eq "reset email from the platform sender" "PressFleet Sites <sites@pressfleet.test>" \
+		"$(jq -r '.messages[0].From | "\(.Name) <\(.Address)>"' <<<"$messages" 2>/dev/null)"
+
 	# --- HTTP through nginx ---------------------------------------------------
 	local body code
 	body="$(curl -fsS "$base/")" && pass "home page returns 200" || fail "home page returns 200"
@@ -363,7 +401,7 @@ test_stack() {
 		docker logs "$nginx" 2>&1 | tail -n 20
 	fi
 
-	docker rm -f "$nginx" "$php" "$db" >/dev/null
+	docker rm -f "$nginx" "$php" "$db" "$mailpit" >/dev/null
 	docker network rm "$net" >/dev/null
 	docker volume rm "$wp_content" "$cache" >/dev/null
 }

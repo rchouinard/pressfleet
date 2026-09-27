@@ -355,6 +355,57 @@ func newProvisionerWith(t *testing.T, f *fixture, sec memSecrets) *compose.Provi
 	return p
 }
 
+// The platform's SMTP relay goes into every site's wp-config.php, and a
+// changed relay reaches an existing site when it is next converged.
+func TestSMTPRenderedIntoWPConfig(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	sec := memSecrets{}
+	f.cfg.DBSecretRef, f.cfg.WPSaltsSecretRef = siteSecrets(t, sec, testSiteID,
+		sitedb.Credentials{Database: "site_db", Username: "site_user", Password: "pw"})
+	withSMTP := func(smtp *wpconfig.SMTP) *compose.Provisioner {
+		p, err := compose.NewProvisioner(compose.ProvisionerConfig{
+			Layout: f.layout, Secrets: sec, MariaDBContainer: testMariaDB, Docker: f.docker.exec,
+			Images: imageMap{"8.4": {PHP: "a", Nginx: "b"}}, SMTP: smtp,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	wpConfig := func() string {
+		b, err := os.ReadFile(filepath.Join(f.siteDir(t), compose.SiteWPConfigFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+
+	if _, err := withSMTP(nil).CreateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := wpConfig(); strings.Contains(got, "PRESSFLEET_SMTP_") {
+		t.Errorf("wp-config.php has SMTP settings without a relay:\n%s", got)
+	}
+	f.docker.calls = nil
+
+	relay := &wpconfig.SMTP{Host: "smtp.example.com", Port: 587, Username: "relay", Password: "relay-pw", Encryption: "tls"}
+	if _, err := withSMTP(relay).UpdateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	got := wpConfig()
+	for _, want := range []string{
+		"define( 'PRESSFLEET_SMTP_HOST', 'smtp.example.com' );",
+		"define( 'PRESSFLEET_SMTP_PASSWORD', 'relay-pw' );",
+		"define( 'PRESSFLEET_SMTP_ENCRYPTION', 'tls' );",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("wp-config.php lacks %s:\n%s", want, got)
+		}
+	}
+	wantCommands(t, f.docker, recreate, upWait)
+}
+
 func TestConvergeRecreatesPHPAfterFailedAttempt(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
