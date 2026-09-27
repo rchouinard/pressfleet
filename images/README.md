@@ -164,7 +164,7 @@ All are optional; defaults are shown.
 | `PHP_FPM_HOST` | `php` | Host name of the php container. |
 | `PHP_FPM_PORT` | `9000` | PHP-FPM port. |
 | `NGINX_RESOLVER` | `127.0.0.11` | DNS server used to resolve `PHP_FPM_HOST` (Docker's embedded DNS). |
-| `NGINX_TRUSTED_PROXIES` | `10.0.0.0/8 172.16.0.0/12 192.168.0.0/16` | Space/comma separated IPs/CIDRs whose `X-Forwarded-For` and `X-Forwarded-Proto` are trusted. The control plane should narrow it to the site network's subnet (where Traefik is the only proxy). If a CDN sits in front of Traefik, Traefik must be configured to trust it. |
+| `NGINX_TRUSTED_PROXIES` | `local` | Space/comma separated IPs/CIDRs whose `X-Forwarded-For` and `X-Forwarded-Proto` are trusted. `local` stands for the IPv4 networks the container is attached to when it starts (read from the kernel's routing table). A site's nginx is only on its site network, where the platform's Traefik is the only proxy, so `local` trusts Traefik without knowing the address Docker gives it; networks the container joins later are not trusted. If a CDN sits in front of Traefik, Traefik must be configured to trust it. |
 | `NGINX_STATUS_ALLOW` | `127.0.0.1 ::1` | IPs/CIDRs allowed on the internal status port 8081. Widen it if the metrics collector (M4) scrapes over the network rather than exec. |
 | `NGINX_XMLRPC` | `deny` | `deny` returns 403 for `/xmlrpc.php`; `allow` passes it to PHP (needed by e.g. Jetpack and the mobile apps). |
 | `NGINX_CLIENT_MAX_BODY_SIZE` | `64m` | Maximum request body (uploads). |

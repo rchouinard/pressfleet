@@ -387,6 +387,17 @@ test_stack() {
 	check_contains "files outside open_basedir unreadable" "passwd=blocked" "$body"
 	check_contains "HTTPS detected from trusted proxy" "https=on" "$body"
 	check_contains "real client IP from trusted proxy" "remote_addr=203.0.113.7" "$body"
+	# A peer on a network nginx joined after starting is not a trusted proxy
+	# (NGINX_TRUSTED_PROXIES=local; see the trusted proxy checks below).
+	docker network create --label "$label" "$net-other" >/dev/null
+	docker network connect --alias nginx-other "$net-other" "$nginx"
+	body="$(docker run --rm --label "$label" --network "$net-other" --entrypoint curl "$php_image" \
+		-fsS -H 'X-Forwarded-For: 203.0.113.7' -H 'X-Forwarded-Proto: https' \
+		http://nginx-other:8080/wp-content/pf-probe.php)" || true
+	check_contains "untrusted peer reaches nginx" "remote_addr=" "$body"
+	check_not "untrusted peer's X-Forwarded-Proto is ignored" grep -qF "https=on" <<<"$body"
+	check_not "untrusted peer's X-Forwarded-For is ignored" grep -qF "remote_addr=203.0.113.7" <<<"$body"
+	docker network disconnect "$net-other" "$nginx"
 	curl -s -o /dev/null "$base/wp-content/pf-probe.php?sleep=2"
 	check_contains "FPM slow log written to stderr" "pf-probe.php" \
 		"$(docker logs "$php" 2>&1 | grep -A 3 'executing too slow' || true)"
@@ -397,6 +408,16 @@ test_stack() {
 	check_contains "access log has client IP" '"remote_addr":"203.0.113.7"' "$logs"
 	check_contains "access log has cache status" '"upstream_cache_status":' "$logs"
 	check_contains "access log has request time" '"request_time":' "$logs"
+
+	# --- Trusted proxies: the container's own network only ------------------
+	# NGINX_TRUSTED_PROXIES=local (the default) trusts the network nginx was
+	# on when it started, where the platform's Traefik is the only proxy. The
+	# test's curl reaches nginx through the network's gateway, which is on
+	# it; a peer on a network joined later is not trusted (checked above).
+	local subnet
+	subnet="$(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' "$net" | awk '{ print $1 }')"
+	check_eq "trusted proxies are the site network" "set_real_ip_from $subnet;" \
+		"$(docker exec "$nginx" cat /tmp/nginx/realip.conf)"
 
 	# --- WordPress security set (§6.1), PHP modules -------------------------
 	# The modules are off unless wp-config.php defines their constants; the

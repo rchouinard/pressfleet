@@ -75,6 +75,14 @@ type ProvisionerConfig struct {
 	// RedisAlias. Empty leaves sites without an object cache; only tests
 	// that don't need one do that.
 	RedisContainer string
+	// TraefikContainer is the platform's Traefik container
+	// (platform.TraefikContainer), connected to each site network under
+	// TraefikAlias so it can reach the site's nginx. PlatformProject is the
+	// platform's Compose project name, which Traefik only routes containers
+	// labeled with (ingress.PlatformLabel). Empty leaves sites unrouted;
+	// only tests that don't need routing do that.
+	TraefikContainer string
+	PlatformProject  string
 	// Docker runs the docker CLI; nil means DockerExec. Tests inject a fake.
 	Docker ExecFunc
 	// Logger receives lifecycle events; nil discards them.
@@ -112,6 +120,7 @@ type Provisioner struct {
 	log         *slog.Logger
 	waitTimeout time.Duration
 	smtp        *wpconfig.SMTP
+	platform    string // ProvisionerConfig.PlatformProject
 
 	wpcliDocker    ExecFunc // docker, but with bounded output
 	wpcliTimeout   time.Duration
@@ -119,7 +128,7 @@ type Provisioner struct {
 }
 
 // sharedService is a platform container that joins every site network under
-// a fixed alias. Traefik joins this list in M2.
+// a fixed alias.
 type sharedService struct {
 	container string
 	alias     string
@@ -153,6 +162,9 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 	if cfg.RedisContainer != "" {
 		shared = append(shared, sharedService{container: cfg.RedisContainer, alias: RedisAlias})
 	}
+	if cfg.TraefikContainer != "" {
+		shared = append(shared, sharedService{container: cfg.TraefikContainer, alias: TraefikAlias})
+	}
 	p := &Provisioner{
 		layout:         cfg.Layout,
 		secrets:        cfg.Secrets,
@@ -163,6 +175,7 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 		log:            cfg.Logger,
 		waitTimeout:    cfg.WaitTimeout,
 		smtp:           cfg.SMTP,
+		platform:       cfg.PlatformProject,
 		wpcliDocker:    cfg.Docker,
 		wpcliTimeout:   cfg.WPCLITimeout,
 		wpcliMaxOutput: cfg.WPCLIMaxOutput,
@@ -299,10 +312,11 @@ func (p *Provisioner) siteRender(ctx context.Context, cfg *provisioner.SiteConfi
 		return SiteRender{}, err
 	}
 	return SiteRender{
-		Site:     cfg,
-		Images:   SiteImages{PHP: images.PHP, Nginx: images.Nginx},
-		WPConfig: wpconfig.Params{DB: creds, Salts: salts, Redis: redis, SMTP: p.smtp},
-		Security: p.security,
+		Site:            cfg,
+		Images:          SiteImages{PHP: images.PHP, Nginx: images.Nginx},
+		WPConfig:        wpconfig.Params{DB: creds, Salts: salts, Redis: redis, SMTP: p.smtp},
+		Security:        p.security,
+		PlatformProject: p.platform,
 	}, nil
 }
 
@@ -375,7 +389,8 @@ func (p *Provisioner) GetSite(ctx context.Context, siteID string) (*provisioner.
 		return nil, fmt.Errorf("get site %s: %w", siteID, provisioner.ErrSiteNotFound)
 	}
 	phase, msg := sitePhase(containers)
-	// URL stays empty until routing exists (Traefik, M2).
+	// URL stays empty: the driver doesn't keep the site's domains; the
+	// site record has them (sites.URL).
 	return &provisioner.SiteStatus{ID: siteID, Phase: phase, Message: msg}, nil
 }
 
@@ -413,7 +428,7 @@ func (p *Provisioner) StopSite(ctx context.Context, siteID string) error {
 }
 
 // AttachSharedServices connects the platform services (MariaDB, the object
-// cache) to an existing site's network. Docker drops a container's
+// cache, Traefik) to an existing site's network. Docker drops a container's
 // connections to other projects' networks when it recreates the container,
 // so after a platform service is recreated (e.g. by an upgrade) running
 // sites can't reach it until this runs; the control plane calls it for every site at

@@ -3,6 +3,7 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/client"
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/e2e"
+	"github.com/rchouinard/pressfleet/control-plane/internal/ingress"
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
@@ -36,12 +38,9 @@ const jobTimeout = 6 * time.Minute
 //
 //  1. creates two sites, each in its own client group, through the API and
 //     waits for them to be provisioned;
-//  2. checks that WordPress is installed and answers over HTTP. "Reached
-//     over HTTP on the host" is read, for M1, as: a client container that
-//     the test starts on the host's Docker engine, attached to the site's
-//     network pf-<id>, gets WordPress pages from the site's nginx. The host
-//     itself can't reach a site until Traefik routes preview domains (M2),
-//     which is when this check should move to the host's own HTTP client;
+//  2. checks that WordPress is installed and answers over HTTPS on its
+//     preview domain, from the host through Traefik (#36), which reaches
+//     the site's nginx over the site network;
 //  3. checks that the two sites can't reach each other's containers by
 //     name or IP, while each reaches the platform MariaDB and object cache;
 //  4. changes a site's PHP version and stops and starts it (#28);
@@ -180,24 +179,77 @@ func TestSiteCreateDelete(t *testing.T) {
 		}
 	})
 
-	// answers checks that WordPress answers over HTTP: see step 2 in the
-	// test's documentation.
+	hc := p.IngressClient(t)
+	previewURL := "https://" + site.PreviewDomain
+
+	// answers checks that WordPress answers on the site's preview domain
+	// through Traefik: see step 2 in the test's documentation.
 	answers := func(t *testing.T) {
 		t.Helper()
-		home := fetch(t, images.PHP, site, "/")
-		if !strings.HasPrefix(home, "HTTP/1.1 200") || !strings.Contains(home, "<title>E2E Site") || !strings.Contains(home, "/wp-content/") {
+		resp, home := waitIngress(t, hc, previewURL+"/", nil, http.StatusOK)
+		if !strings.Contains(home, "<title>E2E Site") || !strings.Contains(home, "/wp-content/") {
 			t.Errorf("front page:\n%.800s", home)
 		}
-		// WordPress sends the login page's visitors to HTTPS. Only
-		// requests from a trusted proxy (Traefik, M2) count as HTTPS, so
-		// the redirect is WordPress answering.
-		login := fetch(t, images.PHP, site, "/wp-login.php")
-		if !strings.HasPrefix(login, "HTTP/1.1 302") || !strings.Contains(login, "X-Redirect-By: WordPress") ||
-			!strings.Contains(login, "Location: https://"+site.PreviewDomain+"/wp-login.php") {
+		if resp.ProtoMajor != 2 {
+			t.Errorf("protocol = %s, want HTTP/2", resp.Proto)
+		}
+		// Preview domains stay out of search engines (§5.1).
+		if got := resp.Header.Get("X-Robots-Tag"); got != "noindex" {
+			t.Errorf("X-Robots-Tag = %q, want noindex", got)
+		}
+		// WordPress only serves the login page over HTTPS. It serves it
+		// here, so it believes Traefik (a trusted proxy) that the request
+		// came over HTTPS.
+		if _, login := waitIngress(t, hc, previewURL+"/wp-login.php", nil, http.StatusOK); !strings.Contains(login, `name="log"`) {
 			t.Errorf("wp-login.php:\n%.800s", login)
 		}
+		resp, _ = ingressGet(t, hc, "http://"+site.PreviewDomain+"/about/?x=1", nil)
+		if loc := resp.Header.Get("Location"); resp.StatusCode/100 != 3 || loc != previewURL+"/about/?x=1" {
+			t.Errorf("HTTP: status %d, Location %q; want a redirect to HTTPS", resp.StatusCode, loc)
+		}
 	}
-	t.Run("WordPress is reached over HTTP from the Docker host", answers)
+	t.Run("WordPress is reached over HTTPS on its preview domain", answers)
+
+	// Traefik reaches nginx over the site network (#36), and nginx takes
+	// the client's address from Traefik's X-Forwarded-For, which Traefik
+	// sets itself rather than passing on the client's. So nginx's access
+	// log, and its login rate limit (§6.1), see the client rather than
+	// Traefik, and a client can't pick an address.
+	t.Run("nginx sees the client's address", func(t *testing.T) {
+		traefik, err := p.Project.ServiceContainer(ctx, ingress.TraefikService)
+		if err != nil {
+			t.Fatal(err)
+		}
+		traefikIP := traefik.Networks[siteProject.Name]
+		if traefikIP == "" {
+			t.Fatalf("Traefik isn't on %s: %v", siteProject.Name, traefik.Networks)
+		}
+		marker := "pf-client-" + strings.ToLower(rand.Text()[:8])
+		forged := http.Header{"X-Forwarded-For": {"203.0.113.9"}}
+		waitIngress(t, hc, previewURL+"/?"+marker, forged, http.StatusOK)
+		logs, err := siteProject.Logs(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var remote string
+		for line := range strings.Lines(string(logs)) {
+			i := strings.Index(line, "{")
+			if !strings.Contains(line, marker) || i < 0 {
+				continue
+			}
+			var entry struct {
+				RemoteAddr string `json:"remote_addr"`
+			}
+			if err := json.Unmarshal([]byte(line[i:]), &entry); err != nil {
+				t.Fatalf("access log line %q: %v", line, err)
+			}
+			remote = entry.RemoteAddr
+		}
+		t.Logf("nginx logged the client as %s; Traefik is %s", remote, traefikIP)
+		if remote == "" || remote == traefikIP || remote == "203.0.113.9" {
+			t.Errorf("nginx logged remote_addr %q; want the client, not Traefik (%s) or the forged address", remote, traefikIP)
+		}
+	})
 
 	t.Run("admin credentials are shown once", func(t *testing.T) {
 		if admin.Email != "owner@e2e.test" || admin.LoginURL != "https://"+site.PreviewDomain+"/wp-login.php" || len(admin.Password) < 20 {
@@ -526,7 +578,7 @@ func TestSiteCreateDelete(t *testing.T) {
 			t.Errorf("left in the sites directory: %s", e.Name())
 		}
 		// The platform services are on no site network any more.
-		for _, service := range []string{"mariadb", "redis"} {
+		for _, service := range []string{"mariadb", "redis", ingress.TraefikService} {
 			c, err := p.Project.ServiceContainer(ctx, service)
 			if err != nil {
 				t.Fatal(err)
@@ -613,7 +665,7 @@ func createSite(t *testing.T, p *e2e.Platform, groupID, name, php string) client
 }
 
 // fetch gets a page of the site from a throwaway client container on the
-// site's network, the way Traefik will reach it, and returns the response
+// site's network, the way Traefik reaches it, and returns the response
 // headers and body. The client is curl in the site's own php image, which
 // is already on the host. headers are extra request headers. Transient
 // failures (nginx re-resolving a recreated php) are retried for a while.

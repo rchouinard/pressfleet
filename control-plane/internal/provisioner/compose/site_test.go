@@ -52,7 +52,8 @@ func testSiteRender() compose.SiteRender {
 				AuthSalt: "s1", SecureAuthSalt: "s2", LoggedInSalt: "s3", NonceSalt: "s4",
 			},
 		},
-		Security: config.DefaultWordPressSecurity(),
+		Security:        config.DefaultWordPressSecurity(),
+		PlatformProject: "pressfleet",
 	}
 }
 
@@ -393,6 +394,12 @@ func TestRenderSiteInvalid(t *testing.T) {
 			in.WPConfig.Constants = []wpconfig.Constant{{Name: "DB_HOST", Value: "x"}}
 		},
 		"zero login rate": func(in *compose.SiteRender) { in.Security.LoginRateLimit.RequestsPerMinute = 0 },
+		"rule injection": func(in *compose.SiteRender) {
+			in.Site.PreviewDomain = "acme.example.com`) || Host(`other.example.com"
+		},
+		"uppercase domain": func(in *compose.SiteRender) { in.Site.PreviewDomain = "Acme.example.com" },
+		"bare domain":      func(in *compose.SiteRender) { in.Site.PreviewDomain = "localhost" },
+		"bad platform":     func(in *compose.SiteRender) { in.PlatformProject = "a`b" },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {

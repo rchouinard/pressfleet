@@ -25,7 +25,7 @@ import (
 // network or seeing each other (§4.1 Networking).
 const (
 	MariaDBAlias = "pf-mariadb"
-	TraefikAlias = "pf-traefik" // M2
+	TraefikAlias = "pf-traefik"
 	RedisAlias   = "pf-redis"
 )
 
@@ -83,6 +83,11 @@ type SiteRender struct {
 	// Security is the install-wide WordPress security set (§6.1), the
 	// same for every site. The zero value turns every feature off.
 	Security config.WordPressSecurityConfig
+	// PlatformProject is the platform's Compose project name
+	// (config.Config.PlatformProject), which the platform's Traefik only
+	// routes containers labeled with. Empty renders no routing labels, so
+	// the site is unreachable from outside; only tests do that.
+	PlatformProject string
 }
 
 // RenderResult says which files RenderSite changed, so the driver knows
@@ -182,6 +187,8 @@ type siteTemplateData struct {
 	EnableCache    bool
 	WPConfigFile   string
 	NginxSecurity  nginxSecurity
+	// RoutingLabels are nginx's Traefik labels (routing.go).
+	RoutingLabels []label
 }
 
 // nginxSecurity is the nginx half of the WordPress security set (§6.1), as
@@ -231,10 +238,18 @@ func siteData(dir string, in SiteRender) (siteTemplateData, error) {
 	if err != nil {
 		errs = append(errs, err)
 	}
+	if err := validateRouting(in.Site); err != nil {
+		errs = append(errs, err)
+	}
 	if err := errors.Join(errs...); err != nil {
 		return siteTemplateData{}, fmt.Errorf("%w: %w", ErrInvalidSite, err)
 	}
+	routing, err := routingLabels(in.PlatformProject, in.Site)
+	if err != nil {
+		return siteTemplateData{}, fmt.Errorf("%w: %w", ErrInvalidSite, err)
+	}
 	return siteTemplateData{
+		RoutingLabels:  routing,
 		Project:        SiteProjectName(in.Site.ID),
 		Network:        SiteProjectName(in.Site.ID),
 		SiteID:         in.Site.ID,

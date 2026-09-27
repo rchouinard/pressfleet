@@ -44,6 +44,8 @@ func (a *app) siteRuntime(cat *catalog.Catalog, secretStore secrets.Store, keys 
 		Images:            cat,
 		MariaDBContainer:  platform.MariaDBContainer(a.cfg.PlatformProject),
 		RedisContainer:    platform.RedisContainer(a.cfg.PlatformProject),
+		TraefikContainer:  platform.TraefikContainer(a.cfg.PlatformProject),
+		PlatformProject:   a.cfg.PlatformProject,
 		WordPressSecurity: a.cfg.WordPressSecurity,
 		Logger:            a.log.With("component", "provisioner"),
 		SMTP:              smtp,

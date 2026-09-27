@@ -84,6 +84,19 @@ services:
       pressfleet.managed: "true"
       pressfleet.site-id: "01k5z3m8q9r7t6v5w4x3y2z1ab"
       pressfleet.client-group-id: "01k5z3m8q9r7t6v5w4x3y2z1cg"
+      # Traefik routes the site's domains here (package ingress documents
+      # the names). Only nginx is routed; php is never reachable from
+      # outside the site network.
+      pressfleet.platform: "pressfleet"
+      traefik.docker.network: "pf-01k5z3m8q9r7t6v5w4x3y2z1ab"
+      traefik.enable: "true"
+      traefik.http.middlewares.pf-01k5z3m8q9r7t6v5w4x3y2z1ab-noindex.headers.customresponseheaders.X-Robots-Tag: "noindex"
+      traefik.http.routers.pf-01k5z3m8q9r7t6v5w4x3y2z1ab-preview.entrypoints: "websecure"
+      traefik.http.routers.pf-01k5z3m8q9r7t6v5w4x3y2z1ab-preview.middlewares: "pf-01k5z3m8q9r7t6v5w4x3y2z1ab-noindex"
+      traefik.http.routers.pf-01k5z3m8q9r7t6v5w4x3y2z1ab-preview.rule: "Host(`acme.preview.example.com`)"
+      traefik.http.routers.pf-01k5z3m8q9r7t6v5w4x3y2z1ab-preview.service: "pf-01k5z3m8q9r7t6v5w4x3y2z1ab"
+      traefik.http.routers.pf-01k5z3m8q9r7t6v5w4x3y2z1ab-preview.tls.certresolver: "acme-preview"
+      traefik.http.services.pf-01k5z3m8q9r7t6v5w4x3y2z1ab.loadbalancer.server.port: "8080"
     environment:
       # FastCGI page cache (SiteConfig.EnableCache). The cache volume below
       # holds it; php purges it (§5.6).

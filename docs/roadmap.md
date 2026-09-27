@@ -57,12 +57,12 @@ Done when: a site can be created in a client group via the API, reached over HTT
 | [#103](https://github.com/rchouinard/pressfleet/issues/103) | Authorization: roles and permission checks | P0 | M | #13 |
 | [#104](https://github.com/rchouinard/pressfleet/issues/104) | Audit log for state-changing actions | P1 | M | #103, #14 |
 
-**Status: complete (2026-09-27).** All issues are closed and the E2E workflow automates the "done when" criteria. Until Traefik lands in M2, "reached over HTTP on the host" means an HTTP client container on the host's Docker engine, attached to the site network (see [testing.md](testing.md)); M2 moves this check to the host itself.
+**Status: complete (2026-09-27).** All issues are closed and the E2E workflow automates the "done when" criteria. Until Traefik lands in M2, "reached over HTTP on the host" means an HTTP client container on the host's Docker engine, attached to the site network (see [testing.md](testing.md)); #36 moved this check to the host itself, through Traefik.
 
 Follow-ups carried out of M1:
 
-- ~~Pass `dashboard_domain` to the control plane container~~ (done in #33) and narrow `NGINX_TRUSTED_PROXIES` to the site subnet (with Traefik, M2).
-- Attach Traefik and Redis to site networks alongside MariaDB (M2); the provisioner keeps a list of shared services for this.
+- ~~Pass `dashboard_domain` to the control plane container~~ (done in #33) ~~and narrow `NGINX_TRUSTED_PROXIES` to the site subnet~~ (done in #36: site-nginx trusts only its own network by default, `NGINX_TRUSTED_PROXIES=local`).
+- ~~Attach Traefik and Redis to site networks alongside MariaDB~~ (done in #37 and #36, through the provisioner's list of shared services).
 - Record the actor's email on audit events so they stay readable after a user is deleted (needs a migration).
 - Prune expired sessions, job history, and state database backups on a schedule.
 - Give `pressfleet user create` a structured "user exists" exit code; `init --force` matches stderr today.

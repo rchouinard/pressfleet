@@ -44,7 +44,44 @@ address_list() {
 	done
 }
 
+# local_subnets: the IPv4 networks the container's interfaces are directly
+# attached to, as CIDRs, from the kernel's routing table. Connected routes
+# are the ones without a gateway. /proc/net/route prints addresses and masks
+# as little-endian hex, e.g. 0005C80A is 10.200.5.0.
+local_subnets() {
+	# shellcheck disable=SC2034 # the unused fields are named for clarity
+	while read -r iface dest gateway flags refcnt use metric mask rest; do
+		[ "$iface" != Iface ] && [ "$gateway" = 00000000 ] && [ "$dest" != 00000000 ] || continue
+		bits=0
+		m=$((0x$mask))
+		while [ "$m" -gt 0 ]; do
+			bits=$((bits + (m & 1)))
+			m=$((m >> 1))
+		done
+		printf '%d.%d.%d.%d/%d\n' "0x${dest#??????}" "0x$(echo "$dest" | cut -c5-6)" \
+			"0x$(echo "$dest" | cut -c3-4)" "0x$(echo "$dest" | cut -c1-2)" "$bits"
+	done </proc/net/route
+}
+
 mkdir -p "$run/client_body" "$run/fastcgi" "$run/proxy" "$run/uwsgi" "$run/scgi"
+
+# NGINX_TRUSTED_PROXIES may name "local", the container's own networks as
+# they are when it starts. A site's nginx is only on the site network, where
+# the only proxy is Traefik (design doc §4.1), so that trusts Traefik without
+# knowing its address, which Docker assigns when Traefik joins the network.
+trusted=""
+for entry in $(echo "${NGINX_TRUSTED_PROXIES-}" | tr ',' ' '); do
+	if [ "$entry" = local ]; then
+		trusted="$trusted $(local_subnets | tr '\n' ' ')"
+	else
+		trusted="$trusted $entry"
+	fi
+done
+NGINX_TRUSTED_PROXIES="$trusted"
+# Validate in this shell: die in the $(...) of the loops below would only
+# end the subshell.
+address_list NGINX_TRUSTED_PROXIES >/dev/null
+address_list NGINX_STATUS_ALLOW >/dev/null
 
 : >"$run/realip.conf"
 : >"$run/trusted-proxies.geo"

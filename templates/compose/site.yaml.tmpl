@@ -4,10 +4,10 @@
   The container side follows the site image runtime contract in
   images/README.md.
 
-  M2 extension points: Traefik router labels go on nginx only (after the
-  "labels" block); the Traefik and Redis platform containers join the site
-  network from outside, with the aliases the driver sets (compose.TraefikAlias,
-  compose.RedisAlias), so this file needs no change for them.
+  Traefik router labels go on nginx only; the driver builds them
+  (compose/routing.go). The Traefik, MariaDB, and Redis platform containers
+  join the site network from outside, under the aliases the driver sets
+  (compose.TraefikAlias, compose.MariaDBAlias, compose.RedisAlias).
 */ -}}
 # PressFleet site {{ .SiteID }} (design doc §4.1).
 #
@@ -91,6 +91,14 @@ services:
         condition: service_started
     labels:
 {{- template "labels" . }}
+{{- if .RoutingLabels }}
+      # Traefik routes the site's domains here (package ingress documents
+      # the names). Only nginx is routed; php is never reachable from
+      # outside the site network.
+{{- range .RoutingLabels }}
+      {{ .Key }}: {{ q .Value }}
+{{- end }}
+{{- end }}
     environment:
       # FastCGI page cache (SiteConfig.EnableCache). The cache volume below
       # holds it; php purges it (§5.6).

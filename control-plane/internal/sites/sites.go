@@ -609,7 +609,7 @@ type SharedServiceAttacher interface {
 
 // ReattachSharedServices reconnects the platform services to the network of
 // every site that has runtime resources. The Compose driver needs it after
-// a platform service container (MariaDB, the object cache) is recreated,
+// a platform service container (MariaDB, the object cache, Traefik) is recreated,
 // which drops its connections to site networks. It is best effort: failures
 // are logged, not returned, and sites being deleted are skipped so a delete
 // job isn't raced.

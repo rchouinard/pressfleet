@@ -12,7 +12,10 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 )
 
-const testRedis = "pressfleet-redis-1"
+const (
+	testRedis   = "pressfleet-redis-1"
+	testTraefik = "pressfleet-traefik-1"
+)
 
 // sharedDocker fakes the docker calls around the platform services of one
 // existing site: every shared container's networks, and the state-changing
@@ -59,16 +62,18 @@ func (f *sharedDocker) exec(_ context.Context, _ io.Reader, args ...string) ([]b
 	return nil, nil
 }
 
-// TestSharedServicesIncludeRedis checks that the object cache joins and
-// leaves site networks alongside MariaDB, under its own alias.
-func TestSharedServicesIncludeRedis(t *testing.T) {
-	docker := &sharedDocker{t: t, networks: map[string]map[string]bool{testMariaDB: {}, testRedis: {}}}
+// TestSharedServices checks that the object cache and Traefik join and
+// leave site networks alongside MariaDB, each under its own alias.
+func TestSharedServices(t *testing.T) {
+	docker := &sharedDocker{t: t, networks: map[string]map[string]bool{testMariaDB: {}, testRedis: {}, testTraefik: {}}}
 	prov, err := compose.NewProvisioner(compose.ProvisionerConfig{
 		Layout:           config.Layout{Root: t.TempDir()},
 		Secrets:          memSecrets{},
 		Images:           imageMap{},
 		MariaDBContainer: testMariaDB,
 		RedisContainer:   testRedis,
+		TraefikContainer: testTraefik,
+		PlatformProject:  "pressfleet",
 		Docker:           docker.exec,
 	})
 	if err != nil {
@@ -83,6 +88,7 @@ func TestSharedServicesIncludeRedis(t *testing.T) {
 	want := []string{
 		"network connect --alias " + compose.MariaDBAlias + " " + network + " " + testMariaDB,
 		"network connect --alias " + compose.RedisAlias + " " + network + " " + testRedis,
+		"network connect --alias " + compose.TraefikAlias + " " + network + " " + testTraefik,
 	}
 	if !slices.Equal(docker.calls, want) {
 		t.Errorf("attach calls:\n got %q\nwant %q", docker.calls, want)
@@ -95,6 +101,7 @@ func TestSharedServicesIncludeRedis(t *testing.T) {
 	want = []string{
 		"network disconnect " + network + " " + testMariaDB,
 		"network disconnect " + network + " " + testRedis,
+		"network disconnect " + network + " " + testTraefik,
 		"compose down",
 	}
 	if !slices.Equal(docker.calls, want) {
