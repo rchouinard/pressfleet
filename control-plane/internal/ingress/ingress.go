@@ -3,7 +3,8 @@
 // points, certificate resolvers, and site routes, and the DNS provider
 // credentials of the preview wildcard certificate. The platform package
 // renders Traefik with these names; the Compose driver puts them in site
-// containers' labels. It imports only package redact, so both can use it.
+// containers' labels and route files. It imports only package redact, so
+// both can use it.
 //
 // A container is routed only if it carries PlatformLabel set to the
 // platform's Compose project name (config.Config.PlatformProject) and
@@ -31,24 +32,49 @@
 // other domain shares. Middlewares meant for the preview domain alone
 // (noindex, [SuffixNoIndex]; the optional basic auth, [SuffixPreviewAuth])
 // are attached to that router only, so production domains never get them.
-// Go-live (#45) and aliases (#46) add routers of their own and must keep to
-// this:
 //
-//   - The primary domain and aliases get a router named with
-//     [SuffixPrimary] (one router whose rule ORs their Host matchers, or
-//     one per domain with a further suffix), using CertResolverHTTP and the
-//     HSTS middleware ([SuffixHSTS]), and never a preview middleware.
-//   - Once a site is live, its preview router redirects to the primary
-//     domain ([SuffixPreviewRedirect], a redirectRegex middleware) instead
-//     of serving the site. The preview middlewares stay in front of the
-//     redirect, so a protected preview domain doesn't reveal the primary
-//     domain to someone without its password.
-//   - Every router is mirrored by a maintenance twin while the site is in
-//     maintenance mode (see MaintenanceService), so a new router must be in
-//     the list the driver mirrors.
+// # Custom domains
+//
+// A live site's primary domain and aliases (design doc §5.2) are routed
+// from Traefik's file provider rather than from labels: the Compose driver
+// writes a file per live site, pf-<site-id>-domains.yaml ([SuffixDomains]),
+// into the directory Traefik watches. Traefik applies a changed file within
+// a couple of seconds without touching the site's containers, whereas a
+// changed label means recreating nginx and a gap in service while the new
+// container becomes healthy, so going live, changing the primary domain,
+// and adding or removing aliases cause no downtime. The file's routers use
+// the service the labels define, pf-<site-id>@docker, so they follow the
+// nginx container like the preview router does:
+//
+//   - pf-<site-id>-primary ([SuffixPrimary]) routes the primary domain with
+//     CertResolverHTTP and, when the security set's headers are on (§6.1),
+//     the HSTS middleware ([SuffixHSTS]; [HSTSMaxAge], no includeSubDomains).
+//     It never has a preview middleware.
+//   - pf-<site-id>-alias-<key> ([SuffixAlias], [AliasKey]) routes one alias
+//     each, so every alias gets a certificate of its own and one alias whose
+//     DNS is wrong can't hold up the others' certificates. They answer with
+//     a permanent redirect to the primary domain that keeps the path and
+//     query ([SuffixAliasRedirect]), after HSTS when it is on.
+//   - pf-<site-id>-preview-redirect ([SuffixPreviewRedirect]) takes over
+//     the preview domain from the preview router, at
+//     [PreviewRedirectPriority], and redirects it to the primary domain
+//     the same way. The preview middlewares stay in front of the redirect
+//     (the file defines its own copies), so a protected preview domain
+//     doesn't reveal the primary domain to someone without its password.
+//
+// The middlewares the file's routers use are defined in the same file, so
+// it depends on nothing of the site's but its service.
+//
+// Every router, label or file, is mirrored by a maintenance twin while the
+// site is in maintenance mode (see MaintenanceService); the driver builds
+// both from one list of the site's routers, so a new router must be in it.
 package ingress
 
-import "strings"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
+)
 
 // PlatformLabel is the container label Traefik's Docker provider is
 // constrained to. Its value must be the platform's Compose project name, so
@@ -98,8 +124,7 @@ const PreviewWildcardRouter = "pf-preview-wildcard"
 const TraefikService = "traefik"
 
 // Suffixes of the names of a site's Traefik routers and middlewares (see
-// [SiteName]). Names that #45 and #46 will use are reserved here so the
-// scheme is decided in one place.
+// [SiteName]), so the scheme is decided in one place.
 const (
 	// SuffixPreview names the router of the preview domain.
 	SuffixPreview = "preview"
@@ -109,15 +134,46 @@ const (
 	// SuffixPreviewAuth names the preview domain's optional basicAuth
 	// middleware (§5.1).
 	SuffixPreviewAuth = "preview-auth"
-	// SuffixPrimary names the router of the primary domain and aliases
-	// (#45, #46).
+	// SuffixPrimary names the router of the primary domain (§5.2).
 	SuffixPrimary = "primary"
-	// SuffixHSTS names the primary router's HSTS middleware (§6.1).
+	// SuffixAlias, followed by [AliasKey], names the router of an alias.
+	SuffixAlias = "alias"
+	// SuffixHSTS names the HSTS middleware of the primary domain and
+	// aliases (§6.1).
 	SuffixHSTS = "hsts"
-	// SuffixPreviewRedirect names the middleware that redirects the
-	// preview domain to the primary domain after go-live (§5.2).
+	// SuffixPreviewRedirect names the router and the middleware that
+	// redirect the preview domain to the primary domain after go-live
+	// (§5.2).
 	SuffixPreviewRedirect = "preview-redirect"
+	// SuffixAliasRedirect names the middleware that redirects aliases to
+	// the primary domain.
+	SuffixAliasRedirect = "alias-redirect"
+	// SuffixDomains names a live site's file of custom domain routes in
+	// Traefik's file provider directory (plus ".yaml").
+	SuffixDomains = "domains"
 )
+
+// PreviewRedirectPriority is the priority of a live site's preview
+// redirect router. Traefik gives routers without a priority the length of
+// their rule, which for the preview router's rule is far below this, so
+// the redirect takes the preview domain over; maintenance routers
+// (MaintenancePriority) are above it.
+const PreviewRedirectPriority = 10000
+
+// HSTSMaxAge is the max-age, in seconds, of the Strict-Transport-Security
+// header on production domains: one year, without includeSubDomains, since
+// a client's other subdomains may not serve HTTPS (§6.1).
+const HSTSMaxAge = 31536000
+
+// AliasKey is the part of an alias's router name that identifies the
+// alias: the first 10 hex digits of the SHA-256 of the domain. Router
+// names can't contain dots, and replacing them could make two aliases
+// collide (a-b.example and a.b-example); a hash keeps each alias's name
+// stable however the list changes.
+func AliasKey(domain string) string {
+	sum := sha256.Sum256([]byte(domain))
+	return hex.EncodeToString(sum[:5])
+}
 
 // SiteService is the Traefik service of a site's nginx container. It has
 // the name of the site's Compose project, pf-<site-id>.

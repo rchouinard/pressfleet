@@ -24,7 +24,7 @@ Run it as root (or a user in the `docker` group who can write `/etc/pressfleet` 
 | --- | --- | --- | --- |
 | Dashboard domain | `--dashboard-domain` | `PRESSFLEET_DASHBOARD_DOMAIN` | (required) |
 | Preview base domain | `--preview-base-domain` | `PRESSFLEET_PREVIEW_BASE_DOMAIN` | (required) |
-| Public IP, only needed behind NAT | `--public-ip` | `PRESSFLEET_PUBLIC_IP` | (unset) |
+| Public IP, for checking DNS records behind NAT | `--public-ip` | `PRESSFLEET_PUBLIC_IP` | (unset) |
 | Data directory | `--data-dir` | `PRESSFLEET_DATA_DIR` | `/var/lib/pressfleet` |
 | Master key file | `--master-key-file` | `PRESSFLEET_MASTER_KEY_FILE` | `master.key` next to the config file |
 | First admin's email address | `--admin-email` | | (required) |
@@ -125,6 +125,12 @@ The master key is printed on standard output (the line starting with `pfmk1:`); 
 - Reuses the object cache admin password in `<data_dir>/platform/secrets/redis_admin_password`, so the running control plane's password stays valid. The object cache server itself only gets its SHA-256 hash, in `<data_dir>/platform/redis/valkey.conf`.
 - Keeps the encrypted DNS provider credentials the same way unless `--dns-credentials-file` gives new ones, in which case it recreates Traefik so it reads them.
 - Leaves an existing admin user with the same email alone. To set a new password, run `pressfleet user reset-password` in the control plane container.
+
+## DNS for custom domains
+
+Sites start on their preview domain. To go live on a client's own domain (`POST /api/v1/sites/{id}/go-live`, see [Custom domains](configuration.md#custom-domains)), the client's DNS must point the domain, and every alias, at this host first: A records to its public IPv4 address and, if it has one, AAAA records to its IPv6 address, and no records pointing anywhere else. A CNAME to the dashboard domain works too. Lower the records' TTL a day ahead to make the switch quick.
+
+The control plane checks this before it changes anything, against `public_ip` and the addresses the dashboard domain resolves to, and refuses a domain that points elsewhere with an explanation; send the request again once the change has propagated. Behind NAT, give `--public-ip` so the check knows the host's public address. Behind a CDN or load balancer, domains resolve to it rather than to this host; skip the check per request with `skip_dns_check`, and make sure plain-HTTP requests for `/.well-known/acme-challenge/` reach this host's port 80, where Traefik gets each domain's certificate.
 
 ## Not yet collected
 

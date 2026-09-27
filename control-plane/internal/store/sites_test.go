@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -52,7 +53,7 @@ func TestSites(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got != *s {
+		if !reflect.DeepEqual(got, *s) {
 			t.Errorf("Get = %+v\nwant %+v", got, *s)
 		}
 

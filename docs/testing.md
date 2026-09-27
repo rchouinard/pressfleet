@@ -14,7 +14,7 @@ Unit tests never need Docker. Besides `make test-platform`, a few packages have 
 
 The end-to-end tests live in `control-plane/internal/e2e`. For each test, the harness:
 
-1. Renders the platform project (control plane, MariaDB, the object cache, Traefik, and its socket proxy) into a temporary data directory, under a unique Compose project name (`pfe2e-<random>`), with a throwaway master key outside the data directory. Host preflight checks are skipped. The dashboard domain is `fleet.e2e.test` and the ACME directory is `https://acme.invalid/directory`, which never resolves: tests never ask Let's Encrypt for certificates, and Traefik serves its self-signed default certificate.
+1. Renders the platform project (control plane, MariaDB, the object cache, Traefik, and its socket proxy) into a temporary data directory, under a unique Compose project name (`pfe2e-<random>`), with a throwaway master key outside the data directory. Host preflight checks are skipped. The dashboard domain is `fleet.e2e.test` and the ACME directory is `https://acme.invalid/directory`, which never resolves: tests never ask Let's Encrypt for certificates, and Traefik serves its self-signed default certificate. `public_ip` is `192.0.2.10` (TEST-NET-1), so the go-live DNS check knows where domains should point, and refuses the test domains, which resolve nowhere.
 2. Adds a `compose.override.yaml` that publishes the control plane on an ephemeral `127.0.0.1` port, which the real platform never does, and replaces Traefik's ports 80 and 443 with ephemeral `127.0.0.1` ports (TCP only; `ports: !override`). So platforms never take the host's ports 80 and 443, and any number of them can run side by side, next to whatever else uses those ports.
 3. Starts the project and waits until the containers are healthy and `GET /readyz` returns `200`.
 4. Creates an admin user with `pressfleet user create --password-stdin` inside the control plane container, then logs in.
@@ -77,6 +77,17 @@ The test can't read a site's project directory: the control plane runs as root a
 - **Maintenance mode (#44).** With maintenance mode on, the preview domain answers `503` with `Retry-After` and the maintenance page (the test logs how long that took), also after the site is stopped and started again, and WP-CLI still works in the site. Turning it off serves the site again.
 
 Deleting the site at the end runs through its job.
+
+#### Go-live
+
+`TestSiteGoLive` provisions one site, gives it a post linking to its preview URL and a serialized option holding it, and checks go-live (#45) through `p.IngressClient`:
+
+- **DNS check.** Going live on `www.golive.e2e.test` with alias `golive.e2e.test` is refused with `422`, the DNS problem type, and an error per domain naming `192.0.2.10`, and the site is unchanged. The "retry after DNS failure succeeds" criterion is covered by unit tests with a fake resolver whose records change between attempts (packages `domains`, `sites`, and `api`); here nothing can make the test domains resolve, so the next request skips the check.
+- **Going live** with `skip_dns_check`. The primary domain serves the site over HTTP/2 with the primary domain's URLs, `Strict-Transport-Security: max-age=31536000`, and no `X-Robots-Tag`, and plain HTTP redirects to HTTPS. `home` and `siteurl`, the post, and the serialized option name the primary domain; the post's GUID is unchanged. The preview domain (with `noindex`) and the alias (with HSTS) answer `301` to the primary domain, keeping path and query. nginx wasn't recreated.
+- **Protected preview.** With preview protection on, the preview domain answers `401` without a `Location`, and `301` with the password; the primary domain doesn't ask for it.
+- **Maintenance mode** puts the primary domain, the alias, and the preview domain on the maintenance page, and back.
+
+After the site is deleted, its primary domain gets Traefik's `404`. Valid certificates for custom domains need a certificate authority; the M2 acceptance test with Pebble (#48) checks them.
 
 ### Writing a test
 

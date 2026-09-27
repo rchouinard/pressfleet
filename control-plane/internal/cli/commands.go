@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
@@ -17,6 +18,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
+	"github.com/rchouinard/pressfleet/control-plane/internal/domains"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
 	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache/redis"
@@ -64,6 +66,14 @@ func (a *app) siteRuntime(cat *catalog.Catalog, secretStore secrets.Store, keys 
 		return nil, nil, err
 	}
 	return prov, siteDBs, nil
+}
+
+// dnsChecker returns the check that a site's new domains resolve to this
+// host (package domains): to public_ip, which config validation has
+// checked, or to the dashboard domain's addresses.
+func (a *app) dnsChecker() *domains.Checker {
+	publicIP, _ := netip.ParseAddr(a.cfg.PublicIP)
+	return domains.NewChecker(domains.Options{PublicIP: publicIP, DashboardDomain: a.cfg.DashboardDomain})
 }
 
 // objectCaches returns the manager of site users on the shared object
@@ -157,6 +167,8 @@ func (a *app) serveCommand() *cobra.Command {
 				Databases:         siteDBs,
 				ObjectCaches:      caches,
 				TwoFactor:         a.cfg.WordPressSecurity.TwoFactor,
+				DashboardDomain:   a.cfg.DashboardDomain,
+				DNSChecker:        a.dnsChecker(),
 				Logger:            a.log.With("component", "sites"),
 			})
 			if err != nil {

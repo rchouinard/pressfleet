@@ -539,6 +539,14 @@ type CurrentUser struct {
 // CurrentUserAuthMethod defines model for CurrentUser.AuthMethod.
 type CurrentUserAuthMethod string
 
+// Domain A host name, such as `www.acme.example`: letters, digits, and
+// hyphens, at least two labels, no scheme, port, path, or wildcard.
+// Internationalized names are given in their ASCII (`xn--`) form. It
+// is stored in lower case without a trailing dot.
+//
+// Examples: www.acme.example
+type Domain = string
+
 // Email defines model for Email.
 type Email = openapi_types.Email
 
@@ -605,7 +613,7 @@ type Job struct {
 
 	// Type What the job does. New types are added over time; treat unknown values as opaque.
 	//
-	// Examples: site.create, site.update, site.delete, site.start, site.stop
+	// Examples: site.create, site.update, site.delete, site.start, site.stop, site.go_live
 	Type string `json:"type"`
 
 	// UpdatedAt Examples: 2026-09-26T17:25:00Z
@@ -822,7 +830,7 @@ type Site struct {
 	// AdminCredentialsAvailable Whether the initial WordPress admin credentials can still be retrieved.
 	AdminCredentialsAvailable bool `json:"admin_credentials_available"`
 
-	// Aliases Additional domains that redirect to the primary domain.
+	// Aliases Additional domains that redirect to the primary domain, sorted. Empty until the site goes live.
 	Aliases []string `json:"aliases"`
 
 	// ClientGroupID Opaque, server-assigned identifier.
@@ -863,7 +871,7 @@ type Site struct {
 	// generated.
 	PreviewProtection PreviewProtection `json:"preview_protection"`
 
-	// PrimaryDomain Null until the site goes live.
+	// PrimaryDomain The domain the site is served on once live (`POST /api/v1/sites/{site_id}/go-live`); null until then.
 	PrimaryDomain *string `json:"primary_domain"`
 
 	// Resources Limits for the site as a whole; the platform splits them between the site's containers.
@@ -948,6 +956,31 @@ type SiteCreate struct {
 
 	// Resources Partial resource limits. Omitted fields keep their current value, or the platform default when creating a site.
 	Resources *ResourceLimitsUpdate `json:"resources,omitempty"`
+}
+
+// SiteGoLive defines model for SiteGoLive.
+type SiteGoLive struct {
+	// Aliases Domains that redirect to the primary domain, each with a
+	// certificate of its own. They replace the site's aliases;
+	// omitted means none.
+	//
+	//
+	// Examples: ["acme.example"]
+	Aliases *[]Domain `json:"aliases,omitempty"`
+
+	// PrimaryDomain A host name, such as `www.acme.example`: letters, digits, and
+	// hyphens, at least two labels, no scheme, port, path, or wildcard.
+	// Internationalized names are given in their ASCII (`xn--`) form. It
+	// is stored in lower case without a trailing dot.
+	//
+	//
+	// Examples: www.acme.example
+	PrimaryDomain Domain `json:"primary_domain"`
+
+	// SkipDNSCheck Skip the check that the domains resolve to this host, for hosts
+	// behind a CDN or load balancer. The certificates still need the
+	// domains to reach this host on port 80.
+	SkipDNSCheck *bool `json:"skip_dns_check,omitempty"`
 }
 
 // SiteList defines model for SiteList.
@@ -1129,6 +1162,9 @@ type Unauthorized = Problem
 // UnprocessableContent RFC 9457 Problem Details. Additional members may be added.
 type UnprocessableContent = Problem
 
+// UnprocessableDomains RFC 9457 Problem Details. Additional members may be added.
+type UnprocessableDomains = Problem
+
 // ListAuditEventsParams defines parameters for ListAuditEvents.
 type ListAuditEventsParams struct {
 	// Limit Maximum number of items to return.
@@ -1240,6 +1276,9 @@ type CreateSiteJSONRequestBody = SiteCreate
 // UpdateSiteJSONRequestBody defines body for UpdateSite for application/json ContentType.
 type UpdateSiteJSONRequestBody = SiteUpdate
 
+// GoLiveSiteJSONRequestBody defines body for GoLiveSite for application/json ContentType.
+type GoLiveSiteJSONRequestBody = SiteGoLive
+
 // SetSiteMaintenanceJSONRequestBody defines body for SetSiteMaintenance for application/json ContentType.
 type SetSiteMaintenanceJSONRequestBody = SiteMaintenance
 
@@ -1317,6 +1356,9 @@ type ServerInterface interface {
 	// PurgeSiteCache Purge a site's caches
 	// (POST /api/v1/sites/{site_id}/cache/purge)
 	PurgeSiteCache(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// GoLiveSite Switch a site to its primary domain
+	// (POST /api/v1/sites/{site_id}/go-live)
+	GoLiveSite(w http.ResponseWriter, r *http.Request, siteID SiteID)
 	// SetSiteMaintenance Turn maintenance mode on or off
 	// (PUT /api/v1/sites/{site_id}/maintenance)
 	SetSiteMaintenance(w http.ResponseWriter, r *http.Request, siteID SiteID)
@@ -2092,6 +2134,32 @@ func (siw *ServerInterfaceWrapper) PurgeSiteCache(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GoLiveSite operation middleware
+func (siw *ServerInterfaceWrapper) GoLiveSite(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GoLiveSite(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SetSiteMaintenance operation middleware
 func (siw *ServerInterfaceWrapper) SetSiteMaintenance(w http.ResponseWriter, r *http.Request) {
 
@@ -2524,6 +2592,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/cache/purge", wrapper.PurgeSiteCache)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/admin-credentials", wrapper.RetrieveSiteAdminCredentials)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/sites/{site_id}/maintenance", wrapper.SetSiteMaintenance)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/go-live", wrapper.GoLiveSite)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/preview-password", wrapper.RegenerateSitePreviewPassword)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs", wrapper.ListJobs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs/{job_id}", wrapper.GetJob)
@@ -2556,6 +2625,8 @@ type TooManyRequestsApplicationProblemPlusJSONResponse struct {
 type UnauthorizedApplicationProblemPlusJSONResponse Problem
 
 type UnprocessableContentApplicationProblemPlusJSONResponse Problem
+
+type UnprocessableDomainsApplicationProblemPlusJSONResponse Problem
 
 type ListAuditEventsRequestObject struct {
 	Params ListAuditEventsParams
@@ -4829,6 +4900,152 @@ func (response PurgeSiteCachedefaultApplicationProblemPlusJSONResponse) VisitPur
 	return err
 }
 
+type GoLiveSiteRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+	Body   *GoLiveSiteJSONRequestBody
+}
+
+type GoLiveSiteResponseObject interface {
+	VisitGoLiveSiteResponse(w http.ResponseWriter) error
+}
+
+type GoLiveSite202ResponseHeaders struct {
+	Location *string
+}
+
+type GoLiveSite202JSONResponse struct {
+	Body    SiteAccepted
+	Headers GoLiveSite202ResponseHeaders
+}
+
+func (response GoLiveSite202JSONResponse) VisitGoLiveSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GoLiveSite400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response GoLiveSite400ApplicationProblemPlusJSONResponse) VisitGoLiveSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GoLiveSite401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GoLiveSite401ApplicationProblemPlusJSONResponse) VisitGoLiveSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GoLiveSite403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GoLiveSite403ApplicationProblemPlusJSONResponse) VisitGoLiveSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GoLiveSite404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response GoLiveSite404ApplicationProblemPlusJSONResponse) VisitGoLiveSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GoLiveSite409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response GoLiveSite409ApplicationProblemPlusJSONResponse) VisitGoLiveSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GoLiveSite422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableDomainsApplicationProblemPlusJSONResponse
+}
+
+func (response GoLiveSite422ApplicationProblemPlusJSONResponse) VisitGoLiveSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GoLiveSitedefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GoLiveSitedefaultApplicationProblemPlusJSONResponse) VisitGoLiveSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type SetSiteMaintenanceRequestObject struct {
 	SiteID SiteID `json:"site_id"`
 	Body   *SetSiteMaintenanceJSONRequestBody
@@ -5978,6 +6195,9 @@ type StrictServerInterface interface {
 	// PurgeSiteCache Purge a site's caches
 	// (POST /api/v1/sites/{site_id}/cache/purge)
 	PurgeSiteCache(ctx context.Context, request PurgeSiteCacheRequestObject) (PurgeSiteCacheResponseObject, error)
+	// GoLiveSite Switch a site to its primary domain
+	// (POST /api/v1/sites/{site_id}/go-live)
+	GoLiveSite(ctx context.Context, request GoLiveSiteRequestObject) (GoLiveSiteResponseObject, error)
 	// SetSiteMaintenance Turn maintenance mode on or off
 	// (PUT /api/v1/sites/{site_id}/maintenance)
 	SetSiteMaintenance(ctx context.Context, request SetSiteMaintenanceRequestObject) (SetSiteMaintenanceResponseObject, error)
@@ -6652,6 +6872,39 @@ func (sh *strictHandler) PurgeSiteCache(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PurgeSiteCacheResponseObject); ok {
 		if err := validResponse.VisitPurgeSiteCacheResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GoLiveSite operation middleware
+func (sh *strictHandler) GoLiveSite(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request GoLiveSiteRequestObject
+
+	request.SiteID = siteID
+
+	var body GoLiveSiteJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GoLiveSite(ctx, request.(GoLiveSiteRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GoLiveSite")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GoLiveSiteResponseObject); ok {
+		if err := validResponse.VisitGoLiveSiteResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

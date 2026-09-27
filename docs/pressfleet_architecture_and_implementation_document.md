@@ -2,7 +2,7 @@
 
 **Project Codename:** PressFleet  
 **Status:** Draft  
-**Last Updated:** 2026-09-26  
+**Last Updated:** 2026-09-27  
 **Target Audience:** Agencies specializing in WordPress development and management  
 **Core Vision:** A self-hostable, containerized application server for WordPress—a smaller-scale, open-source alternative to WP Engine featuring one-click deployments, automatic TLS, page/object caching, built-in monitoring, file management, and automated backup/restore routines.
 
@@ -401,11 +401,13 @@ All long-running operations run as **Jobs**. API endpoints that start them retur
 
 ### 5.2. Go-Live (Domain Switch) Workflow
 1. **User Request:** Agency user sets the primary domain (and optional aliases) on the site.
-2. **DNS Check:** Control plane verifies the domain resolves to the host and reports clearly if not. The user may retry once DNS has propagated.
-3. **Routing & TLS:** `Provisioner.UpdateSite` adds Traefik routes for the primary domain and aliases; Traefik obtains certificates via HTTP-01.
+2. **DNS Check:** Before anything changes, the control plane verifies that each new domain's A and AAAA records all point at the host (its configured public IP or the dashboard domain's addresses) and reports clearly if not. Nothing is recorded, so the user simply retries once DNS has propagated. Hosts behind a CDN or load balancer can skip the check.
+3. **Routing & TLS:** `Provisioner.UpdateSite` adds Traefik routes for the primary domain and aliases; Traefik obtains a certificate per domain via HTTP-01. The Compose driver puts these routes in Traefik's file provider rather than in container labels, so going live and later domain changes recreate no container.
 4. **URL Update:** Runs `wp search-replace` from the preview URL to the primary URL and updates `home`/`siteurl`.
 5. **Cache Purge:** Purges the FastCGI page cache and the site's object cache.
-6. **Preview Redirect:** The preview domain permanently redirects to the primary domain.
+6. **Preview Redirect:** The preview domain (behind its noindex header and optional password) and the aliases permanently redirect to the primary domain.
+
+A go-live that fails before the URL update rolls back to the previous domains. Once the URL update has started it no longer rolls back, because reverting `wp search-replace` isn't safe; the site keeps its new domains, and going live again with the same domains finishes the update. Changing the primary domain later is another go-live; returning to the preview domain alone isn't supported.
 
 ### 5.3. Backup Workflow
 1. Triggered on schedule or on demand; runs as a Job in the control plane's worker pool.

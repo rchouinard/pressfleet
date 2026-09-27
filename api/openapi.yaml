@@ -989,6 +989,93 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/sites/{site_id}/go-live:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    post:
+      operationId: goLiveSite
+      tags: [sites]
+      summary: Switch a site to its primary domain
+      description: |
+        Sets the site's primary domain and aliases and queues a job that
+        switches the site to them (design doc §5.2):
+
+        1. The edge router routes the primary domain and each alias, and
+           gets a certificate for each with the ACME HTTP-01 challenge. The
+           site's containers aren't recreated.
+        2. WordPress's URLs are rewritten from the preview domain (and any
+           earlier primary domain) to `https://<primary_domain>` with
+           `wp search-replace`, serialized data included and GUIDs left
+           alone, and `home` and `siteurl` are set to it.
+        3. The site's object cache and page cache are purged.
+
+        From then on, the preview domain and the aliases answer with a
+        permanent redirect (`301`) to the primary domain that keeps the path
+        and query. A protected preview domain asks for its password before
+        redirecting. The primary domain and aliases never ask for the
+        preview password, never send `X-Robots-Tag: noindex`, and, when the
+        platform's security headers are on, send
+        `Strict-Transport-Security: max-age=31536000` (without
+        `includeSubDomains`).
+
+        **DNS check.** Before anything changes, the control plane checks
+        that each domain the site doesn't have yet resolves (A and AAAA) to
+        this host only: to `public_ip` or the dashboard domain's addresses.
+        If one doesn't, the request fails with `422` and the problem type
+        `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#dns-check`,
+        with one entry in `errors` per domain saying what it resolves to and
+        where it should point. Nothing is recorded; send the request again
+        once the records have propagated. Hosts behind a CDN or load
+        balancer, whose domains resolve elsewhere, set `skip_dns_check`.
+
+        The response contains the site with the new domains and status
+        `updating`, and the job. If the job fails before WordPress's URLs
+        are rewritten, it reverts: the previous domains and routes are back
+        and `status_message` says why. If it fails later, the site keeps its
+        new domains and `status_message` says the go-live didn't finish;
+        going live again with the same domains finishes it.
+
+        Going live again with another primary domain moves the site: the
+        old primary domain's URLs are rewritten too, and it stops being
+        served unless it is listed as an alias. Going back to the preview
+        domain alone isn't supported.
+
+        The site must be `running` (`409` otherwise). A site that is
+        `provisioning`, `updating`, or `deleting`, or whose provisioning
+        failed, returns `409` too. A domain under the preview base domain,
+        the dashboard's domain, or one another site uses is refused with
+        `422`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SiteGoLive"
+      responses:
+        "202":
+          description: The site with its new domains, and the job that applies them.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableDomains"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/sites/{site_id}/preview-password:
     parameters:
       - $ref: "#/components/parameters/SiteID"
@@ -1271,6 +1358,19 @@ components:
             $ref: "#/components/schemas/Problem"
     UnprocessableContent:
       description: The request is well-formed but fails validation. `errors` lists each invalid field.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    UnprocessableDomains:
+      description: |
+        A domain fails validation (`about:blank`), or its DNS records don't
+        point at this host (type
+        `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#dns-check`,
+        title `DNS check failed`). Either way `errors` lists each domain's
+        problem, and nothing was changed. A DNS check that couldn't run at
+        all, because the control plane doesn't know this host's public
+        address, has the DNS type, no `errors`, and says why in `detail`.
       content:
         application/problem+json:
           schema:
@@ -1782,14 +1882,14 @@ components:
           description: "`<slug>.<preview-base-domain>`; always reachable over HTTPS."
           examples: ["acme-marketing.preview.agency.example"]
         primary_domain:
-          description: Null until the site goes live.
+          description: The domain the site is served on once live (`POST /api/v1/sites/{site_id}/go-live`); null until then.
           oneOf:
             - type: string
               examples: ["www.acme.example"]
             - type: "null"
         aliases:
           type: array
-          description: Additional domains that redirect to the primary domain.
+          description: Additional domains that redirect to the primary domain, sorted. Empty until the site goes live.
           items:
             type: string
         php_version:
@@ -1883,6 +1983,42 @@ components:
           $ref: "#/components/schemas/Job"
         preview_credentials:
           $ref: "#/components/schemas/PreviewCredentials"
+
+    Domain:
+      type: string
+      description: |
+        A host name, such as `www.acme.example`: letters, digits, and
+        hyphens, at least two labels, no scheme, port, path, or wildcard.
+        Internationalized names are given in their ASCII (`xn--`) form. It
+        is stored in lower case without a trailing dot.
+      minLength: 1
+      maxLength: 253
+      examples: ["www.acme.example"]
+
+    SiteGoLive:
+      type: object
+      required: [primary_domain]
+      additionalProperties: false
+      properties:
+        primary_domain:
+          $ref: "#/components/schemas/Domain"
+        aliases:
+          type: array
+          description: |
+            Domains that redirect to the primary domain, each with a
+            certificate of its own. They replace the site's aliases;
+            omitted means none.
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/Domain"
+          examples: [["acme.example"]]
+        skip_dns_check:
+          type: boolean
+          default: false
+          description: |
+            Skip the check that the domains resolve to this host, for hosts
+            behind a CDN or load balancer. The certificates still need the
+            domains to reach this host on port 80.
 
     SiteMaintenance:
       type: object
@@ -2056,7 +2192,7 @@ components:
         type:
           type: string
           description: What the job does. New types are added over time; treat unknown values as opaque.
-          examples: ["site.create", "site.update", "site.delete", "site.start", "site.stop"]
+          examples: ["site.create", "site.update", "site.delete", "site.start", "site.stop", "site.go_live"]
         target:
           $ref: "#/components/schemas/JobTarget"
         state:

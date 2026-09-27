@@ -58,6 +58,13 @@ const PreviewBaseDomain = "preview.e2e.test"
 // name) to Traefik's published port (Platform.HTTPSAddr).
 const DashboardDomain = "fleet.e2e.test"
 
+// PublicIP is the public_ip of platforms Start boots, an address from
+// TEST-NET-1 (RFC 5737) that nothing resolves to. So the go-live DNS check
+// (package domains) runs, knows where domains should point, and refuses
+// every test domain, which don't resolve at all; tests that go live skip
+// it.
+const PublicIP = "192.0.2.10"
+
 // ACMECAServer is the ACME directory of platforms the harness boots. The
 // .invalid top-level domain never resolves (RFC 6761), so Traefik can't
 // reach a certificate authority and serves its self-signed default
@@ -161,6 +168,7 @@ func Start(t *testing.T) *Platform {
 		SkipPreflight:     true,
 		PreviewBaseDomain: PreviewBaseDomain,
 		DashboardDomain:   DashboardDomain,
+		PublicIP:          PublicIP,
 		ACME:              platform.ACMEConfig{CAServer: ACMECAServer},
 	}
 	dir := layout.PlatformDir()

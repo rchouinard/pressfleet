@@ -778,6 +778,7 @@ func (i *installer) startPlatform(ctx context.Context, a initAnswers) error {
 		MasterKeyFile:       a.MasterKeyFile,
 		SkipPreflight:       i.f.skipPreflight,
 		PreviewBaseDomain:   a.PreviewBaseDomain,
+		PublicIP:            a.PublicIP,
 		SMTP:                a.smtpConfig(),
 		DashboardDomain:     a.DashboardDomain,
 		ACME: platform.ACMEConfig{

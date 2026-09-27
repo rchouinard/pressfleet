@@ -539,6 +539,14 @@ type CurrentUser struct {
 // CurrentUserAuthMethod defines model for CurrentUser.AuthMethod.
 type CurrentUserAuthMethod string
 
+// Domain A host name, such as `www.acme.example`: letters, digits, and
+// hyphens, at least two labels, no scheme, port, path, or wildcard.
+// Internationalized names are given in their ASCII (`xn--`) form. It
+// is stored in lower case without a trailing dot.
+//
+// Examples: www.acme.example
+type Domain = string
+
 // Email defines model for Email.
 type Email = openapi_types.Email
 
@@ -605,7 +613,7 @@ type Job struct {
 
 	// Type What the job does. New types are added over time; treat unknown values as opaque.
 	//
-	// Examples: site.create, site.update, site.delete, site.start, site.stop
+	// Examples: site.create, site.update, site.delete, site.start, site.stop, site.go_live
 	Type string `json:"type"`
 
 	// UpdatedAt Examples: 2026-09-26T17:25:00Z
@@ -822,7 +830,7 @@ type Site struct {
 	// AdminCredentialsAvailable Whether the initial WordPress admin credentials can still be retrieved.
 	AdminCredentialsAvailable bool `json:"admin_credentials_available"`
 
-	// Aliases Additional domains that redirect to the primary domain.
+	// Aliases Additional domains that redirect to the primary domain, sorted. Empty until the site goes live.
 	Aliases []string `json:"aliases"`
 
 	// ClientGroupID Opaque, server-assigned identifier.
@@ -863,7 +871,7 @@ type Site struct {
 	// generated.
 	PreviewProtection PreviewProtection `json:"preview_protection"`
 
-	// PrimaryDomain Null until the site goes live.
+	// PrimaryDomain The domain the site is served on once live (`POST /api/v1/sites/{site_id}/go-live`); null until then.
 	PrimaryDomain *string `json:"primary_domain"`
 
 	// Resources Limits for the site as a whole; the platform splits them between the site's containers.
@@ -948,6 +956,31 @@ type SiteCreate struct {
 
 	// Resources Partial resource limits. Omitted fields keep their current value, or the platform default when creating a site.
 	Resources *ResourceLimitsUpdate `json:"resources,omitempty"`
+}
+
+// SiteGoLive defines model for SiteGoLive.
+type SiteGoLive struct {
+	// Aliases Domains that redirect to the primary domain, each with a
+	// certificate of its own. They replace the site's aliases;
+	// omitted means none.
+	//
+	//
+	// Examples: ["acme.example"]
+	Aliases *[]Domain `json:"aliases,omitempty"`
+
+	// PrimaryDomain A host name, such as `www.acme.example`: letters, digits, and
+	// hyphens, at least two labels, no scheme, port, path, or wildcard.
+	// Internationalized names are given in their ASCII (`xn--`) form. It
+	// is stored in lower case without a trailing dot.
+	//
+	//
+	// Examples: www.acme.example
+	PrimaryDomain Domain `json:"primary_domain"`
+
+	// SkipDNSCheck Skip the check that the domains resolve to this host, for hosts
+	// behind a CDN or load balancer. The certificates still need the
+	// domains to reach this host on port 80.
+	SkipDNSCheck *bool `json:"skip_dns_check,omitempty"`
 }
 
 // SiteList defines model for SiteList.
@@ -1129,6 +1162,9 @@ type Unauthorized = Problem
 // UnprocessableContent RFC 9457 Problem Details. Additional members may be added.
 type UnprocessableContent = Problem
 
+// UnprocessableDomains RFC 9457 Problem Details. Additional members may be added.
+type UnprocessableDomains = Problem
+
 // ListAuditEventsParams defines parameters for ListAuditEvents.
 type ListAuditEventsParams struct {
 	// Limit Maximum number of items to return.
@@ -1239,6 +1275,9 @@ type CreateSiteJSONRequestBody = SiteCreate
 
 // UpdateSiteJSONRequestBody defines body for UpdateSite for application/json ContentType.
 type UpdateSiteJSONRequestBody = SiteUpdate
+
+// GoLiveSiteJSONRequestBody defines body for GoLiveSite for application/json ContentType.
+type GoLiveSiteJSONRequestBody = SiteGoLive
 
 // SetSiteMaintenanceJSONRequestBody defines body for SetSiteMaintenance for application/json ContentType.
 type SetSiteMaintenanceJSONRequestBody = SiteMaintenance
@@ -1645,6 +1684,118 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/cache/purge (the `PurgeSiteCache` operationId).
 	PurgeSiteCache(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GoLiveSiteWithBody Switch a site to its primary domain
+	//
+	// Sets the site's primary domain and aliases and queues a job that
+	// switches the site to them (design doc §5.2):
+	//
+	// 1. The edge router routes the primary domain and each alias, and
+	//    gets a certificate for each with the ACME HTTP-01 challenge. The
+	//    site's containers aren't recreated.
+	// 2. WordPress's URLs are rewritten from the preview domain (and any
+	//    earlier primary domain) to `https://<primary_domain>` with
+	//    `wp search-replace`, serialized data included and GUIDs left
+	//    alone, and `home` and `siteurl` are set to it.
+	// 3. The site's object cache and page cache are purged.
+	//
+	// From then on, the preview domain and the aliases answer with a
+	// permanent redirect (`301`) to the primary domain that keeps the path
+	// and query. A protected preview domain asks for its password before
+	// redirecting. The primary domain and aliases never ask for the
+	// preview password, never send `X-Robots-Tag: noindex`, and, when the
+	// platform's security headers are on, send
+	// `Strict-Transport-Security: max-age=31536000` (without
+	// `includeSubDomains`).
+	//
+	// **DNS check.** Before anything changes, the control plane checks
+	// that each domain the site doesn't have yet resolves (A and AAAA) to
+	// this host only: to `public_ip` or the dashboard domain's addresses.
+	// If one doesn't, the request fails with `422` and the problem type
+	// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#dns-check`,
+	// with one entry in `errors` per domain saying what it resolves to and
+	// where it should point. Nothing is recorded; send the request again
+	// once the records have propagated. Hosts behind a CDN or load
+	// balancer, whose domains resolve elsewhere, set `skip_dns_check`.
+	//
+	// The response contains the site with the new domains and status
+	// `updating`, and the job. If the job fails before WordPress's URLs
+	// are rewritten, it reverts: the previous domains and routes are back
+	// and `status_message` says why. If it fails later, the site keeps its
+	// new domains and `status_message` says the go-live didn't finish;
+	// going live again with the same domains finishes it.
+	//
+	// Going live again with another primary domain moves the site: the
+	// old primary domain's URLs are rewritten too, and it stops being
+	// served unless it is listed as an alias. Going back to the preview
+	// domain alone isn't supported.
+	//
+	// The site must be `running` (`409` otherwise). A site that is
+	// `provisioning`, `updating`, or `deleting`, or whose provisioning
+	// failed, returns `409` too. A domain under the preview base domain,
+	// the dashboard's domain, or one another site uses is refused with
+	// `422`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/go-live (the `GoLiveSite` operationId).
+	GoLiveSiteWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GoLiveSite Switch a site to its primary domain
+	//
+	// Sets the site's primary domain and aliases and queues a job that
+	// switches the site to them (design doc §5.2):
+	//
+	// 1. The edge router routes the primary domain and each alias, and
+	//    gets a certificate for each with the ACME HTTP-01 challenge. The
+	//    site's containers aren't recreated.
+	// 2. WordPress's URLs are rewritten from the preview domain (and any
+	//    earlier primary domain) to `https://<primary_domain>` with
+	//    `wp search-replace`, serialized data included and GUIDs left
+	//    alone, and `home` and `siteurl` are set to it.
+	// 3. The site's object cache and page cache are purged.
+	//
+	// From then on, the preview domain and the aliases answer with a
+	// permanent redirect (`301`) to the primary domain that keeps the path
+	// and query. A protected preview domain asks for its password before
+	// redirecting. The primary domain and aliases never ask for the
+	// preview password, never send `X-Robots-Tag: noindex`, and, when the
+	// platform's security headers are on, send
+	// `Strict-Transport-Security: max-age=31536000` (without
+	// `includeSubDomains`).
+	//
+	// **DNS check.** Before anything changes, the control plane checks
+	// that each domain the site doesn't have yet resolves (A and AAAA) to
+	// this host only: to `public_ip` or the dashboard domain's addresses.
+	// If one doesn't, the request fails with `422` and the problem type
+	// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#dns-check`,
+	// with one entry in `errors` per domain saying what it resolves to and
+	// where it should point. Nothing is recorded; send the request again
+	// once the records have propagated. Hosts behind a CDN or load
+	// balancer, whose domains resolve elsewhere, set `skip_dns_check`.
+	//
+	// The response contains the site with the new domains and status
+	// `updating`, and the job. If the job fails before WordPress's URLs
+	// are rewritten, it reverts: the previous domains and routes are back
+	// and `status_message` says why. If it fails later, the site keeps its
+	// new domains and `status_message` says the go-live didn't finish;
+	// going live again with the same domains finishes it.
+	//
+	// Going live again with another primary domain moves the site: the
+	// old primary domain's URLs are rewritten too, and it stops being
+	// served unless it is listed as an alias. Going back to the preview
+	// domain alone isn't supported.
+	//
+	// The site must be `running` (`409` otherwise). A site that is
+	// `provisioning`, `updating`, or `deleting`, or whose provisioning
+	// failed, returns `409` too. A domain under the preview base domain,
+	// the dashboard's domain, or one another site uses is refused with
+	// `422`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/go-live (the `GoLiveSite` operationId).
+	GoLiveSite(ctx context.Context, siteID SiteID, body GoLiveSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetSiteMaintenanceWithBody Turn maintenance mode on or off
 	//
@@ -2395,6 +2546,138 @@ func (c *Client) RetrieveSiteAdminCredentials(ctx context.Context, siteID SiteID
 // Corresponds with POST /api/v1/sites/{site_id}/cache/purge (the `PurgeSiteCache` operationId).
 func (c *Client) PurgeSiteCache(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPurgeSiteCacheRequest(c.Server, siteID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GoLiveSiteWithBody Switch a site to its primary domain
+//
+// Sets the site's primary domain and aliases and queues a job that
+// switches the site to them (design doc §5.2):
+//
+//  1. The edge router routes the primary domain and each alias, and
+//     gets a certificate for each with the ACME HTTP-01 challenge. The
+//     site's containers aren't recreated.
+//  2. WordPress's URLs are rewritten from the preview domain (and any
+//     earlier primary domain) to `https://<primary_domain>` with
+//     `wp search-replace`, serialized data included and GUIDs left
+//     alone, and `home` and `siteurl` are set to it.
+//  3. The site's object cache and page cache are purged.
+//
+// From then on, the preview domain and the aliases answer with a
+// permanent redirect (`301`) to the primary domain that keeps the path
+// and query. A protected preview domain asks for its password before
+// redirecting. The primary domain and aliases never ask for the
+// preview password, never send `X-Robots-Tag: noindex`, and, when the
+// platform's security headers are on, send
+// `Strict-Transport-Security: max-age=31536000` (without
+// `includeSubDomains`).
+//
+// **DNS check.** Before anything changes, the control plane checks
+// that each domain the site doesn't have yet resolves (A and AAAA) to
+// this host only: to `public_ip` or the dashboard domain's addresses.
+// If one doesn't, the request fails with `422` and the problem type
+// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#dns-check`,
+// with one entry in `errors` per domain saying what it resolves to and
+// where it should point. Nothing is recorded; send the request again
+// once the records have propagated. Hosts behind a CDN or load
+// balancer, whose domains resolve elsewhere, set `skip_dns_check`.
+//
+// The response contains the site with the new domains and status
+// `updating`, and the job. If the job fails before WordPress's URLs
+// are rewritten, it reverts: the previous domains and routes are back
+// and `status_message` says why. If it fails later, the site keeps its
+// new domains and `status_message` says the go-live didn't finish;
+// going live again with the same domains finishes it.
+//
+// Going live again with another primary domain moves the site: the
+// old primary domain's URLs are rewritten too, and it stops being
+// served unless it is listed as an alias. Going back to the preview
+// domain alone isn't supported.
+//
+// The site must be `running` (`409` otherwise). A site that is
+// `provisioning`, `updating`, or `deleting`, or whose provisioning
+// failed, returns `409` too. A domain under the preview base domain,
+// the dashboard's domain, or one another site uses is refused with
+// `422`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/go-live (the `GoLiveSite` operationId).
+func (c *Client) GoLiveSiteWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGoLiveSiteRequestWithBody(c.Server, siteID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GoLiveSite Switch a site to its primary domain
+//
+// Sets the site's primary domain and aliases and queues a job that
+// switches the site to them (design doc §5.2):
+//
+//  1. The edge router routes the primary domain and each alias, and
+//     gets a certificate for each with the ACME HTTP-01 challenge. The
+//     site's containers aren't recreated.
+//  2. WordPress's URLs are rewritten from the preview domain (and any
+//     earlier primary domain) to `https://<primary_domain>` with
+//     `wp search-replace`, serialized data included and GUIDs left
+//     alone, and `home` and `siteurl` are set to it.
+//  3. The site's object cache and page cache are purged.
+//
+// From then on, the preview domain and the aliases answer with a
+// permanent redirect (`301`) to the primary domain that keeps the path
+// and query. A protected preview domain asks for its password before
+// redirecting. The primary domain and aliases never ask for the
+// preview password, never send `X-Robots-Tag: noindex`, and, when the
+// platform's security headers are on, send
+// `Strict-Transport-Security: max-age=31536000` (without
+// `includeSubDomains`).
+//
+// **DNS check.** Before anything changes, the control plane checks
+// that each domain the site doesn't have yet resolves (A and AAAA) to
+// this host only: to `public_ip` or the dashboard domain's addresses.
+// If one doesn't, the request fails with `422` and the problem type
+// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#dns-check`,
+// with one entry in `errors` per domain saying what it resolves to and
+// where it should point. Nothing is recorded; send the request again
+// once the records have propagated. Hosts behind a CDN or load
+// balancer, whose domains resolve elsewhere, set `skip_dns_check`.
+//
+// The response contains the site with the new domains and status
+// `updating`, and the job. If the job fails before WordPress's URLs
+// are rewritten, it reverts: the previous domains and routes are back
+// and `status_message` says why. If it fails later, the site keeps its
+// new domains and `status_message` says the go-live didn't finish;
+// going live again with the same domains finishes it.
+//
+// Going live again with another primary domain moves the site: the
+// old primary domain's URLs are rewritten too, and it stops being
+// served unless it is listed as an alias. Going back to the preview
+// domain alone isn't supported.
+//
+// The site must be `running` (`409` otherwise). A site that is
+// `provisioning`, `updating`, or `deleting`, or whose provisioning
+// failed, returns `409` too. A domain under the preview base domain,
+// the dashboard's domain, or one another site uses is refused with
+// `422`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/go-live (the `GoLiveSite` operationId).
+func (c *Client) GoLiveSite(ctx context.Context, siteID SiteID, body GoLiveSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGoLiveSiteRequest(c.Server, siteID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3772,6 +4055,53 @@ func NewPurgeSiteCacheRequest(server string, siteID SiteID) (*http.Request, erro
 	return req, nil
 }
 
+// NewGoLiveSiteRequest calls the generic GoLiveSite builder with application/json body
+func NewGoLiveSiteRequest(server string, siteID SiteID, body GoLiveSiteJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewGoLiveSiteRequestWithBody(server, siteID, "application/json", bodyReader)
+}
+
+// NewGoLiveSiteRequestWithBody constructs an http.Request for the GoLiveSite method, with any body, and a specified content type
+func NewGoLiveSiteRequestWithBody(server string, siteID SiteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/go-live", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewSetSiteMaintenanceRequest calls the generic SetSiteMaintenance builder with application/json body
 func NewSetSiteMaintenanceRequest(server string, siteID SiteID, body SetSiteMaintenanceJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -4604,6 +4934,118 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/cache/purge (the `PurgeSiteCache` operationId).
 	PurgeSiteCacheWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*PurgeSiteCacheResponse, error)
+
+	// GoLiveSiteWithBodyWithResponse Switch a site to its primary domain
+	//
+	// Sets the site's primary domain and aliases and queues a job that
+	// switches the site to them (design doc §5.2):
+	//
+	// 1. The edge router routes the primary domain and each alias, and
+	//    gets a certificate for each with the ACME HTTP-01 challenge. The
+	//    site's containers aren't recreated.
+	// 2. WordPress's URLs are rewritten from the preview domain (and any
+	//    earlier primary domain) to `https://<primary_domain>` with
+	//    `wp search-replace`, serialized data included and GUIDs left
+	//    alone, and `home` and `siteurl` are set to it.
+	// 3. The site's object cache and page cache are purged.
+	//
+	// From then on, the preview domain and the aliases answer with a
+	// permanent redirect (`301`) to the primary domain that keeps the path
+	// and query. A protected preview domain asks for its password before
+	// redirecting. The primary domain and aliases never ask for the
+	// preview password, never send `X-Robots-Tag: noindex`, and, when the
+	// platform's security headers are on, send
+	// `Strict-Transport-Security: max-age=31536000` (without
+	// `includeSubDomains`).
+	//
+	// **DNS check.** Before anything changes, the control plane checks
+	// that each domain the site doesn't have yet resolves (A and AAAA) to
+	// this host only: to `public_ip` or the dashboard domain's addresses.
+	// If one doesn't, the request fails with `422` and the problem type
+	// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#dns-check`,
+	// with one entry in `errors` per domain saying what it resolves to and
+	// where it should point. Nothing is recorded; send the request again
+	// once the records have propagated. Hosts behind a CDN or load
+	// balancer, whose domains resolve elsewhere, set `skip_dns_check`.
+	//
+	// The response contains the site with the new domains and status
+	// `updating`, and the job. If the job fails before WordPress's URLs
+	// are rewritten, it reverts: the previous domains and routes are back
+	// and `status_message` says why. If it fails later, the site keeps its
+	// new domains and `status_message` says the go-live didn't finish;
+	// going live again with the same domains finishes it.
+	//
+	// Going live again with another primary domain moves the site: the
+	// old primary domain's URLs are rewritten too, and it stops being
+	// served unless it is listed as an alias. Going back to the preview
+	// domain alone isn't supported.
+	//
+	// The site must be `running` (`409` otherwise). A site that is
+	// `provisioning`, `updating`, or `deleting`, or whose provisioning
+	// failed, returns `409` too. A domain under the preview base domain,
+	// the dashboard's domain, or one another site uses is refused with
+	// `422`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/go-live (the `GoLiveSite` operationId).
+	GoLiveSiteWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GoLiveSiteResponse, error)
+
+	// GoLiveSiteWithResponse Switch a site to its primary domain
+	//
+	// Sets the site's primary domain and aliases and queues a job that
+	// switches the site to them (design doc §5.2):
+	//
+	// 1. The edge router routes the primary domain and each alias, and
+	//    gets a certificate for each with the ACME HTTP-01 challenge. The
+	//    site's containers aren't recreated.
+	// 2. WordPress's URLs are rewritten from the preview domain (and any
+	//    earlier primary domain) to `https://<primary_domain>` with
+	//    `wp search-replace`, serialized data included and GUIDs left
+	//    alone, and `home` and `siteurl` are set to it.
+	// 3. The site's object cache and page cache are purged.
+	//
+	// From then on, the preview domain and the aliases answer with a
+	// permanent redirect (`301`) to the primary domain that keeps the path
+	// and query. A protected preview domain asks for its password before
+	// redirecting. The primary domain and aliases never ask for the
+	// preview password, never send `X-Robots-Tag: noindex`, and, when the
+	// platform's security headers are on, send
+	// `Strict-Transport-Security: max-age=31536000` (without
+	// `includeSubDomains`).
+	//
+	// **DNS check.** Before anything changes, the control plane checks
+	// that each domain the site doesn't have yet resolves (A and AAAA) to
+	// this host only: to `public_ip` or the dashboard domain's addresses.
+	// If one doesn't, the request fails with `422` and the problem type
+	// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#dns-check`,
+	// with one entry in `errors` per domain saying what it resolves to and
+	// where it should point. Nothing is recorded; send the request again
+	// once the records have propagated. Hosts behind a CDN or load
+	// balancer, whose domains resolve elsewhere, set `skip_dns_check`.
+	//
+	// The response contains the site with the new domains and status
+	// `updating`, and the job. If the job fails before WordPress's URLs
+	// are rewritten, it reverts: the previous domains and routes are back
+	// and `status_message` says why. If it fails later, the site keeps its
+	// new domains and `status_message` says the go-live didn't finish;
+	// going live again with the same domains finishes it.
+	//
+	// Going live again with another primary domain moves the site: the
+	// old primary domain's URLs are rewritten too, and it stops being
+	// served unless it is listed as an alias. Going back to the preview
+	// domain alone isn't supported.
+	//
+	// The site must be `running` (`409` otherwise). A site that is
+	// `provisioning`, `updating`, or `deleting`, or whose provisioning
+	// failed, returns `409` too. A domain under the preview base domain,
+	// the dashboard's domain, or one another site uses is refused with
+	// `422`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/go-live (the `GoLiveSite` operationId).
+	GoLiveSiteWithResponse(ctx context.Context, siteID SiteID, body GoLiveSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*GoLiveSiteResponse, error)
 
 	// SetSiteMaintenanceWithBodyWithResponse Turn maintenance mode on or off
 	//
@@ -6460,6 +6902,103 @@ func (r PurgeSiteCacheResponse) ContentType() string {
 	return ""
 }
 
+// GoLiveSiteResponse202Headers the declared response headers of an HTTP 202 response for GoLiveSite
+type GoLiveSiteResponse202Headers struct {
+	Location *string
+}
+
+type GoLiveSiteResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *SiteAccepted
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableDomains
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *GoLiveSiteResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r GoLiveSiteResponse) GetJSON202() *SiteAccepted {
+	return r.JSON202
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GoLiveSiteResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GoLiveSiteResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GoLiveSiteResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GoLiveSiteResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r GoLiveSiteResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r GoLiveSiteResponse) GetApplicationProblemJSON422() *UnprocessableDomains {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GoLiveSiteResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GoLiveSiteResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GoLiveSiteResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GoLiveSiteResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GoLiveSiteResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // SetSiteMaintenanceResponse202Headers the declared response headers of an HTTP 202 response for SetSiteMaintenance
 type SetSiteMaintenanceResponse202Headers struct {
 	Location *string
@@ -7808,6 +8347,130 @@ func (c *ClientWithResponses) PurgeSiteCacheWithResponse(ctx context.Context, si
 		return nil, err
 	}
 	return ParsePurgeSiteCacheResponse(rsp)
+}
+
+// GoLiveSiteWithBodyWithResponse Switch a site to its primary domain
+//
+// Sets the site's primary domain and aliases and queues a job that
+// switches the site to them (design doc §5.2):
+//
+//  1. The edge router routes the primary domain and each alias, and
+//     gets a certificate for each with the ACME HTTP-01 challenge. The
+//     site's containers aren't recreated.
+//  2. WordPress's URLs are rewritten from the preview domain (and any
+//     earlier primary domain) to `https://<primary_domain>` with
+//     `wp search-replace`, serialized data included and GUIDs left
+//     alone, and `home` and `siteurl` are set to it.
+//  3. The site's object cache and page cache are purged.
+//
+// From then on, the preview domain and the aliases answer with a
+// permanent redirect (`301`) to the primary domain that keeps the path
+// and query. A protected preview domain asks for its password before
+// redirecting. The primary domain and aliases never ask for the
+// preview password, never send `X-Robots-Tag: noindex`, and, when the
+// platform's security headers are on, send
+// `Strict-Transport-Security: max-age=31536000` (without
+// `includeSubDomains`).
+//
+// **DNS check.** Before anything changes, the control plane checks
+// that each domain the site doesn't have yet resolves (A and AAAA) to
+// this host only: to `public_ip` or the dashboard domain's addresses.
+// If one doesn't, the request fails with `422` and the problem type
+// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#dns-check`,
+// with one entry in `errors` per domain saying what it resolves to and
+// where it should point. Nothing is recorded; send the request again
+// once the records have propagated. Hosts behind a CDN or load
+// balancer, whose domains resolve elsewhere, set `skip_dns_check`.
+//
+// The response contains the site with the new domains and status
+// `updating`, and the job. If the job fails before WordPress's URLs
+// are rewritten, it reverts: the previous domains and routes are back
+// and `status_message` says why. If it fails later, the site keeps its
+// new domains and `status_message` says the go-live didn't finish;
+// going live again with the same domains finishes it.
+//
+// Going live again with another primary domain moves the site: the
+// old primary domain's URLs are rewritten too, and it stops being
+// served unless it is listed as an alias. Going back to the preview
+// domain alone isn't supported.
+//
+// The site must be `running` (`409` otherwise). A site that is
+// `provisioning`, `updating`, or `deleting`, or whose provisioning
+// failed, returns `409` too. A domain under the preview base domain,
+// the dashboard's domain, or one another site uses is refused with
+// `422`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/go-live (the `GoLiveSite` operationId).
+func (c *ClientWithResponses) GoLiveSiteWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*GoLiveSiteResponse, error) {
+	rsp, err := c.GoLiveSiteWithBody(ctx, siteID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGoLiveSiteResponse(rsp)
+}
+
+// GoLiveSiteWithResponse Switch a site to its primary domain
+//
+// Sets the site's primary domain and aliases and queues a job that
+// switches the site to them (design doc §5.2):
+//
+//  1. The edge router routes the primary domain and each alias, and
+//     gets a certificate for each with the ACME HTTP-01 challenge. The
+//     site's containers aren't recreated.
+//  2. WordPress's URLs are rewritten from the preview domain (and any
+//     earlier primary domain) to `https://<primary_domain>` with
+//     `wp search-replace`, serialized data included and GUIDs left
+//     alone, and `home` and `siteurl` are set to it.
+//  3. The site's object cache and page cache are purged.
+//
+// From then on, the preview domain and the aliases answer with a
+// permanent redirect (`301`) to the primary domain that keeps the path
+// and query. A protected preview domain asks for its password before
+// redirecting. The primary domain and aliases never ask for the
+// preview password, never send `X-Robots-Tag: noindex`, and, when the
+// platform's security headers are on, send
+// `Strict-Transport-Security: max-age=31536000` (without
+// `includeSubDomains`).
+//
+// **DNS check.** Before anything changes, the control plane checks
+// that each domain the site doesn't have yet resolves (A and AAAA) to
+// this host only: to `public_ip` or the dashboard domain's addresses.
+// If one doesn't, the request fails with `422` and the problem type
+// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#dns-check`,
+// with one entry in `errors` per domain saying what it resolves to and
+// where it should point. Nothing is recorded; send the request again
+// once the records have propagated. Hosts behind a CDN or load
+// balancer, whose domains resolve elsewhere, set `skip_dns_check`.
+//
+// The response contains the site with the new domains and status
+// `updating`, and the job. If the job fails before WordPress's URLs
+// are rewritten, it reverts: the previous domains and routes are back
+// and `status_message` says why. If it fails later, the site keeps its
+// new domains and `status_message` says the go-live didn't finish;
+// going live again with the same domains finishes it.
+//
+// Going live again with another primary domain moves the site: the
+// old primary domain's URLs are rewritten too, and it stops being
+// served unless it is listed as an alias. Going back to the preview
+// domain alone isn't supported.
+//
+// The site must be `running` (`409` otherwise). A site that is
+// `provisioning`, `updating`, or `deleting`, or whose provisioning
+// failed, returns `409` too. A domain under the preview base domain,
+// the dashboard's domain, or one another site uses is refused with
+// `422`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/go-live (the `GoLiveSite` operationId).
+func (c *ClientWithResponses) GoLiveSiteWithResponse(ctx context.Context, siteID SiteID, body GoLiveSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*GoLiveSiteResponse, error) {
+	rsp, err := c.GoLiveSite(ctx, siteID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGoLiveSiteResponse(rsp)
 }
 
 // SetSiteMaintenanceWithBodyWithResponse Turn maintenance mode on or off
@@ -9480,6 +10143,94 @@ func ParsePurgeSiteCacheResponse(rsp *http.Response) (*PurgeSiteCacheResponse, e
 	switch {
 	case rsp.StatusCode == 202:
 		var headers PurgeSiteCacheResponse202Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGoLiveSiteResponse parses an HTTP response from a GoLiveSiteWithResponse call
+func ParseGoLiveSiteResponse(rsp *http.Response) (*GoLiveSiteResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GoLiveSiteResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest SiteAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableDomains
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers GoLiveSiteResponse202Headers
 		if values := rsp.Header.Values("Location"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {

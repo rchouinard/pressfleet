@@ -85,6 +85,14 @@
 // [MaintenanceJobType] job that puts its domains on the platform's
 // maintenance page, or takes them off; see maintenance.go.
 //
+// # Go-live
+//
+// [Service.GoLive] checks a primary domain and aliases (including their
+// DNS), records them, and queues a [GoLiveJobType] job that routes them,
+// rewrites WordPress's URLs to the primary domain, and purges the caches;
+// the preview domain then redirects to the primary domain. See golive.go,
+// which also describes what a failed go-live leaves behind.
+//
 // # Start and stop
 //
 // [Service.Start] and [Service.Stop] enqueue [StartJobType] and
@@ -99,7 +107,7 @@
 // the site's object cache and then purges its page cache (cache.go). The
 // status doesn't change.
 //
-// Updating, starting, stopping, and purging are refused with ErrBusy while
+// Updating, going live, starting, stopping, and purging are refused with ErrBusy while
 // a job is provisioning, updating, or deleting the site, and with
 // ErrNotProvisioned for a site whose provisioning failed, which has nothing
 // left to change.
@@ -157,6 +165,7 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
+	"github.com/rchouinard/pressfleet/control-plane/internal/domains"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
 	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
@@ -231,6 +240,13 @@ type Options struct {
 	Provisioner  provisioner.Provisioner
 	Databases    sitedb.Manager
 	ObjectCaches objectcache.Manager
+	// DashboardDomain is config.Config.DashboardDomain, which no site may
+	// use.
+	DashboardDomain string
+	// DNSChecker checks that a site's new domains resolve to this host
+	// (golive.go). Nil means a domains.Checker that knows this host by the
+	// dashboard domain's addresses alone.
+	DNSChecker DNSChecker
 	// TwoFactor is the security set's two-factor setting
 	// (config.WordPressSecurityConfig.TwoFactor): unless it is
 	// config.TwoFactorOff or empty, sites get the Two Factor plugin.
@@ -255,6 +271,8 @@ type Service struct {
 	databases   sitedb.Manager
 	caches      objectcache.Manager
 	twoFactor   bool
+	dashboard   string
+	dns         DNSChecker
 	log         *slog.Logger
 	now         func() time.Time
 
@@ -291,6 +309,8 @@ func New(opts Options) (*Service, error) {
 		databases:   opts.Databases,
 		caches:      opts.ObjectCaches,
 		twoFactor:   opts.TwoFactor != "" && opts.TwoFactor != config.TwoFactorOff,
+		dashboard:   strings.TrimSuffix(strings.ToLower(opts.DashboardDomain), "."),
+		dns:         opts.DNSChecker,
 		log:         opts.Logger,
 		now:         opts.Now,
 
@@ -301,6 +321,9 @@ func New(opts Options) (*Service, error) {
 	}
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
+	}
+	if s.dns == nil {
+		s.dns = domains.NewChecker(domains.Options{DashboardDomain: s.dashboard})
 	}
 	if s.now == nil {
 		s.now = time.Now
@@ -604,7 +627,7 @@ func (s *Service) TakeAdminCredentials(ctx context.Context, siteID string) (Admi
 func (s *Service) Handlers() []jobs.Handler {
 	return []jobs.Handler{
 		s.createHandler(), s.deleteHandler(), s.updateHandler(), s.startHandler(), s.stopHandler(),
-		s.reconcileHandler(), s.purgeCacheHandler(), s.maintenanceHandler(),
+		s.reconcileHandler(), s.purgeCacheHandler(), s.maintenanceHandler(), s.goLiveHandler(),
 	}
 }
 

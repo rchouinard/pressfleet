@@ -32,6 +32,10 @@ services:
 {{- if .DashboardDomain }}
       PRESSFLEET_DASHBOARD_DOMAIN: {{ q .DashboardDomain }}
 {{- end }}
+{{- if .PublicIP }}
+      # Where custom domains must point for a site to go live (§5.2).
+      PRESSFLEET_PUBLIC_IP: {{ q .PublicIP }}
+{{- end }}
 {{- if .ACME.DNSProvider }}
       # The control plane decrypts the DNS provider credentials (encrypted
       # with the master key) for Traefik when it starts.

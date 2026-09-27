@@ -28,6 +28,8 @@ services:
       PRESSFLEET_PLATFORM_PROJECT: "pressfleet"
       PRESSFLEET_PREVIEW_BASE_DOMAIN: "preview.agency.example"
       PRESSFLEET_DASHBOARD_DOMAIN: "fleet.agency.example"
+      # Where custom domains must point for a site to go live (§5.2).
+      PRESSFLEET_PUBLIC_IP: "203.0.113.7"
     volumes:
       # The data directory is mounted at the same absolute path as on the host.
       # The control plane starts helper containers (backups, restores) that

@@ -1341,6 +1341,60 @@
           ]
         },
         {
+          "id": "66ea163f-f6f3-5ed0-ba72-e81317918cd2",
+          "name": "Go live",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/go-live",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "go-live"
+              ]
+            },
+            "description": "Switches a running site to `primary_domain`, with `alias_domain` redirecting to it (design doc \u00a75.2): routes both, each with its own HTTP-01 certificate, rewrites WordPress's URLs from the preview domain, purges the caches, and redirects the preview domain. The domains' A/AAAA records must point at the host first; otherwise the response is `422` with the DNS problem type and one error per domain, and nothing changes: fix the records and send it again. On a development machine, or behind a CDN, set `skip_dns_check` to `true`. Sending it again with other domains moves the site.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"primary_domain\": \"{{primary_domain}}\",\n  \"aliases\": [\"{{alias_domain}}\"],\n  \"skip_dns_check\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 422) {",
+                  "    // The DNS check or validation failed; errors says why, per domain.",
+                  "    console.log(pm.response.json());",
+                  "}",
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"the site has the primary domain\", () => {",
+                  "    pm.expect(pm.response.json().site.primary_domain).to.eql(pm.environment.get(\"primary_domain\"));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "id": "6f0d3a52-2d1c-5b8e-9a41-7c3e5b0f1d27",
           "name": "Purge site cache",
           "request": {

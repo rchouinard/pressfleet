@@ -294,6 +294,11 @@ func (p *Provisioner) converge(ctx context.Context, cfg *provisioner.SiteConfig,
 	if err := p.attachShared(ctx, cfg.ID); err != nil {
 		return fmt.Errorf("site %s: %w", cfg.ID, err)
 	}
+	// Custom domains follow the file alone (domains.go), so changing them
+	// never recreates a container.
+	if _, err := p.applyDomains(cfg.ID, cfg.PrimaryDomain != ""); err != nil {
+		return fmt.Errorf("site %s: %w", cfg.ID, err)
+	}
 	if !cfg.Maintenance {
 		if _, err := p.applyMaintenance(cfg.ID, false); err != nil {
 			return fmt.Errorf("site %s: %w", cfg.ID, err)
@@ -476,6 +481,9 @@ func (p *Provisioner) DeleteSite(ctx context.Context, siteID string) error {
 		return fmt.Errorf("delete site: %w: %w", ErrInvalidSite, err)
 	}
 	if _, err := p.applyMaintenance(siteID, false); err != nil {
+		return fmt.Errorf("delete site %s: %w", siteID, err)
+	}
+	if _, err := p.applyDomains(siteID, false); err != nil {
 		return fmt.Errorf("delete site %s: %w", siteID, err)
 	}
 	// Docker refuses to remove a network that containers are still

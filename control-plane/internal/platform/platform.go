@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -155,6 +156,10 @@ type Config struct {
 	// site's preview domain from it (config.Config.PreviewBaseDomain).
 	// Empty leaves it unset, and site creation is refused until it is set.
 	PreviewBaseDomain string
+	// PublicIP is this host's public address (config.Config.PublicIP),
+	// passed to the control plane for the go-live DNS check (package
+	// domains). Empty leaves it unset.
+	PublicIP string
 	// SMTP is passed to the control plane, which renders it into every
 	// site's wp-config.php (config.Config.SMTP). Its password is sealed with
 	// the master key, so the rendered project never holds it in plaintext.
@@ -253,6 +258,11 @@ func (c Config) withDefaults() (Config, error) {
 	} else if rel, err := filepath.Rel(c.DataDir, c.MasterKeyFile); err == nil && filepath.IsLocal(rel) {
 		errs = append(errs, fmt.Errorf("master key file %s must not be inside the data directory", c.MasterKeyFile))
 	}
+	if c.PublicIP != "" {
+		if _, err := netip.ParseAddr(c.PublicIP); err != nil {
+			errs = append(errs, fmt.Errorf("public IP must be an IP address, got %q", c.PublicIP))
+		}
+	}
 	if c.PreviewBaseDomain != "" && !config.ValidDomain(c.PreviewBaseDomain) {
 		errs = append(errs, fmt.Errorf("preview base domain must be a domain name like preview.example.com, got %q", c.PreviewBaseDomain))
 	}
@@ -321,6 +331,7 @@ type templateData struct {
 	MasterKeySecretPath    string
 	SkipPreflight          bool
 	PreviewBaseDomain      string
+	PublicIP               string
 	SMTP                   *config.SMTPConfig // nil when outbound email is off
 	ListenPort             int
 	TraefikMemoryMB        int
@@ -422,6 +433,7 @@ func Render(dir string, cfg Config) error {
 		MasterKeySecretPath:    MasterKeySecretPath,
 		SkipPreflight:          cfg.SkipPreflight,
 		PreviewBaseDomain:      cfg.PreviewBaseDomain,
+		PublicIP:               cfg.PublicIP,
 		TraefikMemoryMB:        cfg.TraefikMemoryMB,
 		TraefikGoMemLimitMB:    cfg.TraefikMemoryMB * 3 / 4,
 		SocketProxyMemoryMB:    cfg.SocketProxyMemoryMB,

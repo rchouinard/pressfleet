@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -103,7 +104,8 @@ type RenderResult struct {
 }
 
 // RenderSite writes the site's Compose project (compose.yaml), its
-// wp-config.php, and its maintenance routes (SiteMaintenanceFile) into dir,
+// wp-config.php, its maintenance routes (SiteMaintenanceFile), and, for a
+// live site, its custom domain routes (SiteDomainsFile) into dir,
 // normally config.Layout.SiteDir. Re-rendering is safe: a file whose
 // content is unchanged is left alone.
 //
@@ -159,6 +161,10 @@ func RenderSite(dir string, in SiteRender) (RenderResult, error) {
 	if err != nil {
 		return res, fmt.Errorf("rendering %s: %w", SiteMaintenanceFile, err)
 	}
+	domains, err := domainRoutes(in.Site, in.Security.Headers)
+	if err != nil {
+		return res, fmt.Errorf("rendering %s: %w", SiteDomainsFile, err)
+	}
 
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return res, fmt.Errorf("creating %s: %w", dir, err)
@@ -178,6 +184,15 @@ func RenderSite(dir string, in SiteRender) (RenderResult, error) {
 	// Kept up to date for SetMaintenance, whether or not the site is in
 	// maintenance mode (maintenance.go).
 	if _, err := replaceFile(filepath.Join(dir, SiteMaintenanceFile), routes, 0o644, -1); err != nil {
+		return res, err
+	}
+	// Only a live site has custom domain routes (domains.go).
+	domainsPath := filepath.Join(dir, SiteDomainsFile)
+	if domains == nil {
+		if err := os.Remove(domainsPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return res, err
+		}
+	} else if _, err := replaceFile(domainsPath, domains, 0o644, -1); err != nil {
 		return res, err
 	}
 	return res, nil

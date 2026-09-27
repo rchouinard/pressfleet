@@ -76,8 +76,12 @@ type Site struct {
 	// Maintenance means the site's visitors get the platform's maintenance
 	// page (§5.4).
 	Maintenance bool
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// URLRewriteFrom are the host names whose URLs go-live still has to
+	// rewrite to the primary domain's in the site's WordPress database
+	// (§5.2), until a go-live job has.
+	URLRewriteFrom []string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // Sites reads and writes sites.
@@ -94,20 +98,25 @@ func NewSites(q Querier) Sites {
 const siteColumns = "id, client_group_id, name, slug, status, status_message, preview_domain, primary_domain, " +
 	"php_version, wp_core_version, wp_core_pinned, enable_cache, cpu_limit, memory_reservation_mb, memory_limit_mb, " +
 	"uid, wp_salts_secret_ref, admin_username, admin_email, admin_password_secret_ref, " +
-	"preview_protection, preview_username, preview_password_hash, preview_password_secret_ref, maintenance, created_at, updated_at"
+	"preview_protection, preview_username, preview_password_hash, preview_password_secret_ref, maintenance, url_rewrite_from, " +
+	"created_at, updated_at"
 
 func scanSite(s scanner) (Site, error) {
 	var (
 		site    Site
 		primary sql.NullString
+		rewrite string
 	)
 	err := s.Scan(&site.ID, &site.ClientGroupID, &site.Name, &site.Slug, &site.Status, &site.StatusMessage,
 		&site.PreviewDomain, &primary, &site.PHPVersion, &site.WPCoreVersion, &site.WPCorePinned, &site.EnableCache,
 		&site.CPULimit, &site.MemoryReservationMB, &site.MemoryLimitMB, &site.UID, &site.WPSaltsSecretRef,
 		&site.AdminUsername, &site.AdminEmail, &site.AdminPasswordSecretRef,
 		&site.PreviewProtection, &site.PreviewUsername, &site.PreviewPasswordHash, &site.PreviewPasswordSecretRef,
-		&site.Maintenance, &site.CreatedAt, &site.UpdatedAt)
+		&site.Maintenance, &rewrite, &site.CreatedAt, &site.UpdatedAt)
 	site.PrimaryDomain = primary.String
+	if rewrite != "" {
+		site.URLRewriteFrom = strings.Fields(rewrite)
+	}
 	return site, err
 }
 
@@ -123,13 +132,13 @@ func (r Sites) Create(ctx context.Context, s *Site) error {
 	created.CreatedAt = now()
 	created.UpdatedAt = created.CreatedAt
 	_, err := r.q.ExecContext(ctx, "INSERT INTO sites ("+siteColumns+") VALUES "+
-		"("+placeholders(27)+")",
+		"("+placeholders(28)+")",
 		created.ID, created.ClientGroupID, created.Name, created.Slug, string(created.Status), created.StatusMessage,
 		created.PreviewDomain, nullString(created.PrimaryDomain), created.PHPVersion, created.WPCoreVersion,
 		created.WPCorePinned, created.EnableCache, created.CPULimit, created.MemoryReservationMB, created.MemoryLimitMB,
 		created.UID, created.WPSaltsSecretRef, created.AdminUsername, created.AdminEmail, created.AdminPasswordSecretRef,
 		created.PreviewProtection, created.PreviewUsername, created.PreviewPasswordHash, created.PreviewPasswordSecretRef,
-		created.Maintenance, created.CreatedAt, created.UpdatedAt)
+		created.Maintenance, strings.Join(created.URLRewriteFrom, " "), created.CreatedAt, created.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create site: %w", err)
 	}
@@ -339,6 +348,78 @@ func (r Sites) SetMaintenance(ctx context.Context, siteID string, enabled bool, 
 		args = append(args, from[0])
 	}
 	return r.exec(ctx, "set maintenance of site "+siteID, query, args...)
+}
+
+// SiteDomains are a site's custom domains (§5.2): its primary domain, empty
+// until go-live, the aliases that redirect to it, and the host names whose
+// URLs are still to be rewritten to it (Site.URLRewriteFrom). Jobs record
+// them in their payloads to put them back.
+type SiteDomains struct {
+	Primary        string   `json:"primary"`
+	Aliases        []string `json:"aliases"`
+	URLRewriteFrom []string `json:"url_rewrite_from"`
+}
+
+// SetDomains replaces the site's custom domains. Domains are unique across
+// sites: a primary domain or alias another site has already, as the same
+// kind, is ErrConflict (DomainOwner also checks across kinds). It reports
+// whether the site exists; a missing site is not an error.
+func (r Sites) SetDomains(ctx context.Context, siteID string, d SiteDomains) (bool, error) {
+	what := "set domains of site " + siteID
+	ok, err := r.exec(ctx, what, "UPDATE sites SET primary_domain = ?, url_rewrite_from = ?, updated_at = ? WHERE id = ?",
+		nullString(d.Primary), strings.Join(d.URLRewriteFrom, " "), now(), siteID)
+	if err != nil || !ok {
+		return ok, err
+	}
+	if _, err := r.q.ExecContext(ctx, "DELETE FROM site_aliases WHERE site_id = ?", siteID); err != nil {
+		return false, fmt.Errorf("%s: %w", what, err)
+	}
+	created := now()
+	for _, alias := range d.Aliases {
+		if _, err := r.q.ExecContext(ctx, "INSERT INTO site_aliases (domain, site_id, created_at) VALUES (?, ?, ?)",
+			alias, siteID, created); err != nil {
+			return false, fmt.Errorf("%s: alias %s: %w", what, alias, err)
+		}
+	}
+	return true, nil
+}
+
+// Domains returns the site's custom domains.
+func (r Sites) Domains(ctx context.Context, siteID string) (SiteDomains, error) {
+	site, err := r.Get(ctx, siteID)
+	if err != nil {
+		return SiteDomains{}, err
+	}
+	aliases, err := r.Aliases(ctx, siteID)
+	if err != nil {
+		return SiteDomains{}, err
+	}
+	return SiteDomains{Primary: site.PrimaryDomain, Aliases: aliases, URLRewriteFrom: site.URLRewriteFrom}, nil
+}
+
+// DomainOwner returns the ID of the site that uses the domain as its
+// preview domain, primary domain, or an alias, or "" if none does.
+func (r Sites) DomainOwner(ctx context.Context, domain string) (string, error) {
+	var siteID string
+	err := r.q.QueryRowContext(ctx,
+		"SELECT id FROM sites WHERE preview_domain = ? OR primary_domain = ? "+
+			"UNION SELECT site_id FROM site_aliases WHERE domain = ?", domain, domain, domain).Scan(&siteID)
+	if errors.Is(err, ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("owner of domain %s: %w", domain, err)
+	}
+	return siteID, nil
+}
+
+// ClearURLRewrite forgets the host names whose URLs were to be rewritten,
+// once they have been, if they are still from. It reports whether they
+// were.
+func (r Sites) ClearURLRewrite(ctx context.Context, siteID string, from []string) (bool, error) {
+	return r.exec(ctx, "clear URL rewrite of site "+siteID,
+		"UPDATE sites SET url_rewrite_from = '', updated_at = ? WHERE id = ? AND url_rewrite_from = ?",
+		now(), siteID, strings.Join(from, " "))
 }
 
 // SlugTaken reports whether a site already uses the slug or the preview

@@ -47,11 +47,12 @@ func MaintenanceRoutesFile(siteID string) string {
 	return ingress.SiteName(siteID, ingress.SuffixMaintenance) + ".yaml"
 }
 
-// maintenanceRouter is a router in Traefik's file provider format.
-type maintenanceRouter struct {
+// fileRouter is a router in Traefik's file provider format.
+type fileRouter struct {
 	Rule        string   `yaml:"rule"`
 	EntryPoints []string `yaml:"entryPoints"`
-	Priority    int      `yaml:"priority"`
+	Priority    int      `yaml:"priority,omitempty"`
+	Middlewares []string `yaml:"middlewares,omitempty"`
 	Service     string   `yaml:"service"`
 	TLS         struct {
 		CertResolver string `yaml:"certResolver"`
@@ -64,9 +65,9 @@ type maintenanceRouter struct {
 // twins have none of the site's middlewares, which belong to the site's
 // containers and vanish with them; the page is public and holds nothing.
 func maintenanceRoutes(site *provisioner.SiteConfig) ([]byte, error) {
-	routers := map[string]maintenanceRouter{}
-	for _, r := range siteRouters(site) {
-		m := maintenanceRouter{
+	routers := map[string]fileRouter{}
+	for _, r := range siteRouters(site, false) {
+		m := fileRouter{
 			Rule:        r.Rule,
 			EntryPoints: []string{ingress.EntryPointHTTPS},
 			Priority:    ingress.MaintenancePriority,

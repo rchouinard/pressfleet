@@ -189,6 +189,56 @@ func (h *Handlers) SetSiteMaintenance(ctx context.Context, req gen.SetSiteMainte
 	}, nil
 }
 
+// GoLiveSite checks the site's new domains, saves them, and queues the job
+// that switches the site to its primary domain (#45).
+func (h *Handlers) GoLiveSite(ctx context.Context, req gen.GoLiveSiteRequestObject) (gen.GoLiveSiteResponseObject, error) {
+	p, err := h.authorize(ctx, authz.ManageSiteDomains, authz.Site(req.SiteID))
+	if err != nil {
+		return nil, err
+	}
+	if h.sites == nil {
+		return nil, errNoSites
+	}
+	b := deref(req.Body)
+	site, aliases, job, err := h.sites.GoLive(ctx, req.SiteID, sites.GoLive{
+		PrimaryDomain:   b.PrimaryDomain,
+		Aliases:         deref(b.Aliases),
+		SkipDNSCheck:    deref(b.SkipDNSCheck),
+		CreatedByUserID: p.UserID,
+	})
+	if err != nil {
+		return nil, siteError(err)
+	}
+	j, err := jobResponse(job, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	location := jobLocation(job)
+	return gen.GoLiveSite202JSONResponse{
+		Body:    gen.SiteAccepted{Site: siteResponse(site, aliases), Job: j},
+		Headers: gen.GoLiveSite202ResponseHeaders{Location: &location},
+	}, nil
+}
+
+// DNSCheckProblemType is the problem type of a request whose domains
+// failed the DNS check (package domains). It links to the documentation
+// of the check.
+const DNSCheckProblemType = "https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#dns-check"
+
+// dnsProblem is the 422 of a failed DNS check.
+func dnsProblem(e *sites.DNSCheckError) *httpserver.Problem {
+	p := httpserver.NewProblem(http.StatusUnprocessableEntity, e.Detail)
+	p.Type, p.Title = DNSCheckProblemType, "DNS check failed"
+	if p.Detail == "" {
+		p.Detail = "Some domains don't resolve to this host yet. Point their DNS records here, " +
+			"and send the request again once the change has propagated."
+	}
+	for _, f := range e.Fields {
+		p.Errors = append(p.Errors, httpserver.FieldError{Field: f.Field, Detail: f.Detail})
+	}
+	return p
+}
+
 // RegenerateSitePreviewPassword replaces the site's preview password and
 // returns the new one, once, with the job that applies it.
 func (h *Handlers) RegenerateSitePreviewPassword(ctx context.Context, req gen.RegenerateSitePreviewPasswordRequestObject) (gen.RegenerateSitePreviewPasswordResponseObject, error) {
@@ -350,12 +400,17 @@ func siteError(err error) error {
 		}
 		return out
 	}
+	var dnsErr *sites.DNSCheckError
+	if errors.As(err, &dnsErr) {
+		return dnsProblem(dnsErr)
+	}
 	for _, m := range []struct{ from, to error }{
 		{sites.ErrNotFound, ErrNotFound},
 		{sites.ErrNoPreviewDomain, ErrConflict},
 		{sites.ErrNotReady, ErrConflict},
 		{sites.ErrCredentialsGone, ErrGone},
 		{sites.ErrNotProvisioned, ErrConflict},
+		{sites.ErrNotRunning, ErrConflict},
 	} {
 		if errors.Is(err, m.from) {
 			return fmt.Errorf("%w: %w", m.to, m.from)

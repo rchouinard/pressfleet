@@ -197,13 +197,15 @@ func (s *Service) secretRefs(ctx context.Context, r *jobs.Run) (db, cache string
 	return db, cache, nil
 }
 
-// SiteConfig returns the provisioner configuration of a site.
-func SiteConfig(site store.Site, dbSecretRef, cacheSecretRef string) *provisioner.SiteConfig {
+// SiteConfig returns the provisioner configuration of a site with the
+// given aliases.
+func SiteConfig(site store.Site, aliases []string, dbSecretRef, cacheSecretRef string) *provisioner.SiteConfig {
 	return &provisioner.SiteConfig{
 		ID:            site.ID,
 		ClientGroupID: site.ClientGroupID,
 		PreviewDomain: site.PreviewDomain,
 		PrimaryDomain: site.PrimaryDomain,
+		Aliases:       aliases,
 		PHPVersion:    site.PHPVersion,
 		WPCoreVersion: site.WPCoreVersion,
 		EnableCache:   site.EnableCache,
@@ -233,7 +235,7 @@ func (s *Service) startStack(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
-	cfg := SiteConfig(site, dbRef, cacheRef)
+	cfg := SiteConfig(site, nil, dbRef, cacheRef)
 	if err := cfg.Validate(); err != nil {
 		// Retrying can't fix the site's own settings.
 		return jobs.Permanent(err)

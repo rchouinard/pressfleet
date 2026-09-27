@@ -44,6 +44,7 @@ func testConfig() platform.Config {
 		RedisAdminPassword:  testRedisPassword,
 		MasterKeyFile:       "/etc/pressfleet/master.key",
 		PreviewBaseDomain:   "preview.agency.example",
+		PublicIP:            "203.0.113.7",
 		DashboardDomain:     "fleet.agency.example",
 		ACME:                platform.ACMEConfig{Email: "ops@agency.example"},
 	}
@@ -391,6 +392,7 @@ func TestRenderInvalidConfig(t *testing.T) {
 		"key in data dir":   func(c *platform.Config) { c.MasterKeyFile = "/var/lib/pressfleet/master.key" },
 		"bad preview base":  func(c *platform.Config) { c.PreviewBaseDomain = "*.preview.example" },
 		"bad dashboard":     func(c *platform.Config) { c.DashboardDomain = "https://fleet.example" },
+		"bad public ip":     func(c *platform.Config) { c.PublicIP = "fleet.example" },
 		"bad listen":        func(c *platform.Config) { c.Listen = "8080" },
 		"tiny traefik":      func(c *platform.Config) { c.TraefikMemoryMB = 16 },
 		"bad acme email":    func(c *platform.Config) { c.ACME.Email = "ops" },

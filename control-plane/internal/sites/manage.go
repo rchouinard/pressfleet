@@ -362,9 +362,20 @@ func (s *Service) applyUpdate(ctx context.Context, r *jobs.Run) error {
 	return nil
 }
 
-// converge applies the site's settings with provisioner.UpdateSite. A site
-// without containers can't be updated, so that is permanent.
+// converge applies the site's settings, with its recorded aliases, with
+// provisioner.UpdateSite. A site without containers can't be updated, so
+// that is permanent.
 func (s *Service) converge(ctx context.Context, r *jobs.Run, site store.Site) (*provisioner.SiteStatus, error) {
+	aliases, err := store.NewSites(s.db).Aliases(ctx, site.ID)
+	if err != nil {
+		return nil, err
+	}
+	return s.convergeWith(ctx, r, site, aliases)
+}
+
+// convergeWith is converge with the given aliases, for putting previous
+// domains back.
+func (s *Service) convergeWith(ctx context.Context, r *jobs.Run, site store.Site, aliases []string) (*provisioner.SiteStatus, error) {
 	// Ask first, so a missing stack doesn't make the database and object
 	// cache managers recreate a database and a user for nothing.
 	if _, err := s.prov.GetSite(ctx, site.ID); err != nil {
@@ -377,7 +388,7 @@ func (s *Service) converge(ctx context.Context, r *jobs.Run, site store.Site) (*
 	if err != nil {
 		return nil, err
 	}
-	cfg := SiteConfig(site, dbRef, cacheRef)
+	cfg := SiteConfig(site, aliases, dbRef, cacheRef)
 	if err := cfg.Validate(); err != nil {
 		return nil, jobs.Permanent(err)
 	}
