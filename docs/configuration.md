@@ -176,6 +176,15 @@ Each site's `nginx` container carries the Traefik labels that route its preview 
 
 Traefik tells `nginx` the client's address and scheme in `X-Forwarded-For` and `X-Forwarded-Proto`. It sets both itself rather than passing on what a client sent, and `nginx` believes them only from its own network (`NGINX_TRUSTED_PROXIES=local`, see [images/README.md](../images/README.md)), where Traefik is the only proxy. So WordPress sees HTTPS requests as HTTPS, and the access log and the login rate limit see the client's address rather than Traefik's.
 
+### Preview password protection
+
+A site's preview domain can ask for HTTP basic auth, for sensitive sites in development (design doc §5.1). It is off by default and set per site, by Operators and Admins, with `PATCH /api/v1/sites/{id}` and `{"preview_protection": {"enabled": true}}`; there is no install-wide setting. Production domains are never protected.
+
+- The platform generates the password (26 random characters) the first time protection is turned on and returns it in that response only; `POST /api/v1/sites/{id}/preview-password` replaces it with a new one, returned the same way. The username defaults to the site's slug and can be changed with `preview_protection.username`. Turning protection off keeps the credentials, so turning it back on restores them.
+- The password is stored encrypted with the master key. Traefik only gets a bcrypt hash of it, in the site's container labels. The hash uses bcrypt's lowest cost: Traefik checks it on every request, and a random password needs no stretching.
+- Traefik checks the credentials and removes the `Authorization` header before the request reaches WordPress, so the header can't be mistaken for an application password.
+- The platform's own work doesn't go through the preview domain: WP-Cron and other tasks run WP-CLI in the site's containers, cache purges use the filesystem, and Traefik answers ACME HTTP-01 challenges on port 80 before any router.
+
 ## Preview certificates
 
 Every site is reachable on `https://<slug>.<preview_base_domain>/` as soon as it is provisioned. Traefik gets certificates for preview domains in one of two ways (design doc §4.1):

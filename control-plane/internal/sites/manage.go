@@ -88,6 +88,10 @@ type SiteUpdate struct {
 	CPU                 *string
 	MemoryReservationMB *int
 	MemoryLimitMB       *int
+	// PreviewProtection turns preview password protection on or off, and
+	// PreviewUsername changes its username (see preview.go).
+	PreviewProtection *bool
+	PreviewUsername   *string
 	// CreatedByUserID is the user starting the job.
 	CreatedByUserID string
 }
@@ -101,13 +105,17 @@ type updatePayload struct {
 
 // Update validates the requested settings, saves them as the site's
 // desired state with status updating, and queues a [UpdateJobType] job that
-// applies them. It returns the site as saved and the job. Validation
-// problems are a *ValidationError; a site that a job is working on, or that
-// never finished provisioning, is ErrBusy or ErrNotProvisioned.
-func (s *Service) Update(ctx context.Context, siteID string, req SiteUpdate) (store.Site, store.Job, error) {
+// applies them. It returns the site as saved and the job. If the update
+// turns preview protection on for the first time, it generates the preview
+// password and returns the credentials too, the only time they are
+// returned; otherwise they are nil. Validation problems are a
+// *ValidationError; a site that a job is working on, or that never finished
+// provisioning, is ErrBusy or ErrNotProvisioned.
+func (s *Service) Update(ctx context.Context, siteID string, req SiteUpdate) (store.Site, store.Job, *PreviewCredentials, error) {
 	var (
-		site store.Site
-		job  store.Job
+		site    store.Site
+		job     store.Job
+		preview *PreviewCredentials
 	)
 	err := s.db.InTx(ctx, func(q store.Querier) error {
 		sites := store.NewSites(q)
@@ -121,6 +129,13 @@ func (s *Service) Update(ctx context.Context, siteID string, req SiteUpdate) (st
 		}
 		if _, err := sites.SetSettings(ctx, siteID, next); err != nil {
 			return err
+		}
+		if next.PreviewProtection && current.PreviewPasswordSecretRef == "" {
+			password, err := s.replacePreviewPassword(ctx, q, current)
+			if err != nil {
+				return err
+			}
+			preview = &PreviewCredentials{Username: next.PreviewUsername, Password: password}
 		}
 		if _, err := sites.SetStatus(ctx, siteID, store.SiteUpdating, ""); err != nil {
 			return err
@@ -140,10 +155,11 @@ func (s *Service) Update(ctx context.Context, siteID string, req SiteUpdate) (st
 		return err
 	})
 	if err != nil {
-		return store.Site{}, store.Job{}, err
+		return store.Site{}, store.Job{}, nil, err
 	}
-	s.log.InfoContext(ctx, "site update queued", "site_id", siteID, "job_id", job.ID, "php_version", site.PHPVersion)
-	return site, job, nil
+	s.log.InfoContext(ctx, "site update queued", "site_id", siteID, "job_id", job.ID, "php_version", site.PHPVersion,
+		"preview_protection", site.PreviewProtection)
+	return site, job, preview, nil
 }
 
 // manageable returns the site if it can be updated, started, or stopped:
@@ -196,6 +212,20 @@ func (s *Service) validateUpdate(site store.Site, req SiteUpdate) (store.SiteSet
 		MemoryReservationMB: next.MemoryReservationMB,
 		MemoryLimitMB:       next.MemoryLimitMB,
 	})...)
+	if req.PreviewProtection != nil {
+		next.PreviewProtection = *req.PreviewProtection
+	}
+	if req.PreviewUsername != nil {
+		if err := provisioner.ValidateBasicAuthUsername(*req.PreviewUsername); err != nil {
+			fields = append(fields, FieldError{"/preview_protection/username", err.Error()})
+		}
+		next.PreviewUsername = *req.PreviewUsername
+	}
+	if next.PreviewProtection && next.PreviewUsername == "" {
+		// The slug is a valid username, and no secret: it is in the
+		// preview domain.
+		next.PreviewUsername = site.Slug
+	}
 	if len(fields) > 0 {
 		return store.SiteSettings{}, &ValidationError{Fields: fields}
 	}
@@ -307,8 +337,12 @@ func (s *Service) prepareUpdate(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
-	r.Logf("Applying PHP %s and resources of %s CPU, %d MiB reserved, %d MiB limit.",
-		site.PHPVersion, site.CPULimit, site.MemoryReservationMB, site.MemoryLimitMB)
+	protection := "off"
+	if previewAuth(site) != nil {
+		protection = "on for user " + site.PreviewUsername
+	}
+	r.Logf("Applying PHP %s, resources of %s CPU, %d MiB reserved, %d MiB limit, and preview password protection %s.",
+		site.PHPVersion, site.CPULimit, site.MemoryReservationMB, site.MemoryLimitMB, protection)
 	return nil
 }
 

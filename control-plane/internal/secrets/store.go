@@ -33,6 +33,9 @@ const (
 	// KindSiteWPAdminPassword is a site's generated WordPress admin
 	// password, kept until the API hands it out once.
 	KindSiteWPAdminPassword Kind = "site-wp-admin-password" //nolint:gosec // G101: a kind name, not a credential
+	// KindSitePreviewPassword is a site's generated preview domain basic
+	// auth password (§5.1), kept for the uptime checks that send it.
+	KindSitePreviewPassword Kind = "site-preview-password"
 )
 
 // Kinds are validated by shape rather than against the list above, so a new

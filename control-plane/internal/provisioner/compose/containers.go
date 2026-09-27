@@ -26,6 +26,8 @@ type ContainerDetails struct {
 	Networks map[string]string
 	// Mounts are the container's volumes and bind mounts.
 	Mounts []Mount
+	// Labels are the container's labels.
+	Labels map[string]string
 }
 
 // Mount is one of a container's volumes or bind mounts.
@@ -146,7 +148,8 @@ func InspectContainer(ctx context.Context, docker ExecFunc, container string) (C
 		ID     string `json:"Id"`
 		Name   string `json:"Name"`
 		Config struct {
-			Image string `json:"Image"`
+			Image  string            `json:"Image"`
+			Labels map[string]string `json:"Labels"`
 		} `json:"Config"`
 		State struct {
 			Running bool `json:"Running"`
@@ -172,6 +175,7 @@ func InspectContainer(ctx context.Context, docker ExecFunc, container string) (C
 		Running:  info.State.Running,
 		Networks: map[string]string{},
 		Mounts:   info.Mounts,
+		Labels:   info.Config.Labels,
 	}
 	for name, n := range info.NetworkSettings.Networks {
 		d.Networks[name] = n.IPAddress

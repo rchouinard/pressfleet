@@ -120,7 +120,7 @@ func (s *Service) failDeletion(ctx context.Context, r *jobs.Run) error {
 	return nil
 }
 
-// deleteSecrets deletes the site's salts and admin password; the database
+// deleteSecrets deletes the site's salts, admin password, and preview password; the database
 // credentials went with the database (sitedb.Manager.DropDatabase), the
 // object cache credentials with the cache user
 // (objectcache.Manager.DeleteUser), and the rendered files with the stack

@@ -707,13 +707,22 @@ paths:
       tags: [sites]
       summary: Update a site's settings
       description: |
-        Changes the PHP version or resource limits. The settings are
-        validated, saved as the site's desired state, and applied by a job
-        that recreates the affected containers (design doc §5.5); changing
-        the PHP version recreates the `php` container on the new image. The
-        response contains the site with the requested settings and status
-        `updating`, and the job. A stopped site stays stopped and runs with
-        the new settings when started.
+        Changes the PHP version, resource limits, or preview password
+        protection. The settings are validated, saved as the site's desired
+        state, and applied by a job that recreates the affected containers
+        (design doc §5.5); changing the PHP version recreates the `php`
+        container on the new image. The response contains the site with the
+        requested settings and status `updating`, and the job. A stopped
+        site stays stopped and runs with the new settings when started.
+
+        `preview_protection.enabled` turns HTTP basic auth on the preview
+        domain on or off (design doc §5.1); production domains are never
+        protected. The platform generates the password the first time
+        protection is turned on and returns it in `preview_credentials` of
+        this response only; it is never shown again, but can be replaced
+        with `POST /api/v1/sites/{site_id}/preview-password`. Turning
+        protection off keeps the credentials, so turning it on again
+        restores them. The username defaults to the site's slug.
 
         If the job fails, it reverts: the previous settings are applied and
         saved again, the status returns to what the containers are doing,
@@ -928,6 +937,49 @@ paths:
           $ref: "#/components/responses/Conflict"
         "410":
           $ref: "#/components/responses/Gone"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/sites/{site_id}/preview-password:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    post:
+      operationId: regenerateSitePreviewPassword
+      tags: [sites]
+      summary: Generate a new preview password (shown once)
+      description: |
+        Replaces the password of the site's preview domain protection
+        (design doc §5.1) with a newly generated one, returns it, and queues
+        a job that applies it; the old password stops working when the job
+        has finished. The password is returned by this response only. It
+        can be generated whether or not protection is on; with protection
+        off, it is kept for when it is turned on. The site's status is
+        `updating` until the job has finished. A site that is
+        `provisioning`, `updating`, or `deleting`, or whose provisioning
+        failed, returns `409`.
+      responses:
+        "202":
+          description: The new credentials, and the job that applies them.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+            Cache-Control:
+              description: Always `no-store`.
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PreviewPasswordAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
         default:
           $ref: "#/components/responses/Error"
 
@@ -1657,6 +1709,7 @@ components:
         - wp_core_version
         - wp_core_pinned
         - resources
+        - preview_protection
         - status
         - parent_site_id
         - admin_credentials_available
@@ -1700,6 +1753,8 @@ components:
           description: Whether the site is pinned to its current core version and skipped by core rollouts.
         resources:
           $ref: "#/components/schemas/ResourceLimits"
+        preview_protection:
+          $ref: "#/components/schemas/PreviewProtection"
         status:
           $ref: "#/components/schemas/SiteStatus"
         status_message:
@@ -1760,6 +1815,8 @@ components:
           $ref: "#/components/schemas/PHPVersion"
         resources:
           $ref: "#/components/schemas/ResourceLimitsUpdate"
+        preview_protection:
+          $ref: "#/components/schemas/PreviewProtectionUpdate"
 
     SiteAccepted:
       type: object
@@ -1767,6 +1824,65 @@ components:
       properties:
         site:
           $ref: "#/components/schemas/Site"
+        job:
+          $ref: "#/components/schemas/Job"
+        preview_credentials:
+          $ref: "#/components/schemas/PreviewCredentials"
+
+    PreviewProtection:
+      type: object
+      description: |
+        HTTP basic auth on the site's preview domain (design doc §5.1). The
+        password is never part of the site; it is returned once, when it is
+        generated.
+      required: [enabled, username]
+      properties:
+        enabled:
+          type: boolean
+          description: Whether the preview domain asks for the credentials.
+        username:
+          description: Null until a preview password has been generated.
+          oneOf:
+            - type: string
+              examples: ["acme-marketing"]
+            - type: "null"
+
+    PreviewProtectionUpdate:
+      type: object
+      description: Only the fields present are changed.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        enabled:
+          type: boolean
+          description: |
+            Turns protection on or off. Turning it on the first time
+            generates the password, returned in `preview_credentials`.
+        username:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: "^[!-9;-~]+$"
+          description: Printable ASCII without spaces or colons. Defaults to the site's slug.
+
+    PreviewCredentials:
+      type: object
+      description: The preview domain's basic auth login. Shown only once.
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+          description: The plaintext password. Shown only once.
+
+    PreviewPasswordAccepted:
+      type: object
+      required: [credentials, job]
+      properties:
+        credentials:
+          $ref: "#/components/schemas/PreviewCredentials"
         job:
           $ref: "#/components/schemas/Job"
 

@@ -51,11 +51,17 @@ type router struct {
 // alone. Go-live (#45) adds the primary domain's here; everything built
 // from this list (labels, maintenance routes) follows.
 func siteRouters(site *provisioner.SiteConfig) []router {
+	// The first middleware is the outermost, so noindex also marks the 401
+	// that basic auth answers with.
+	preview := []string{ingress.SiteName(site.ID, ingress.SuffixNoIndex)}
+	if site.PreviewAuth != nil {
+		preview = append(preview, ingress.SiteName(site.ID, ingress.SuffixPreviewAuth))
+	}
 	return []router{{
 		Name:         ingress.SiteName(site.ID, ingress.SuffixPreview),
 		Rule:         hostRule(site.PreviewDomain),
 		CertResolver: ingress.CertResolverPreview,
-		Middlewares:  []string{ingress.SiteName(site.ID, ingress.SuffixNoIndex)},
+		Middlewares:  preview,
 	}}
 }
 
@@ -85,6 +91,17 @@ func routingLabels(platformProject string, site *provisioner.SiteConfig) ([]labe
 		// Preview domains stay out of search engines (§5.1).
 		"traefik.http.middlewares." + ingress.SiteName(site.ID, ingress.SuffixNoIndex) +
 			".headers.customresponseheaders.X-Robots-Tag": "noindex",
+	}
+	if a := site.PreviewAuth; a != nil {
+		// Preview password protection (§5.1): only the bcrypt hash is in
+		// the label. The template doubles its "$"s for Compose. The
+		// Authorization header is removed before the request reaches
+		// WordPress, which would otherwise try it as an application
+		// password and refuse REST API requests.
+		auth := "traefik.http.middlewares." + ingress.SiteName(site.ID, ingress.SuffixPreviewAuth) + ".basicauth."
+		m[auth+"users"] = a.Username + ":" + a.PasswordHash
+		m[auth+"removeheader"] = "true"
+		m[auth+"realm"] = "Preview"
 	}
 	for _, r := range siteRouters(site) {
 		prefix := "traefik.http.routers." + r.Name + "."

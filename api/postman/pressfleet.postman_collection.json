@@ -1022,7 +1022,7 @@
                 "{{site_id}}"
               ]
             },
-            "description": "Changes `php_version` and/or `resources`; a job recreates the affected containers.",
+            "description": "Changes `php_version`, `resources`, and/or `preview_protection`; a job recreates the affected containers. See **Turn on preview protection** for the preview password.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"php_version\": \"8.4\"\n}",
@@ -1040,6 +1040,143 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "2297e6fa-fd2b-5ae1-a7b7-b8aa16e0c668",
+          "name": "Turn on preview protection",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}"
+              ]
+            },
+            "description": "Asks for HTTP basic auth on the site's preview domain (design doc \u00a75.1). The first time, the platform generates the password and returns it in `preview_credentials` of this response **only**; the test saves it to `preview_username` and `preview_password`. Turning protection on again later reuses the same credentials and returns none. Add `\"username\"` to choose the username (default: the site's slug).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"preview_protection\": {\n    \"enabled\": true\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "// The generated preview password is returned by this response only.",
+                  "const creds = pm.response.json().preview_credentials;",
+                  "if (creds) {",
+                  "    pm.environment.set(\"preview_username\", creds.username);",
+                  "    pm.environment.set(\"preview_password\", creds.password);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "62287324-0bed-5473-bd5b-d34887504018",
+          "name": "Turn off preview protection",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}"
+              ]
+            },
+            "description": "Opens the preview domain again. The credentials are kept for when protection is turned back on.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"preview_protection\": {\n    \"enabled\": false\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "de3c84b3-b6c0-5c23-baa9-c1b2294d808f",
+          "name": "Regenerate preview password",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/preview-password",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "preview-password"
+              ]
+            },
+            "description": "Replaces the preview password with a new one, returned by this response **only** (saved to `preview_username` and `preview_password`), and queues the job that applies it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "// The generated preview password is returned by this response only.",
+                  "const creds = pm.response.json().credentials;",
+                  "if (creds) {",
+                  "    pm.environment.set(\"preview_username\", creds.username);",
+                  "    pm.environment.set(\"preview_password\", creds.password);",
+                  "}"
                 ]
               }
             }

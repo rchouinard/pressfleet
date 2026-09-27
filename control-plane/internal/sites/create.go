@@ -111,7 +111,7 @@ func (s *Service) failProvisioning(ctx context.Context, r *jobs.Run) error {
 // the references.
 func (s *Service) deleteSiteSecrets(ctx context.Context, q store.Querier, site store.Site) error {
 	sec := s.secrets.With(q)
-	for _, ref := range []string{site.WPSaltsSecretRef, site.AdminPasswordSecretRef} {
+	for _, ref := range []string{site.WPSaltsSecretRef, site.AdminPasswordSecretRef, site.PreviewPasswordSecretRef} {
 		if ref == "" {
 			continue
 		}
@@ -216,6 +216,7 @@ func SiteConfig(site store.Site, dbSecretRef, cacheSecretRef string) *provisione
 		RedisSecretRef:   cacheSecretRef,
 		UID:              site.UID,
 		WPSaltsSecretRef: site.WPSaltsSecretRef,
+		PreviewAuth:      previewAuth(site),
 	}
 }
 

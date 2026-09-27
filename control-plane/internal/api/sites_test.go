@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
@@ -29,15 +31,23 @@ const testPreviewBase = "preview.example.test"
 
 // implementedSiteOps are the site operations that no longer answer 501.
 var implementedSiteOps = map[string]bool{
-	"listSites":                    true,
-	"createSite":                   true,
-	"getSite":                      true,
-	"updateSite":                   true,
-	"deleteSite":                   true,
-	"startSite":                    true,
-	"stopSite":                     true,
-	"purgeSiteCache":               true,
-	"retrieveSiteAdminCredentials": true,
+	"listSites":                     true,
+	"createSite":                    true,
+	"getSite":                       true,
+	"updateSite":                    true,
+	"deleteSite":                    true,
+	"startSite":                     true,
+	"stopSite":                      true,
+	"purgeSiteCache":                true,
+	"retrieveSiteAdminCredentials":  true,
+	"regenerateSitePreviewPassword": true,
+}
+
+func orEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // siteEnv is a site service on fakes, with a job pool to run its jobs.
@@ -405,6 +415,79 @@ func TestSiteManagementEndpoints(t *testing.T) {
 		if s, _ := e.prov.Site(siteID); s.Config.PHPVersion != "8.3" || s.Config.Resources.MemoryLimitMB != 768 {
 			t.Errorf("provisioner config = %+v", s.Config)
 		}
+
+		// Preview password protection (#107).
+		patchPreview := func(body string) gen.SiteAccepted {
+			t.Helper()
+			w := do(t, h, request{authed: true, method: http.MethodPatch, target: target, body: `{"preview_protection":` + body + `}`})
+			if w.Code != http.StatusAccepted {
+				t.Fatalf("patch preview protection %s: %d %s", body, w.Code, w.Body)
+			}
+			acc := decodeJSON[gen.SiteAccepted](t, w.Body.Bytes())
+			if w.Header().Get("Cache-Control") != "no-store" {
+				t.Errorf("Cache-Control = %q", w.Header().Get("Cache-Control"))
+			}
+			e.runJobs(t)
+			return acc
+		}
+		previewAuth := func() *provisioner.BasicAuth {
+			t.Helper()
+			s, _ := e.prov.Site(siteID)
+			return s.Config.PreviewAuth
+		}
+		checkPassword := func(auth *provisioner.BasicAuth, password string) {
+			t.Helper()
+			if auth == nil || bcrypt.CompareHashAndPassword([]byte(auth.PasswordHash), []byte(password)) != nil {
+				t.Errorf("the provisioner's preview auth %+v doesn't match the password", auth)
+			}
+		}
+		if got := get(); got.PreviewProtection.Enabled || got.PreviewProtection.Username != nil || previewAuth() != nil {
+			t.Errorf("new site has preview protection: %+v", got.PreviewProtection)
+		}
+		// Turning it on the first time generates the password, returned once.
+		acc = patchPreview(`{"enabled":true}`)
+		creds := acc.PreviewCredentials
+		if creds == nil || creds.Username != "one" || len(creds.Password) < 20 || !acc.Site.PreviewProtection.Enabled ||
+			orEmpty(acc.Site.PreviewProtection.Username) != "one" || acc.Job.Type != sites.UpdateJobType {
+			t.Fatalf("enabling preview protection = %+v", acc)
+		}
+		checkPassword(previewAuth(), creds.Password)
+		if a := previewAuth(); a.Username != "one" {
+			t.Errorf("preview auth username = %q", a.Username)
+		}
+		if w := do(t, h, request{authed: true, method: http.MethodGet, target: target}); strings.Contains(w.Body.String(), creds.Password) {
+			t.Error("GET returns the preview password")
+		}
+		// Off, and on again with the same credentials, which aren't shown.
+		if acc := patchPreview(`{"enabled":false}`); acc.PreviewCredentials != nil || acc.Site.PreviewProtection.Enabled || previewAuth() != nil {
+			t.Errorf("disabling = %+v, provisioner %+v", acc, previewAuth())
+		}
+		if acc := patchPreview(`{"enabled":true,"username":"client"}`); acc.PreviewCredentials != nil || orEmpty(acc.Site.PreviewProtection.Username) != "client" {
+			t.Errorf("enabling again = %+v", acc)
+		}
+		checkPassword(previewAuth(), creds.Password)
+		// A new password replaces the old one.
+		w = do(t, h, request{authed: true, method: http.MethodPost, target: target + "/preview-password"})
+		if w.Code != http.StatusAccepted || w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("regenerate: %d %v %s", w.Code, w.Header(), w.Body)
+		}
+		regen := decodeJSON[gen.PreviewPasswordAccepted](t, w.Body.Bytes())
+		if regen.Credentials.Username != "client" || regen.Credentials.Password == creds.Password || regen.Job.Type != sites.UpdateJobType ||
+			w.Header().Get("Location") != "/api/v1/jobs/"+regen.Job.ID {
+			t.Errorf("regenerate = %s", w.Body)
+		}
+		e.runJobs(t)
+		checkPassword(previewAuth(), regen.Credentials.Password)
+		var previewSecrets int
+		if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM secrets WHERE kind = ?", string(secrets.KindSitePreviewPassword)).Scan(&previewSecrets); err != nil || previewSecrets != 1 {
+			t.Errorf("preview password secrets = %d, %v; want the new one only", previewSecrets, err)
+		}
+		for _, body := range []string{`{"preview_protection":{"username":"a:b"}}`, `{"preview_protection":{}}`} {
+			if w := do(t, h, request{authed: true, method: http.MethodPatch, target: target, body: body}); w.Code != http.StatusUnprocessableEntity {
+				t.Errorf("patch %s: %d %s", body, w.Code, w.Body)
+			}
+		}
+		patchPreview(`{"enabled":false}`)
 
 		// Validation.
 		for _, tt := range []struct{ name, body, field string }{

@@ -49,15 +49,16 @@
 // [DeleteJobType] job, whose steps remove the stack with its network,
 // volumes, and rendered files (provisioner.DeleteSite), the database, its
 // user and credentials (sitedb.Manager.DropDatabase), the object cache user,
-// its data and credentials (objectcache.Manager.DeleteUser), the salts and
-// admin password secrets, and finally the site row with its schedules. Each step
+// its data and credentials (objectcache.Manager.DeleteUser), the salts,
+// admin password, and preview password secrets, and finally the site row with its schedules. Each step
 // succeeds when there is nothing left to remove, so a retried or repeated
 // deletion converges. Deletion can't be rolled back: a job that gives up
 // marks the site failed, and deleting it again queues a new job.
 //
 // # Settings changes
 //
-// [Service.Update] changes the PHP version and resource limits. It
+// [Service.Update] changes the PHP version, resource limits, and preview
+// password protection (see preview.go). It
 // validates the merged settings like creation does (a PHP version only when
 // it changes, so a site on an end-of-life branch can still get new limits),
 // then in one transaction saves them as the site's desired state, sets the

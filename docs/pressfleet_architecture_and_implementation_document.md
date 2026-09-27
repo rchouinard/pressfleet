@@ -396,7 +396,7 @@ All long-running operations run as **Jobs**. API endpoints that start them retur
 
 **Preview password protection (optional):** For sensitive sites in development, a site's preview domain can require HTTP basic auth. It is off by default and turned on or off per site with `PATCH /api/v1/sites/{id}`.
 * Traefik enforces it with a `basicAuth` middleware on the preview-domain router only, so WordPress is not involved. Production domains are never protected; after go-live the preview domain redirects to the primary domain (§5.2).
-* Each site has one username and password. The platform generates the password, stores it encrypted, and shows it once (like the WordPress admin password); it can be regenerated. Only a bcrypt hash appears in the site's Traefik labels.
+* Each site has one username and password. The platform generates the password, stores it encrypted, and shows it once (like the WordPress admin password); it can be regenerated. Only a bcrypt hash appears in the site's Traefik labels. The hash uses bcrypt's lowest cost, because Traefik checks it on every request and a random password needs no stretching.
 * Platform operations don't go through the protected route: WP-Cron and other tasks use WP-CLI, cache purges use the filesystem, and Traefik answers ACME challenges before routing. Uptime checks (§7.1) send the site's credentials.
 
 ### 5.2. Go-Live (Domain Switch) Workflow

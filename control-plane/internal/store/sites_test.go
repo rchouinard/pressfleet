@@ -236,16 +236,65 @@ func TestSiteListAndSettings(t *testing.T) {
 
 		// Settings.
 		before, _ := sites.Get(ctx, created[0])
-		want := store.SiteSettings{PHPVersion: "8.3", CPULimit: "2.5", MemoryReservationMB: 256, MemoryLimitMB: 1024}
+		want := store.SiteSettings{PHPVersion: "8.3", CPULimit: "2.5", MemoryReservationMB: 256, MemoryLimitMB: 1024,
+			PreviewProtection: true, PreviewUsername: "preview"}
 		if ok, err := sites.SetSettings(ctx, created[0], want); err != nil || !ok {
 			t.Fatalf("SetSettings = %v, %v", ok, err)
 		}
 		got, _ := sites.Get(ctx, created[0])
-		if got.Settings() != want || got.UpdatedAt.Before(before.UpdatedAt) || before.WithSettings(want).PHPVersion != "8.3" {
+		if got.Settings() != want || got.UpdatedAt.Before(before.UpdatedAt) || before.WithSettings(want).Settings() != want {
 			t.Errorf("after SetSettings: %+v", got)
 		}
 		if ok, err := sites.SetSettings(ctx, id.New(), want); err != nil || ok {
 			t.Errorf("SetSettings on a missing site = %v, %v", ok, err)
+		}
+	})
+}
+
+// TestSitePreviewPassword covers the preview protection columns (#107):
+// the password reference and hash, and their removal with the site's other
+// secret references.
+func TestSitePreviewPassword(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		sites := store.NewSites(db)
+		s := newTestSite(createGroup(ctx, t, db), "acme", 20000)
+		if err := sites.Create(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+		if s.PreviewProtection || s.PreviewUsername != "" || s.PreviewPasswordHash != "" || s.PreviewPasswordSecretRef != "" {
+			t.Errorf("new site has preview protection: %+v", s)
+		}
+		if ok, err := sites.SetPreviewPassword(ctx, s.ID, "pw-ref", "$2a$04$hash"); err != nil || !ok {
+			t.Fatalf("SetPreviewPassword = %v, %v", ok, err)
+		}
+		set := s.Settings()
+		set.PreviewProtection, set.PreviewUsername = true, "preview"
+		if _, err := sites.SetSettings(ctx, s.ID, set); err != nil {
+			t.Fatal(err)
+		}
+		got, err := sites.Get(ctx, s.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.PreviewProtection || got.PreviewUsername != "preview" || got.PreviewPasswordSecretRef != "pw-ref" ||
+			got.PreviewPasswordHash != "$2a$04$hash" {
+			t.Errorf("after SetPreviewPassword and SetSettings: %+v", got)
+		}
+		if _, err := sites.SetPreviewPassword(ctx, s.ID, "", "x"); err == nil {
+			t.Error("SetPreviewPassword accepted an empty reference")
+		}
+		if ok, err := sites.SetPreviewPassword(ctx, id.New(), "r", "h"); err != nil || ok {
+			t.Errorf("SetPreviewPassword on a missing site = %v, %v", ok, err)
+		}
+
+		if err := sites.ClearSecretRefs(ctx, s.ID); err != nil {
+			t.Fatal(err)
+		}
+		got, _ = sites.Get(ctx, s.ID)
+		if got.PreviewProtection || got.PreviewPasswordSecretRef != "" || got.PreviewPasswordHash != "" ||
+			got.WPSaltsSecretRef != "" || got.AdminPasswordSecretRef != "" {
+			t.Errorf("after ClearSecretRefs: %+v", got)
 		}
 	})
 }

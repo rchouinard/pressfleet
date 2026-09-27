@@ -702,6 +702,41 @@ type PasswordChange struct {
 	NewPassword     *Password `json:"new_password,omitempty"`
 }
 
+// PreviewCredentials The preview domain's basic auth login. Shown only once.
+type PreviewCredentials struct {
+	// Password The plaintext password. Shown only once.
+	Password string `json:"password"`
+	Username string `json:"username"`
+}
+
+// PreviewPasswordAccepted defines model for PreviewPasswordAccepted.
+type PreviewPasswordAccepted struct {
+	// Credentials The preview domain's basic auth login. Shown only once.
+	Credentials PreviewCredentials `json:"credentials"`
+	Job         Job                `json:"job"`
+}
+
+// PreviewProtection HTTP basic auth on the site's preview domain (design doc §5.1). The
+// password is never part of the site; it is returned once, when it is
+// generated.
+type PreviewProtection struct {
+	// Enabled Whether the preview domain asks for the credentials.
+	Enabled bool `json:"enabled"`
+
+	// Username Null until a preview password has been generated.
+	Username *string `json:"username"`
+}
+
+// PreviewProtectionUpdate Only the fields present are changed.
+type PreviewProtectionUpdate struct {
+	// Enabled Turns protection on or off. Turning it on the first time
+	// generates the password, returned in `preview_credentials`.
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Username Printable ASCII without spaces or colons. Defaults to the site's slug.
+	Username *string `json:"username,omitempty"`
+}
+
 // Problem RFC 9457 Problem Details. Additional members may be added.
 type Problem struct {
 	// Detail Human-readable explanation of this occurrence.
@@ -819,6 +854,11 @@ type Site struct {
 	// Examples: acme-marketing.preview.agency.example
 	PreviewDomain string `json:"preview_domain"`
 
+	// PreviewProtection HTTP basic auth on the site's preview domain (design doc §5.1). The
+	// password is never part of the site; it is returned once, when it is
+	// generated.
+	PreviewProtection PreviewProtection `json:"preview_protection"`
+
 	// PrimaryDomain Null until the site goes live.
 	PrimaryDomain *string `json:"primary_domain"`
 
@@ -863,8 +903,11 @@ type Site struct {
 
 // SiteAccepted defines model for SiteAccepted.
 type SiteAccepted struct {
-	Job  Job  `json:"job"`
-	Site Site `json:"site"`
+	Job Job `json:"job"`
+
+	// PreviewCredentials The preview domain's basic auth login. Shown only once.
+	PreviewCredentials *PreviewCredentials `json:"preview_credentials,omitempty"`
+	Site               Site                `json:"site"`
 }
 
 // SiteAdminCredentials defines model for SiteAdminCredentials.
@@ -951,6 +994,9 @@ type SiteUpdate struct {
 	//
 	// Examples: 8.4
 	PhpVersion *PHPVersion `json:"php_version,omitempty"`
+
+	// PreviewProtection Only the fields present are changed.
+	PreviewProtection *PreviewProtectionUpdate `json:"preview_protection,omitempty"`
 
 	// Resources Partial resource limits. Omitted fields keep their current value, or the platform default when creating a site.
 	Resources *ResourceLimitsUpdate `json:"resources,omitempty"`
@@ -1258,6 +1304,9 @@ type ServerInterface interface {
 	// PurgeSiteCache Purge a site's caches
 	// (POST /api/v1/sites/{site_id}/cache/purge)
 	PurgeSiteCache(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// RegenerateSitePreviewPassword Generate a new preview password (shown once)
+	// (POST /api/v1/sites/{site_id}/preview-password)
+	RegenerateSitePreviewPassword(w http.ResponseWriter, r *http.Request, siteID SiteID)
 	// StartSite Start a stopped site
 	// (POST /api/v1/sites/{site_id}/start)
 	StartSite(w http.ResponseWriter, r *http.Request, siteID SiteID)
@@ -2027,6 +2076,32 @@ func (siw *ServerInterfaceWrapper) PurgeSiteCache(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// RegenerateSitePreviewPassword operation middleware
+func (siw *ServerInterfaceWrapper) RegenerateSitePreviewPassword(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RegenerateSitePreviewPassword(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // StartSite operation middleware
 func (siw *ServerInterfaceWrapper) StartSite(w http.ResponseWriter, r *http.Request) {
 
@@ -2406,6 +2481,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/stop", wrapper.StopSite)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/cache/purge", wrapper.PurgeSiteCache)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/admin-credentials", wrapper.RetrieveSiteAdminCredentials)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/preview-password", wrapper.RegenerateSitePreviewPassword)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs", wrapper.ListJobs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs/{job_id}", wrapper.GetJob)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit-events", wrapper.ListAuditEvents)
@@ -4710,6 +4786,123 @@ func (response PurgeSiteCachedefaultApplicationProblemPlusJSONResponse) VisitPur
 	return err
 }
 
+type RegenerateSitePreviewPasswordRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+}
+
+type RegenerateSitePreviewPasswordResponseObject interface {
+	VisitRegenerateSitePreviewPasswordResponse(w http.ResponseWriter) error
+}
+
+type RegenerateSitePreviewPassword202ResponseHeaders struct {
+	CacheControl *string
+	Location     *string
+}
+
+type RegenerateSitePreviewPassword202JSONResponse struct {
+	Body    PreviewPasswordAccepted
+	Headers RegenerateSitePreviewPassword202ResponseHeaders
+}
+
+func (response RegenerateSitePreviewPassword202JSONResponse) VisitRegenerateSitePreviewPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegenerateSitePreviewPassword401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response RegenerateSitePreviewPassword401ApplicationProblemPlusJSONResponse) VisitRegenerateSitePreviewPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegenerateSitePreviewPassword403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response RegenerateSitePreviewPassword403ApplicationProblemPlusJSONResponse) VisitRegenerateSitePreviewPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegenerateSitePreviewPassword404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response RegenerateSitePreviewPassword404ApplicationProblemPlusJSONResponse) VisitRegenerateSitePreviewPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegenerateSitePreviewPassword409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response RegenerateSitePreviewPassword409ApplicationProblemPlusJSONResponse) VisitRegenerateSitePreviewPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegenerateSitePreviewPassworddefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response RegenerateSitePreviewPassworddefaultApplicationProblemPlusJSONResponse) VisitRegenerateSitePreviewPasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type StartSiteRequestObject struct {
 	SiteID SiteID `json:"site_id"`
 }
@@ -5596,6 +5789,9 @@ type StrictServerInterface interface {
 	// PurgeSiteCache Purge a site's caches
 	// (POST /api/v1/sites/{site_id}/cache/purge)
 	PurgeSiteCache(ctx context.Context, request PurgeSiteCacheRequestObject) (PurgeSiteCacheResponseObject, error)
+	// RegenerateSitePreviewPassword Generate a new preview password (shown once)
+	// (POST /api/v1/sites/{site_id}/preview-password)
+	RegenerateSitePreviewPassword(ctx context.Context, request RegenerateSitePreviewPasswordRequestObject) (RegenerateSitePreviewPasswordResponseObject, error)
 	// StartSite Start a stopped site
 	// (POST /api/v1/sites/{site_id}/start)
 	StartSite(ctx context.Context, request StartSiteRequestObject) (StartSiteResponseObject, error)
@@ -6264,6 +6460,32 @@ func (sh *strictHandler) PurgeSiteCache(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PurgeSiteCacheResponseObject); ok {
 		if err := validResponse.VisitPurgeSiteCacheResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RegenerateSitePreviewPassword operation middleware
+func (sh *strictHandler) RegenerateSitePreviewPassword(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request RegenerateSitePreviewPasswordRequestObject
+
+	request.SiteID = siteID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RegenerateSitePreviewPassword(ctx, request.(RegenerateSitePreviewPasswordRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RegenerateSitePreviewPassword")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RegenerateSitePreviewPasswordResponseObject); ok {
+		if err := validResponse.VisitRegenerateSitePreviewPasswordResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

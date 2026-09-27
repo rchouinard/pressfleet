@@ -43,6 +43,8 @@ var operationActions = map[string]authz.Action{
 	"stopSite":                     authz.StopSite,
 	"purgeSiteCache":               authz.PurgeSiteCache,
 	"retrieveSiteAdminCredentials": authz.RetrieveSiteCredentials,
+	// Preview password protection is a site setting (design doc §4.6).
+	"regenerateSitePreviewPassword": authz.UpdateSite,
 
 	"listJobs": authz.ViewJobs,
 	"getJob":   authz.ViewJobs,

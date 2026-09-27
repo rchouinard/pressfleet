@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 )
 
 // ErrSiteNotFound is returned when an operation targets a site the driver
@@ -75,7 +76,56 @@ type SiteConfig struct {
 	// them into the Redis Object Cache plugin's settings; empty leaves the
 	// site without them.
 	RedisSecretRef string
+	// PreviewAuth, if set, protects the preview domain, and only the
+	// preview domain, with HTTP basic auth (§5.1). It carries the password's
+	// bcrypt hash rather than a reference to the password: the hash is all
+	// the edge router needs, and it isn't secret enough to need resolving
+	// by the driver.
+	PreviewAuth *BasicAuth
 }
+
+// BasicAuth is one HTTP basic auth credential.
+type BasicAuth struct {
+	Username string
+	// PasswordHash is a bcrypt hash ($2a$, $2b$, or $2y$) of the password.
+	PasswordHash string
+}
+
+// Validate checks that the credential can be used: a username of printable
+// ASCII without spaces or colons (the basic auth separator), and a bcrypt
+// hash.
+func (a *BasicAuth) Validate() error {
+	var errs []error
+	if err := ValidateBasicAuthUsername(a.Username); err != nil {
+		errs = append(errs, fmt.Errorf("preview auth: %w", err))
+	}
+	if !bcryptHash.MatchString(a.PasswordHash) {
+		errs = append(errs, errors.New("preview auth: password hash must be a bcrypt hash"))
+	}
+	return errors.Join(errs...)
+}
+
+// ValidateBasicAuthUsername checks a basic auth username: 1 to
+// MaxBasicAuthUsername characters of printable ASCII other than spaces and
+// colons (the separator of the credentials).
+func ValidateBasicAuthUsername(u string) error {
+	if u == "" || len(u) > MaxBasicAuthUsername {
+		return fmt.Errorf("username must be 1 to %d characters", MaxBasicAuthUsername)
+	}
+	for _, r := range u {
+		if r <= ' ' || r > '~' || r == ':' {
+			return errors.New("username may only contain printable ASCII other than spaces and colons")
+		}
+	}
+	return nil
+}
+
+// MaxBasicAuthUsername is the longest basic auth username accepted.
+const MaxBasicAuthUsername = 64
+
+// bcryptHash matches the modular crypt format of bcrypt: version, two-digit
+// cost, and 53 characters of salt and hash.
+var bcryptHash = regexp.MustCompile(`^\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}$`)
 
 // Validate reports every problem with the config, or nil if it is usable.
 func (c *SiteConfig) Validate() error {
@@ -99,6 +149,11 @@ func (c *SiteConfig) Validate() error {
 	}
 	if err := c.Resources.Validate(); err != nil {
 		errs = append(errs, err)
+	}
+	if c.PreviewAuth != nil {
+		if err := c.PreviewAuth.Validate(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("invalid site config %q: %w", c.ID, err)

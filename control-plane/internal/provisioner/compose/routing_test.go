@@ -1,6 +1,7 @@
 package compose_test
 
 import (
+	"errors"
 	"maps"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 )
 
@@ -73,6 +75,40 @@ func TestRoutingLabels(t *testing.T) {
 	}
 	if php := traefikLabels(labels["php"]); len(php) != 0 {
 		t.Errorf("php is routed: %v", php)
+	}
+}
+
+// TestRoutingLabelsPreviewAuth checks preview password protection (#107):
+// a basicAuth middleware on the preview router, after noindex, with the
+// bcrypt hash escaped for Compose.
+func TestRoutingLabelsPreviewAuth(t *testing.T) {
+	const hash = "$2a$04$abcdefghijklmnopqrstuuq5MvA9Wh8m6cHfVZ1gXWLU4.o9rSPTa"
+	in := testSiteRender()
+	in.Site.PreviewAuth = &provisioner.BasicAuth{Username: "preview", PasswordHash: hash}
+	dir, _ := renderSite(t, in)
+	raw, err := os.ReadFile(filepath.Join(dir, compose.SiteComposeFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := "pf-" + testSiteID
+	auth := "traefik.http.middlewares." + p + "-preview-auth.basicauth."
+	// Compose interpolates "$", so the file must double it.
+	if want := auth + `users: "preview:$$2a$$04$$abcdefghijklmnopqrstuuq5MvA9Wh8m6cHfVZ1gXWLU4.o9rSPTa"`; !strings.Contains(string(raw), want) {
+		t.Errorf("compose.yaml lacks %s", want)
+	}
+	nginx := renderedLabels(t, in)["nginx"]
+	for k, want := range map[string]string{
+		"traefik.http.routers." + p + "-preview.middlewares": p + "-noindex," + p + "-preview-auth",
+		auth + "removeheader":                                "true",
+	} {
+		if nginx[k] != want {
+			t.Errorf("%s = %q, want %q", k, nginx[k], want)
+		}
+	}
+
+	in.Site.PreviewAuth.PasswordHash = "plaintext"
+	if _, err := compose.RenderSite(filepath.Join(t.TempDir(), "site"), in); !errors.Is(err, compose.ErrInvalidSite) {
+		t.Errorf("a plaintext password: err = %v, want ErrInvalidSite", err)
 	}
 }
 

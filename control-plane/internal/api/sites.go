@@ -132,7 +132,10 @@ func (h *Handlers) UpdateSite(ctx context.Context, req gen.UpdateSiteRequestObje
 	if r := b.Resources; r != nil {
 		in.CPU, in.MemoryReservationMB, in.MemoryLimitMB = r.CPU, r.MemoryReservationMb, r.MemoryLimitMb
 	}
-	site, job, err := h.sites.Update(ctx, req.SiteID, in)
+	if pp := b.PreviewProtection; pp != nil {
+		in.PreviewProtection, in.PreviewUsername = pp.Enabled, pp.Username
+	}
+	site, job, preview, err := h.sites.Update(ctx, req.SiteID, in)
 	if err != nil {
 		return nil, siteError(err)
 	}
@@ -145,9 +148,43 @@ func (h *Handlers) UpdateSite(ctx context.Context, req gen.UpdateSiteRequestObje
 		return nil, err
 	}
 	location := jobLocation(job)
-	return gen.UpdateSite202JSONResponse{
+	out := gen.UpdateSite202JSONResponse{
 		Body:    gen.SiteAccepted{Site: siteResponse(site, aliases), Job: j},
 		Headers: gen.UpdateSite202ResponseHeaders{Location: &location},
+	}
+	if preview != nil {
+		// The generated password is returned by this response only. Like
+		// every API response, it is sent with Cache-Control: no-store.
+		out.Body.PreviewCredentials = &gen.PreviewCredentials{Username: preview.Username, Password: preview.Password.Reveal()}
+	}
+	return out, nil
+}
+
+// RegenerateSitePreviewPassword replaces the site's preview password and
+// returns the new one, once, with the job that applies it.
+func (h *Handlers) RegenerateSitePreviewPassword(ctx context.Context, req gen.RegenerateSitePreviewPasswordRequestObject) (gen.RegenerateSitePreviewPasswordResponseObject, error) {
+	p, err := h.authorize(ctx, authz.UpdateSite, authz.Site(req.SiteID))
+	if err != nil {
+		return nil, err
+	}
+	if h.sites == nil {
+		return nil, errNoSites
+	}
+	creds, job, err := h.sites.RegeneratePreviewPassword(ctx, req.SiteID, p.UserID)
+	if err != nil {
+		return nil, siteError(err)
+	}
+	j, err := jobResponse(job, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	location, noStore := jobLocation(job), "no-store"
+	return gen.RegenerateSitePreviewPassword202JSONResponse{
+		Body: gen.PreviewPasswordAccepted{
+			Credentials: gen.PreviewCredentials{Username: creds.Username, Password: creds.Password.Reveal()},
+			Job:         j,
+		},
+		Headers: gen.RegenerateSitePreviewPassword202ResponseHeaders{Location: &location, CacheControl: &noStore},
 	}, nil
 }
 
@@ -323,8 +360,12 @@ func siteResponse(s store.Site, aliases []string) gen.Site {
 		Status:                    gen.SiteStatus(s.Status),
 		URL:                       &url,
 		AdminCredentialsAvailable: s.AdminPasswordSecretRef != "",
+		PreviewProtection:         gen.PreviewProtection{Enabled: s.PreviewProtection},
 		CreatedAt:                 s.CreatedAt,
 		UpdatedAt:                 s.UpdatedAt,
+	}
+	if s.PreviewUsername != "" {
+		out.PreviewProtection.Username = &s.PreviewUsername
 	}
 	if s.PrimaryDomain != "" {
 		out.PrimaryDomain = &s.PrimaryDomain

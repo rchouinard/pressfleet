@@ -40,7 +40,7 @@ A collection pre-request script authenticates every request:
 
 ## Variables
 
-Requests that create something save its ID for the requests that follow: `client_group_id`, `site_id`, `user_id`, `token_id`. Every `202` response saves the queued job's ID to `job_id`.
+Requests that create something save its ID for the requests that follow: `client_group_id`, `site_id`, `user_id`, `token_id`. Every `202` response saves the queued job's ID to `job_id`. **Sites → Turn on preview protection** (the first time) and **Regenerate preview password** save the preview domain's generated basic auth login to `preview_username` and `preview_password`, since the API returns the password only once.
 
 Site changes run as jobs. Follow them with **Jobs → Get job**. When the collection runs in the Collection Runner or newman, **Get job** repeats every 2 seconds until the job finishes and fails if the job didn't succeed. Sent by hand, it polls once.
 

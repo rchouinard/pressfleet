@@ -64,8 +64,17 @@ type Site struct {
 	// AdminPasswordSecretRef references the administrator's generated
 	// password until the API has handed it out (TakeAdminPassword).
 	AdminPasswordSecretRef string
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
+	// PreviewProtection turns on HTTP basic auth on the preview domain
+	// (§5.1) with PreviewUsername and the password that
+	// PreviewPasswordSecretRef references. PreviewPasswordHash is the
+	// password's bcrypt hash, which is all Traefik gets. The credentials
+	// are kept while protection is off.
+	PreviewProtection        bool
+	PreviewUsername          string
+	PreviewPasswordHash      string
+	PreviewPasswordSecretRef string
+	CreatedAt                time.Time
+	UpdatedAt                time.Time
 }
 
 // Sites reads and writes sites.
@@ -81,7 +90,8 @@ func NewSites(q Querier) Sites {
 // siteColumns lists columns in the order scanSite expects.
 const siteColumns = "id, client_group_id, name, slug, status, status_message, preview_domain, primary_domain, " +
 	"php_version, wp_core_version, wp_core_pinned, enable_cache, cpu_limit, memory_reservation_mb, memory_limit_mb, " +
-	"uid, wp_salts_secret_ref, admin_username, admin_email, admin_password_secret_ref, created_at, updated_at"
+	"uid, wp_salts_secret_ref, admin_username, admin_email, admin_password_secret_ref, " +
+	"preview_protection, preview_username, preview_password_hash, preview_password_secret_ref, created_at, updated_at"
 
 func scanSite(s scanner) (Site, error) {
 	var (
@@ -91,7 +101,9 @@ func scanSite(s scanner) (Site, error) {
 	err := s.Scan(&site.ID, &site.ClientGroupID, &site.Name, &site.Slug, &site.Status, &site.StatusMessage,
 		&site.PreviewDomain, &primary, &site.PHPVersion, &site.WPCoreVersion, &site.WPCorePinned, &site.EnableCache,
 		&site.CPULimit, &site.MemoryReservationMB, &site.MemoryLimitMB, &site.UID, &site.WPSaltsSecretRef,
-		&site.AdminUsername, &site.AdminEmail, &site.AdminPasswordSecretRef, &site.CreatedAt, &site.UpdatedAt)
+		&site.AdminUsername, &site.AdminEmail, &site.AdminPasswordSecretRef,
+		&site.PreviewProtection, &site.PreviewUsername, &site.PreviewPasswordHash, &site.PreviewPasswordSecretRef,
+		&site.CreatedAt, &site.UpdatedAt)
 	site.PrimaryDomain = primary.String
 	return site, err
 }
@@ -108,11 +120,12 @@ func (r Sites) Create(ctx context.Context, s *Site) error {
 	created.CreatedAt = now()
 	created.UpdatedAt = created.CreatedAt
 	_, err := r.q.ExecContext(ctx, "INSERT INTO sites ("+siteColumns+") VALUES "+
-		"(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"("+placeholders(26)+")",
 		created.ID, created.ClientGroupID, created.Name, created.Slug, string(created.Status), created.StatusMessage,
 		created.PreviewDomain, nullString(created.PrimaryDomain), created.PHPVersion, created.WPCoreVersion,
 		created.WPCorePinned, created.EnableCache, created.CPULimit, created.MemoryReservationMB, created.MemoryLimitMB,
 		created.UID, created.WPSaltsSecretRef, created.AdminUsername, created.AdminEmail, created.AdminPasswordSecretRef,
+		created.PreviewProtection, created.PreviewUsername, created.PreviewPasswordHash, created.PreviewPasswordSecretRef,
 		created.CreatedAt, created.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create site: %w", err)
@@ -258,12 +271,16 @@ func (r Sites) AliasesForSites(ctx context.Context, siteIDs []string) (map[strin
 }
 
 // SiteSettings are the settings of a site that users change after
-// creation: its PHP version and resource limits.
+// creation: its PHP version, resource limits, and whether its preview
+// domain is protected, with which username. The preview password isn't
+// among them: it is regenerated rather than set (SetPreviewPassword).
 type SiteSettings struct {
 	PHPVersion          string `json:"php_version"`
 	CPULimit            string `json:"cpu_limit"`
 	MemoryReservationMB int    `json:"memory_reservation_mb"`
 	MemoryLimitMB       int    `json:"memory_limit_mb"`
+	PreviewProtection   bool   `json:"preview_protection"`
+	PreviewUsername     string `json:"preview_username"`
 }
 
 // Settings returns the site's current settings.
@@ -273,6 +290,8 @@ func (s Site) Settings() SiteSettings {
 		CPULimit:            s.CPULimit,
 		MemoryReservationMB: s.MemoryReservationMB,
 		MemoryLimitMB:       s.MemoryLimitMB,
+		PreviewProtection:   s.PreviewProtection,
+		PreviewUsername:     s.PreviewUsername,
 	}
 }
 
@@ -280,15 +299,30 @@ func (s Site) Settings() SiteSettings {
 func (s Site) WithSettings(set SiteSettings) Site {
 	s.PHPVersion, s.CPULimit = set.PHPVersion, set.CPULimit
 	s.MemoryReservationMB, s.MemoryLimitMB = set.MemoryReservationMB, set.MemoryLimitMB
+	s.PreviewProtection, s.PreviewUsername = set.PreviewProtection, set.PreviewUsername
 	return s
 }
 
-// SetSettings saves the site's PHP version and resource limits. It reports
-// whether the site exists; a missing site is not an error.
+// SetSettings saves the site's settings. It reports whether the site
+// exists; a missing site is not an error.
 func (r Sites) SetSettings(ctx context.Context, siteID string, s SiteSettings) (bool, error) {
 	return r.exec(ctx, "set settings of site "+siteID,
-		"UPDATE sites SET php_version = ?, cpu_limit = ?, memory_reservation_mb = ?, memory_limit_mb = ?, updated_at = ? WHERE id = ?",
-		s.PHPVersion, s.CPULimit, s.MemoryReservationMB, s.MemoryLimitMB, now(), siteID)
+		"UPDATE sites SET php_version = ?, cpu_limit = ?, memory_reservation_mb = ?, memory_limit_mb = ?, "+
+			"preview_protection = ?, preview_username = ?, updated_at = ? WHERE id = ?",
+		s.PHPVersion, s.CPULimit, s.MemoryReservationMB, s.MemoryLimitMB,
+		s.PreviewProtection, s.PreviewUsername, now(), siteID)
+}
+
+// SetPreviewPassword records the site's preview password: the reference to
+// the secret holding it and its bcrypt hash. It reports whether the site
+// exists; a missing site is not an error.
+func (r Sites) SetPreviewPassword(ctx context.Context, siteID, secretRef, hash string) (bool, error) {
+	if secretRef == "" || hash == "" {
+		return false, errors.New("set preview password: reference and hash are required")
+	}
+	return r.exec(ctx, "set preview password of site "+siteID,
+		"UPDATE sites SET preview_password_secret_ref = ?, preview_password_hash = ?, updated_at = ? WHERE id = ?",
+		secretRef, hash, now(), siteID)
 }
 
 // SlugTaken reports whether a site already uses the slug or the preview
@@ -350,11 +384,14 @@ func (r Sites) SetStatus(ctx context.Context, siteID string, status SiteStatus, 
 	return r.exec(ctx, "set status of site "+siteID, query, args...)
 }
 
-// ClearSecretRefs forgets the site's salts and admin password references,
-// after their secrets have been deleted. A missing site is not an error.
+// ClearSecretRefs forgets the site's salts, admin password, and preview
+// password references, after their secrets have been deleted, and turns
+// preview protection off, since it has no password any more. A missing
+// site is not an error.
 func (r Sites) ClearSecretRefs(ctx context.Context, siteID string) error {
 	_, err := r.exec(ctx, "clear secret references of site "+siteID,
-		"UPDATE sites SET wp_salts_secret_ref = '', admin_password_secret_ref = '', updated_at = ? WHERE id = ?", now(), siteID)
+		"UPDATE sites SET wp_salts_secret_ref = '', admin_password_secret_ref = '', preview_password_secret_ref = '', "+
+			"preview_password_hash = '', preview_protection = ?, updated_at = ? WHERE id = ?", false, now(), siteID)
 	return err
 }
 

@@ -69,6 +69,12 @@ The preview base domain is `preview.e2e.test`, which nothing resolves. The test 
 
 The test can't read a site's project directory: the control plane runs as root and creates `sites/<id>` with mode `0700`, and the test runs as an unprivileged user (in CI, at least; Docker Desktop doesn't enforce the ownership). So it never runs `docker compose` against that directory. It addresses the site's project by name with an empty directory of its own (`ps` and `down` work from the Compose labels), and runs commands in the site's containers with `compose.Project.ExecService` and inspects them with `ServiceContainer`, which find the containers by label and use `docker exec` and `docker container inspect`.
 
+#### Preview domains
+
+`TestSitePreview` provisions one site and checks its preview domain through `p.IngressClient`:
+
+- **Password protection (#107).** With protection on, the preview domain answers `401` (with `X-Robots-Tag: noindex`) without credentials or with a wrong password, and `200` with the generated ones, including the REST API (Traefik strips the `Authorization` header). `http://<preview>/.well-known/acme-challenge/<token>` gets Traefik's own `404`, so HTTP-01 challenges are answered before protection, and WP-CLI (WP-Cron's path) works. The plaintext password must not appear in the nginx container's labels (which hold its bcrypt hash), the platform's or site's container logs, or the site, jobs, and audit log API responses. Regenerating the password makes only the new one work; turning protection off opens the domain again. Deleting the site at the end runs through its job.
+
 ### Writing a test
 
 ```go

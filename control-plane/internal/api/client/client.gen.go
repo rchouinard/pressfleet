@@ -702,6 +702,41 @@ type PasswordChange struct {
 	NewPassword     *Password `json:"new_password,omitempty"`
 }
 
+// PreviewCredentials The preview domain's basic auth login. Shown only once.
+type PreviewCredentials struct {
+	// Password The plaintext password. Shown only once.
+	Password string `json:"password"`
+	Username string `json:"username"`
+}
+
+// PreviewPasswordAccepted defines model for PreviewPasswordAccepted.
+type PreviewPasswordAccepted struct {
+	// Credentials The preview domain's basic auth login. Shown only once.
+	Credentials PreviewCredentials `json:"credentials"`
+	Job         Job                `json:"job"`
+}
+
+// PreviewProtection HTTP basic auth on the site's preview domain (design doc §5.1). The
+// password is never part of the site; it is returned once, when it is
+// generated.
+type PreviewProtection struct {
+	// Enabled Whether the preview domain asks for the credentials.
+	Enabled bool `json:"enabled"`
+
+	// Username Null until a preview password has been generated.
+	Username *string `json:"username"`
+}
+
+// PreviewProtectionUpdate Only the fields present are changed.
+type PreviewProtectionUpdate struct {
+	// Enabled Turns protection on or off. Turning it on the first time
+	// generates the password, returned in `preview_credentials`.
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Username Printable ASCII without spaces or colons. Defaults to the site's slug.
+	Username *string `json:"username,omitempty"`
+}
+
 // Problem RFC 9457 Problem Details. Additional members may be added.
 type Problem struct {
 	// Detail Human-readable explanation of this occurrence.
@@ -819,6 +854,11 @@ type Site struct {
 	// Examples: acme-marketing.preview.agency.example
 	PreviewDomain string `json:"preview_domain"`
 
+	// PreviewProtection HTTP basic auth on the site's preview domain (design doc §5.1). The
+	// password is never part of the site; it is returned once, when it is
+	// generated.
+	PreviewProtection PreviewProtection `json:"preview_protection"`
+
 	// PrimaryDomain Null until the site goes live.
 	PrimaryDomain *string `json:"primary_domain"`
 
@@ -863,8 +903,11 @@ type Site struct {
 
 // SiteAccepted defines model for SiteAccepted.
 type SiteAccepted struct {
-	Job  Job  `json:"job"`
-	Site Site `json:"site"`
+	Job Job `json:"job"`
+
+	// PreviewCredentials The preview domain's basic auth login. Shown only once.
+	PreviewCredentials *PreviewCredentials `json:"preview_credentials,omitempty"`
+	Site               Site                `json:"site"`
 }
 
 // SiteAdminCredentials defines model for SiteAdminCredentials.
@@ -951,6 +994,9 @@ type SiteUpdate struct {
 	//
 	// Examples: 8.4
 	PhpVersion *PHPVersion `json:"php_version,omitempty"`
+
+	// PreviewProtection Only the fields present are changed.
+	PreviewProtection *PreviewProtectionUpdate `json:"preview_protection,omitempty"`
 
 	// Resources Partial resource limits. Omitted fields keep their current value, or the platform default when creating a site.
 	Resources *ResourceLimitsUpdate `json:"resources,omitempty"`
@@ -1495,13 +1541,22 @@ type ClientInterface interface {
 
 	// UpdateSiteWithBody Update a site's settings
 	//
-	// Changes the PHP version or resource limits. The settings are
-	// validated, saved as the site's desired state, and applied by a job
-	// that recreates the affected containers (design doc §5.5); changing
-	// the PHP version recreates the `php` container on the new image. The
-	// response contains the site with the requested settings and status
-	// `updating`, and the job. A stopped site stays stopped and runs with
-	// the new settings when started.
+	// Changes the PHP version, resource limits, or preview password
+	// protection. The settings are validated, saved as the site's desired
+	// state, and applied by a job that recreates the affected containers
+	// (design doc §5.5); changing the PHP version recreates the `php`
+	// container on the new image. The response contains the site with the
+	// requested settings and status `updating`, and the job. A stopped
+	// site stays stopped and runs with the new settings when started.
+	//
+	// `preview_protection.enabled` turns HTTP basic auth on the preview
+	// domain on or off (design doc §5.1); production domains are never
+	// protected. The platform generates the password the first time
+	// protection is turned on and returns it in `preview_credentials` of
+	// this response only; it is never shown again, but can be replaced
+	// with `POST /api/v1/sites/{site_id}/preview-password`. Turning
+	// protection off keeps the credentials, so turning it on again
+	// restores them. The username defaults to the site's slug.
 	//
 	// If the job fails, it reverts: the previous settings are applied and
 	// saved again, the status returns to what the containers are doing,
@@ -1520,13 +1575,22 @@ type ClientInterface interface {
 
 	// UpdateSite Update a site's settings
 	//
-	// Changes the PHP version or resource limits. The settings are
-	// validated, saved as the site's desired state, and applied by a job
-	// that recreates the affected containers (design doc §5.5); changing
-	// the PHP version recreates the `php` container on the new image. The
-	// response contains the site with the requested settings and status
-	// `updating`, and the job. A stopped site stays stopped and runs with
-	// the new settings when started.
+	// Changes the PHP version, resource limits, or preview password
+	// protection. The settings are validated, saved as the site's desired
+	// state, and applied by a job that recreates the affected containers
+	// (design doc §5.5); changing the PHP version recreates the `php`
+	// container on the new image. The response contains the site with the
+	// requested settings and status `updating`, and the job. A stopped
+	// site stays stopped and runs with the new settings when started.
+	//
+	// `preview_protection.enabled` turns HTTP basic auth on the preview
+	// domain on or off (design doc §5.1); production domains are never
+	// protected. The platform generates the password the first time
+	// protection is turned on and returns it in `preview_credentials` of
+	// this response only; it is never shown again, but can be replaced
+	// with `POST /api/v1/sites/{site_id}/preview-password`. Turning
+	// protection off keeps the credentials, so turning it on again
+	// restores them. The username defaults to the site's slug.
 	//
 	// If the job fails, it reverts: the previous settings are applied and
 	// saved again, the status returns to what the containers are doing,
@@ -1568,6 +1632,21 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/cache/purge (the `PurgeSiteCache` operationId).
 	PurgeSiteCache(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegenerateSitePreviewPassword Generate a new preview password (shown once)
+	//
+	// Replaces the password of the site's preview domain protection
+	// (design doc §5.1) with a newly generated one, returns it, and queues
+	// a job that applies it; the old password stops working when the job
+	// has finished. The password is returned by this response only. It
+	// can be generated whether or not protection is on; with protection
+	// off, it is kept for when it is turned on. The site's status is
+	// `updating` until the job has finished. A site that is
+	// `provisioning`, `updating`, or `deleting`, or whose provisioning
+	// failed, returns `409`.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/preview-password (the `RegenerateSitePreviewPassword` operationId).
+	RegenerateSitePreviewPassword(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// StartSite Start a stopped site
 	//
@@ -2145,13 +2224,22 @@ func (c *Client) GetSite(ctx context.Context, siteID SiteID, reqEditors ...Reque
 
 // UpdateSiteWithBody Update a site's settings
 //
-// Changes the PHP version or resource limits. The settings are
-// validated, saved as the site's desired state, and applied by a job
-// that recreates the affected containers (design doc §5.5); changing
-// the PHP version recreates the `php` container on the new image. The
-// response contains the site with the requested settings and status
-// `updating`, and the job. A stopped site stays stopped and runs with
-// the new settings when started.
+// Changes the PHP version, resource limits, or preview password
+// protection. The settings are validated, saved as the site's desired
+// state, and applied by a job that recreates the affected containers
+// (design doc §5.5); changing the PHP version recreates the `php`
+// container on the new image. The response contains the site with the
+// requested settings and status `updating`, and the job. A stopped
+// site stays stopped and runs with the new settings when started.
+//
+// `preview_protection.enabled` turns HTTP basic auth on the preview
+// domain on or off (design doc §5.1); production domains are never
+// protected. The platform generates the password the first time
+// protection is turned on and returns it in `preview_credentials` of
+// this response only; it is never shown again, but can be replaced
+// with `POST /api/v1/sites/{site_id}/preview-password`. Turning
+// protection off keeps the credentials, so turning it on again
+// restores them. The username defaults to the site's slug.
 //
 // If the job fails, it reverts: the previous settings are applied and
 // saved again, the status returns to what the containers are doing,
@@ -2180,13 +2268,22 @@ func (c *Client) UpdateSiteWithBody(ctx context.Context, siteID SiteID, contentT
 
 // UpdateSite Update a site's settings
 //
-// Changes the PHP version or resource limits. The settings are
-// validated, saved as the site's desired state, and applied by a job
-// that recreates the affected containers (design doc §5.5); changing
-// the PHP version recreates the `php` container on the new image. The
-// response contains the site with the requested settings and status
-// `updating`, and the job. A stopped site stays stopped and runs with
-// the new settings when started.
+// Changes the PHP version, resource limits, or preview password
+// protection. The settings are validated, saved as the site's desired
+// state, and applied by a job that recreates the affected containers
+// (design doc §5.5); changing the PHP version recreates the `php`
+// container on the new image. The response contains the site with the
+// requested settings and status `updating`, and the job. A stopped
+// site stays stopped and runs with the new settings when started.
+//
+// `preview_protection.enabled` turns HTTP basic auth on the preview
+// domain on or off (design doc §5.1); production domains are never
+// protected. The platform generates the password the first time
+// protection is turned on and returns it in `preview_credentials` of
+// this response only; it is never shown again, but can be replaced
+// with `POST /api/v1/sites/{site_id}/preview-password`. Turning
+// protection off keeps the credentials, so turning it on again
+// restores them. The username defaults to the site's slug.
 //
 // If the job fails, it reverts: the previous settings are applied and
 // saved again, the status returns to what the containers are doing,
@@ -2249,6 +2346,31 @@ func (c *Client) RetrieveSiteAdminCredentials(ctx context.Context, siteID SiteID
 // Corresponds with POST /api/v1/sites/{site_id}/cache/purge (the `PurgeSiteCache` operationId).
 func (c *Client) PurgeSiteCache(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPurgeSiteCacheRequest(c.Server, siteID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegenerateSitePreviewPassword Generate a new preview password (shown once)
+//
+// Replaces the password of the site's preview domain protection
+// (design doc §5.1) with a newly generated one, returns it, and queues
+// a job that applies it; the old password stops working when the job
+// has finished. The password is returned by this response only. It
+// can be generated whether or not protection is on; with protection
+// off, it is kept for when it is turned on. The site's status is
+// `updating` until the job has finished. A site that is
+// `provisioning`, `updating`, or `deleting`, or whose provisioning
+// failed, returns `409`.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/preview-password (the `RegenerateSitePreviewPassword` operationId).
+func (c *Client) RegenerateSitePreviewPassword(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegenerateSitePreviewPasswordRequest(c.Server, siteID)
 	if err != nil {
 		return nil, err
 	}
@@ -3545,6 +3667,40 @@ func NewPurgeSiteCacheRequest(server string, siteID SiteID) (*http.Request, erro
 	return req, nil
 }
 
+// NewRegenerateSitePreviewPasswordRequest constructs an http.Request for the RegenerateSitePreviewPassword method
+func NewRegenerateSitePreviewPasswordRequest(server string, siteID SiteID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/preview-password", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewStartSiteRequest constructs an http.Request for the StartSite method
 func NewStartSiteRequest(server string, siteID SiteID) (*http.Request, error) {
 	var err error
@@ -4201,13 +4357,22 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateSiteWithBodyWithResponse Update a site's settings
 	//
-	// Changes the PHP version or resource limits. The settings are
-	// validated, saved as the site's desired state, and applied by a job
-	// that recreates the affected containers (design doc §5.5); changing
-	// the PHP version recreates the `php` container on the new image. The
-	// response contains the site with the requested settings and status
-	// `updating`, and the job. A stopped site stays stopped and runs with
-	// the new settings when started.
+	// Changes the PHP version, resource limits, or preview password
+	// protection. The settings are validated, saved as the site's desired
+	// state, and applied by a job that recreates the affected containers
+	// (design doc §5.5); changing the PHP version recreates the `php`
+	// container on the new image. The response contains the site with the
+	// requested settings and status `updating`, and the job. A stopped
+	// site stays stopped and runs with the new settings when started.
+	//
+	// `preview_protection.enabled` turns HTTP basic auth on the preview
+	// domain on or off (design doc §5.1); production domains are never
+	// protected. The platform generates the password the first time
+	// protection is turned on and returns it in `preview_credentials` of
+	// this response only; it is never shown again, but can be replaced
+	// with `POST /api/v1/sites/{site_id}/preview-password`. Turning
+	// protection off keeps the credentials, so turning it on again
+	// restores them. The username defaults to the site's slug.
 	//
 	// If the job fails, it reverts: the previous settings are applied and
 	// saved again, the status returns to what the containers are doing,
@@ -4226,13 +4391,22 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateSiteWithResponse Update a site's settings
 	//
-	// Changes the PHP version or resource limits. The settings are
-	// validated, saved as the site's desired state, and applied by a job
-	// that recreates the affected containers (design doc §5.5); changing
-	// the PHP version recreates the `php` container on the new image. The
-	// response contains the site with the requested settings and status
-	// `updating`, and the job. A stopped site stays stopped and runs with
-	// the new settings when started.
+	// Changes the PHP version, resource limits, or preview password
+	// protection. The settings are validated, saved as the site's desired
+	// state, and applied by a job that recreates the affected containers
+	// (design doc §5.5); changing the PHP version recreates the `php`
+	// container on the new image. The response contains the site with the
+	// requested settings and status `updating`, and the job. A stopped
+	// site stays stopped and runs with the new settings when started.
+	//
+	// `preview_protection.enabled` turns HTTP basic auth on the preview
+	// domain on or off (design doc §5.1); production domains are never
+	// protected. The platform generates the password the first time
+	// protection is turned on and returns it in `preview_credentials` of
+	// this response only; it is never shown again, but can be replaced
+	// with `POST /api/v1/sites/{site_id}/preview-password`. Turning
+	// protection off keeps the credentials, so turning it on again
+	// restores them. The username defaults to the site's slug.
 	//
 	// If the job fails, it reverts: the previous settings are applied and
 	// saved again, the status returns to what the containers are doing,
@@ -4278,6 +4452,23 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/cache/purge (the `PurgeSiteCache` operationId).
 	PurgeSiteCacheWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*PurgeSiteCacheResponse, error)
+
+	// RegenerateSitePreviewPasswordWithResponse Generate a new preview password (shown once)
+	//
+	// Replaces the password of the site's preview domain protection
+	// (design doc §5.1) with a newly generated one, returns it, and queues
+	// a job that applies it; the old password stops working when the job
+	// has finished. The password is returned by this response only. It
+	// can be generated whether or not protection is on; with protection
+	// off, it is kept for when it is turned on. The site's status is
+	// `updating` until the job has finished. A site that is
+	// `provisioning`, `updating`, or `deleting`, or whose provisioning
+	// failed, returns `409`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/preview-password (the `RegenerateSitePreviewPassword` operationId).
+	RegenerateSitePreviewPasswordWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*RegenerateSitePreviewPasswordResponse, error)
 
 	// StartSiteWithResponse Start a stopped site
 	//
@@ -6081,6 +6272,90 @@ func (r PurgeSiteCacheResponse) ContentType() string {
 	return ""
 }
 
+// RegenerateSitePreviewPasswordResponse202Headers the declared response headers of an HTTP 202 response for RegenerateSitePreviewPassword
+type RegenerateSitePreviewPasswordResponse202Headers struct {
+	CacheControl *string
+	Location     *string
+}
+
+type RegenerateSitePreviewPasswordResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *PreviewPasswordAccepted
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *RegenerateSitePreviewPasswordResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r RegenerateSitePreviewPasswordResponse) GetJSON202() *PreviewPasswordAccepted {
+	return r.JSON202
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RegenerateSitePreviewPasswordResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RegenerateSitePreviewPasswordResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RegenerateSitePreviewPasswordResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RegenerateSitePreviewPasswordResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RegenerateSitePreviewPasswordResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RegenerateSitePreviewPasswordResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RegenerateSitePreviewPasswordResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RegenerateSitePreviewPasswordResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RegenerateSitePreviewPasswordResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // StartSiteResponse202Headers the declared response headers of an HTTP 202 response for StartSite
 type StartSiteResponse202Headers struct {
 	Location *string
@@ -7130,13 +7405,22 @@ func (c *ClientWithResponses) GetSiteWithResponse(ctx context.Context, siteID Si
 
 // UpdateSiteWithBodyWithResponse Update a site's settings
 //
-// Changes the PHP version or resource limits. The settings are
-// validated, saved as the site's desired state, and applied by a job
-// that recreates the affected containers (design doc §5.5); changing
-// the PHP version recreates the `php` container on the new image. The
-// response contains the site with the requested settings and status
-// `updating`, and the job. A stopped site stays stopped and runs with
-// the new settings when started.
+// Changes the PHP version, resource limits, or preview password
+// protection. The settings are validated, saved as the site's desired
+// state, and applied by a job that recreates the affected containers
+// (design doc §5.5); changing the PHP version recreates the `php`
+// container on the new image. The response contains the site with the
+// requested settings and status `updating`, and the job. A stopped
+// site stays stopped and runs with the new settings when started.
+//
+// `preview_protection.enabled` turns HTTP basic auth on the preview
+// domain on or off (design doc §5.1); production domains are never
+// protected. The platform generates the password the first time
+// protection is turned on and returns it in `preview_credentials` of
+// this response only; it is never shown again, but can be replaced
+// with `POST /api/v1/sites/{site_id}/preview-password`. Turning
+// protection off keeps the credentials, so turning it on again
+// restores them. The username defaults to the site's slug.
 //
 // If the job fails, it reverts: the previous settings are applied and
 // saved again, the status returns to what the containers are doing,
@@ -7161,13 +7445,22 @@ func (c *ClientWithResponses) UpdateSiteWithBodyWithResponse(ctx context.Context
 
 // UpdateSiteWithResponse Update a site's settings
 //
-// Changes the PHP version or resource limits. The settings are
-// validated, saved as the site's desired state, and applied by a job
-// that recreates the affected containers (design doc §5.5); changing
-// the PHP version recreates the `php` container on the new image. The
-// response contains the site with the requested settings and status
-// `updating`, and the job. A stopped site stays stopped and runs with
-// the new settings when started.
+// Changes the PHP version, resource limits, or preview password
+// protection. The settings are validated, saved as the site's desired
+// state, and applied by a job that recreates the affected containers
+// (design doc §5.5); changing the PHP version recreates the `php`
+// container on the new image. The response contains the site with the
+// requested settings and status `updating`, and the job. A stopped
+// site stays stopped and runs with the new settings when started.
+//
+// `preview_protection.enabled` turns HTTP basic auth on the preview
+// domain on or off (design doc §5.1); production domains are never
+// protected. The platform generates the password the first time
+// protection is turned on and returns it in `preview_credentials` of
+// this response only; it is never shown again, but can be replaced
+// with `POST /api/v1/sites/{site_id}/preview-password`. Turning
+// protection off keeps the credentials, so turning it on again
+// restores them. The username defaults to the site's slug.
 //
 // If the job fails, it reverts: the previous settings are applied and
 // saved again, the status returns to what the containers are doing,
@@ -7230,6 +7523,29 @@ func (c *ClientWithResponses) PurgeSiteCacheWithResponse(ctx context.Context, si
 		return nil, err
 	}
 	return ParsePurgeSiteCacheResponse(rsp)
+}
+
+// RegenerateSitePreviewPasswordWithResponse Generate a new preview password (shown once)
+//
+// Replaces the password of the site's preview domain protection
+// (design doc §5.1) with a newly generated one, returns it, and queues
+// a job that applies it; the old password stops working when the job
+// has finished. The password is returned by this response only. It
+// can be generated whether or not protection is on; with protection
+// off, it is kept for when it is turned on. The site's status is
+// `updating` until the job has finished. A site that is
+// `provisioning`, `updating`, or `deleting`, or whose provisioning
+// failed, returns `409`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/preview-password (the `RegenerateSitePreviewPassword` operationId).
+func (c *ClientWithResponses) RegenerateSitePreviewPasswordWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*RegenerateSitePreviewPasswordResponse, error) {
+	rsp, err := c.RegenerateSitePreviewPassword(ctx, siteID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegenerateSitePreviewPasswordResponse(rsp)
 }
 
 // StartSiteWithResponse Start a stopped site
@@ -8831,6 +9147,87 @@ func ParsePurgeSiteCacheResponse(rsp *http.Response) (*PurgeSiteCacheResponse, e
 	switch {
 	case rsp.StatusCode == 202:
 		var headers PurgeSiteCacheResponse202Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRegenerateSitePreviewPasswordResponse parses an HTTP response from a RegenerateSitePreviewPasswordWithResponse call
+func ParseRegenerateSitePreviewPasswordResponse(rsp *http.Response) (*RegenerateSitePreviewPasswordResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RegenerateSitePreviewPasswordResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest PreviewPasswordAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers RegenerateSitePreviewPasswordResponse202Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
 		if values := rsp.Header.Values("Location"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {

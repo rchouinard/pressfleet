@@ -92,7 +92,7 @@ func TestUpdate(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		saved, job, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{PHPVersion: ptr("8.3"), CPU: ptr("2"), MemoryLimitMB: ptr(1024)})
+		saved, job, _, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{PHPVersion: ptr("8.3"), CPU: ptr("2"), MemoryLimitMB: ptr(1024)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -104,7 +104,7 @@ func TestUpdate(t *testing.T) {
 			t.Errorf("job = %+v (payload %s)", job, job.Payload)
 		}
 		// One change at a time.
-		if _, _, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{PHPVersion: ptr("8.4")}); !errors.Is(err, sites.ErrBusy) {
+		if _, _, _, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{PHPVersion: ptr("8.4")}); !errors.Is(err, sites.ErrBusy) {
 			t.Errorf("second update: err = %v, want ErrBusy", err)
 		}
 		if _, err := e.svc.Stop(ctx, site.ID, ""); !errors.Is(err, sites.ErrBusy) {
@@ -131,7 +131,7 @@ func TestUpdate(t *testing.T) {
 			t.Fatal(err)
 		}
 		e.runJobs(t)
-		if _, _, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{PHPVersion: ptr("8.4")}); err != nil {
+		if _, _, _, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{PHPVersion: ptr("8.4")}); err != nil {
 			t.Fatal(err)
 		}
 		e.runJobs(t)
@@ -159,7 +159,7 @@ func TestUpdateValidation(t *testing.T) {
 			{"too little CPU", sites.SiteUpdate{CPU: ptr("0.1")}, "/resources/cpu"},
 			{"reservation over limit", sites.SiteUpdate{MemoryReservationMB: ptr(600)}, "/resources/memory_reservation_mb"},
 		} {
-			_, _, err := e.svc.Update(ctx, site.ID, tt.req)
+			_, _, _, err := e.svc.Update(ctx, site.ID, tt.req)
 			var ve *sites.ValidationError
 			if !errors.As(err, &ve) || len(ve.Fields) != 1 || ve.Fields[0].Field != tt.field {
 				t.Errorf("%s: err = %v", tt.name, err)
@@ -175,11 +175,11 @@ func TestUpdateValidation(t *testing.T) {
 		if _, err := store.NewSites(db).SetSettings(ctx, site.ID, eol); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{PHPVersion: ptr("8.1"), MemoryLimitMB: ptr(640)}); err != nil {
+		if _, _, _, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{PHPVersion: ptr("8.1"), MemoryLimitMB: ptr(640)}); err != nil {
 			t.Errorf("resources of an EOL site: %v", err)
 		}
 
-		if _, _, err := e.svc.Update(ctx, "01j9zq3v6t8k4m2n5p7r9s1x3y", sites.SiteUpdate{CPU: ptr("1")}); !errors.Is(err, sites.ErrNotFound) {
+		if _, _, _, err := e.svc.Update(ctx, "01j9zq3v6t8k4m2n5p7r9s1x3y", sites.SiteUpdate{CPU: ptr("1")}); !errors.Is(err, sites.ErrNotFound) {
 			t.Errorf("missing site: err = %v", err)
 		}
 	})
@@ -190,7 +190,7 @@ func TestManageRefusesSitesWithoutAStack(t *testing.T) {
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
 		e := newEnv(t, db)
 		site, _ := e.create(t, "Pending")
-		if _, _, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{CPU: ptr("2")}); !errors.Is(err, sites.ErrBusy) {
+		if _, _, _, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{CPU: ptr("2")}); !errors.Is(err, sites.ErrBusy) {
 			t.Errorf("update while provisioning: err = %v, want ErrBusy", err)
 		}
 		if _, err := e.svc.Start(ctx, site.ID, ""); !errors.Is(err, sites.ErrBusy) {
@@ -208,7 +208,7 @@ func TestManageRefusesSitesWithoutAStack(t *testing.T) {
 			t.Fatalf("site = %+v", got)
 		}
 		e.prov.Err = nil
-		if _, _, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{CPU: ptr("2")}); !errors.Is(err, sites.ErrNotProvisioned) {
+		if _, _, _, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{CPU: ptr("2")}); !errors.Is(err, sites.ErrNotProvisioned) {
 			t.Errorf("update after failed provisioning: err = %v", err)
 		}
 		if _, err := e.svc.Stop(ctx, site.ID, ""); !errors.Is(err, sites.ErrNotProvisioned) {
@@ -230,7 +230,7 @@ func TestUpdateFailureReverts(t *testing.T) {
 			}
 			return nil
 		}
-		_, job, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{PHPVersion: ptr("8.3"), MemoryLimitMB: ptr(1024)})
+		_, job, _, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{PHPVersion: ptr("8.3"), MemoryLimitMB: ptr(1024)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -247,7 +247,7 @@ func TestUpdateFailureReverts(t *testing.T) {
 			t.Errorf("provisioner config = %+v", s.Config)
 		}
 		// The site can be changed again.
-		if _, _, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{PHPVersion: ptr("8.3")}); err != nil {
+		if _, _, _, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{PHPVersion: ptr("8.3")}); err != nil {
 			t.Errorf("update after a reverted one: %v", err)
 		}
 	})
@@ -264,7 +264,7 @@ func TestUpdateRevertFailureMarksFailed(t *testing.T) {
 			}
 			return nil
 		}
-		_, job, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{PHPVersion: ptr("8.3")})
+		_, job, _, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{PHPVersion: ptr("8.3")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -278,7 +278,7 @@ func TestUpdateRevertFailureMarksFailed(t *testing.T) {
 			t.Errorf("site = %+v", got)
 		}
 		e.prov.Err = nil
-		if _, _, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{PHPVersion: ptr("8.3")}); err != nil {
+		if _, _, _, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{PHPVersion: ptr("8.3")}); err != nil {
 			t.Fatalf("retrying on a failed site: %v", err)
 		}
 		e.runJobs(t)
@@ -293,7 +293,7 @@ func TestDeleteWhileUpdateQueued(t *testing.T) {
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
 		e := newEnv(t, db)
 		site := e.running(t, "Doomed")
-		_, update, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{PHPVersion: ptr("8.3")})
+		_, update, _, err := e.svc.Update(ctx, site.ID, sites.SiteUpdate{PHPVersion: ptr("8.3")})
 		if err != nil {
 			t.Fatal(err)
 		}

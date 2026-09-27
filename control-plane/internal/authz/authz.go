@@ -67,8 +67,8 @@ const (
 	ViewMonitoring   Action = "monitoring.view" // metrics, logs, and alerts
 
 	// Create sites; change site settings (PHP version, core pin,
-	// resources); go-live and domains; start/stop; maintenance mode; cache
-	// purge.
+	// resources, preview password protection); go-live and domains;
+	// start/stop; maintenance mode; cache purge.
 	CreateSite              Action = "site.create"
 	RetrieveSiteCredentials Action = "site.credentials.retrieve" // the one-time admin password of a new site
 	UpdateSite              Action = "site.update"
