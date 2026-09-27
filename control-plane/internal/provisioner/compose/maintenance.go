@@ -122,7 +122,7 @@ func (p *Provisioner) applyMaintenance(siteID string, enabled bool) (bool, error
 		return err == nil, err
 	}
 	if fi, err := os.Stat(p.routesDir); err != nil || !fi.IsDir() {
-		return false, fmt.Errorf("%w: %s doesn't exist; re-render the platform with this version (pressfleet upgrade)",
+		return false, fmt.Errorf("%w: %s doesn't exist; re-render the platform with this version (pressfleet init --force)",
 			ErrMaintenanceUnavailable, p.routesDir)
 	}
 	dir, err := p.layout.SiteDir(siteID)
