@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -24,36 +26,49 @@ import (
 // images are ensured first) but waits for the containers' health checks.
 const jobTimeout = 6 * time.Minute
 
-// TestSiteCreateDelete is the acceptance test of #27, #28, #29, and #31:
-// create a site through the API, wait for provisioning, check that
-// WordPress is installed and serving, change its PHP version, stop and
-// start it, then delete it and check that nothing is left.
+// TestSiteCreateDelete automates the M1 "done when" (design doc §8 Phase 1,
+// #32) and is the acceptance test of #27, #28, #29, and #31. On one
+// platform, it:
+//
+//  1. creates two sites, each in its own client group, through the API and
+//     waits for them to be provisioned;
+//  2. checks that WordPress is installed and answers over HTTP. "Reached
+//     over HTTP on the host" is read, for M1, as: a client container that
+//     the test starts on the host's Docker engine, attached to the site's
+//     network pf-<id>, gets WordPress pages from the site's nginx. The host
+//     itself can't reach a site until Traefik routes preview domains (M2),
+//     which is when this check should move to the host's own HTTP client;
+//  3. checks that the two sites can't reach each other's containers by
+//     name or IP, while each reaches the platform MariaDB;
+//  4. changes a site's PHP version and stops and starts it (#28);
+//  5. deletes both sites and checks that no containers, networks, volumes,
+//     rendered files, databases, database users or grants, secrets, or
+//     state rows are left.
 func TestSiteCreateDelete(t *testing.T) {
-	// The site's project directory belongs to the control plane, which runs
+	// A site's project directory belongs to the control plane, which runs
 	// as root and creates it with mode 0700, so the test (an unprivileged
 	// user in CI) can't read it, and `docker compose` fails when it can't
-	// stat the directory's .env. The test addresses the site project by
-	// name with this empty directory instead: ps and down work from the
-	// Compose labels alone, and commands in containers go through
-	// ExecService (`docker exec`). Created before the cleanup below, it is
-	// removed after it.
+	// stat the directory's .env. The test addresses site projects by name
+	// with this empty directory instead: ps and down work from the Compose
+	// labels alone, and commands in containers go through ExecService
+	// (`docker exec`). Created before the cleanup below, it is removed
+	// after it.
 	projectDir := t.TempDir()
-	// Whatever happens below, don't leave the site's containers, network,
+	// Whatever happens below, don't leave the sites' containers, networks,
 	// or volumes behind: they aren't part of the platform project that
 	// Start tears down. Registered first, this runs last, after the
 	// platform teardown has removed MariaDB, which would otherwise keep the
-	// site network in use.
-	var siteProject compose.Project
+	// site networks in use.
+	var siteProjects []compose.Project
 	t.Cleanup(func() {
-		if siteProject.Name == "" {
-			return
-		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		if res, err := siteProject.Resources(ctx); err == nil && !res.Empty() {
-			t.Logf("removing leftover site project %s", siteProject.Name)
-			if err := siteProject.Down(ctx, compose.DownOptions{Volumes: true}); err != nil {
-				t.Errorf("removing leftover site project: %v", err)
+		for _, sp := range siteProjects {
+			if res, err := sp.Resources(ctx); err == nil && !res.Empty() {
+				t.Logf("removing leftover site project %s", sp.Name)
+				if err := sp.Down(ctx, compose.DownOptions{Volumes: true}); err != nil {
+					t.Errorf("removing leftover site project %s: %v", sp.Name, err)
+				}
 			}
 		}
 	})
@@ -72,7 +87,7 @@ func TestSiteCreateDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The site moves to another PHP version later on.
+	// The first site moves to another PHP version later on.
 	otherPHP := ""
 	for _, v := range cat.AvailablePHPVersions(time.Now()) {
 		if v.Version != php {
@@ -89,42 +104,27 @@ func TestSiteCreateDelete(t *testing.T) {
 	}
 	e2e.EnsureImages(t, images.PHP, images.Nginx, otherImages.PHP)
 
-	group, err := p.Client.CreateClientGroupWithResponse(ctx, client.CreateClientGroupJSONRequestBody{Name: "E2E Agency"})
-	if err != nil {
-		t.Fatal(err)
+	// Both sites provision at the same time: their jobs have different
+	// lock keys.
+	groupID := createGroup(t, p, "E2E Agency")
+	created := createSite(t, p, groupID, "E2E Site", php)
+	other := createSite(t, p, createGroup(t, p, "E2E Other Agency"), "E2E Other Site", php)
+	site := created.Site
+	t.Logf("sites %s (%s) and %s (%s)", site.ID, site.PreviewDomain, other.Site.ID, other.Site.PreviewDomain)
+	if site.Slug != "e2e-site" || site.PreviewDomain != "e2e-site."+e2e.PreviewBaseDomain || site.Status != client.SiteStatusProvisioning ||
+		site.ClientGroupID != groupID {
+		t.Errorf("created site = %+v", site)
 	}
-	if group.JSON201 == nil {
-		t.Fatalf("create client group: status %d: %s", group.StatusCode(), group.Body)
-	}
+	siteProject := compose.Project{Name: compose.SiteProjectName(site.ID), Dir: projectDir}
+	otherProject := compose.Project{Name: compose.SiteProjectName(other.Site.ID), Dir: projectDir}
+	siteProjects = append(siteProjects, siteProject, otherProject)
+	waitJob(t, p, created.Job.ID)
+	waitJob(t, p, other.Job.ID)
 
-	created, err := p.Client.CreateSiteWithResponse(ctx, client.CreateSiteJSONRequestBody{
-		ClientGroupID: group.JSON201.ID,
-		Name:          "E2E Site",
-		AdminEmail:    "owner@e2e.test",
-		PhpVersion:    &php,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if created.JSON202 == nil {
-		t.Fatalf("create site: status %d: %s", created.StatusCode(), created.Body)
-	}
-	site := created.JSON202.Site
-	t.Logf("site %s (%s), job %s", site.ID, site.PreviewDomain, created.JSON202.Job.ID)
-	if site.Slug != "e2e-site" || site.PreviewDomain != "e2e-site."+e2e.PreviewBaseDomain || site.Status != client.SiteStatusProvisioning {
-		t.Errorf("created site = %s", created.Body)
-	}
-	siteProject = compose.Project{Name: compose.SiteProjectName(site.ID), Dir: projectDir}
-	siteDir := filepath.Join(p.DataDir, "sites", site.ID)
-
-	waitJob(t, p, created.JSON202.Job.ID)
-
-	got, err := p.Client.GetSiteWithResponse(ctx, site.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.JSON200 == nil || got.JSON200.Status != client.SiteStatusRunning || !got.JSON200.AdminCredentialsAvailable {
-		t.Fatalf("site after provisioning: status %d: %s", got.StatusCode(), got.Body)
+	for _, id := range []string{site.ID, other.Site.ID} {
+		if got := getSite(t, p, id); got.Status != client.SiteStatusRunning || !got.AdminCredentialsAvailable {
+			t.Fatalf("site %s after provisioning: %+v", id, got)
+		}
 	}
 
 	t.Run("containers are running and healthy", func(t *testing.T) {
@@ -176,35 +176,24 @@ func TestSiteCreateDelete(t *testing.T) {
 		}
 	})
 
-	// answers checks that WordPress answers through nginx. The page is
-	// fetched from the php container over the site network, with the
-	// preview host: the host can't reach sites until routing exists. A 200
-	// with the site's title, or WordPress redirecting to its HTTPS preview
-	// URL, both mean WordPress answered.
+	// answers checks that WordPress answers over HTTP: see step 2 in the
+	// test's documentation.
 	answers := func(t *testing.T) {
 		t.Helper()
-		script := fmt.Sprintf(`$c = stream_context_create(["http" => ["header" => "Host: %s", "follow_location" => 0, "ignore_errors" => true, "timeout" => 10]]);
-$body = @file_get_contents("http://nginx:8080/", false, $c);
-echo implode("\n", $http_response_header ?? ["no response"]), "\n\n", $body;`, site.PreviewDomain)
-		var out string
-		for deadline := time.Now().Add(30 * time.Second); ; {
-			b, err := siteProject.ExecService(ctx, "php", "php", "-r", script)
-			out = string(b)
-			if err == nil && !strings.HasPrefix(out, "no response") || time.Now().After(deadline) {
-				break
-			}
-			time.Sleep(time.Second)
+		home := fetch(t, images.PHP, site, "/")
+		if !strings.HasPrefix(home, "HTTP/1.1 200") || !strings.Contains(home, "<title>E2E Site") || !strings.Contains(home, "/wp-content/") {
+			t.Errorf("front page:\n%.800s", home)
 		}
-		status, _, _ := strings.Cut(out, "\n")
-		t.Logf("home page: %s", status)
-		switch {
-		case strings.Contains(status, " 200 ") && strings.Contains(out, "E2E Site"):
-		case strings.Contains(status, " 301 ") && strings.Contains(out, "https://"+site.PreviewDomain+"/"):
-		default:
-			t.Errorf("home page response:\n%.600s", out)
+		// WordPress sends the login page's visitors to HTTPS. Only
+		// requests from a trusted proxy (Traefik, M2) count as HTTPS, so
+		// the redirect is WordPress answering.
+		login := fetch(t, images.PHP, site, "/wp-login.php")
+		if !strings.HasPrefix(login, "HTTP/1.1 302") || !strings.Contains(login, "X-Redirect-By: WordPress") ||
+			!strings.Contains(login, "Location: https://"+site.PreviewDomain+"/wp-login.php") {
+			t.Errorf("wp-login.php:\n%.800s", login)
 		}
 	}
-	t.Run("WordPress answers through nginx", answers)
+	t.Run("WordPress is reached over HTTP from the Docker host", answers)
 
 	t.Run("admin credentials are shown once", func(t *testing.T) {
 		if admin.Email != "owner@e2e.test" || admin.LoginURL != "https://"+site.PreviewDomain+"/wp-login.php" || len(admin.Password) < 20 {
@@ -219,14 +208,56 @@ echo implode("\n", $http_response_header ?? ["no response"]), "\n\n", $body;`, s
 		}
 	})
 
-	t.Run("site database exists", func(t *testing.T) {
-		if dbs, users := siteDatabase(t, p, site.ID); dbs != 1 || users != 1 {
-			t.Errorf("site databases = %d, users = %d; want 1 and 1", dbs, users)
+	t.Run("site databases exist", func(t *testing.T) {
+		for _, id := range []string{site.ID, other.Site.ID} {
+			if n := siteDatabase(t, p, id); n != (dbObjects{databases: 1, users: 1, grants: 1}) {
+				t.Errorf("site %s: %+v; want a database, a user, and its grant", id, n)
+			}
+		}
+	})
+
+	// Two sites can't reach each other over the network (§6): a site's
+	// containers are only on its own network, and from one site's php
+	// container the other site's containers neither resolve by name nor
+	// answer on their IPs, while its own nginx and the platform MariaDB
+	// (connected to every site network under its alias) do. Both
+	// directions are checked.
+	t.Run("sites can't reach each other", func(t *testing.T) {
+		a := siteNetwork(t, siteProject)
+		b := siteNetwork(t, otherProject)
+		for _, dir := range []struct{ from, to siteNet }{{a, b}, {b, a}} {
+			results := probe(t, dir.from.project, []string{
+				// Positive controls: the probe works.
+				"nginx:8080",
+				dir.from.ips["nginx"] + ":8080",
+				compose.MariaDBAlias + ":3306",
+				// The other site, by container name and by IP.
+				dir.to.names["nginx"] + ":8080",
+				dir.to.names["php"] + ":9000",
+				dir.to.ips["nginx"] + ":8080",
+				dir.to.ips["php"] + ":9000",
+			})
+			from := dir.from.project.Name
+			for i, r := range results {
+				t.Logf("from %s: %s open=%v ip=%q %s", from, r.target, r.open, r.ip, r.detail)
+				if want := i < 3; r.open != want {
+					t.Errorf("from %s: %s open = %v, want %v (%s)", from, r.target, r.open, want, r.detail)
+				}
+			}
+			// The service name resolves to the site's own nginx.
+			if results[0].ip != dir.from.ips["nginx"] {
+				t.Errorf("from %s: nginx resolves to %q, want its own nginx %s", from, results[0].ip, dir.from.ips["nginx"])
+			}
+			for _, r := range results[3:5] {
+				if r.ip != "" {
+					t.Errorf("from %s: %s resolves to %s", from, r.target, r.ip)
+				}
+			}
 		}
 	})
 
 	t.Run("the site is listed and has a live status", func(t *testing.T) {
-		list, err := p.Client.ListSitesWithResponse(ctx, &client.ListSitesParams{ClientGroupID: &group.JSON201.ID})
+		list, err := p.Client.ListSitesWithResponse(ctx, &client.ListSitesParams{ClientGroupID: &groupID})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -316,48 +347,75 @@ echo implode("\n", $http_response_header ?? ["no response"]), "\n\n", $body;`, s
 		answers(t)
 	})
 
-	deleted, err := p.Client.DeleteSiteWithResponse(ctx, site.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if deleted.JSON202 == nil {
-		t.Fatalf("delete site: status %d: %s", deleted.StatusCode(), deleted.Body)
-	}
-	waitJob(t, p, deleted.JSON202.Job.ID)
-
-	t.Run("site is gone from the API", func(t *testing.T) {
-		got, err := p.Client.GetSiteWithResponse(ctx, site.ID)
+	// Delete both sites; their deletions run at the same time.
+	var deletions []string
+	for _, id := range []string{site.ID, other.Site.ID} {
+		deleted, err := p.Client.DeleteSiteWithResponse(ctx, id)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.StatusCode() != http.StatusNotFound {
-			t.Errorf("get deleted site: status %d: %s", got.StatusCode(), got.Body)
+		if deleted.JSON202 == nil {
+			t.Fatalf("delete site %s: status %d: %s", id, deleted.StatusCode(), deleted.Body)
+		}
+		deletions = append(deletions, deleted.JSON202.Job.ID)
+	}
+	for _, jobID := range deletions {
+		waitJob(t, p, jobID)
+	}
+
+	t.Run("sites are gone from the API", func(t *testing.T) {
+		for _, id := range []string{site.ID, other.Site.ID} {
+			got, err := p.Client.GetSiteWithResponse(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.StatusCode() != http.StatusNotFound {
+				t.Errorf("get deleted site %s: status %d: %s", id, got.StatusCode(), got.Body)
+			}
 		}
 	})
 
 	t.Run("no containers, networks, volumes, or files are left", func(t *testing.T) {
-		res, err := siteProject.Resources(ctx)
+		for _, sp := range siteProjects {
+			res, err := sp.Resources(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !res.Empty() {
+				t.Errorf("site project %s left resources behind: %+v", sp.Name, res)
+			}
+		}
+		// The test created the sites directory, so it can see into it.
+		entries, err := os.ReadDir(filepath.Join(p.DataDir, "sites"))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			t.Errorf("left in the sites directory: %s", e.Name())
+		}
+		// The platform MariaDB is on no site network any more.
+		mariadb, err := p.Project.ServiceContainer(ctx, "mariadb")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !res.Empty() {
-			t.Errorf("site project left resources behind: %+v", res)
-		}
-		// The test created the sites directory, so it can see into it.
-		if _, err := os.Stat(siteDir); !errors.Is(err, fs.ErrNotExist) {
-			t.Errorf("site directory: %v, want it gone", err)
+		for _, sp := range siteProjects {
+			if _, ok := mariadb.Networks[sp.Name]; ok {
+				t.Errorf("MariaDB is still on %s", sp.Name)
+			}
 		}
 	})
 
-	t.Run("no database or user is left", func(t *testing.T) {
-		if dbs, users := siteDatabase(t, p, site.ID); dbs != 0 || users != 0 {
-			t.Errorf("site databases = %d, users = %d; want none", dbs, users)
+	t.Run("no database, user, or grant is left", func(t *testing.T) {
+		for _, id := range []string{site.ID, other.Site.ID} {
+			if n := siteDatabase(t, p, id); n != (dbObjects{}) {
+				t.Errorf("site %s left %+v on MariaDB", id, n)
+			}
 		}
 	})
 
 	// Last, because it stops the platform: the state database belongs to
 	// the control plane, so it is read once the control plane has stopped.
-	t.Run("no secrets are left", func(t *testing.T) {
+	t.Run("no secrets or state are left", func(t *testing.T) {
 		// The harness's teardown can't hand the files back once the
 		// control plane is stopped, so do it now.
 		stateDir := filepath.Join(p.DataDir, "state")
@@ -369,7 +427,7 @@ echo implode("\n", $http_response_header ?? ["no response"]), "\n\n", $body;`, s
 			t.Fatal(err)
 		}
 		db := storetest.OpenUnmigrated(t, store.Config{Driver: store.SQLite, SQLitePath: filepath.Join(stateDir, "pressfleet.db")})
-		for _, table := range []string{"secrets", "site_databases", "sites", "schedules WHERE target_type = 'site'"} {
+		for _, table := range []string{"secrets", "site_databases", "sites", "site_aliases", "schedules WHERE target_type = 'site'"} {
 			var n int
 			if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&n); err != nil {
 				t.Fatal(err)
@@ -379,6 +437,144 @@ echo implode("\n", $http_response_header ?? ["no response"]), "\n\n", $body;`, s
 			}
 		}
 	})
+}
+
+// createGroup creates a client group through the API and returns its ID.
+func createGroup(t *testing.T, p *e2e.Platform, name string) string {
+	t.Helper()
+	resp, err := p.Client.CreateClientGroupWithResponse(t.Context(), client.CreateClientGroupJSONRequestBody{Name: name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.JSON201 == nil {
+		t.Fatalf("create client group: status %d: %s", resp.StatusCode(), resp.Body)
+	}
+	return resp.JSON201.ID
+}
+
+// createSite starts provisioning a site through the API.
+func createSite(t *testing.T, p *e2e.Platform, groupID, name, php string) client.SiteAccepted {
+	t.Helper()
+	resp, err := p.Client.CreateSiteWithResponse(t.Context(), client.CreateSiteJSONRequestBody{
+		ClientGroupID: groupID,
+		Name:          name,
+		AdminEmail:    "owner@e2e.test",
+		PhpVersion:    &php,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.JSON202 == nil {
+		t.Fatalf("create site %q: status %d: %s", name, resp.StatusCode(), resp.Body)
+	}
+	return *resp.JSON202
+}
+
+// fetch gets a page of the site from a throwaway client container on the
+// site's network, the way Traefik will reach it, and returns the response
+// headers and body. The client is curl in the site's own php image, which
+// is already on the host. Transient failures (nginx re-resolving a
+// recreated php) are retried for a while.
+func fetch(t *testing.T, image string, site client.Site, path string) string {
+	t.Helper()
+	var (
+		out []byte
+		err error
+	)
+	for deadline := time.Now().Add(30 * time.Second); ; {
+		out, err = compose.RunContainer(t.Context(), nil, compose.RunOptions{
+			Image:      image,
+			Network:    compose.SiteProjectName(site.ID),
+			Entrypoint: "curl",
+			Command: []string{"--silent", "--show-error", "--max-time", "10", "--include",
+				"--header", "Host: " + site.PreviewDomain, "http://nginx:8080" + path},
+		})
+		if err == nil && !strings.HasPrefix(string(out), "HTTP/1.1 5") || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	if err != nil {
+		t.Fatalf("fetching %s from %s: %v", path, site.PreviewDomain, err)
+	}
+	status, _, _ := strings.Cut(string(out), "\n")
+	t.Logf("GET %s: %s", path, strings.TrimSpace(status))
+	return string(out)
+}
+
+// siteNet is what the isolation check knows about a site's containers.
+type siteNet struct {
+	project compose.Project
+	names   map[string]string // service -> container name
+	ips     map[string]string // service -> IP on the site network
+}
+
+// siteNetwork inspects a site's containers and checks that each is on the
+// site's network and no other.
+func siteNetwork(t *testing.T, project compose.Project) siteNet {
+	t.Helper()
+	n := siteNet{project: project, names: map[string]string{}, ips: map[string]string{}}
+	for _, service := range []string{"nginx", "php"} {
+		c, err := project.ServiceContainer(t.Context(), service)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if networks := slices.Collect(maps.Keys(c.Networks)); len(networks) != 1 || c.Networks[project.Name] == "" {
+			t.Errorf("%s is on networks %v, want only %s", c.Name, networks, project.Name)
+		}
+		n.names[service], n.ips[service] = c.Name, c.Networks[project.Name]
+	}
+	return n
+}
+
+// probeResult is the outcome of one TCP connection attempt.
+type probeResult struct {
+	target string // host:port
+	ip     string // what the host resolved to; empty if it didn't
+	open   bool
+	detail string
+}
+
+// probeScript tries a TCP connection to each host:port argument and prints
+// one line per target: "<target> <open|closed> <ip or -> <detail>". A host
+// that doesn't resolve is closed without trying; a blocked connection
+// times out after 2 seconds.
+const probeScript = `foreach (array_slice($argv, 1) as $target) {
+	$start = microtime(true);
+	$i = strrpos($target, ":");
+	$ip = gethostbyname(substr($target, 0, $i));
+	if (!filter_var($ip, FILTER_VALIDATE_IP)) { printf("%s closed - unresolved (%.1fs)\n", $target, microtime(true) - $start); continue; }
+	$fp = @fsockopen($ip, (int) substr($target, $i + 1), $errno, $errstr, 2);
+	if ($fp) { fclose($fp); printf("%s open %s\n", $target, $ip); continue; }
+	printf("%s closed %s %s (%.1fs)\n", $target, $ip, $errstr, microtime(true) - $start);
+}`
+
+// probe runs probeScript in a site's php container.
+func probe(t *testing.T, project compose.Project, targets []string) []probeResult {
+	t.Helper()
+	out, err := project.ExecService(t.Context(), "php", append([]string{"php", "-r", probeScript, "--"}, targets...)...)
+	if err != nil {
+		t.Fatalf("probing from %s: %v", project.Name, err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) != len(targets) {
+		t.Fatalf("probe output from %s:\n%s", project.Name, out)
+	}
+	results := make([]probeResult, len(lines))
+	for i, line := range lines {
+		f := strings.SplitN(line, " ", 4)
+		if len(f) < 3 || f[0] != targets[i] {
+			t.Fatalf("probe output line %q for %s", line, targets[i])
+		}
+		results[i] = probeResult{target: f[0], open: f[1] == "open"}
+		if f[2] != "-" {
+			results[i].ip = f[2]
+		}
+		if len(f) == 4 {
+			results[i].detail = f[3]
+		}
+	}
+	return results
 }
 
 // getSite gets a site through the API, failing the test unless it exists.
@@ -422,21 +618,28 @@ func waitJob(t *testing.T, p *e2e.Platform, jobID string) {
 	}
 }
 
-// siteDatabase counts the site's database and database user on the
-// platform MariaDB, as root. The password is read inside the container, so
-// it never reaches the test's command lines.
-func siteDatabase(t *testing.T, p *e2e.Platform, siteID string) (databases, users int) {
+// dbObjects counts a site's objects on the platform MariaDB.
+type dbObjects struct {
+	databases, users, grants int
+}
+
+// siteDatabase counts the site's database, database user, and database
+// grants on the platform MariaDB, as root. The password is read inside the
+// container, so it never reaches the test's command lines.
+func siteDatabase(t *testing.T, p *e2e.Platform, siteID string) dbObjects {
 	t.Helper()
 	name := "pf_" + siteID
-	query := fmt.Sprintf("SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '%s'; "+
-		"SELECT COUNT(*) FROM mysql.user WHERE User = '%s';", name, name)
+	query := fmt.Sprintf("SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '%[1]s'; "+
+		"SELECT COUNT(*) FROM mysql.user WHERE User = '%[1]s'; "+
+		"SELECT COUNT(*) FROM mysql.db WHERE Db = '%[1]s' OR User = '%[1]s';", name)
 	out, err := p.Project.Exec(t.Context(), "mariadb", "sh", "-c",
 		`exec mariadb --user=root --password="$(cat /run/secrets/mariadb_root_password)" --batch --skip-column-names -e "$1"`, "sh", query)
 	if err != nil {
 		t.Fatalf("querying MariaDB: %v", err)
 	}
-	if _, err := fmt.Sscan(string(out), &databases, &users); err != nil {
+	var n dbObjects
+	if _, err := fmt.Sscan(string(out), &n.databases, &n.users, &n.grants); err != nil {
 		t.Fatalf("parsing MariaDB output %q: %v", out, err)
 	}
-	return databases, users
+	return n
 }

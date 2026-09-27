@@ -42,7 +42,8 @@ const (
 const Service = "control-plane"
 
 // PreviewBaseDomain is the preview base domain of platforms Start boots.
-// Nothing resolves it: tests reach sites inside their containers, because
+// Nothing resolves it: tests reach sites over their networks, from the
+// sites' containers or a client container (compose.RunContainer), because
 // routing (Traefik) isn't part of the platform yet.
 const PreviewBaseDomain = "preview.e2e.test"
 

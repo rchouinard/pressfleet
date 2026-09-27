@@ -73,6 +73,55 @@ func (p Project) ExecService(ctx context.Context, service string, command ...str
 	return out, nil
 }
 
+// RunOptions configures RunContainer.
+type RunOptions struct {
+	// Image is the image to run. It must be available locally
+	// (EnsureImage): a probe shouldn't stall on a pull.
+	Image string
+	// Network is the only network the container joins, e.g. a site's
+	// network (SiteProjectName). Empty means Docker's default bridge.
+	Network string
+	// Entrypoint, if set, replaces the image's entrypoint; Command is
+	// passed to it as arguments.
+	Entrypoint string
+	Command    []string
+	// User defaults to 65534:65534 (nobody).
+	User string
+}
+
+// RunContainer runs a short-lived container and returns its standard
+// output: a client on a site's network sees the site the way the platform's
+// own services do, which the end-to-end tests rely on until the host can
+// reach sites through Traefik. The container is locked down like a site
+// container (non-root, read-only root filesystem, no capabilities, no new
+// privileges) and removed when it exits. A nil docker means DockerExec.
+func RunContainer(ctx context.Context, docker ExecFunc, opts RunOptions) ([]byte, error) {
+	if docker == nil {
+		docker = DockerExec
+	}
+	if opts.Image == "" {
+		return nil, fmt.Errorf("%w: run needs an image", ErrInvalidProject)
+	}
+	user := opts.User
+	if user == "" {
+		user = "65534:65534"
+	}
+	args := []string{"container", "run", "--rm", "--user", user, "--read-only", "--tmpfs", "/tmp",
+		"--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--pull", "never"}
+	if opts.Network != "" {
+		args = append(args, "--network", opts.Network)
+	}
+	if opts.Entrypoint != "" {
+		args = append(args, "--entrypoint", opts.Entrypoint)
+	}
+	args = append(args, "--", opts.Image)
+	out, err := docker(ctx, nil, append(args, opts.Command...)...)
+	if err != nil {
+		return out, fmt.Errorf("running %s: %w", opts.Image, err)
+	}
+	return out, nil
+}
+
 // InspectContainer returns the details of a container, by name or ID. A nil
 // docker means DockerExec.
 func InspectContainer(ctx context.Context, docker ExecFunc, container string) (ContainerDetails, error) {

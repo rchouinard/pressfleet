@@ -30,12 +30,6 @@ mise exec -- make test-e2e
 
 This builds the control plane image as `pressfleet-control-plane:e2e`, runs the tests against it with verbose output, and removes the image afterwards. The first run also pulls MariaDB.
 
-`TestSiteCreateDelete` provisions a real site and later moves it to another PHP version, so it needs the site images for the latest WordPress in [`images/manifest.json`](../images/manifest.json) and two PHP versions: the default one and the next available one, e.g. `ghcr.io/rchouinard/pressfleet/site-php:php8.5-wp7.1.2`, `site-php:php8.4-wp7.1.2`, and `site-nginx:wp7.1.2`. The harness (`e2e.EnsureImages`) uses local images when they exist, so images built with `make images` are tested as they are, and otherwise pulls them from GHCR. If neither works, the test fails and says to run `make images` (see [images/README.md](../images/README.md)). After changing `images/`, run `make images` before `make test-e2e`, or the test runs against whatever images you already have.
-
-The test reaches the site from inside its containers, not from the host: sites aren't routable from the host until Traefik is part of the platform. The preview base domain is `preview.e2e.test`, which nothing resolves.
-
-The test can't read a site's project directory: the control plane runs as root and creates `sites/<id>` with mode `0700`, and the test runs as an unprivileged user (in CI, at least; Docker Desktop doesn't enforce the ownership). So it never runs `docker compose` against that directory. It addresses the site's project by name with an empty directory of its own (`ps` and `down` work from the Compose labels), and runs commands in the site's containers with `compose.Project.ExecService` and inspects them with `ServiceContainer`, which find the containers by label and use `docker exec` and `docker container inspect`.
-
 To run the tests against an image you already built, for example to rerun one test:
 
 ```sh
@@ -44,13 +38,32 @@ PRESSFLEET_DOCKER_TESTS=1 PRESSFLEET_TEST_CONTROL_PLANE_IMAGE=pressfleet-control
   go test -count=1 -v -run TestAPI ./control-plane/internal/e2e/
 ```
 
-The tests work with Docker Engine on Linux and with Docker Desktop. If a run is killed before its cleanup can run, remove what it left:
+The tests work with Docker Engine on Linux and with Docker Desktop. If a run is killed before its cleanup can run, remove what it left. Remove the platform first: its MariaDB keeps the site networks in use.
 
 ```sh
 docker compose -p pfe2e-<random> down --volumes
+docker compose -p pf-<site-id> down --volumes   # for each site it created
 ```
 
 `TestInit` doesn't use `e2e.Start`: it runs `pressfleet init --non-interactive --skip-preflight` into a temporary root under the project name `pfinit-<random>`, then logs in as the admin init created. `e2e.Adopt` gives it the same teardown, and `e2e.WriteOverride` publishes the control plane port.
+
+#### The M1 acceptance test
+
+`TestSiteCreateDelete` automates the M1 "done when" ([roadmap](roadmap.md), design doc §8 Phase 1) on one platform:
+
+1. It creates two sites through the API, each in its own client group, and waits for both to be provisioned.
+2. It checks that WordPress is installed and reached over HTTP (see below).
+3. It checks that the two sites can't reach each other. Each site's containers must be on its own network (`pf-<id>`) and no other. From each site's php container, the other site's containers must not resolve by container name, and their IPs must not answer on nginx's port 8080 or PHP-FPM's port 9000 (the connection times out). The service name `nginx` resolves to the site's own nginx. As positive controls, the site's own nginx and the platform MariaDB (`pf-mariadb:3306`) must answer.
+4. It changes one site's PHP version, checks that the php container was recreated on the new image and nginx was left alone, then stops and starts the site (#28).
+5. It deletes both sites. It checks that no container, network, or volume with either project's label is left, that nothing is left under `sites/` and MariaDB is on no site network, that the site databases, users, and grants are gone from MariaDB, and that no secret, site, alias, database, or schedule row is left in the state database.
+
+**"Reached over HTTP on the host" in M1.** The host can't route to a site until Traefik serves preview domains (M2). Until then, the test starts a throwaway client container on the host's Docker engine, attached to the site's network, the way Traefik will be (`compose.RunContainer`: curl from the site's php image, which is already on the host, running as nobody with a read-only root filesystem and no capabilities). It requests `http://nginx:8080/` with the preview domain as `Host` and expects `200` with the site's title and `wp-content` URLs. It requests `/wp-login.php` and expects WordPress's `302` to the HTTPS login page: only a trusted proxy's requests count as HTTPS, so the redirect shows WordPress answering. Once Traefik lands, this check should move to the host's own HTTP client.
+
+It needs the site images for the latest WordPress in [`images/manifest.json`](../images/manifest.json) and two PHP versions: the default one and the next available one, e.g. `ghcr.io/rchouinard/pressfleet/site-php:php8.5-wp7.1.2`, `site-php:php8.4-wp7.1.2`, and `site-nginx:wp7.1.2`. The harness (`e2e.EnsureImages`) uses local images when they exist, so images built with `make images` are tested as they are, and otherwise pulls them from GHCR. If neither works, the test fails and says to run `make images` (see [images/README.md](../images/README.md)). After changing `images/`, run `make images` before `make test-e2e`, or the test runs against whatever images you already have.
+
+The preview base domain is `preview.e2e.test`, which nothing resolves. The test takes about a minute locally once the images are present. Most of that is provisioning and the isolation probes, which wait for blocked connections and unresolvable names to time out.
+
+The test can't read a site's project directory: the control plane runs as root and creates `sites/<id>` with mode `0700`, and the test runs as an unprivileged user (in CI, at least; Docker Desktop doesn't enforce the ownership). So it never runs `docker compose` against that directory. It addresses the site's project by name with an empty directory of its own (`ps` and `down` work from the Compose labels), and runs commands in the site's containers with `compose.Project.ExecService` and inspects them with `ServiceContainer`, which find the containers by label and use `docker exec` and `docker container inspect`.
 
 ### Writing a test
 

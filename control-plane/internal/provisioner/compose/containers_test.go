@@ -81,3 +81,24 @@ func TestServiceContainerAndExecService(t *testing.T) {
 		t.Errorf("exec without a command: err = %v", err)
 	}
 }
+
+func TestRunContainer(t *testing.T) {
+	ctx := context.Background()
+	r := &recorder{out: []byte("HTTP/1.1 200 OK\n")}
+	out, err := compose.RunContainer(ctx, r.exec, compose.RunOptions{
+		Image: "registry.example/site-php:php8.4-wp7.1.2", Network: "pf-site1",
+		Entrypoint: "curl", Command: []string{"-sS", "http://nginx:8080/"},
+	})
+	if err != nil || string(out) != "HTTP/1.1 200 OK\n" {
+		t.Fatalf("RunContainer = %q, %v", out, err)
+	}
+	want := []string{"container", "run", "--rm", "--user", "65534:65534", "--read-only", "--tmpfs", "/tmp",
+		"--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--pull", "never",
+		"--network", "pf-site1", "--entrypoint", "curl", "--", "registry.example/site-php:php8.4-wp7.1.2", "-sS", "http://nginx:8080/"}
+	if !slices.Equal(r.args[0], want) {
+		t.Errorf("args = %q\nwant %q", r.args[0], want)
+	}
+	if _, err := compose.RunContainer(ctx, r.exec, compose.RunOptions{}); !errors.Is(err, compose.ErrInvalidProject) {
+		t.Errorf("without an image: err = %v", err)
+	}
+}
