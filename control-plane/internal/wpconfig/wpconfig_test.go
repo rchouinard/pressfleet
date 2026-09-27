@@ -52,6 +52,10 @@ func fullParams() Params {
 		Host: "smtp.example.com", Port: 587, Username: "mailer", Password: `smtp\pw`,
 		Encryption: "tls", FromEmail: "noreply@example.com", FromName: "Acme's Site",
 	}
+	p.Security = Security{
+		DisallowFileEdit: true, BlockUserEnumeration: true, PasswordMinLength: 12,
+		PasswordHashing: HashArgon2id, DisableApplicationPasswords: true,
+	}
 	p.Constants = []Constant{
 		{Name: "WP_DEBUG", Value: false},
 		{Name: "WP_POST_REVISIONS", Value: 10},
@@ -131,10 +135,63 @@ func TestRenderContract(t *testing.T) {
 	}
 	// Go-live changes the URL in the database (§5.2); getenv() can't work
 	// with clear_env = yes; unset M2 settings emit nothing.
-	for _, absent := range []string{"'WP_HOME'", "'WP_SITEURL'", "getenv", "WP_REDIS_", "PRESSFLEET_SMTP_", "Site constants"} {
+	for _, absent := range []string{"'WP_HOME'", "'WP_SITEURL'", "getenv", "WP_REDIS_", "PRESSFLEET_", "DISALLOW_FILE_EDIT", "security set", "Site constants"} {
 		if strings.Contains(s, absent) {
 			t.Errorf("output contains %q", absent)
 		}
+	}
+}
+
+// TestRenderSecurity checks that each security setting emits its constant
+// only when it is on (§6.1): the must-use plugin modules key off the
+// constants being defined.
+func TestRenderSecurity(t *testing.T) {
+	all := []string{
+		"define( 'DISALLOW_FILE_EDIT', true );",
+		"define( 'PRESSFLEET_BLOCK_USER_ENUMERATION', true );",
+		"define( 'PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH', ",
+		"define( 'PRESSFLEET_PASSWORD_HASHING', ",
+		"define( 'PRESSFLEET_DISABLE_APPLICATION_PASSWORDS', true );",
+	}
+	for _, tc := range []struct {
+		name string
+		sec  Security
+		want []string // lines from all that must appear; the rest must not
+	}{
+		{"off", Security{}, nil},
+		{"bcrypt is the WordPress default", Security{PasswordHashing: HashBcrypt}, nil},
+		{"file edit", Security{DisallowFileEdit: true}, all[:1]},
+		{"user enumeration", Security{BlockUserEnumeration: true}, all[1:2]},
+		{"password policy", Security{PasswordMinLength: 14}, []string{"define( 'PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH', 14 );"}},
+		{"argon2id", Security{PasswordHashing: HashArgon2id}, []string{"define( 'PRESSFLEET_PASSWORD_HASHING', 'argon2id' );"}},
+		{"application passwords", Security{DisableApplicationPasswords: true}, all[4:]},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := testParams()
+			p.Security = tc.sec
+			out, err := Render(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := string(out)
+			for _, want := range tc.want {
+				if !strings.Contains(s, want) {
+					t.Errorf("missing %q", want)
+				}
+			}
+			for _, line := range all {
+				wanted := false
+				for _, want := range tc.want {
+					wanted = wanted || strings.HasPrefix(want, line)
+				}
+				if !wanted && strings.Contains(s, line) {
+					t.Errorf("unexpected %q", line)
+				}
+			}
+			if hasSection := strings.Contains(s, "security set"); hasSection != (len(tc.want) > 0) {
+				t.Errorf("security section present = %v, want %v", hasSection, len(tc.want) > 0)
+			}
+		})
 	}
 }
 
@@ -260,6 +317,9 @@ func TestRenderInvalid(t *testing.T) {
 		"redis port":          {func(p *Params) { r := fullParams().Redis; r.Port = 0; p.Redis = r }, "redis: port"},
 		"smtp no host":        {func(p *Params) { p.SMTP = &SMTP{Port: 25, Password: secret} }, "smtp: host is required"},
 		"smtp bad encryption": {func(p *Params) { s := fullParams().SMTP; s.Encryption = "starttls"; p.SMTP = s }, "smtp: encryption"},
+		"reserved file edit":  {func(p *Params) { p.Constants = []Constant{{Name: "DISALLOW_FILE_EDIT", Value: false}} }, "set by the platform"},
+		"negative min length": {func(p *Params) { p.Security.PasswordMinLength = -1 }, "security: password minimum length"},
+		"unknown hashing":     {func(p *Params) { p.Security.PasswordHashing = "md5" }, "security: password hashing"},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {

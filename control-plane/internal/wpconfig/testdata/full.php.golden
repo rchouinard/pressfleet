@@ -65,6 +65,15 @@ define( 'PRESSFLEET_SMTP_ENCRYPTION', 'tls' );
 define( 'PRESSFLEET_SMTP_FROM_EMAIL', 'noreply@example.com' );
 define( 'PRESSFLEET_SMTP_FROM_NAME', 'Acme\'s Site' );
 
+// ** WordPress security set (§6.1), install-wide ** //
+// No theme or plugin file editor; updates keep working.
+define( 'DISALLOW_FILE_EDIT', true );
+// Platform must-use plugin modules, each off unless its constant is defined.
+define( 'PRESSFLEET_BLOCK_USER_ENUMERATION', true );
+define( 'PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH', 12 );
+define( 'PRESSFLEET_PASSWORD_HASHING', 'argon2id' );
+define( 'PRESSFLEET_DISABLE_APPLICATION_PASSWORDS', true );
+
 // ** Site constants ** //
 define( 'WP_DEBUG', false );
 define( 'WP_POST_REVISIONS', 10 );

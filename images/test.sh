@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test for the site images (issues #17, #18, #40, #47).
+# Smoke test for the site images (issues #17, #18, #40, #47, #108).
 #
 #   images/test.sh [php-version ...]     default: every PHP version images/matrix.sh builds
 #
@@ -145,6 +145,10 @@ define( 'PRESSFLEET_SMTP_PASSWORD', '$smtp_password' );
 define( 'PRESSFLEET_SMTP_ENCRYPTION', '' );
 define( 'PRESSFLEET_SMTP_FROM_EMAIL', 'sites@pressfleet.test' );
 define( 'PRESSFLEET_SMTP_FROM_NAME', 'PressFleet Sites' );
+// Security set constants (§6.1), written by the security checks below.
+if ( file_exists( __DIR__ . '/wp-content/pf-smoke-security.php' ) ) {
+	require __DIR__ . '/wp-content/pf-smoke-security.php';
+}
 if ( ! defined( 'ABSPATH' ) ) {
 	define( 'ABSPATH', __DIR__ . '/' );
 }
@@ -356,6 +360,92 @@ test_stack() {
 	check_contains "access log has client IP" '"remote_addr":"203.0.113.7"' "$logs"
 	check_contains "access log has cache status" '"upstream_cache_status":' "$logs"
 	check_contains "access log has request time" '"request_time":' "$logs"
+
+	# --- WordPress security set (§6.1), PHP modules -------------------------
+	# The modules are off unless wp-config.php defines their constants; the
+	# smoke test's wp-config.php includes wp-content/pf-smoke-security.php
+	# for them, standing in for the control plane's generated constants.
+	"${cexec[@]}" wp rewrite structure '/%postname%/' >/dev/null
+	local weak_pw="Qwerty123456" strong_pw argon_pw hello_url="$base/hello-world/" route rp_key
+	strong_pw="$(head -c 18 /dev/urandom | base64 | tr -d '/+=')"
+	argon_pw="$(head -c 18 /dev/urandom | base64 | tr -d '/+=')"
+	login_post() { curl -s -d "log=$1&pwd=$2&wp-submit=Log+In" "$base/wp-login.php"; }
+
+	check_eq "off: ?author=N redirects to the author archive" "301 $base/author/admin/" \
+		"$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$base/?author=1")"
+	check_contains "off: REST lists users" '"slug":"admin"' "$(curl -s "$base/wp-json/wp/v2/users")"
+	check_eq "off: users sitemap served" "200" "$(curl -s -o /dev/null -w '%{http_code}' "$base/wp-sitemap-users-1.xml")"
+	check_contains "off: oEmbed names the author" '"author_name":"admin"' \
+		"$(curl -s "$base/wp-json/oembed/1.0/embed?url=$hello_url")"
+	check_contains "off: login error reveals unknown users" "is not registered" "$(login_post nosuchuser x)"
+	check "off: weak password accepted" "${cexec[@]}" wp user create weakling weakling@example.com --user_pass="$weak_pw"
+	"${cexec[@]}" wp user delete weakling --yes >/dev/null
+	check_eq "off: file editor available" "yes" \
+		"$("${cexec[@]}" wp eval --user=admin 'echo current_user_can("edit_themes") ? "yes" : "no";')"
+	check_eq "off: application passwords available" "yes" \
+		"$("${cexec[@]}" wp eval '$_SERVER["HTTPS"] = "on"; echo wp_is_application_passwords_available() ? "yes" : "no";')"
+	check "bcrypt user created" "${cexec[@]}" wp user create hasher hasher@example.com --user_pass="$strong_pw"
+	check_contains "off: new hashes are bcrypt" '$wp$2y$' "$("${cexec[@]}" wp user get hasher --field=user_pass)"
+
+	docker exec -i "$php" sh -c 'cat > wp-content/pf-smoke-security.php' <<-'PHP'
+		<?php
+		define( 'DISALLOW_FILE_EDIT', true );
+		define( 'PRESSFLEET_BLOCK_USER_ENUMERATION', true );
+		define( 'PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH', 12 );
+		define( 'PRESSFLEET_DISABLE_APPLICATION_PASSWORDS', true );
+	PHP
+
+	check_eq "on: ?author=N is a 404" "404" "$(curl -s -o /dev/null -w '%{http_code}' "$base/?author=1")"
+	for route in "/wp-json/wp/v2/users" "/wp-json/wp/v2/users/1" "/wp-json/wp/v2/USERS" "/?rest_route=/wp/v2/users"; do
+		check_eq "on: anonymous $route refused" "401" "$(curl -s -o /dev/null -w '%{http_code}' "$base$route")"
+	done
+	check_eq "on: logged-in users still list users" "200" \
+		"$("${cexec[@]}" wp eval --user=admin 'echo rest_do_request( new WP_REST_Request( "GET", "/wp/v2/users" ) )->get_status();')"
+	check_eq "on: users sitemap gone" "404" "$(curl -s -o /dev/null -w '%{http_code}' "$base/wp-sitemap-users-1.xml")"
+	body="$(curl -s "$base/wp-json/oembed/1.0/embed?url=$hello_url")"
+	check_contains "on: oEmbed still works" '"title":"Hello world!"' "$body"
+	check_not "on: oEmbed omits the author" grep -q author_name <<<"$body"
+	body="$(login_post nosuchuser x)"
+	check_contains "on: unknown user gets the generic login error" "username, email address, or password is incorrect" "$body"
+	check_not "on: login error doesn't reveal unknown users" grep -q "is not registered" <<<"$body"
+	check_contains "on: wrong password gets the same error" "username, email address, or password is incorrect" \
+		"$(login_post admin wrong-password)"
+	check_eq "on: lost password form doesn't reveal unknown users" "302 $base/wp-login.php?checkemail=confirm" \
+		"$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -d 'user_login=nobody@example.com' "$base/wp-login.php?action=lostpassword")"
+
+	check_contains "on: short password rejected (WP-CLI create)" "at least 12 characters" \
+		"$("${cexec[@]}" wp user create weakling weakling@example.com --user_pass=short-pw1 2>&1 || true)"
+	check_contains "on: common password rejected (WP-CLI create)" "most commonly used" \
+		"$("${cexec[@]}" wp user create weakling weakling@example.com --user_pass="$weak_pw" 2>&1 || true)"
+	check_not "on: rejected user was not created" "${cexec[@]}" wp user get weakling
+	check_contains "on: common password rejected (WP-CLI update)" "most commonly used" \
+		"$("${cexec[@]}" wp user update hasher --user_pass="$weak_pw" 2>&1 || true)"
+	check_eq "on: rejected update kept the old password" "ok" \
+		"$("${cexec[@]}" wp eval "\$u = get_user_by( 'login', 'hasher' ); echo wp_check_password( '$strong_pw', \$u->user_pass, \$u->ID ) ? 'ok' : 'changed';")"
+	check_contains "on: common password rejected (profile save)" "most commonly used" \
+		"$("${cexec[@]}" wp eval --user=admin "require_once ABSPATH . 'wp-admin/includes/user.php'; \$_POST = array( 'email' => 'admin@example.com', 'nickname' => 'admin', 'pass1' => '$weak_pw', 'pass2' => '$weak_pw' ); \$r = edit_user( get_current_user_id() ); echo is_wp_error( \$r ) ? \$r->get_error_message() : 'saved';")"
+	check_eq "on: common password rejected (REST)" "400" \
+		"$("${cexec[@]}" wp eval --user=admin "\$r = new WP_REST_Request( 'POST', '/wp/v2/users' ); \$r->set_body_params( array( 'username' => 'restuser', 'email' => 'rest@example.com', 'password' => '$weak_pw' ) ); echo rest_do_request( \$r )->get_status();")"
+	rp_key="$("${cexec[@]}" wp eval 'echo get_password_reset_key( get_user_by( "login", "hasher" ) );')"
+	curl -s -o /dev/null -c "$tmp/rp-cookies" "$base/wp-login.php?action=rp&key=$rp_key&login=hasher"
+	check_contains "on: common password rejected (reset form)" "most commonly used" \
+		"$(curl -s -b "$tmp/rp-cookies" -d "pass1=$weak_pw&pass2=$weak_pw&rp_key=$rp_key&wp-submit=Save+Password" "$base/wp-login.php?action=resetpass")"
+	check "on: strong password accepted" "${cexec[@]}" wp user create strongling strongling@example.com --user_pass="$strong_pw"
+	check_eq "on: file editor disabled" "no" \
+		"$("${cexec[@]}" wp eval --user=admin 'echo current_user_can("edit_themes") ? "yes" : "no";')"
+	check_eq "on: application passwords disabled" "no" \
+		"$("${cexec[@]}" wp eval '$_SERVER["HTTPS"] = "on"; echo wp_is_application_passwords_available() ? "yes" : "no";')"
+
+	# Only WP-CLI (no OPcache) reads the changed file from here on.
+	"${cexec[@]}" sh -c "echo \"define( 'PRESSFLEET_PASSWORD_HASHING', 'argon2id' );\" >> wp-content/pf-smoke-security.php"
+	check "argon2id: password changed" "${cexec[@]}" wp user update strongling --user_pass="$argon_pw"
+	check_contains "argon2id: new hashes are Argon2id" '$argon2id$' "$("${cexec[@]}" wp user get strongling --field=user_pass)"
+	check_eq "argon2id: new hash verifies" "ok" \
+		"$("${cexec[@]}" wp eval "\$u = get_user_by( 'login', 'strongling' ); echo wp_check_password( '$argon_pw', \$u->user_pass, \$u->ID ) ? 'ok' : 'bad';")"
+	check_eq "argon2id: existing bcrypt hash still logs in" "ok" \
+		"$("${cexec[@]}" wp eval "echo is_wp_error( wp_authenticate( 'hasher', '$strong_pw' ) ) ? 'bad' : 'ok';")"
+	check_contains "argon2id: bcrypt hash upgraded at login" '$argon2id$' "$("${cexec[@]}" wp user get hasher --field=user_pass)"
+	"${cexec[@]}" rm -f wp-content/pf-smoke-security.php
 
 	# --- Internal status port -------------------------------------------------
 	check_contains "nginx stub_status" "Active connections" \

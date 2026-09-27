@@ -83,6 +83,18 @@
 // provisioning, updating, or deleting the site, and with ErrNotProvisioned
 // for a site whose provisioning failed, which has nothing left to change.
 //
+// # Startup reconciliation
+//
+// Install-wide settings such as the WordPress security set (§6.1) reach a
+// site whenever the driver renders it. So that a changed setting also
+// reaches sites nobody touches, [Service.EnqueueReconcile] queues a
+// [ReconcileJobType] job per site when the control plane starts; its steps
+// re-render running and stopped sites with provisioner.UpdateSite, which
+// recreates only what changed. See reconcile.go for how other features hook
+// in. A reconciliation that gives up leaves the site's status alone unless
+// its containers are no longer running or stopped, and records the error in
+// the status message.
+//
 // # Live status
 //
 // [Service.Runtime] asks the provisioner for the site's live phase, within
@@ -553,7 +565,10 @@ func (s *Service) TakeAdminCredentials(ctx context.Context, siteID string) (Admi
 // Handlers returns the job handlers of the site workflows, to register on
 // the job pool.
 func (s *Service) Handlers() []jobs.Handler {
-	return []jobs.Handler{s.createHandler(), s.deleteHandler(), s.updateHandler(), s.startHandler(), s.stopHandler()}
+	return []jobs.Handler{
+		s.createHandler(), s.deleteHandler(), s.updateHandler(), s.startHandler(), s.stopHandler(),
+		s.reconcileHandler(),
+	}
 }
 
 // SharedServiceAttacher reconnects the platform services to a site's

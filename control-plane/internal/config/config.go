@@ -76,6 +76,8 @@ type Config struct {
 	PlatformProject string `yaml:"platform_project"`
 	// SMTP is the relay sites send email through (§5.6).
 	SMTP SMTPConfig `yaml:"smtp"`
+	// WordPressSecurity is the install-wide WordPress security set (§6.1).
+	WordPressSecurity WordPressSecurityConfig `yaml:"wordpress_security"`
 }
 
 // Values of smtp.encryption.
@@ -304,7 +306,8 @@ func Default() Config {
 			AdminUser:         "root",
 			AdminPasswordFile: "/run/secrets/mariadb_root_password",
 		},
-		SMTP: SMTPConfig{Encryption: SMTPEncryptionSTARTTLS},
+		SMTP:              SMTPConfig{Encryption: SMTPEncryptionSTARTTLS},
+		WordPressSecurity: DefaultWordPressSecurity(),
 	}
 }
 
@@ -417,7 +420,7 @@ func ApplyEnv(cfg *Config, env LookupEnv) error {
 			}
 		}
 	}
-	return nil
+	return cfg.WordPressSecurity.applyEnv(env)
 }
 
 func loadFile(cfg *Config, path string) error {
@@ -501,6 +504,9 @@ func (c Config) Validate() error {
 		errs = append(errs, fmt.Errorf("platform_project must be a Compose project name (lowercase letters, digits, - and _), got %q", c.PlatformProject))
 	}
 	if err := c.SMTP.Validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.WordPressSecurity.validate(); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)

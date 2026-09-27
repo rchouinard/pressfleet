@@ -53,6 +53,20 @@ smtp:                    # optional; without a host, sites send no email
   password: pfenc1:...   # encrypted with the master key by pressfleet init
   from_email: sites@agency.example
   from_name: Agency Sites
+wordpress_security:            # install-wide; see "WordPress security set"
+  block_user_enumeration: true
+  password_policy:
+    enabled: true
+    min_length: 12
+  password_hashing: bcrypt     # bcrypt, argon2id
+  login_rate_limit:
+    enabled: true
+    requests_per_minute: 10
+    burst: 10
+  disable_file_edit: true
+  headers: true
+  two_factor: "off"            # off, optional, required_for_admins
+  disable_application_passwords: false
 ```
 
 ## Settings
@@ -86,6 +100,17 @@ smtp:                    # optional; without a host, sites send no email
 | `smtp.password` | `PRESSFLEET_SMTP_PASSWORD` | `--smtp-password-file` (`init` only) | (unset) | Relay password, encrypted with the master key (`pfenc1:...`). `pressfleet init` reads the plaintext from `--smtp-password-file` and writes only the encrypted value; a plaintext value is rejected. The control plane decrypts it at startup and refuses to start if it can't. |
 | `smtp.from_email` | `PRESSFLEET_SMTP_FROM_EMAIL` | `--smtp-from-email` (`init` only) | (unset) | Sender address that replaces WordPress's default `wordpress@<site domain>`, which relays usually refuse. It is also the envelope sender of every message. |
 | `smtp.from_name` | `PRESSFLEET_SMTP_FROM_NAME` | `--smtp-from-name` (`init` only) | (unset) | Sender name that replaces WordPress's default, "WordPress". |
+| `wordpress_security.block_user_enumeration` | `PRESSFLEET_WORDPRESS_SECURITY_BLOCK_USER_ENUMERATION` | | `true` | Hide which user names exist from visitors. See [WordPress security set](#wordpress-security-set). |
+| `wordpress_security.password_policy.enabled` | `PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_POLICY_ENABLED` | | `true` | Check new WordPress passwords on the server: minimum length and a common-password list. |
+| `wordpress_security.password_policy.min_length` | `PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_POLICY_MIN_LENGTH` | | `12` | Minimum WordPress password length, from 8 to 64 characters. |
+| `wordpress_security.password_hashing` | `PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_HASHING` | | `bcrypt` | Algorithm for new WordPress password hashes: `bcrypt` (WordPress's default) or `argon2id`. |
+| `wordpress_security.login_rate_limit.enabled` | `PRESSFLEET_WORDPRESS_SECURITY_LOGIN_RATE_LIMIT_ENABLED` | | `true` | Rate-limit `wp-login.php` per client IP; excess requests get `429`. |
+| `wordpress_security.login_rate_limit.requests_per_minute` | `PRESSFLEET_WORDPRESS_SECURITY_LOGIN_RATE_LIMIT_REQUESTS_PER_MINUTE` | | `10` | Sustained `wp-login.php` requests per minute per client IP, from 1 to 600. |
+| `wordpress_security.login_rate_limit.burst` | `PRESSFLEET_WORDPRESS_SECURITY_LOGIN_RATE_LIMIT_BURST` | | `10` | Requests above the rate allowed at once before `429`, from 0 to 100. |
+| `wordpress_security.disable_file_edit` | `PRESSFLEET_WORDPRESS_SECURITY_DISABLE_FILE_EDIT` | | `true` | Turn off the theme and plugin file editor (`DISALLOW_FILE_EDIT`). Updates keep working. |
+| `wordpress_security.headers` | `PRESSFLEET_WORDPRESS_SECURITY_HEADERS` | | `true` | Send `Referrer-Policy`, `X-Frame-Options`, and `Permissions-Policy` from every site. |
+| `wordpress_security.two_factor` | `PRESSFLEET_WORDPRESS_SECURITY_TWO_FACTOR` | | `off` | The Two Factor plugin: `off`, `optional` (installed; users opt in), or `required_for_admins`. Applies to sites provisioned from then on. |
+| `wordpress_security.disable_application_passwords` | `PRESSFLEET_WORDPRESS_SECURITY_DISABLE_APPLICATION_PASSWORDS` | | `false` | Turn off WordPress application passwords. Off by default because integrations rely on them. |
 
 ## Outbound email
 
@@ -95,8 +120,23 @@ The relay password is encrypted with the master key everywhere PressFleet stores
 
 - **Sender.** With `smtp.from_email` set, messages WordPress would send as `wordpress@<site domain>` use it instead, and every message uses it as the envelope sender, so bounces go to the platform's domain. A From address chosen by a plugin (WooCommerce's store address, say) is kept; the relay must accept it.
 - **Per-site mail.** The plugin configures the mailer early, so a site that installs its own mail plugin, for example to use a client's own provider, overrides it.
-- **Changes.** The settings are read when the control plane starts. Rerun `pressfleet init --force` to change them; a site picks up new settings the next time its `wp-config.php` is rendered.
+- **Changes.** The settings are read when the control plane starts. Rerun `pressfleet init --force` to change them; at startup the control plane re-renders every site (see [WordPress security set](#wordpress-security-set)), so running and stopped sites pick up the new settings.
 - **Failures.** A message the relay refuses is logged to the site's `php` container log (`docker logs`), with the relay's error.
+
+## WordPress security set
+
+The `wordpress_security` settings are the platform's WordPress hardening (design doc §6.1). They apply to every site; there are no per-site overrides. The images already make WordPress core and `wp-config.php` read-only, disable core updates, deny `/xmlrpc.php`, and refuse to run PHP from `uploads`; these settings add to that:
+
+- **Block user enumeration** (on): visitors who aren't logged in get a 404 for `?author=N` instead of a redirect to the author's archive, a 401 from `/wp-json/wp/v2/users`, oEmbed data without the author, and no users sitemap. The login form gives one error for unknown users and wrong passwords, and the lost password form answers the same whether or not the account exists.
+- **Password policy** (on, 12 characters): new passwords must be at least `min_length` characters long and not among the 100,000 most commonly used passwords. It is checked on the server when a password is set in the profile, by an admin, through the reset form, the REST API, or WP-CLI. Existing passwords keep working until they are changed.
+- **Password hashing** (`bcrypt`): `argon2id` hashes new passwords with Argon2id. Each hash then takes about 64 MiB of memory for a moment, which counts against the site's memory. Existing hashes keep working and are rehashed with the configured algorithm at the user's next login, in either direction.
+- **Login rate limiting** (on, 10 a minute, burst 10): nginx answers `429` to a client IP that exceeds the rate on `wp-login.php`. Loading the form and submitting it are two requests.
+- **Disable the file editor** (on).
+- **Security headers** (on): `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: SAMEORIGIN`, and `Permissions-Policy: camera=(), microphone=(), usb=()` on every response, unless WordPress or a plugin already sent its own. HSTS on production domains comes with go-live.
+- **Two-factor authentication** (off): the WordPress.org Two Factor plugin, installed on new sites when not `off`.
+- **Disable application passwords** (off).
+
+**Changing a setting** takes effect when the control plane restarts. At startup it queues a `site.reconcile` job for every site (skipping sites being deleted, and not queuing a second one for a site whose job hasn't run yet). The job re-renders running and stopped sites with the current settings: `wp-config.php` and the site's Compose project are rewritten, and only containers whose configuration changed are recreated. A stopped site stays stopped and picks the change up when it starts. Sites that are failed are left alone and pick up the settings with their next update. If a job gives up, the error is recorded in the site's status message, and the site is marked failed only if its containers are no longer running.
 
 ## Sessions and HTTPS
 

@@ -16,10 +16,13 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/cookiejar"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -172,6 +175,32 @@ func WriteOverride(t *testing.T, dir string) {
 	if err := os.WriteFile(filepath.Join(dir, "compose.override.yaml"), []byte(overrideFile), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// Restart recreates the control plane with extra PRESSFLEET_* environment
+// variables, the way an operator changes its configuration and restarts it,
+// then reconnects and logs in again. Only the control plane is recreated;
+// MariaDB and the sites keep running.
+func (p *Platform) Restart(t *testing.T, env map[string]string) {
+	t.Helper()
+	override := overrideFile
+	if len(env) > 0 {
+		override += "    environment:\n"
+		for _, k := range slices.Sorted(maps.Keys(env)) {
+			override += "      " + k + ": " + strconv.Quote(env[k]) + "\n"
+		}
+	}
+	if err := os.WriteFile(filepath.Join(p.Project.Dir, "compose.override.yaml"), []byte(override), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), bootTimeout)
+	defer cancel()
+	t.Logf("restarting the control plane of %s", p.Project.Name)
+	if err := p.Project.Up(ctx, compose.UpOptions{Wait: true, WaitTimeout: bootTimeout - 30*time.Second}); err != nil {
+		t.Fatalf("restarting the control plane: %v", err)
+	}
+	p.Connect(ctx, t)
+	p.Client = p.Login(t, p.AdminEmail, p.AdminPassword)
 }
 
 // Adopt tears down a platform project like Start does when the test ends,

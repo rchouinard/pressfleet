@@ -47,6 +47,13 @@ define( 'RT_WP_NGINX_HELPER_CACHE_PATH', '/var/cache/pressfleet/fastcgi' );
 // WP_SITEURL are deliberately not defined; go-live changes the site's URL
 // in the database (§5.2).
 
+// ** WordPress security set (§6.1), install-wide ** //
+// No theme or plugin file editor; updates keep working.
+define( 'DISALLOW_FILE_EDIT', true );
+// Platform must-use plugin modules, each off unless its constant is defined.
+define( 'PRESSFLEET_BLOCK_USER_ENUMERATION', true );
+define( 'PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH', 12 );
+
 if ( ! defined( 'ABSPATH' ) ) {
 	define( 'ABSPATH', __DIR__ . '/' );
 }

@@ -1,7 +1,8 @@
 // Package wpconfig generates a site's wp-config.php from its record (design
 // doc §5.5): database credentials, keys and salts, the table prefix, the
 // constants the site images require (images/README.md, "wp-config.php
-// requirements"), and agency constants from the site's configuration.
+// requirements"), the install-wide WordPress security set (§6.1), and
+// agency constants from the site's configuration.
 //
 // The file is generated, never hand-edited, and mounted read-only into the
 // php container. Generation is orchestrator-agnostic: the Compose driver
@@ -69,9 +70,54 @@ type Params struct {
 	// SMTP configures outbound mail for the platform mu-plugin. Nil (the
 	// default until M2) emits nothing.
 	SMTP *SMTP
+	// Security switches on the WordPress security set's wp-config.php
+	// settings and must-use plugin modules (§6.1). The zero value turns
+	// everything off.
+	Security Security
 	// Constants are agency-specific constants from the site's configuration,
 	// defined in this order after the platform's.
 	Constants []Constant
+}
+
+// Security is the part of the install-wide WordPress security set (§6.1)
+// that lives in wp-config.php: DISALLOW_FILE_EDIT, and one PRESSFLEET_*
+// constant per module of the platform must-use plugin
+// (images/shared/mu-plugins). A module does nothing unless its constant is
+// defined, so a feature that is off emits nothing.
+type Security struct {
+	// DisallowFileEdit defines DISALLOW_FILE_EDIT.
+	DisallowFileEdit bool
+	// BlockUserEnumeration turns on the user enumeration module.
+	BlockUserEnumeration bool
+	// PasswordMinLength turns on the password policy module with this
+	// minimum length; zero leaves it off.
+	PasswordMinLength int
+	// PasswordHashing is HashArgon2id to hash new passwords with Argon2id;
+	// "" or HashBcrypt keeps WordPress's default, bcrypt.
+	PasswordHashing string
+	// DisableApplicationPasswords turns on the module that disables
+	// application passwords.
+	DisableApplicationPasswords bool
+}
+
+// Values of Security.PasswordHashing.
+const (
+	HashBcrypt   = "bcrypt"
+	HashArgon2id = "argon2id"
+)
+
+// Constants read by the platform must-use plugin's security modules.
+const (
+	ConstBlockUserEnumeration        = "PRESSFLEET_BLOCK_USER_ENUMERATION"
+	ConstPasswordPolicyMinLength     = "PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH"
+	ConstPasswordHashing             = "PRESSFLEET_PASSWORD_HASHING"
+	ConstDisableApplicationPasswords = "PRESSFLEET_DISABLE_APPLICATION_PASSWORDS" //nolint:gosec // G101: a constant name, not a credential
+)
+
+// enabled reports whether any setting emits something.
+func (s Security) enabled() bool {
+	return s.DisallowFileEdit || s.BlockUserEnumeration || s.PasswordMinLength > 0 ||
+		s.PasswordHashing == HashArgon2id || s.DisableApplicationPasswords
 }
 
 // Redis is a site's connection to the shared Redis server (§6): an ACL user
@@ -120,6 +166,8 @@ var (
 var reservedConstants = map[string]bool{
 	"ABSPATH": true, "WPMU_PLUGIN_DIR": true, "WPMU_PLUGIN_URL": true, "FS_METHOD": true,
 	"WP_AUTO_UPDATE_CORE": true, "DISABLE_WP_CRON": true, "RT_WP_NGINX_HELPER_CACHE_PATH": true,
+	// The security set is install-wide, without per-site overrides (§6.1).
+	"DISALLOW_FILE_EDIT": true,
 	// Go-live changes the URLs in the database (§5.2); constants would pin them.
 	"WP_HOME": true, "WP_SITEURL": true,
 	// wp-content is the site volume at the image's fixed path.
@@ -220,6 +268,28 @@ func Render(p Params) ([]byte, error) {
 		w.line("")
 	}
 
+	if sec := p.Security; sec.enabled() {
+		w.line("// ** WordPress security set (§6.1), install-wide ** //")
+		if sec.DisallowFileEdit {
+			w.line("// No theme or plugin file editor; updates keep working.")
+			w.define("DISALLOW_FILE_EDIT", true)
+		}
+		w.line("// Platform must-use plugin modules, each off unless its constant is defined.")
+		if sec.BlockUserEnumeration {
+			w.define(ConstBlockUserEnumeration, true)
+		}
+		if sec.PasswordMinLength > 0 {
+			w.define(ConstPasswordPolicyMinLength, sec.PasswordMinLength)
+		}
+		if sec.PasswordHashing == HashArgon2id {
+			w.define(ConstPasswordHashing, HashArgon2id)
+		}
+		if sec.DisableApplicationPasswords {
+			w.define(ConstDisableApplicationPasswords, true)
+		}
+		w.line("")
+	}
+
 	if len(p.Constants) > 0 {
 		w.line("// ** Site constants ** //")
 		for _, c := range p.Constants {
@@ -273,6 +343,14 @@ func (p *Params) validate() error {
 		default:
 			errs = append(errs, errors.New(`smtp: encryption must be "tls", "ssl", or empty`))
 		}
+	}
+	if p.Security.PasswordMinLength < 0 {
+		errs = append(errs, errors.New("security: password minimum length must not be negative"))
+	}
+	switch p.Security.PasswordHashing {
+	case "", HashBcrypt, HashArgon2id:
+	default:
+		errs = append(errs, fmt.Errorf("security: password hashing must be %q or %q", HashBcrypt, HashArgon2id))
 	}
 	seen := map[string]bool{}
 	for i, c := range p.Constants {

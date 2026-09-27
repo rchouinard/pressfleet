@@ -38,12 +38,13 @@ func (a *app) siteRuntime(cat *catalog.Catalog, secretStore secrets.Store, keys 
 		return nil, nil, err
 	}
 	prov, err := compose.NewProvisioner(compose.ProvisionerConfig{
-		Layout:           a.cfg.Layout(),
-		Secrets:          secretStore,
-		Images:           cat,
-		MariaDBContainer: platform.MariaDBContainer(a.cfg.PlatformProject),
-		Logger:           a.log.With("component", "provisioner"),
-		SMTP:             smtp,
+		Layout:            a.cfg.Layout(),
+		Secrets:           secretStore,
+		Images:            cat,
+		MariaDBContainer:  platform.MariaDBContainer(a.cfg.PlatformProject),
+		WordPressSecurity: a.cfg.WordPressSecurity,
+		Logger:            a.log.With("component", "provisioner"),
+		SMTP:              smtp,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -168,6 +169,13 @@ func (a *app) serveCommand() *cobra.Command {
 			}
 			if err := sitecron.Register(pool, db, prov); err != nil {
 				return err
+			}
+			// Existing sites pick up changed install-wide settings (the
+			// WordPress security set, §6.1) through one reconcile job per
+			// site. Queuing them is best effort: a failure must not keep
+			// the API from starting.
+			if _, err := siteSvc.EnqueueReconcile(cmd.Context()); err != nil && cmd.Context().Err() == nil {
+				a.log.Warn("queuing site reconciliation failed", "error", err)
 			}
 			// A canceled context means serve is already stopping; the
 			// server below returns at once.

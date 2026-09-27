@@ -12,6 +12,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sitedb"
@@ -50,6 +51,7 @@ func testSiteRender() compose.SiteRender {
 				AuthSalt: "s1", SecureAuthSalt: "s2", LoggedInSalt: "s3", NonceSalt: "s4",
 			},
 		},
+		Security: config.DefaultWordPressSecurity(),
 	}
 }
 

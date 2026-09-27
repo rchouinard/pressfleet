@@ -13,6 +13,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/wpconfig"
 	"github.com/rchouinard/pressfleet/templates"
@@ -73,8 +74,12 @@ type SiteRender struct {
 	// Site.WPCoreVersion.
 	Images SiteImages
 	// WPConfig is passed to wpconfig.Render. An empty DBHost means
-	// DefaultDBHost.
+	// DefaultDBHost; its Security is replaced by the one derived from
+	// Security below.
 	WPConfig wpconfig.Params
+	// Security is the install-wide WordPress security set (§6.1), the
+	// same for every site. The zero value turns every feature off.
+	Security config.WordPressSecurityConfig
 }
 
 // RenderResult says which files RenderSite changed, so the driver knows
@@ -125,6 +130,7 @@ func RenderSite(dir string, in SiteRender) (RenderResult, error) {
 	if params.DBHost == "" {
 		params.DBHost = DefaultDBHost
 	}
+	params.Security = wpSecurity(in.Security)
 	wpConfig, err := wpconfig.Render(params)
 	if err != nil {
 		return res, fmt.Errorf("%w: %w", ErrInvalidSite, err)
@@ -212,6 +218,23 @@ func siteData(dir string, in SiteRender) (siteTemplateData, error) {
 		EnableCache:    in.Site.EnableCache,
 		WPConfigFile:   SiteWPConfigFile,
 	}, nil
+}
+
+// wpSecurity is the part of the security set that wp-config.php carries:
+// DISALLOW_FILE_EDIT and the must-use plugin modules' constants.
+func wpSecurity(s config.WordPressSecurityConfig) wpconfig.Security {
+	sec := wpconfig.Security{
+		DisallowFileEdit:            s.DisableFileEdit,
+		BlockUserEnumeration:        s.BlockUserEnumeration,
+		DisableApplicationPasswords: s.DisableApplicationPasswords,
+	}
+	if s.PasswordPolicy.Enabled {
+		sec.PasswordMinLength = s.PasswordPolicy.MinLength
+	}
+	if s.PasswordHashing == config.PasswordHashingArgon2id {
+		sec.PasswordHashing = wpconfig.HashArgon2id
+	}
+	return sec
 }
 
 // containerResources are one container's share of the site's resources.

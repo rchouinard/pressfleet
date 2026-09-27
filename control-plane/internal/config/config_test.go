@@ -73,7 +73,8 @@ func TestLoadPrecedence(t *testing.T) {
 		Audit:    config.AuditConfig{RetentionDays: 365},           // default
 		SMTP:     config.Default().SMTP,                            // default
 		// default
-		PlatformProject: "pressfleet",
+		PlatformProject:   "pressfleet",
+		WordPressSecurity: config.DefaultWordPressSecurity(), // default
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("Load() = %+v, want %+v", cfg, want)

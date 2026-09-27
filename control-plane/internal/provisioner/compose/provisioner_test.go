@@ -213,6 +213,7 @@ type fixture struct {
 	prov   *compose.Provisioner
 	layout config.Layout
 	cfg    *provisioner.SiteConfig
+	sec    memSecrets
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -239,7 +240,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	cfg := testSiteRender().Site
 	cfg.DBSecretRef, cfg.WPSaltsSecretRef = dbRef, saltsRef
-	return &fixture{docker: docker, prov: prov, layout: layout, cfg: cfg}
+	return &fixture{docker: docker, prov: prov, layout: layout, cfg: cfg, sec: sec}
 }
 
 func (f *fixture) siteDir(t *testing.T) string {
@@ -342,13 +343,62 @@ func TestUpdateSiteRecreatesPHPWhenWPConfigChanges(t *testing.T) {
 	wantCommands(t, f.docker, recreate, upWait)
 }
 
+// TestUpdateSiteAppliesSecuritySet checks that a changed security set
+// reaches a site through UpdateSite, which is how the control plane applies
+// it to existing sites at startup (sites.ReconcileJobType).
+func TestUpdateSiteAppliesSecuritySet(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if _, err := f.prov.CreateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	wpConfig := filepath.Join(f.siteDir(t), compose.SiteWPConfigFile)
+	if got, _ := os.ReadFile(wpConfig); strings.Contains(string(got), "DISALLOW_FILE_EDIT") {
+		t.Fatalf("security set is off, but wp-config.php has it:\n%s", got)
+	}
+	f.docker.calls = nil
+
+	sec := config.DefaultWordPressSecurity()
+	sec.PasswordHashing = config.PasswordHashingArgon2id
+	f.prov = newProvisionerWith(t, f, f.sec, func(c *compose.ProvisionerConfig) { c.WordPressSecurity = sec })
+	if _, err := f.prov.UpdateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	wantCommands(t, f.docker, recreate, upWait)
+	got, err := os.ReadFile(wpConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"define( 'DISALLOW_FILE_EDIT', true );",
+		"define( 'PRESSFLEET_BLOCK_USER_ENUMERATION', true );",
+		"define( 'PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH', 12 );",
+		"define( 'PRESSFLEET_PASSWORD_HASHING', 'argon2id' );",
+	} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("wp-config.php lacks %q", want)
+		}
+	}
+
+	// Unchanged settings recreate nothing.
+	if _, err := f.prov.UpdateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	wantCommands(t, f.docker, upWait)
+}
+
 // newProvisionerWith returns a provisioner for f that reads secrets from sec.
-func newProvisionerWith(t *testing.T, f *fixture, sec memSecrets) *compose.Provisioner {
+// opts adjust its configuration.
+func newProvisionerWith(t *testing.T, f *fixture, sec memSecrets, opts ...func(*compose.ProvisionerConfig)) *compose.Provisioner {
 	t.Helper()
-	p, err := compose.NewProvisioner(compose.ProvisionerConfig{
+	cfg := compose.ProvisionerConfig{
 		Layout: f.layout, Secrets: sec, MariaDBContainer: testMariaDB, Docker: f.docker.exec,
 		Images: imageMap{"8.4": {PHP: "a", Nginx: "b"}, "8.3": {PHP: "c", Nginx: "d"}},
-	})
+	}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	p, err := compose.NewProvisioner(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

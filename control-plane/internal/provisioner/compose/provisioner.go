@@ -63,6 +63,11 @@ type ProvisionerConfig struct {
 	// (platform.MariaDBContainer), connected to each site network under
 	// MariaDBAlias.
 	MariaDBContainer string
+	// WordPressSecurity is the install-wide WordPress security set (§6.1),
+	// applied to every site the provisioner renders. It is install-wide
+	// configuration rather than part of SiteConfig because there are no
+	// per-site overrides. The zero value turns every feature off.
+	WordPressSecurity config.WordPressSecurityConfig
 	// Docker runs the docker CLI; nil means DockerExec. Tests inject a fake.
 	Docker ExecFunc
 	// Logger receives lifecycle events; nil discards them.
@@ -95,6 +100,7 @@ type Provisioner struct {
 	secrets     SecretReader
 	images      ImageResolver
 	shared      []sharedService
+	security    config.WordPressSecurityConfig
 	docker      ExecFunc
 	log         *slog.Logger
 	waitTimeout time.Duration
@@ -141,6 +147,7 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 		secrets:        cfg.Secrets,
 		images:         cfg.Images,
 		shared:         []sharedService{{container: cfg.MariaDBContainer, alias: MariaDBAlias}},
+		security:       cfg.WordPressSecurity,
 		docker:         cfg.Docker,
 		log:            cfg.Logger,
 		waitTimeout:    cfg.WaitTimeout,
@@ -280,6 +287,7 @@ func (p *Provisioner) siteRender(ctx context.Context, cfg *provisioner.SiteConfi
 		Site:     cfg,
 		Images:   SiteImages{PHP: images.PHP, Nginx: images.Nginx},
 		WPConfig: wpconfig.Params{DB: creds, Salts: salts, SMTP: p.smtp},
+		Security: p.security,
 	}, nil
 }
 

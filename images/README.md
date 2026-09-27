@@ -119,6 +119,7 @@ require_once ABSPATH . 'wp-settings.php';
 ```
 
 - `DB_HOST` is the MariaDB service reachable on the site network (`test.sh` uses `db`).
+- **WordPress security set (§6.1), optional.** Each module of the platform must-use plugin runs only when its constant is defined with a true value (see [site-php/README.md](site-php/README.md#security-set-modules)): `PRESSFLEET_BLOCK_USER_ENUMERATION` (`true`), `PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH` (an integer, at least 8: the common-password list holds nothing shorter), `PRESSFLEET_PASSWORD_HASHING` (`'argon2id'`; leave it undefined for WordPress's bcrypt), and `PRESSFLEET_DISABLE_APPLICATION_PASSWORDS` (`true`). `DISALLOW_FILE_EDIT` is WordPress's own.
 - **HTTPS behind Traefik needs no wp-config code.** nginx sets the FastCGI `HTTPS=on` parameter (and `REQUEST_SCHEME`, `SERVER_PORT=443`, `HTTP_X_FORWARDED_PROTO`) when a trusted proxy (`NGINX_TRUSTED_PROXIES`) sends `X-Forwarded-Proto: https`, so `is_ssl()` works natively. Untrusted clients cannot spoof it: the raw header never reaches PHP. `REMOTE_ADDR` is already the real client IP.
 - The FastCGI cache path for Nginx Helper (#41) is `/var/cache/pressfleet/fastcgi` (`RT_WP_NGINX_HELPER_CACHE_PATH`). See [FastCGI page cache](#fastcgi-page-cache).
 - Do not use `getenv()` for site settings: the FPM pool runs with `clear_env = yes`, so container environment variables are not visible to PHP.

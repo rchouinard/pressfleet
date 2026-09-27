@@ -67,6 +67,16 @@ Notes:
 Plugin and theme updates are unaffected.
 
 [../shared/mu-plugins/pressfleet-smtp.php](../shared/mu-plugins/pressfleet-smtp.php) sends site email through the platform's SMTP relay (#47, §5.6), configured by the `PRESSFLEET_SMTP_*` constants in `wp-config.php` ([runtime contract](../README.md#wp-configphp-requirements)). It configures PHPMailer on `phpmailer_init` at priority 1, so a site's own mail plugin can still override it; replaces WordPress's default sender with `PRESSFLEET_SMTP_FROM_EMAIL`/`_FROM_NAME`; sets a 15 s SMTP timeout; and logs delivery failures to stderr. Without `PRESSFLEET_SMTP_HOST` it does nothing.
+### Security set modules
+
+[../shared/mu-plugins/pressfleet-security.php](../shared/mu-plugins/pressfleet-security.php) is the PHP half of the WordPress security set (§6.1). It loads a module from [../shared/mu-plugins/pressfleet-security/](../shared/mu-plugins/pressfleet-security) only when `wp-config.php` defines the module's constant with a true value; the control plane generates those constants from its install-wide settings. See [../README.md](../README.md#wp-configphp-requirements) for the constants.
+
+| Module | Constant | Effect |
+| --- | --- | --- |
+| `user-enumeration.php` | `PRESSFLEET_BLOCK_USER_ENUMERATION` | For visitors who aren't logged in: `?author=N` returns 404 instead of redirecting to the author archive; `/wp/v2/users` (any case, also via `?rest_route=` and embeds) returns 401; oEmbed responses drop `author_name` and `author_url`; the users sitemap is removed. Everyone gets one generic login error for unknown users and wrong passwords (an unknown user costs a password hash too, so timing doesn't tell them apart), and the lost password form answers the same whether or not an account exists. |
+| `password-policy.php` | `PRESSFLEET_PASSWORD_POLICY_MIN_LENGTH` (integer) | Rejects new passwords shorter than the minimum or on the common-password list (`common-passwords.txt`: the NCSC's 100,000 most used passwords, from Have I Been Pwned via SecLists, of 8 or more characters, compared case-insensitively). Checked on profile save, Users > Add New, the password reset form, the REST API (`400 rest_weak_password`), and WP-CLI (`wp user create`, `wp user update --user_pass`, `wp core install`). Existing passwords keep working. |
+| `password-hashing.php` | `PRESSFLEET_PASSWORD_HASHING` (`'argon2id'`) | Hashes new passwords with Argon2id through `wp_hash_password_algorithm` instead of WordPress's bcrypt. Existing hashes still verify and are rehashed at the user's next login. PHP's default Argon2id cost uses about 64 MiB per hash, outside `memory_limit` but inside the container's memory. |
+| `application-passwords.php` | `PRESSFLEET_DISABLE_APPLICATION_PASSWORDS` | Disables application passwords (`wp_is_application_passwords_available`). |
 
 ## WP-CLI
 
