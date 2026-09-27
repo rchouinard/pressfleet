@@ -23,6 +23,10 @@ The server loads the embedded spec at startup (`spec.go`). It validates every re
 - Request bodies set `additionalProperties: false`, so unknown fields are rejected with `422`.
 - Give every operation an `operationId`. It names the generated handler method.
 
+## Trying the API
+
+[`postman/`](postman/) has a Postman collection with a request for every operation, plus an environment for a local platform. When you change the spec, update the collection too.
+
 ## Generator choice
 
 The generator is [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen) v2.8.0, pinned as a `tool` directive in `go.mod` and run with `go tool oapi-codegen`. Its configuration is in `control-plane/internal/api/gen/oapi-codegen.yaml` (server) and `control-plane/internal/api/client/oapi-codegen.yaml` (client).

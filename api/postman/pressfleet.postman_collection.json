@@ -1,0 +1,1772 @@
+{
+  "info": {
+    "_postman_id": "c62b2d50-96ac-5984-ad51-bcc56839575e",
+    "name": "PressFleet API",
+    "description": "Requests for every PressFleet API operation (api/openapi.yaml), for development. Select the **PressFleet local** environment, set `admin_email` and `admin_password`, and send **Auth \u2192 Log in**. See api/postman/README.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Authenticates every request. A bearer token (api_token) wins when set: the",
+          "// server ignores the session cookie if an Authorization header is present.",
+          "// Otherwise the session cookie from Log in is sent by Postman's cookie jar,",
+          "// and unsafe methods need the session's CSRF token.",
+          "const token = pm.environment.get(\"api_token\");",
+          "const csrf = pm.environment.get(\"csrf_token\");",
+          "const unsafe = ![\"GET\", \"HEAD\", \"OPTIONS\"].includes(pm.request.method);",
+          "if (token) {",
+          "    pm.request.headers.upsert({ key: \"Authorization\", value: `Bearer ${token}` });",
+          "} else if (unsafe && csrf) {",
+          "    pm.request.headers.upsert({ key: \"X-CSRF-Token\", value: csrf });",
+          "}"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Every long-running operation returns 202 with the queued job.",
+          "if (pm.response.code === 202) {",
+          "    const job = pm.response.json().job;",
+          "    if (job) {",
+          "        pm.environment.set(\"job_id\", job.id);",
+          "    }",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "id": "9e158e88-17f2-5bd1-a498-fb3ffd281625",
+      "name": "Health",
+      "description": "Liveness and readiness probes. Unauthenticated.",
+      "item": [
+        {
+          "id": "fe6f2018-274d-5f0d-b9f7-de155ed8b97b",
+          "name": "Liveness",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/healthz",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "healthz"
+              ]
+            },
+            "description": "Returns 200 while the process is running."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "996afcab-bd88-5fb7-9228-a66eee634d44",
+          "name": "Readiness",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/readyz",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "readyz"
+              ]
+            },
+            "description": "Runs the readiness checks; 503 if any fails."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "8ba08227-bbaf-5072-8065-a6762f8c84de",
+      "name": "Auth",
+      "description": "Sessions and the current user. **Log in** first: it starts a session (the cookie is kept by Postman's cookie jar) and saves the CSRF token to `csrf_token`.",
+      "item": [
+        {
+          "id": "8ce2961c-a53d-5073-98f9-51d52eab20e9",
+          "name": "Log in",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Starts a session as `{{admin_email}}` and saves the session's CSRF token to `csrf_token`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{admin_email}}\",\n  \"password\": \"{{admin_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.request.headers.remove(\"Authorization\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200 && pm.response.json().csrf_token) {",
+                  "    pm.environment.set(\"csrf_token\", pm.response.json().csrf_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "0a63f249-96ee-50b3-a40f-9d4a25716c90",
+          "name": "Get current user",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Also refreshes `csrf_token`, e.g. after the environment was reset."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200 && pm.response.json().csrf_token) {",
+                  "    pm.environment.set(\"csrf_token\", pm.response.json().csrf_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "6d4f7511-d646-5c73-bd19-d781e09180a1",
+          "name": "Change password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/password",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "password"
+              ]
+            },
+            "description": "Signs out the user's other sessions and **revokes all of their API tokens**. Update `admin_password` afterwards.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"current_password\": \"{{admin_password}}\",\n  \"new_password\": \"change-me-to-12+-chars\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "118d1097-edab-5490-af18-e8437de6529c",
+          "name": "Log out",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/logout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "Ends the session and clears `csrf_token`. With a bearer token it only clears the cookie."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));",
+                  "if (pm.response.code === 204) {",
+                  "    pm.environment.set(\"csrf_token\", \"\");",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "221d60d3-8d4a-5883-b51b-517dd057195f",
+      "name": "API tokens",
+      "description": "The current user's API tokens. Once `api_token` is set, every request authenticates with it instead of the session.",
+      "item": [
+        {
+          "id": "2086e4f0-9a3e-5b10-8c6b-a4c6c43a4a86",
+          "name": "List API tokens",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/tokens",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "tokens"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Maximum number of items to return (1-200).",
+                  "disabled": true
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "description": "The next_cursor from the previous page.",
+                  "disabled": true
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "a97f0e15-c961-5dd9-9751-657ae6eb7ac2",
+          "name": "Create API token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/tokens",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "tokens"
+              ]
+            },
+            "description": "Saves the new token to `api_token` (it's shown only once) and its ID to `token_id`. From then on requests use it as a bearer token.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Postman\",\n  \"scope\": \"full\",\n  \"expires_at\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "if (pm.response.code === 201) {",
+                  "    const t = pm.response.json();",
+                  "    pm.environment.set(\"api_token\", t.token);",
+                  "    pm.environment.set(\"token_id\", t.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "be9a2f8e-69d7-5537-81b8-1ba9025bc2b1",
+          "name": "Revoke API token",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/tokens/{{token_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "tokens",
+                "{{token_id}}"
+              ]
+            },
+            "description": "Revokes `token_id`. If that is the token in `api_token`, clears `api_token` so requests fall back to the session."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));",
+                  "if (pm.response.code === 204) {",
+                  "    const auth = pm.request.headers.get(\"Authorization\") || \"\";",
+                  "    if (auth === `Bearer ${pm.environment.get(\"api_token\")}`) {",
+                  "        pm.environment.set(\"api_token\", \"\");",
+                  "    }",
+                  "    pm.environment.set(\"token_id\", \"\");",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "d6a8f1c4-483a-59c4-be5c-fd9f0a0bd853",
+      "name": "Users",
+      "description": "User management (Admin only).",
+      "item": [
+        {
+          "id": "ae90ebaa-319e-58f8-a101-a2aea3637c8e",
+          "name": "List users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Maximum number of items to return (1-200).",
+                  "disabled": true
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "description": "The next_cursor from the previous page.",
+                  "disabled": true
+                },
+                {
+                  "key": "role",
+                  "value": "operator",
+                  "description": "admin, operator, or viewer",
+                  "disabled": true
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "97028286-2ffe-5547-86c3-53278d2e6bb1",
+          "name": "Create user",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users"
+              ]
+            },
+            "description": "Saves the new user's ID to `user_id`. Passwords need at least 12 characters.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"operator@example.com\",\n  \"password\": \"{{$randomPassword}}\",\n  \"role\": \"operator\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "if (pm.response.code === 201) {",
+                  "    pm.environment.set(\"user_id\", pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "102cadde-fcef-5bbd-b790-9f6d38a1e0fe",
+          "name": "Get user",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{user_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "{{user_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "4e662e57-1f6a-54c3-a7bf-6af865f93f5e",
+          "name": "Update user",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{user_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "{{user_id}}"
+              ]
+            },
+            "description": "Only the fields present are changed: `email`, `password`, `role`, `disabled`. Setting a password or disabling the user revokes their sessions and tokens.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"viewer\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "12881e20-ce0b-5fcd-8046-8488adc83ec1",
+          "name": "Delete user",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{user_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "{{user_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "8e29334d-1b07-5061-9a04-58d0313dedeb",
+      "name": "Client groups",
+      "description": "Client groups own sites.",
+      "item": [
+        {
+          "id": "2f80dd18-1f5c-5177-91c1-581cea21b9c7",
+          "name": "List client groups",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/client-groups",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "client-groups"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Maximum number of items to return (1-200).",
+                  "disabled": true
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "description": "The next_cursor from the previous page.",
+                  "disabled": true
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "f2309863-7272-5b60-869a-5777f444f2a4",
+          "name": "Create client group",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/client-groups",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "client-groups"
+              ]
+            },
+            "description": "Saves the new group's ID to `client_group_id`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Acme Corp\",\n  \"notes\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "if (pm.response.code === 201) {",
+                  "    pm.environment.set(\"client_group_id\", pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "d4ac94c7-4b99-5106-86cd-3075fb0d1d8d",
+          "name": "Get client group",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/client-groups/{{client_group_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "client-groups",
+                "{{client_group_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "5d2d2857-a7be-5552-984b-9debed9b37f7",
+          "name": "Update client group",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/client-groups/{{client_group_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "client-groups",
+                "{{client_group_id}}"
+              ]
+            },
+            "description": "Only the fields present are changed.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"notes\": \"Updated from Postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "6eb9b2a3-fedd-5fda-88ef-5fc350d15b44",
+          "name": "Delete client group",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/client-groups/{{client_group_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "client-groups",
+                "{{client_group_id}}"
+              ]
+            },
+            "description": "Returns 409 while the group still has sites."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "765ec90f-1aa6-5c66-b777-cd30027cacd5",
+      "name": "Sites",
+      "description": "WordPress sites. Changes run as jobs: each `202` response saves the job's ID to `job_id`; follow it with **Jobs \u2192 Get job**.",
+      "item": [
+        {
+          "id": "adb048bd-e852-5b7b-ba43-da72e36e98d7",
+          "name": "List sites",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Maximum number of items to return (1-200).",
+                  "disabled": true
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "description": "The next_cursor from the previous page.",
+                  "disabled": true
+                },
+                {
+                  "key": "client_group_id",
+                  "value": "{{client_group_id}}",
+                  "description": "Only sites in this client group.",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "running",
+                  "description": "provisioning, running, stopped, updating, deleting, or failed",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Newest first, without live `runtime` state."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "b13e82ec-7afb-536a-83ac-822d419d1b44",
+          "name": "Create site",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites"
+              ]
+            },
+            "description": "Queues provisioning in `client_group_id`. Saves the site's ID to `site_id` and the job's to `job_id`. Optional fields: `admin_username`, `php_version`, `resources` (`cpu`, `memory_reservation_mb`, `memory_limit_mb`).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"client_group_id\": \"{{client_group_id}}\",\n  \"name\": \"Acme Marketing\",\n  \"admin_email\": \"{{admin_email}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "if (pm.response.code === 202) {",
+                  "    const b = pm.response.json();",
+                  "    pm.environment.set(\"site_id\", b.site.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "79c0c264-ea29-59d9-8c8a-4f038cd76dee",
+          "name": "Get site",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}"
+              ]
+            },
+            "description": "Includes the live `runtime` state."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "601ec4f4-192e-5e68-ab35-40c3ea458b50",
+          "name": "Update site",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}"
+              ]
+            },
+            "description": "Changes `php_version` and/or `resources`; a job recreates the affected containers.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"php_version\": \"8.4\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "285f3d2e-6383-5484-81a0-ec49df76549a",
+          "name": "Stop site",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/stop",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "stop"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "913a9a85-9bb3-5da6-a355-14106260e6fa",
+          "name": "Start site",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/start",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "start"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "d22ac131-213f-502a-8eb6-d2b74715836d",
+          "name": "Retrieve admin credentials",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/admin-credentials",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "admin-credentials"
+              ]
+            },
+            "description": "Returns the generated WordPress admin credentials **once**; later calls return 410. Returns 409 while the site is still provisioning."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "fe76b5d3-ad4c-556d-8239-f081303884e2",
+          "name": "Delete site",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}"
+              ]
+            },
+            "description": "Queues deletion of the site's containers, network, volumes, database, and secrets."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "e6e4ae4e-bd53-5c62-929c-0923010ae276",
+      "name": "Jobs",
+      "description": "Long-running operations.",
+      "item": [
+        {
+          "id": "88ef7273-304d-51e5-9b7b-c5407e16b53e",
+          "name": "List jobs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/jobs",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "jobs"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Maximum number of items to return (1-200).",
+                  "disabled": true
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "description": "The next_cursor from the previous page.",
+                  "disabled": true
+                },
+                {
+                  "key": "state",
+                  "value": "running",
+                  "description": "queued, running, rolling_back, succeeded, failed, or rollback_failed",
+                  "disabled": true
+                },
+                {
+                  "key": "target_type",
+                  "value": "site",
+                  "description": "site, client_group, or platform",
+                  "disabled": true
+                },
+                {
+                  "key": "target_id",
+                  "value": "{{site_id}}",
+                  "description": "Only jobs for this target.",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Newest first, without step logs."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "6e89a191-3270-55ca-936b-480c0b19901d",
+          "name": "Get job",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/jobs/{{job_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "jobs",
+                "{{job_id}}"
+              ]
+            },
+            "description": "The job with its steps and step log. In the Collection Runner it polls until the job finishes."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Polls the job until it reaches a terminal state. Repeating a request only",
+                  "// works in the Collection Runner and newman; sent by hand, this is one poll.",
+                  "const terminal = [\"succeeded\", \"failed\", \"rollback_failed\"];",
+                  "const job = pm.response.json();",
+                  "const polls = (pm.variables.get(\"job_polls\") || 0) + 1;",
+                  "const maxPolls = 150; // 2s apart, so 5 minutes",
+                  "",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "if (!terminal.includes(job.state) && polls < maxPolls) {",
+                  "    pm.variables.set(\"job_polls\", polls);",
+                  "    console.log(`job ${job.id} (${job.type}) is ${job.state}; polling again`);",
+                  "    setTimeout(() => {}, 2000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "} else {",
+                  "    pm.variables.set(\"job_polls\", 0);",
+                  "    pm.test(`job ${job.type} succeeded`, () => {",
+                  "        pm.expect(job.state, job.error || \"\").to.eql(\"succeeded\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "a00970ad-55d7-5834-a803-6cca449f1edc",
+      "name": "Audit",
+      "description": "The audit log (Admin only).",
+      "item": [
+        {
+          "id": "3420f514-42c8-51aa-8284-71d2f9807a41",
+          "name": "List audit events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/audit-events",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "audit-events"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Maximum number of items to return (1-200).",
+                  "disabled": true
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "description": "The next_cursor from the previous page.",
+                  "disabled": true
+                },
+                {
+                  "key": "actor_user_id",
+                  "value": "{{user_id}}",
+                  "description": "Only events by this user.",
+                  "disabled": true
+                },
+                {
+                  "key": "action",
+                  "value": "site.delete",
+                  "description": "Only events for this action.",
+                  "disabled": true
+                },
+                {
+                  "key": "target_type",
+                  "value": "site",
+                  "description": "Only events whose target has this type.",
+                  "disabled": true
+                },
+                {
+                  "key": "target_id",
+                  "value": "{{site_id}}",
+                  "description": "Only events for this target.",
+                  "disabled": true
+                },
+                {
+                  "key": "since",
+                  "value": "2026-01-01T00:00:00Z",
+                  "description": "At or after this time (RFC 3339).",
+                  "disabled": true
+                },
+                {
+                  "key": "until",
+                  "value": "2026-12-31T00:00:00Z",
+                  "description": "Before this time (RFC 3339).",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Newest first."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ce0bcabe-e697-5d45-80d3-c48349106625",
+      "name": "Smoke test",
+      "description": "Run this folder in the Collection Runner (or with newman) to exercise a whole site lifecycle: log in, create a client group and a site, wait for provisioning, retrieve the admin credentials, then delete both. It overwrites `client_group_id`, `site_id`, and `job_id`.",
+      "item": [
+        {
+          "id": "882226b4-4cac-5613-b7b7-7ae53d96f7ca",
+          "name": "Log in",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{admin_email}}\",\n  \"password\": \"{{admin_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.request.headers.remove(\"Authorization\");"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200 && pm.response.json().csrf_token) {",
+                  "    pm.environment.set(\"csrf_token\", pm.response.json().csrf_token);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "54a5a73d-b513-5007-b2de-d84533b3cde0",
+          "name": "Create client group",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/client-groups",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "client-groups"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Smoke test {{$timestamp}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "if (pm.response.code === 201) {",
+                  "    pm.environment.set(\"client_group_id\", pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "0ee16a45-1153-511b-be42-4f03cafda625",
+          "name": "Create site",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"client_group_id\": \"{{client_group_id}}\",\n  \"name\": \"Smoke test {{$timestamp}}\",\n  \"admin_email\": \"{{admin_email}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "if (pm.response.code === 202) {",
+                  "    const b = pm.response.json();",
+                  "    pm.environment.set(\"site_id\", b.site.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "a435f270-b30b-56b4-acc1-19c9119e2546",
+          "name": "Wait for provisioning",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/jobs/{{job_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "jobs",
+                "{{job_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Polls the job until it reaches a terminal state. Repeating a request only",
+                  "// works in the Collection Runner and newman; sent by hand, this is one poll.",
+                  "const terminal = [\"succeeded\", \"failed\", \"rollback_failed\"];",
+                  "const job = pm.response.json();",
+                  "const polls = (pm.variables.get(\"job_polls\") || 0) + 1;",
+                  "const maxPolls = 150; // 2s apart, so 5 minutes",
+                  "",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "if (!terminal.includes(job.state) && polls < maxPolls) {",
+                  "    pm.variables.set(\"job_polls\", polls);",
+                  "    console.log(`job ${job.id} (${job.type}) is ${job.state}; polling again`);",
+                  "    setTimeout(() => {}, 2000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "} else {",
+                  "    pm.variables.set(\"job_polls\", 0);",
+                  "    pm.test(`job ${job.type} succeeded`, () => {",
+                  "        pm.expect(job.state, job.error || \"\").to.eql(\"succeeded\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "4863e5d8-0b07-5023-93dd-4ddc9d511341",
+          "name": "Get site",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"site is running\", () => pm.expect(pm.response.json().status).to.eql(\"running\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "624a7a6c-e72f-5dcf-be4f-d263f92cbfad",
+          "name": "Retrieve admin credentials",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/admin-credentials",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "admin-credentials"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"has a password\", () => pm.expect(pm.response.json().password).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "2d6ad422-2291-5a67-9e75-84d544f05944",
+          "name": "Delete site",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "f6ebae60-b014-5d41-9f87-dfba22b08a1d",
+          "name": "Wait for deletion",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/jobs/{{job_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "jobs",
+                "{{job_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Polls the job until it reaches a terminal state. Repeating a request only",
+                  "// works in the Collection Runner and newman; sent by hand, this is one poll.",
+                  "const terminal = [\"succeeded\", \"failed\", \"rollback_failed\"];",
+                  "const job = pm.response.json();",
+                  "const polls = (pm.variables.get(\"job_polls\") || 0) + 1;",
+                  "const maxPolls = 150; // 2s apart, so 5 minutes",
+                  "",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "if (!terminal.includes(job.state) && polls < maxPolls) {",
+                  "    pm.variables.set(\"job_polls\", polls);",
+                  "    console.log(`job ${job.id} (${job.type}) is ${job.state}; polling again`);",
+                  "    setTimeout(() => {}, 2000);",
+                  "    pm.execution.setNextRequest(pm.info.requestId);",
+                  "} else {",
+                  "    pm.variables.set(\"job_polls\", 0);",
+                  "    pm.test(`job ${job.type} succeeded`, () => {",
+                  "        pm.expect(job.state, job.error || \"\").to.eql(\"succeeded\");",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "69b36e31-d6e1-541b-9a9f-1b5b8e974ed4",
+          "name": "Delete client group",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/client-groups/{{client_group_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "client-groups",
+                "{{client_group_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
