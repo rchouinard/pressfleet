@@ -22,9 +22,10 @@ const securityConstants = `foreach (array("DISALLOW_FILE_EDIT", "PRESSFLEET_BLOC
 
 // TestSecuritySetReachesExistingSites is the acceptance test of #108's
 // "a change reaches existing sites after a control plane restart" (design
-// doc §6.1): a site provisioned with the default security set gets the new
-// settings, in a recreated php container, once the control plane restarts
-// with changed configuration.
+// doc §6.1), and of the control plane half of #109: a site provisioned with
+// the default security set gets the new settings, in recreated php and
+// nginx containers, once the control plane restarts with changed
+// configuration.
 func TestSecuritySetReachesExistingSites(t *testing.T) {
 	// See TestSiteCreateDelete for why the site project uses an empty
 	// directory and is cleaned up here.
@@ -72,13 +73,23 @@ func TestSecuritySetReachesExistingSites(t *testing.T) {
 		}
 		return strings.TrimSpace(string(out))
 	}
-	phpContainer := func() string {
+	container := func(service string) string {
 		t.Helper()
-		c, err := siteProject.ServiceContainer(ctx, "php")
+		c, err := siteProject.ServiceContainer(ctx, service)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return c.ID
+	}
+	// The nginx half (#109) is the site-nginx container's environment.
+	nginxEnv := func() string {
+		t.Helper()
+		out, err := siteProject.ExecService(ctx, "nginx", "printenv",
+			"NGINX_LOGIN_RATE_LIMIT", "NGINX_LOGIN_RATE", "NGINX_LOGIN_BURST", "NGINX_SECURITY_HEADERS")
+		if err != nil {
+			t.Fatalf("reading the nginx environment: %v", err)
+		}
+		return strings.Join(strings.Fields(string(out)), " ")
 	}
 
 	// The §6.1 defaults.
@@ -91,13 +102,18 @@ func TestSecuritySetReachesExistingSites(t *testing.T) {
 	}, "\n"); got != want {
 		t.Errorf("constants after provisioning:\n%s\nwant:\n%s", got, want)
 	}
-	phpBefore := phpContainer()
+	if got, want := nginxEnv(), "on 10r/m 10 on"; got != want {
+		t.Errorf("nginx environment after provisioning = %q, want %q", got, want)
+	}
+	phpBefore, nginxBefore := container("php"), container("nginx")
 
 	p.Restart(t, map[string]string{
 		"PRESSFLEET_WORDPRESS_SECURITY_DISABLE_FILE_EDIT":             "false",
 		"PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_POLICY_MIN_LENGTH":    "16",
 		"PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_HASHING":              "argon2id",
 		"PRESSFLEET_WORDPRESS_SECURITY_DISABLE_APPLICATION_PASSWORDS": "true",
+		"PRESSFLEET_WORDPRESS_SECURITY_LOGIN_RATE_LIMIT_BURST":        "5",
+		"PRESSFLEET_WORDPRESS_SECURITY_HEADERS":                       "false",
 	})
 	waitJob(t, p, reconcileJob(t, p, site.ID))
 
@@ -110,8 +126,14 @@ func TestSecuritySetReachesExistingSites(t *testing.T) {
 	}, "\n"); got != want {
 		t.Errorf("constants after the restart:\n%s\nwant:\n%s", got, want)
 	}
-	if phpContainer() == phpBefore {
+	if container("php") == phpBefore {
 		t.Error("php was not recreated, so it can't see the new wp-config.php")
+	}
+	if got, want := nginxEnv(), "on 10r/m 5 off"; got != want {
+		t.Errorf("nginx environment after the restart = %q, want %q", got, want)
+	}
+	if container("nginx") == nginxBefore {
+		t.Error("nginx was not recreated")
 	}
 	if got := getSite(t, p, site.ID); got.Status != client.SiteStatusRunning {
 		t.Errorf("site after reconciling: %+v", got)

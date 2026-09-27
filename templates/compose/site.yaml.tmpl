@@ -95,6 +95,15 @@ services:
       # FastCGI page cache (SiteConfig.EnableCache). The cache volume below
       # holds it; php purges it (§5.6).
       NGINX_FASTCGI_CACHE: {{ if .EnableCache }}"on"{{ else }}"off"{{ end }}
+      # WordPress security set (§6.1), install-wide.
+{{- if .NginxSecurity.LoginRateLimit }}
+      NGINX_LOGIN_RATE_LIMIT: "on"
+      NGINX_LOGIN_RATE: {{ q .NginxSecurity.LoginRate }}
+      NGINX_LOGIN_BURST: {{ q .NginxSecurity.LoginBurst }}
+{{- else }}
+      NGINX_LOGIN_RATE_LIMIT: "off"
+{{- end }}
+      NGINX_SECURITY_HEADERS: {{ if .NginxSecurity.SecurityHeaders }}"on"{{ else }}"off"{{ end }}
     volumes:
       - type: volume
         source: wp-content

@@ -107,6 +107,36 @@ http {
         server ${PHP_FPM_HOST}:${PHP_FPM_PORT} resolve;
     }
 
+    # --- WordPress security set (§6.1) ---------------------------------
+    # Login rate limit (NGINX_LOGIN_RATE_LIMIT): the zone is keyed on
+    # $binary_remote_addr, which real_ip above has already set to the client
+    # behind a trusted proxy.
+    include /tmp/nginx/login-zone.conf;
+    limit_req_status 429;
+    limit_req_log_level warn;
+
+    # Security headers (NGINX_SECURITY_HEADERS). add_header normally applies
+    # only at the innermost level that has one, so a location adding its own
+    # header (e.g. a cache status) would silently drop these; merge makes
+    # every level add to its parent's headers instead. Each value is empty,
+    # so the header isn't added, when PHP already sent one: WordPress sends
+    # X-Frame-Options and Referrer-Policy on wp-admin and wp-login.php, and a
+    # plugin's stricter value must not be duplicated or overridden. The
+    # upstream variables are also set for FastCGI cache hits.
+    add_header_inherit merge;
+    map $upstream_http_referrer_policy $pressfleet_referrer_policy {
+        ""      strict-origin-when-cross-origin;
+        default "";
+    }
+    map $upstream_http_x_frame_options $pressfleet_x_frame_options {
+        ""      SAMEORIGIN;
+        default "";
+    }
+    map $upstream_http_permissions_policy $pressfleet_permissions_policy {
+        ""      "camera=(), microphone=(), usb=()";
+        default "";
+    }
+
     include /etc/nginx/pressfleet/http.d/*.conf;
 
     # --- Site (Traefik routes here) -------------------------------------
@@ -118,9 +148,18 @@ http {
         index index.php index.html;
 
         add_header X-Content-Type-Options nosniff always;
+        include /tmp/nginx/security-headers.conf;
 
         include /etc/nginx/pressfleet/snippets/security.conf;
         include /etc/nginx/pressfleet/server.d/*.conf;
+
+        # Rate limited per client IP (NGINX_LOGIN_RATE_LIMIT).
+        location = /wp-login.php {
+            include /tmp/nginx/login-limit.conf;
+            include /etc/nginx/pressfleet/snippets/fastcgi-php.conf;
+            include /etc/nginx/pressfleet/php.d/*.conf;
+            fastcgi_pass php;
+        }
 
         location = /xmlrpc.php {
             include /tmp/nginx/xmlrpc.conf;

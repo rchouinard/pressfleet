@@ -97,6 +97,42 @@ off | 0 | false)
 *) die "invalid NGINX_FASTCGI_CACHE: '$NGINX_FASTCGI_CACHE' (want on or off)" ;;
 esac
 
+# Login rate limit (§6.1): per real client IP (after real_ip), 429 when
+# exceeded. The zone is always defined; limit_req only when enabled.
+case "$NGINX_LOGIN_RATE_LIMIT" in
+on | 1 | true)
+	digits="${NGINX_LOGIN_RATE%%[!0-9]*}"
+	case "$digits:${NGINX_LOGIN_RATE#"$digits"}" in
+	[0-9]*:r/s | [0-9]*:r/m) ;;
+	*) die "invalid NGINX_LOGIN_RATE: '$NGINX_LOGIN_RATE' (want e.g. 10r/m)" ;;
+	esac
+	scalar NGINX_LOGIN_BURST '0-9'
+	echo "limit_req_zone \$binary_remote_addr zone=pressfleet_login:1m rate=$NGINX_LOGIN_RATE;" >"$run/login-zone.conf"
+	echo "limit_req zone=pressfleet_login burst=$NGINX_LOGIN_BURST nodelay;" >"$run/login-limit.conf"
+	;;
+off | 0 | false)
+	: >"$run/login-zone.conf"
+	: >"$run/login-limit.conf"
+	;;
+*) die "invalid NGINX_LOGIN_RATE_LIMIT: '$NGINX_LOGIN_RATE_LIMIT' (want on or off)" ;;
+esac
+
+# Security headers (§6.1). Each is sent only when the response doesn't have
+# its own (see the maps in nginx.conf), so WordPress's and plugins' values win.
+case "$NGINX_SECURITY_HEADERS" in
+on | 1 | true)
+	cat >"$run/security-headers.conf" <<-'EOF'
+		add_header Referrer-Policy $pressfleet_referrer_policy always;
+		add_header X-Frame-Options $pressfleet_x_frame_options always;
+		add_header Permissions-Policy $pressfleet_permissions_policy always;
+	EOF
+	;;
+off | 0 | false)
+	: >"$run/security-headers.conf"
+	;;
+*) die "invalid NGINX_SECURITY_HEADERS: '$NGINX_SECURITY_HEADERS' (want on or off)" ;;
+esac
+
 # shellcheck disable=SC2016 # the variable names are for envsubst, not the shell
 envsubst '${NGINX_WORKER_PROCESSES} ${NGINX_WORKER_CONNECTIONS} ${NGINX_CLIENT_MAX_BODY_SIZE} ${NGINX_FASTCGI_READ_TIMEOUT} ${NGINX_RESOLVER} ${PHP_FPM_HOST} ${PHP_FPM_PORT}' \
 	<"$conf/nginx.conf.template" >"$run/nginx.conf"

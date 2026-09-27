@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test for the site images (issues #17, #18, #40, #47, #108).
+# Smoke test for the site images (issues #17, #18, #40, #47, #108, #109).
 #
 #   images/test.sh [php-version ...]     default: every PHP version images/matrix.sh builds
 #
@@ -446,6 +446,57 @@ test_stack() {
 		"$("${cexec[@]}" wp eval "echo is_wp_error( wp_authenticate( 'hasher', '$strong_pw' ) ) ? 'bad' : 'ok';")"
 	check_contains "argon2id: bcrypt hash upgraded at login" '$argon2id$' "$("${cexec[@]}" wp user get hasher --field=user_pass)"
 	"${cexec[@]}" rm -f wp-content/pf-smoke-security.php
+
+	# --- WordPress security set (§6.1), nginx ---------------------------------
+	# Security headers, on by default: on PHP pages, static files, and errors,
+	# once each even where WordPress sends its own (wp-login.php).
+	local headers path
+	for path in / /wp-includes/css/dashicons.min.css /no-such-page/ /wp-login.php; do
+		headers="$(curl -s -o /dev/null -D - "$base$path" | tr -d '\r' | tr '[:upper:]' '[:lower:]')"
+		check_eq "headers on $path: Referrer-Policy once" "1" "$(grep -c '^referrer-policy: ' <<<"$headers")"
+		check_eq "headers on $path: X-Frame-Options once" "1" "$(grep -c '^x-frame-options: sameorigin$' <<<"$headers")"
+		check_contains "headers on $path: Permissions-Policy" "permissions-policy: camera=(), microphone=(), usb=()" "$headers"
+		check_contains "headers on $path: X-Content-Type-Options" "x-content-type-options: nosniff" "$headers"
+	done
+
+	# Login rate limit, on by default (10r/m, burst 10), keyed on the real
+	# client IP from the trusted proxy's X-Forwarded-For.
+	local codes="" i
+	for i in $(seq 15); do
+		codes+="$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Forwarded-For: 198.51.100.10' "$base/wp-login.php") "
+	done
+	check_contains "login rate limit: first requests pass" "200 200 200" "$codes"
+	check_contains "login rate limit: excess requests get 429" "429" "${codes##* 200 }"
+	check_eq "login rate limit: another client IP is unaffected" "200" \
+		"$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Forwarded-For: 198.51.100.11' "$base/wp-login.php")"
+	check_eq "login rate limit: other pages are unaffected" "200" \
+		"$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Forwarded-For: 198.51.100.10' "$base/")"
+
+	# Both turned off, on a second nginx for the same site.
+	local nginx_off="$p-nginx-off" base_off
+	docker run -d --label "$label" --name "$nginx_off" --network "$net" \
+		--user "$user" "${hardening[@]}" \
+		-v "$wp_content:/var/www/wordpress/wp-content:ro" \
+		-v "$cache:/var/cache/pressfleet/fastcgi" \
+		-e NGINX_SECURITY_HEADERS=off -e NGINX_LOGIN_RATE_LIMIT=off \
+		-p 127.0.0.1::8080 --health-interval 2s "$nginx_image" >/dev/null
+	check "nginx with the security set off is healthy" wait_healthy "$nginx_off"
+	base_off="http://127.0.0.1:$(docker port "$nginx_off" 8080/tcp | head -n 1 | sed 's/.*://')"
+	headers="$(curl -s -o /dev/null -D - "$base_off/" | tr -d '\r' | tr '[:upper:]' '[:lower:]')"
+	check_not "headers off: no Referrer-Policy" grep -q '^referrer-policy:' <<<"$headers"
+	check_not "headers off: no X-Frame-Options" grep -q '^x-frame-options:' <<<"$headers"
+	check_not "headers off: no Permissions-Policy" grep -q '^permissions-policy:' <<<"$headers"
+	check_contains "headers off: X-Content-Type-Options stays" "x-content-type-options: nosniff" "$headers"
+	codes=""
+	for i in $(seq 15); do
+		codes+="$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Forwarded-For: 198.51.100.12' "$base_off/wp-login.php") "
+	done
+	check_not "login rate limit off: no 429" grep -q 429 <<<"$codes"
+	docker rm -f "$nginx_off" >/dev/null
+	check_not "invalid NGINX_LOGIN_RATE refused" docker run --rm --user "$user" "${hardening[@]}" \
+		-e NGINX_LOGIN_RATE='10r/m; evil' "$nginx_image" true
+	check_not "invalid NGINX_SECURITY_HEADERS refused" docker run --rm --user "$user" "${hardening[@]}" \
+		-e NGINX_SECURITY_HEADERS=maybe "$nginx_image" true
 
 	# --- Internal status port -------------------------------------------------
 	check_contains "nginx stub_status" "Active connections" \

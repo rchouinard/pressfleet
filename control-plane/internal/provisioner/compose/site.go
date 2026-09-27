@@ -178,6 +178,29 @@ type siteTemplateData struct {
 	PHPMaxChildren int
 	EnableCache    bool
 	WPConfigFile   string
+	NginxSecurity  nginxSecurity
+}
+
+// nginxSecurity is the nginx half of the WordPress security set (§6.1), as
+// the site-nginx image's environment variables (images/README.md).
+type nginxSecurity struct {
+	LoginRateLimit  bool
+	LoginRate       string // NGINX_LOGIN_RATE, e.g. "10r/m"
+	LoginBurst      int
+	SecurityHeaders bool
+}
+
+func nginxSecuritySettings(s config.WordPressSecurityConfig) (nginxSecurity, error) {
+	n := nginxSecurity{LoginRateLimit: s.LoginRateLimit.Enabled, SecurityHeaders: s.Headers}
+	if !n.LoginRateLimit {
+		return n, nil
+	}
+	if s.LoginRateLimit.RequestsPerMinute < 1 || s.LoginRateLimit.Burst < 0 {
+		return n, errors.New("security: the login rate limit needs a positive rate and a burst of at least 0")
+	}
+	n.LoginRate = strconv.Itoa(s.LoginRateLimit.RequestsPerMinute) + "r/m"
+	n.LoginBurst = s.LoginRateLimit.Burst
+	return n, nil
 }
 
 func siteData(dir string, in SiteRender) (siteTemplateData, error) {
@@ -201,6 +224,10 @@ func siteData(dir string, in SiteRender) (siteTemplateData, error) {
 	if err != nil {
 		errs = append(errs, err)
 	}
+	nginx, err := nginxSecuritySettings(in.Security)
+	if err != nil {
+		errs = append(errs, err)
+	}
 	if err := errors.Join(errs...); err != nil {
 		return siteTemplateData{}, fmt.Errorf("%w: %w", ErrInvalidSite, err)
 	}
@@ -217,6 +244,7 @@ func siteData(dir string, in SiteRender) (siteTemplateData, error) {
 		PHPMaxChildren: split.PHPMaxChildren,
 		EnableCache:    in.Site.EnableCache,
 		WPConfigFile:   SiteWPConfigFile,
+		NginxSecurity:  nginx,
 	}, nil
 }
 

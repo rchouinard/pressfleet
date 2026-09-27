@@ -172,6 +172,10 @@ All are optional; defaults are shown.
 | `NGINX_FASTCGI_CACHE` | `on` | `on` caches anonymous page views in the FastCGI cache; `off` disables it. The control plane sets it from the site's `EnableCache`. |
 | `NGINX_FASTCGI_CACHE_VALID` | `1h` | How long a cached `200` or `301` stays fresh (nginx time, e.g. `10m`). Nginx Helper purges changed pages sooner. |
 | `NGINX_FASTCGI_CACHE_MAX_SIZE` | `256m` | Size limit of the cache volume's content; the least recently used pages are removed beyond it. |
+| `NGINX_LOGIN_RATE_LIMIT` | `on` | `on` rate-limits `/wp-login.php` per client IP (`limit_req`, keyed on the real client IP after `NGINX_TRUSTED_PROXIES`) and answers `429` beyond the limit; `off` disables it. WordPress security set (§6.1). |
+| `NGINX_LOGIN_RATE` | `10r/m` | Sustained rate per client IP, `<n>r/m` or `<n>r/s`. |
+| `NGINX_LOGIN_BURST` | `10` | Requests above the rate let through at once (`nodelay`) before `429`. |
+| `NGINX_SECURITY_HEADERS` | `on` | `on` adds `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: SAMEORIGIN`, and `Permissions-Policy: camera=(), microphone=(), usb=()` to every site response (PHP, FastCGI cache hits, static files, errors), each only if PHP didn't send that header itself; `off` sends none of them. `X-Content-Type-Options: nosniff` is always sent. HSTS is not set here (Traefik adds it on primary domains). |
 
 Values are validated at startup; an invalid value stops the container with an error instead of producing a broken or injectable config.
 

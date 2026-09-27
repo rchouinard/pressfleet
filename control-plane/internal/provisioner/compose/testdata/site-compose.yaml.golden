@@ -88,6 +88,11 @@ services:
       # FastCGI page cache (SiteConfig.EnableCache). The cache volume below
       # holds it; php purges it (§5.6).
       NGINX_FASTCGI_CACHE: "on"
+      # WordPress security set (§6.1), install-wide.
+      NGINX_LOGIN_RATE_LIMIT: "on"
+      NGINX_LOGIN_RATE: "10r/m"
+      NGINX_LOGIN_BURST: "10"
+      NGINX_SECURITY_HEADERS: "on"
     volumes:
       - type: volume
         source: wp-content

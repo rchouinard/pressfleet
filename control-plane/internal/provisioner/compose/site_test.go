@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"flag"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -391,6 +392,7 @@ func TestRenderSiteInvalid(t *testing.T) {
 		"bad constant": func(in *compose.SiteRender) {
 			in.WPConfig.Constants = []wpconfig.Constant{{Name: "DB_HOST", Value: "x"}}
 		},
+		"zero login rate": func(in *compose.SiteRender) { in.Security.LoginRateLimit.RequestsPerMinute = 0 },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -411,6 +413,55 @@ func TestRenderSiteInvalid(t *testing.T) {
 	}
 	if _, err := compose.RenderSite("relative/dir", testSiteRender()); !errors.Is(err, compose.ErrInvalidSite) {
 		t.Errorf("relative dir: err = %v", err)
+	}
+}
+
+// TestRenderSiteNginxSecurity checks that the security set's nginx half
+// reaches the site-nginx environment (images/README.md), and php's
+// environment stays free of it.
+func TestRenderSiteNginxSecurity(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*config.WordPressSecurityConfig)
+		want   map[string]string
+	}{
+		{"defaults", func(*config.WordPressSecurityConfig) {}, map[string]string{
+			"NGINX_LOGIN_RATE_LIMIT": "on", "NGINX_LOGIN_RATE": "10r/m", "NGINX_LOGIN_BURST": "10", "NGINX_SECURITY_HEADERS": "on",
+		}},
+		{"custom rate", func(c *config.WordPressSecurityConfig) {
+			c.LoginRateLimit = config.LoginRateLimitConfig{Enabled: true, RequestsPerMinute: 30, Burst: 0}
+		}, map[string]string{
+			"NGINX_LOGIN_RATE_LIMIT": "on", "NGINX_LOGIN_RATE": "30r/m", "NGINX_LOGIN_BURST": "0", "NGINX_SECURITY_HEADERS": "on",
+		}},
+		{"off", func(c *config.WordPressSecurityConfig) {
+			c.LoginRateLimit.Enabled, c.Headers = false, false
+		}, map[string]string{"NGINX_LOGIN_RATE_LIMIT": "off", "NGINX_SECURITY_HEADERS": "off"}},
+		{"zero value", func(c *config.WordPressSecurityConfig) { *c = config.WordPressSecurityConfig{} },
+			map[string]string{"NGINX_LOGIN_RATE_LIMIT": "off", "NGINX_SECURITY_HEADERS": "off"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := testSiteRender()
+			tc.mutate(&in.Security)
+			dir, _ := renderSite(t, in)
+			raw, err := os.ReadFile(filepath.Join(dir, compose.SiteComposeFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var f siteFile
+			if err := yaml.Unmarshal(raw, &f); err != nil {
+				t.Fatal(err)
+			}
+			got := f.Services["nginx"].Environment
+			delete(got, "NGINX_FASTCGI_CACHE") // TestRenderSiteEnableCache covers it
+			if !maps.Equal(got, tc.want) {
+				t.Errorf("nginx environment = %v, want %v", got, tc.want)
+			}
+			for k := range f.Services["php"].Environment {
+				if strings.HasPrefix(k, "NGINX_") {
+					t.Errorf("php environment has %s", k)
+				}
+			}
+		})
 	}
 }
 
