@@ -78,20 +78,23 @@ Done when: a new site is reachable over HTTPS on its preview domain within secon
 | --- | --- | --- | --- | --- |
 | [#33](https://github.com/rchouinard/pressfleet/issues/33) | Traefik platform service with read-only Docker socket proxy | P0 | M | #7 |
 | [#34](https://github.com/rchouinard/pressfleet/issues/34) | Preview domain TLS: DNS-01 wildcard with HTTP-01 fallback | P0 | M | #33, #8 |
-| [#35](https://github.com/rchouinard/pressfleet/issues/35) | Decision: preview domain protection | P2 | S | — |
+| [#35](https://github.com/rchouinard/pressfleet/issues/35) | ~~Decision: preview domain protection~~ Resolved | P2 | S | — |
 | [#36](https://github.com/rchouinard/pressfleet/issues/36) | Traefik routing labels for site stacks | P0 | S | #34, #25, #35 |
 | [#37](https://github.com/rchouinard/pressfleet/issues/37) | Shared Redis platform service | P0 | S | #7 |
 | [#38](https://github.com/rchouinard/pressfleet/issues/38) | Per-site Redis ACL users | P0 | M | #37, #29 |
 | [#39](https://github.com/rchouinard/pressfleet/issues/39) | Configure Redis Object Cache per site | P0 | S | #38, #21 |
 | [#40](https://github.com/rchouinard/pressfleet/issues/40) | Nginx `fastcgi_cache` defaults | P0 | M | #18, #24 |
 | [#41](https://github.com/rchouinard/pressfleet/issues/41) | Nginx Helper integration and `PurgeCache` | P0 | S | #40, #39, #26 |
-| [#42](https://github.com/rchouinard/pressfleet/issues/42) | Decision: default agency security plugin set | P1 | S | — |
-| [#43](https://github.com/rchouinard/pressfleet/issues/43) | Default plugin stack activation during provisioning | P0 | S | #41, #42 |
+| [#42](https://github.com/rchouinard/pressfleet/issues/42) | ~~Decision: default agency security plugin set~~ Resolved | P1 | S | — |
+| [#43](https://github.com/rchouinard/pressfleet/issues/43) | Default plugin stack activation during provisioning | P0 | S | #41, #42, #108 |
 | [#44](https://github.com/rchouinard/pressfleet/issues/44) | `SetMaintenance`: Traefik-served maintenance page | P1 | M | #36 |
 | [#45](https://github.com/rchouinard/pressfleet/issues/45) | Go-live workflow: primary domain switch | P0 | L | #36, #41 |
 | [#46](https://github.com/rchouinard/pressfleet/issues/46) | Domain alias management | P1 | S | #45 |
 | [#47](https://github.com/rchouinard/pressfleet/issues/47) | Outbound email via configurable SMTP relay | P1 | S | #21, #17 |
-| [#48](https://github.com/rchouinard/pressfleet/issues/48) | Integration tests: M2 acceptance criteria | P0 | M | #32, #45, #43 |
+| [#48](https://github.com/rchouinard/pressfleet/issues/48) | Integration tests: M2 acceptance criteria | P0 | M | #32, #45, #43, #107, #109 |
+| [#107](https://github.com/rchouinard/pressfleet/issues/107) | Preview domain password protection | P1 | M | #36 |
+| [#108](https://github.com/rchouinard/pressfleet/issues/108) | WordPress security set: configuration and must-use plugin modules | P1 | M | #21 |
+| [#109](https://github.com/rchouinard/pressfleet/issues/109) | site-nginx: login rate limiting and security headers | P1 | S | #108 |
 
 ### M3: Backup Engine & File Management
 
@@ -155,7 +158,7 @@ Done when: every Phase 1–4 operation can be performed from the UI. (Design doc
 | [#82](https://github.com/rchouinard/pressfleet/issues/82) | UI: login, session, users, and API tokens | P0 | S | #81, #13 |
 | [#83](https://github.com/rchouinard/pressfleet/issues/83) | UI: client groups | P0 | S | #81, #16 |
 | [#84](https://github.com/rchouinard/pressfleet/issues/84) | UI: site list, detail, provisioning, and deletion | P0 | L | #83, #28, #29 |
-| [#85](https://github.com/rchouinard/pressfleet/issues/85) | UI: site settings | P0 | M | #84, #57, #44, #41 |
+| [#85](https://github.com/rchouinard/pressfleet/issues/85) | UI: site settings | P0 | M | #84, #57, #44, #41, #107 |
 | [#86](https://github.com/rchouinard/pressfleet/issues/86) | UI: go-live and domain management | P0 | M | #84, #46 |
 | [#87](https://github.com/rchouinard/pressfleet/issues/87) | UI: backups and restore | P0 | M | #84, #55 |
 | [#88](https://github.com/rchouinard/pressfleet/issues/88) | UI: site and platform metrics charts | P0 | L | #84, #77 |
@@ -207,8 +210,8 @@ These must be resolved before the work they block.
 | --- | --- | --- | --- |
 | [#10](https://github.com/rchouinard/pressfleet/issues/10) | ~~user roles beyond full access?~~ **Resolved:** fixed Admin/Operator/Viewer roles, audit log in MVP (design doc §4.6) | M1: Core Engine & Compose Driver | P1 |
 | [#22](https://github.com/rchouinard/pressfleet/issues/22) | Design: driver interface extensions for logs, stats, and volume access | M1: Core Engine & Compose Driver | P1 |
-| [#35](https://github.com/rchouinard/pressfleet/issues/35) | preview domain protection | M2: Ingress, Caching & Domains | P2 |
-| [#42](https://github.com/rchouinard/pressfleet/issues/42) | default agency security plugin set | M2: Ingress, Caching & Domains | P1 |
+| [#35](https://github.com/rchouinard/pressfleet/issues/35) | ~~preview domain protection~~ **Resolved:** optional per-site basic auth on the preview domain, off by default (design doc §5.1) | M2: Ingress, Caching & Domains | P2 |
+| [#42](https://github.com/rchouinard/pressfleet/issues/42) | ~~default agency security plugin set~~ **Resolved:** install-wide configurable security set of must-use plugin modules, nginx settings, and optional Two Factor; no per-site overrides (design doc §6.1) | M2: Ingress, Caching & Domains | P1 |
 | [#56](https://github.com/rchouinard/pressfleet/issues/56) | WordPress core rollout policy | M3: Backup Engine & File Management | P1 |
 | [#59](https://github.com/rchouinard/pressfleet/issues/59) | importing existing sites in MVP? | M3: Backup Engine & File Management | P1 |
 | [#60](https://github.com/rchouinard/pressfleet/issues/60) | developer code deployment | M3: Backup Engine & File Management | P1 |
