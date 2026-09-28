@@ -140,6 +140,15 @@ Done when: a site can be backed up, modified, and restored to its earlier state,
 | [#114](https://github.com/rchouinard/pressfleet/issues/114) | Database export download | P1 | S | #61, #49 |
 | [#115](https://github.com/rchouinard/pressfleet/issues/115) | Temporary database sessions through the SFTP gateway | P1 | M | #61, #62, #23 |
 
+**Status: in progress (2026-09-28).** Backup and restore are in place: #49, #50, #51, #52, #53, and #55 are closed. Decisions made along the way:
+
+- Local Restic repositories are shared by a client group's sites through one platform GID (`provisioner.RepositoryGID`, 60000), since each site's backup task runs as the site's own UID.
+- A group's repository is created lazily on its first backup; a group with a repository can't be deleted until the repository is exported or deleted (`pressfleet repository export|delete`).
+- Restores across client groups are not supported in the MVP (each group has its own key).
+- Prune and check (#54) should take lock key `repo:<group-id>`; backups hold `site:<id>` and wait on Restic's exclusive lock with `--retry-lock`.
+
+Known gaps to pick up: an S3 endpoint on the platform network isn't reachable from backup tasks (only external endpoints work); nothing sweeps `tmp/` at startup, so a crashed backup can leave a dump behind; site import (#112) must strip `DEFINER` clauses from external dumps.
+
 ### M4: Monitoring & Alerting
 
 Goal: built-in metrics, uptime checks, logs, and alerting for every site and the platform.
@@ -253,6 +262,6 @@ Planning surfaced these items, which the design document doesn't yet cover. Each
 
 ## Where to start
 
-M1 and M2 are complete, and M3's decisions are resolved; continue with M3, starting from its P0 backup and restore issues (#49, #50). Original guidance:
+M1 and M2 are complete, and M3's backup and restore pipeline has landed; continue with M3's remaining P0, retention and integrity checks (#54), then core rollout (#57), the resumable upload API (#111), and the SFTP gateway (#62). Original guidance:
 
 Begin with [#1](https://github.com/rchouinard/pressfleet/issues/1) (repo scaffolding). After it lands, CI ([#2](https://github.com/rchouinard/pressfleet/issues/2)), core interfaces ([#3](https://github.com/rchouinard/pressfleet/issues/3)), the CLI skeleton ([#4](https://github.com/rchouinard/pressfleet/issues/4)), and the `site-php` image ([#17](https://github.com/rchouinard/pressfleet/issues/17)) can proceed in parallel.
