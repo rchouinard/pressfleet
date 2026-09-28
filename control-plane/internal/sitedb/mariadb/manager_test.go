@@ -62,6 +62,19 @@ func (f *fakeServer) drop(_ context.Context, name siteName) error {
 	return nil
 }
 
+func (f *fakeServer) empty(_ context.Context, name siteName) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.fail != nil {
+		if err := f.fail("empty"); err != nil {
+			return err
+		}
+	}
+	delete(f.dbs, name.String())
+	return nil
+}
+
 func (f *fakeServer) state(name string) (db bool, u fakeUser, userOK bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -310,16 +323,6 @@ func TestInvalidSiteIDTouchesNothing(t *testing.T) {
 			t.Error("an invalid site ID reached the server or the state database")
 		}
 	})
-}
-
-func TestDumpImportUnsupported(t *testing.T) {
-	m := newManager(newFakeServer(), nil, secrets.Store{}, 0, storetest.Logger())
-	if err := m.Dump(context.Background(), testSiteID, "/tmp/x"); !errors.Is(err, errors.ErrUnsupported) {
-		t.Errorf("Dump err = %v", err)
-	}
-	if err := m.Import(context.Background(), testSiteID, "/tmp/x"); !errors.Is(err, errors.ErrUnsupported) {
-		t.Errorf("Import err = %v", err)
-	}
 }
 
 func TestNewValidates(t *testing.T) {

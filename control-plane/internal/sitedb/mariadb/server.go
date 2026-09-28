@@ -16,6 +16,9 @@ type server interface {
 	ensure(ctx context.Context, name siteName, passwordHash string, maxUserConnections int) error
 	// drop removes the user and the database if they exist.
 	drop(ctx context.Context, name siteName) error
+	// empty drops the database if it exists, keeping the user and its
+	// grants, so ensure can recreate it empty.
+	empty(ctx context.Context, name siteName) error
 }
 
 // sqlServer runs the statements against a MariaDB server as the admin user.
@@ -59,6 +62,15 @@ func (s sqlServer) drop(ctx context.Context, name siteName) error {
 	if _, err := s.db.ExecContext(ctx, "DROP USER IF EXISTS "+name.account()); err != nil {
 		return fmt.Errorf("dropping user %s: %w", name, err)
 	}
+	if _, err := s.db.ExecContext(ctx, "DROP DATABASE IF EXISTS "+name.ident()); err != nil {
+		return fmt.Errorf("dropping database %s: %w", name, err)
+	}
+	return nil
+}
+
+// empty drops only the database. Grants on a database are stored apart
+// from it and survive the drop.
+func (s sqlServer) empty(ctx context.Context, name siteName) error {
 	if _, err := s.db.ExecContext(ctx, "DROP DATABASE IF EXISTS "+name.ident()); err != nil {
 		return fmt.Errorf("dropping database %s: %w", name, err)
 	}

@@ -85,5 +85,19 @@
 // is down and picks up a changed password without a restart. Its pool is
 // small, since admin connections count against max_connections too.
 //
-// Dump and Import are not implemented yet (#49).
+// # Dump and Import
+//
+// Dump and Import run the mariadb-dump and mariadb client programs as the
+// site's own user, over the network like the site itself. The control plane
+// container ships both. The site user, not the admin: its grants confine
+// both to the site's database, which matters most for Import, since a dump
+// is shaped by the site's own code. The password goes to the client in a
+// 0600 option file (--defaults-file) that is removed afterwards, never in
+// argv or the environment.
+//
+// A dump is portable between sites: it has no CREATE DATABASE or USE, and
+// the DEFINER clauses of views and triggers are removed, so a restore can
+// import it into another site's database (§5.4). Import empties the
+// database first, so the result matches the dump exactly. See dump.go for
+// the client options and why each is there.
 package mariadb

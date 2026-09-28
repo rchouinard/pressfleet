@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -141,9 +142,14 @@ func TestMariaDB(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	dumpProg, clientProg := clientPrograms()
+
 	storetest.Run(t, func(t *testing.T, state *store.DB) {
 		st := secrets.NewStore(state, secretstest.Keyring(t, 1))
-		m, err := mariadb.New(mariadb.Config{Addr: addr, User: "root", PasswordFile: pwFile}, state, st, storetest.Logger())
+		m, err := mariadb.New(mariadb.Config{
+			Addr: addr, User: "root", PasswordFile: pwFile,
+			DumpProgram: dumpProg, ClientProgram: clientProg,
+		}, state, st, storetest.Logger())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -152,7 +158,28 @@ func TestMariaDB(t *testing.T) {
 			t.Fatalf("Ping: %v", err)
 		}
 		runMariaDBScenario(ctx, t, addr, admin, m, state, st)
+		t.Run("DumpImport", func(t *testing.T) {
+			for _, p := range []string{dumpProg, clientProg} {
+				if _, err := exec.LookPath(p); err != nil {
+					t.Skipf("%s isn't installed; install the MariaDB client or set %s to a directory with mariadb and mariadb-dump", p, envClientDir)
+				}
+			}
+			runDumpImportScenario(ctx, t, addr, m, st)
+		})
 	})
+}
+
+// envClientDir names a directory holding the mariadb and mariadb-dump
+// programs for the dump and import test. Without it they are looked up in
+// PATH, and the test is skipped if they aren't there.
+const envClientDir = "PRESSFLEET_TEST_MARIADB_CLIENT_DIR"
+
+func clientPrograms() (dump, client string) {
+	dir := os.Getenv(envClientDir)
+	if dir == "" {
+		return mariadb.DefaultDumpProgram, mariadb.DefaultClientProgram
+	}
+	return filepath.Join(dir, mariadb.DefaultDumpProgram), filepath.Join(dir, mariadb.DefaultClientProgram)
 }
 
 func runMariaDBScenario(ctx context.Context, t *testing.T, addr string, admin *sql.DB, m *mariadb.Manager, state *store.DB, st secrets.Store) {

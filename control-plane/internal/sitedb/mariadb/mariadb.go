@@ -39,6 +39,11 @@ type Config struct {
 	// MaxUserConnections is each site user's connection limit; zero means
 	// DefaultMaxUserConnections.
 	MaxUserConnections int
+	// DumpProgram and ClientProgram are the mariadb-dump and mariadb
+	// programs that Dump and Import run, as paths or names looked up in
+	// PATH. Empty means DefaultDumpProgram and DefaultClientProgram.
+	DumpProgram   string
+	ClientProgram string
 }
 
 // Manager implements sitedb.Manager on the shared MariaDB server.
@@ -49,6 +54,12 @@ type Manager struct {
 	secrets  secrets.Store
 	maxConns int
 	log      *slog.Logger
+
+	// Dump and Import run client programs that connect to addr.
+	addr          string
+	dumpProgram   string
+	clientProgram string
+	tempDir       string // for client option files; empty means os.TempDir
 }
 
 var _ sitedb.Manager = (*Manager)(nil)
@@ -98,6 +109,13 @@ func New(cfg Config, state *store.DB, secretStore secrets.Store, log *slog.Logge
 	conn.SetConnMaxIdleTime(connIdleTime)
 	m := newManager(sqlServer{db: conn}, state, secretStore, cfg.MaxUserConnections, log)
 	m.conn = conn
+	m.addr = cfg.Addr
+	if cfg.DumpProgram != "" {
+		m.dumpProgram = cfg.DumpProgram
+	}
+	if cfg.ClientProgram != "" {
+		m.clientProgram = cfg.ClientProgram
+	}
 	return m, nil
 }
 
@@ -105,7 +123,10 @@ func newManager(srv server, state *store.DB, secretStore secrets.Store, maxConns
 	if maxConns == 0 {
 		maxConns = DefaultMaxUserConnections
 	}
-	return &Manager{server: srv, state: state, secrets: secretStore, maxConns: maxConns, log: log}
+	return &Manager{
+		server: srv, state: state, secrets: secretStore, maxConns: maxConns, log: log,
+		dumpProgram: DefaultDumpProgram, clientProgram: DefaultClientProgram,
+	}
 }
 
 // maxPasswordFileSize bounds how much of the password file is read.
@@ -180,6 +201,12 @@ func (m *Manager) credentials(ctx context.Context, siteID string, name siteName)
 	if err != nil {
 		return "", sitedb.Credentials{}, err
 	}
+	return m.recordCredentials(ctx, rec, name)
+}
+
+// recordCredentials reads the credentials rec points to and checks that
+// they are for name.
+func (m *Manager) recordCredentials(ctx context.Context, rec record, name siteName) (secrets.Ref, sitedb.Credentials, error) {
 	if rec.Database != name.String() || rec.Username != name.String() {
 		return "", sitedb.Credentials{}, fmt.Errorf("stored database %q and user %q don't match %s", rec.Database, rec.Username, name)
 	}
@@ -257,16 +284,6 @@ func (m *Manager) DropDatabase(ctx context.Context, siteID string) error {
 	}
 	m.log.Info("site database dropped", "site_id", siteID, "database", name.String())
 	return nil
-}
-
-// Dump implements sitedb.Manager. It is not implemented yet.
-func (m *Manager) Dump(context.Context, string, string) error {
-	return fmt.Errorf("mariadb: dump is not implemented yet (see https://github.com/rchouinard/pressfleet/issues/49): %w", errors.ErrUnsupported)
-}
-
-// Import implements sitedb.Manager. It is not implemented yet.
-func (m *Manager) Import(context.Context, string, string) error {
-	return fmt.Errorf("mariadb: import is not implemented yet (see https://github.com/rchouinard/pressfleet/issues/49): %w", errors.ErrUnsupported)
 }
 
 // driverLogger sends the MySQL driver's messages (connection errors it

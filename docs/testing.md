@@ -8,7 +8,7 @@ PressFleet has three kinds of tests.
 | Docker | `make test-platform`, `make images-test`, `PRESSFLEET_DOCKER_TESTS=1 go test ./...` | Docker Engine with Compose v2 | `images-test` in the Images workflow |
 | End to end | `make test-e2e` | Docker Engine with Compose v2 | Push to `main`, manual runs, and PRs labeled `e2e` |
 
-Unit tests never need Docker. Besides `make test-platform`, a few packages have Docker tests that start the pinned platform image they need, such as `sitedb/mariadb` and `objectcache/redis` (the object cache isolation test: one site can't read, list, or flush another's keys). Tests that do are skipped unless `PRESSFLEET_DOCKER_TESTS=1`. State database tests run against SQLite, and also against PostgreSQL when `PRESSFLEET_TEST_POSTGRES_DSN` is set.
+Unit tests never need Docker. Besides `make test-platform`, a few packages have Docker tests that start the pinned platform image they need, such as `sitedb/mariadb` and `objectcache/redis` (the object cache isolation test: one site can't read, list, or flush another's keys). Tests that do are skipped unless `PRESSFLEET_DOCKER_TESTS=1`. The `sitedb/mariadb` dump and import round trip also runs the `mariadb-dump` and `mariadb` client programs, from `PATH` or from the directory in `PRESSFLEET_TEST_MARIADB_CLIENT_DIR`, and is skipped if they aren't found. State database tests run against SQLite, and also against PostgreSQL when `PRESSFLEET_TEST_POSTGRES_DSN` is set.
 
 ## End-to-end tests
 
