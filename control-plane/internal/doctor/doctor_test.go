@@ -94,7 +94,11 @@ func TestPlatform(t *testing.T) {
 
 func TestDocker(t *testing.T) {
 	runCases(t, "docker", []checkCase{
-		{name: "reachable", wantStatus: doctor.StatusPass, wantMessage: "27.3.1"},
+		{name: "reachable", wantStatus: doctor.StatusPass, wantMessage: "28.5.1"},
+		{name: "newer major", setup: func(f *fixture) { f.docker.Info.ServerVersion = "29.8.0" }, wantStatus: doctor.StatusPass},
+		{name: "too old", setup: func(f *fixture) { f.docker.Info.ServerVersion = "27.5.1" },
+			wantStatus: doctor.StatusFail, wantMessage: "too old", wantFix: "28 or later"},
+		{name: "garbage version", setup: func(f *fixture) { f.docker.Info.ServerVersion = "dev" }, wantStatus: doctor.StatusFail},
 		{name: "unreachable", setup: func(f *fixture) { f.docker.InfoErr = errors.New("permission denied") },
 			wantStatus: doctor.StatusFail, wantMessage: "permission denied", wantFix: "docker group"},
 		{name: "windows containers", setup: func(f *fixture) { f.docker.Info.OSType = "windows" },

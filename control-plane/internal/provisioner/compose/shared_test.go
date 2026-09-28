@@ -86,9 +86,9 @@ func TestSharedServices(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"network connect --alias " + compose.MariaDBAlias + " " + network + " " + testMariaDB,
-		"network connect --alias " + compose.RedisAlias + " " + network + " " + testRedis,
-		"network connect --alias " + compose.TraefikAlias + " " + network + " " + testTraefik,
+		"network connect --gw-priority -1 --alias " + compose.MariaDBAlias + " " + network + " " + testMariaDB,
+		"network connect --gw-priority -1 --alias " + compose.RedisAlias + " " + network + " " + testRedis,
+		"network connect --gw-priority -1 --alias " + compose.TraefikAlias + " " + network + " " + testTraefik,
 	}
 	if !slices.Equal(docker.calls, want) {
 		t.Errorf("attach calls:\n got %q\nwant %q", docker.calls, want)

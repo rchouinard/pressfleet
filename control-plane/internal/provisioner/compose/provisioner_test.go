@@ -265,7 +265,7 @@ func (f *fixture) siteDir(t *testing.T) string {
 var (
 	network  = compose.SiteProjectName(testSiteID)
 	upWait   = "compose up --detach --remove-orphans --wait --wait-timeout 180"
-	connect  = "network connect --alias pf-mariadb " + network + " " + testMariaDB
+	connect  = "network connect --gw-priority -1 --alias pf-mariadb " + network + " " + testMariaDB
 	recreate = "compose up --detach --remove-orphans --force-recreate -- php"
 )
 

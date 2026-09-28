@@ -89,7 +89,7 @@ var _ doctor.DockerProbe = (*Docker)(nil)
 func HealthyDocker() *Docker {
 	return &Docker{
 		Info: compose.EngineInfo{
-			ServerVersion: "27.3.1", OSType: "linux", Architecture: "x86_64",
+			ServerVersion: "28.5.1", OSType: "linux", Architecture: "x86_64",
 			CgroupVersion: "2",
 			DefaultAddressPools: []compose.AddressPool{
 				{Base: netip.MustParsePrefix("10.200.0.0/16"), Size: 24},

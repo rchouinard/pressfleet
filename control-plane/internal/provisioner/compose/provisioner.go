@@ -589,7 +589,13 @@ func (p *Provisioner) attachShared(ctx context.Context, siteID string) error {
 		if _, ok := info.NetworkSettings.Networks[network]; ok {
 			continue
 		}
-		_, err = p.docker(ctx, nil, "network", "connect", "--alias", s.alias, network, s.container)
+		// --gw-priority -1 keeps the platform network as the container's
+		// default gateway. Docker forwards published ports over the gateway
+		// network, and otherwise picks the network whose name sorts first:
+		// pf-<id> sorts before the platform's own network, so connecting
+		// Traefik to a site would take down its host ports 80 and 443.
+		// Needs Docker Engine 28 (API 1.48); doctor enforces it.
+		_, err = p.docker(ctx, nil, "network", "connect", "--gw-priority", "-1", "--alias", s.alias, network, s.container)
 		if err != nil && !stderrContains(err, "already exists") {
 			return fmt.Errorf("connecting %s to %s: %w", s.container, network, err)
 		}

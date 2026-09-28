@@ -101,6 +101,12 @@ func checkPlatform(_ context.Context, e *env) outcome {
 	return pass("%s/%s", goos, goarch)
 }
 
+// MinDockerEngineMajor is the oldest Docker Engine major version PressFleet
+// supports. Engine 28 (API 1.48) added network gateway priorities, which the
+// Compose driver needs to attach platform services to site networks without
+// moving Traefik's published ports off the platform network.
+const MinDockerEngineMajor = 28
+
 func checkDocker(ctx context.Context, e *env) outcome {
 	info, err := e.engineInfo(ctx)
 	if err != nil {
@@ -111,6 +117,11 @@ func checkDocker(ctx context.Context, e *env) outcome {
 	if info.OSType != "linux" {
 		return fail("Switch Docker to Linux containers.",
 			"Docker Engine %s runs %s containers; PressFleet needs Linux containers", info.ServerVersion, info.OSType)
+	}
+	major, _, _ := strings.Cut(info.ServerVersion, ".")
+	if n, err := strconv.Atoi(major); err != nil || n < MinDockerEngineMajor {
+		return fail(fmt.Sprintf("Upgrade Docker Engine to %d or later (https://docs.docker.com/engine/install/).", MinDockerEngineMajor),
+			"Docker Engine %s is too old; PressFleet needs %d or later", info.ServerVersion, MinDockerEngineMajor)
 	}
 	return pass("Docker Engine %s (%s/%s)", info.ServerVersion, info.OSType, info.Architecture)
 }

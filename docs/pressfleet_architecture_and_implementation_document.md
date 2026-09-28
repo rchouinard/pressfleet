@@ -143,7 +143,7 @@ Each site runs two containers, following the one-process-per-container conventio
 
 #### Host Requirements & Preflight
 PressFleet ships a `pressfleet doctor` command (also run automatically at install and control plane startup) that checks the host and prints any required or recommended fixes:
-* **Required:** Linux on amd64, Docker Engine with Compose v2, cgroup v2 (for memory reservations and limits), ports 80 and 443 available, dashboard and wildcard preview DNS records resolving to the host.
+* **Required:** Linux on amd64, Docker Engine 28 or later with Compose v2, cgroup v2 (for memory reservations and limits), ports 80 and 443 available, dashboard and wildcard preview DNS records resolving to the host.
 * **Required:** Docker `default-address-pools` configured for small subnets. Docker's defaults run out of address space at roughly 30 networks, well below the per-site-network design. Recommended `daemon.json` setting:
   ```json
   { "default-address-pools": [ { "base": "10.200.0.0/16", "size": 24 } ] }

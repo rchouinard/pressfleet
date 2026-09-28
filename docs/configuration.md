@@ -305,6 +305,8 @@ The key never appears in logs. Log lines and errors name it by its key ID, a 16-
 
 `pressfleet serve` runs the subset of checks that apply to a running control plane (Docker, Compose, cgroup v2, address pools, disk, memory) and refuses to start if a required one fails. Checks that only make sense before installation (ports 80/443, DNS, log rotation in the host's `daemon.json`) run only in `doctor`. On a development machine, `serve --skip-preflight` (or `PRESSFLEET_SKIP_PREFLIGHT=true`, e.g. for a control plane container in CI) starts anyway and logs a warning. The flag takes precedence over the environment variable.
 
+The Docker check requires Docker Engine 28 or later. The Compose driver attaches platform services (MariaDB, the object cache, Traefik) to each site network with a lower gateway priority (`docker network connect --gw-priority -1`, API 1.48). Without it, Docker makes the site network Traefik's default gateway, because `pf-<id>` sorts before the platform network's name, and Traefik's published ports 80 and 443 stop answering.
+
 The DNS checks are skipped until `dashboard_domain` and `preview_base_domain` are set. For the wildcard, doctor resolves a random name under the preview base domain. A record that doesn't resolve, or resolves only to loopback, fails. Otherwise:
 
 - With `public_ip` set, the check passes if the record includes that address and fails if it doesn't.
