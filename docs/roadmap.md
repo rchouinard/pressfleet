@@ -113,9 +113,9 @@ Follow-ups carried out of M2:
 
 ### M3: Backup Engine & File Management
 
-Goal: encrypted, deduplicated backups per client group with safe, automatically rolled-back restores, and platform-managed core updates.
+Goal: encrypted, deduplicated backups per client group with safe, automatically rolled-back restores, platform-managed core updates, site import, and developer access to files and databases.
 
-Done when: a site can be backed up, modified, and restored to its earlier state, and a failed restore rolls back automatically. (Design doc §8 Phase 3)
+Done when: a site can be backed up, modified, and restored to its earlier state, a failed restore rolls back automatically, an existing site can be imported from an archive and dump, and a developer can deploy code and reach the database only for the site they're working on. (Design doc §8 Phase 3)
 
 | # | Issue | Priority | Size | Depends on |
 | --- | --- | --- | --- | --- |
@@ -126,14 +126,19 @@ Done when: a site can be backed up, modified, and restored to its earlier state,
 | [#53](https://github.com/rchouinard/pressfleet/issues/53) | Scheduled backups | P0 | S | #52, #15 |
 | [#54](https://github.com/rchouinard/pressfleet/issues/54) | Retention, prune, and integrity checks | P0 | M | #53 |
 | [#55](https://github.com/rchouinard/pressfleet/issues/55) | Restore pipeline with pre-restore snapshot and rollback | P0 | XL | #52, #44, #41 |
-| [#56](https://github.com/rchouinard/pressfleet/issues/56) | Decision: WordPress core rollout policy | P1 | S | — |
+| [#56](https://github.com/rchouinard/pressfleet/issues/56) | ~~Decision: WordPress core rollout policy~~ Resolved | P1 | S | — |
 | [#57](https://github.com/rchouinard/pressfleet/issues/57) | WordPress core update rollout | P1 | L | #55, #20, #56 |
 | [#58](https://github.com/rchouinard/pressfleet/issues/58) | Platform image update rollout | P1 | M | #57 |
-| [#59](https://github.com/rchouinard/pressfleet/issues/59) | Decision: importing existing sites in MVP? | P1 | S | — |
-| [#60](https://github.com/rchouinard/pressfleet/issues/60) | Decision: developer code deployment | P1 | S | — |
-| [#61](https://github.com/rchouinard/pressfleet/issues/61) | Decision: database access for agencies | P2 | S | — |
-| [#62](https://github.com/rchouinard/pressfleet/issues/62) | Per-site file management (SFTP / web file browser) | P2 | L | #60, #50 |
-| [#63](https://github.com/rchouinard/pressfleet/issues/63) | Integration tests: M3 acceptance criteria | P0 | M | #55, #48 |
+| [#59](https://github.com/rchouinard/pressfleet/issues/59) | ~~Decision: importing existing sites in MVP?~~ Resolved | P1 | S | — |
+| [#60](https://github.com/rchouinard/pressfleet/issues/60) | ~~Decision: developer code deployment~~ Resolved | P1 | S | — |
+| [#61](https://github.com/rchouinard/pressfleet/issues/61) | ~~Decision: database access for agencies~~ Resolved | P2 | S | — |
+| [#62](https://github.com/rchouinard/pressfleet/issues/62) | SFTP gateway for per-site wp-content access | P1 | L | #60, #50 |
+| [#63](https://github.com/rchouinard/pressfleet/issues/63) | Integration tests: M3 acceptance criteria | P0 | M | #55, #48, #112, #113, #114, #115 |
+| [#111](https://github.com/rchouinard/pressfleet/issues/111) | Resumable upload API for large files | P1 | M | #12 |
+| [#112](https://github.com/rchouinard/pressfleet/issues/112) | Site import: wp-content archive and SQL dump | P1 | L | #59, #111, #49, #55, #43 |
+| [#113](https://github.com/rchouinard/pressfleet/issues/113) | Code deployment API: deploy a theme or plugin package | P1 | M | #60, #111, #41 |
+| [#114](https://github.com/rchouinard/pressfleet/issues/114) | Database export download | P1 | S | #61, #49 |
+| [#115](https://github.com/rchouinard/pressfleet/issues/115) | Temporary database sessions through the SFTP gateway | P1 | M | #61, #62, #23 |
 
 ### M4: Monitoring & Alerting
 
@@ -181,8 +186,9 @@ Done when: every Phase 1–4 operation can be performed from the UI. (Design doc
 | [#90](https://github.com/rchouinard/pressfleet/issues/90) | UI: alerts, rules, and channels | P0 | M | #81, #76 |
 | [#91](https://github.com/rchouinard/pressfleet/issues/91) | UI: platform overview and capacity warnings | P1 | M | #81, #9, #72 |
 | [#92](https://github.com/rchouinard/pressfleet/issues/92) | Decision: plugin/theme update visibility | P2 | S | — |
-| [#93](https://github.com/rchouinard/pressfleet/issues/93) | UI end-to-end tests (Playwright) | P1 | L | #82, #85, #86, #87, #88, #89, #90, #91 |
+| [#93](https://github.com/rchouinard/pressfleet/issues/93) | UI end-to-end tests (Playwright) | P1 | L | #82, #85, #86, #87, #88, #89, #90, #91, #116 |
 | [#105](https://github.com/rchouinard/pressfleet/issues/105) | UI: audit log viewer | P1 | S | #81, #104 |
+| [#116](https://github.com/rchouinard/pressfleet/issues/116) | UI: site import, code deployment, SSH keys, and database access | P1 | M | #84, #82, #112, #113, #114, #115, #62 |
 
 ### MVP Release Gate
 
@@ -227,10 +233,10 @@ These must be resolved before the work they block.
 | [#22](https://github.com/rchouinard/pressfleet/issues/22) | Design: driver interface extensions for logs, stats, and volume access | M1: Core Engine & Compose Driver | P1 |
 | [#35](https://github.com/rchouinard/pressfleet/issues/35) | ~~preview domain protection~~ **Resolved:** optional per-site basic auth on the preview domain, off by default (design doc §5.1) | M2: Ingress, Caching & Domains | P2 |
 | [#42](https://github.com/rchouinard/pressfleet/issues/42) | ~~default agency security plugin set~~ **Resolved:** install-wide configurable security set of must-use plugin modules, nginx settings, and optional Two Factor; no per-site overrides (design doc §6.1) | M2: Ingress, Caching & Domains | P1 |
-| [#56](https://github.com/rchouinard/pressfleet/issues/56) | WordPress core rollout policy | M3: Backup Engine & File Management | P1 |
-| [#59](https://github.com/rchouinard/pressfleet/issues/59) | importing existing sites in MVP? | M3: Backup Engine & File Management | P1 |
-| [#60](https://github.com/rchouinard/pressfleet/issues/60) | developer code deployment | M3: Backup Engine & File Management | P1 |
-| [#61](https://github.com/rchouinard/pressfleet/issues/61) | database access for agencies | M3: Backup Engine & File Management | P2 |
+| [#56](https://github.com/rchouinard/pressfleet/issues/56) | ~~WordPress core rollout policy~~ **Resolved:** minor and security releases automatic, majors approved per site or client group (optionally after a delay), holds per major branch that keep getting security releases (design doc §5.5) | M3: Backup Engine & File Management | P1 |
+| [#59](https://github.com/rchouinard/pressfleet/issues/59) | ~~importing existing sites in MVP?~~ **Resolved:** yes, from a `wp-content` archive and SQL dump; other sources after MVP (design doc §5.7) | M3: Backup Engine & File Management | P1 |
+| [#60](https://github.com/rchouinard/pressfleet/issues/60) | ~~developer code deployment~~ **Resolved:** SFTP gateway with platform users' SSH keys, plus a deploy API for CI (design doc §5.8) | M3: Backup Engine & File Management | P1 |
+| [#61](https://github.com/rchouinard/pressfleet/issues/61) | ~~database access for agencies~~ **Resolved:** database exports and temporary, read-only-by-default sessions through the SFTP gateway; no web UI (design doc §5.8) | M3: Backup Engine & File Management | P2 |
 | [#64](https://github.com/rchouinard/pressfleet/issues/64) | confirm VictoriaMetrics + built-in collector | M4: Monitoring & Alerting | P0 |
 | [#65](https://github.com/rchouinard/pressfleet/issues/65) | metrics retention period | M4: Monitoring & Alerting | P1 |
 | [#92](https://github.com/rchouinard/pressfleet/issues/92) | plugin/theme update visibility | M5: Dashboard | P2 |
@@ -247,6 +253,6 @@ Planning surfaced these items, which the design document doesn't yet cover. Each
 
 ## Where to start
 
-M1 and M2 are complete; continue with M3, starting with the open decisions it depends on (#56, #59, #60, #61). Original guidance:
+M1 and M2 are complete, and M3's decisions are resolved; continue with M3, starting from its P0 backup and restore issues (#49, #50). Original guidance:
 
 Begin with [#1](https://github.com/rchouinard/pressfleet/issues/1) (repo scaffolding). After it lands, CI ([#2](https://github.com/rchouinard/pressfleet/issues/2)), core interfaces ([#3](https://github.com/rchouinard/pressfleet/issues/3)), the CLI skeleton ([#4](https://github.com/rchouinard/pressfleet/issues/4)), and the `site-php` image ([#17](https://github.com/rchouinard/pressfleet/issues/17)) can proceed in parallel.
