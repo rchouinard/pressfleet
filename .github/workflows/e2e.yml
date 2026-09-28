@@ -17,6 +17,14 @@ name: E2E
 # have to exist inside the dind container instead of on the runner, which
 # breaks that contract. The runner's daemon is already an isolated,
 # throwaway Docker host.
+#
+# Site images: the tests use local images and pull missing ones from GHCR,
+# where the Images workflow publishes them from main. When a push or PR
+# changes images/, the published images are stale (on main, the Images
+# workflow is still publishing the new ones while this runs), so this
+# workflow first builds the ones the tests use from the tree: the latest
+# WordPress on the two newest PHP branches. The M2 acceptance test also
+# pulls Pebble and its DNS server, public images on ghcr.io/letsencrypt.
 
 on:
   push:
@@ -41,6 +49,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # to diff against the base or previous commit
       - uses: jdx/mise-action@v4
       - uses: ./.github/actions/go-cache
       # The site images on GHCR may be private. The tests pull them when
@@ -54,4 +64,29 @@ jobs:
         run: |
           docker version
           docker compose version
+      - id: sites
+        name: Decide whether to build the site images
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+          pull_request)
+            changed="$(git diff --name-only "$BASE" HEAD)" ;;
+          push)
+            if git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              changed="$(git diff --name-only "$BEFORE" HEAD)"
+            else
+              changed="images/"  # new branch or force push
+            fi ;;
+          *)
+            changed="images/" ;;  # manual runs always test the tree
+          esac
+          if grep -q '^images/' <<<"$changed"; then build=true; else build=false; fi
+          echo "build=$build" >>"$GITHUB_OUTPUT"
+          echo "Site images built from the tree: \`$build\`" >>"$GITHUB_STEP_SUMMARY"
+      - if: steps.sites.outputs.build == 'true'
+        name: Build the site images the tests use
+        run: make images SITE_PHP="$(images/matrix.sh php | head -n 2 | xargs)"
       - run: make test-e2e

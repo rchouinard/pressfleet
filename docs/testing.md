@@ -63,7 +63,7 @@ docker compose -p pf-<site-id> down --volumes   # for each site it created
 
 **"Reached over HTTP on the host."** Since Traefik routes preview domains (#36), the test reaches the site from the host itself, through Traefik, with `p.IngressClient`. It requests `https://<preview domain>/` and expects `200` over HTTP/2 with the site's title, `wp-content` URLs, and `X-Robots-Tag: noindex`. It requests `/wp-login.php` and expects WordPress's login form: WordPress only serves it over HTTPS, and only a trusted proxy's `X-Forwarded-Proto` counts, so this shows that nginx trusts Traefik. Plain HTTP must redirect to HTTPS. It also sends a request with a forged `X-Forwarded-For` and checks, in nginx's access log, that nginx logged neither the forged address nor Traefik's address on the site network, but the client's (the login rate limit keys on the same address). The site images in use decide how nginx trusts Traefik (`NGINX_TRUSTED_PROXIES`); `images/test.sh` checks that the `local` default trusts the container's own network only.
 
-It needs the site images for the latest WordPress in [`images/manifest.json`](../images/manifest.json) and two PHP versions: the default one and the next available one, e.g. `ghcr.io/rchouinard/pressfleet/site-php:php8.5-wp7.1.2`, `site-php:php8.4-wp7.1.2`, and `site-nginx:wp7.1.2`. The harness (`e2e.EnsureImages`) uses local images when they exist, so images built with `make images` are tested as they are, and otherwise pulls them from GHCR. If neither works, the test fails and says to run `make images` (see [images/README.md](../images/README.md)). After changing `images/`, run `make images` before `make test-e2e`, or the test runs against whatever images you already have.
+It needs the site images for the latest WordPress in [`images/manifest.json`](../images/manifest.json) and two PHP versions: the default one and the next available one, e.g. `ghcr.io/rchouinard/pressfleet/site-php:php8.5-wp7.1.2`, `site-php:php8.4-wp7.1.2`, and `site-nginx:wp7.1.2`. The harness (`e2e.EnsureImages`) uses local images when they exist, so images built with `make images` are tested as they are, and otherwise pulls them from GHCR. If neither works, the test fails and says to run `make images` (see [images/README.md](../images/README.md)). After changing `images/`, run `make images` before `make test-e2e`, or the test runs against whatever images you already have. `make images SITE_PHP="8.5 8.4"` builds only the PHP branches the tests use.
 
 The preview base domain is `preview.e2e.test`, which nothing resolves. The test takes about a minute locally once the images are present. Most of that is provisioning and the isolation probes, which wait for blocked connections and unresolvable names to time out.
 
@@ -90,6 +90,29 @@ Deleting the site at the end runs through its job.
 
 After the site is deleted, its primary domain gets Traefik's `404`. Valid certificates for custom domains need a certificate authority; the M2 acceptance test with Pebble (#48) checks them.
 
+#### Certificates from Pebble
+
+`e2e.StartWithPebble` boots a platform whose Traefik gets real certificates, with the HTTP-01 challenge, from [Pebble](https://github.com/letsencrypt/pebble), Let's Encrypt's ACME test server. The override adds two services on the platform network, pinned by digest in `e2e/pebble.go`:
+
+- `pebble`, the ACME server (`acme.ca_server` is `https://pebble:14000/dir`). The harness generates a throwaway CA and a certificate for Pebble's API and hands the CA to Traefik as `acme.ca_certificates`. Pebble validates on port 80 (not its test default of 5002), without its random delays, and without rejecting nonces.
+- `challtestsrv` (`pebble-challtestsrv`), the DNS server Pebble resolves names with. Once the containers run, the harness sets its default A record to Traefik's address on the platform network (and it answers no AAAA query), so every name resolves to Traefik and Pebble validates challenges against Traefik for real.
+
+The harness then recreates the control plane with `challtestsrv` as its DNS server and `public_ip` set to Traefik's address, so the go-live DNS check passes for real, without `skip_dns_check`. It fetches Pebble's root, which Pebble generates when it starts, from its management API (`/roots/0`, published on an ephemeral loopback port), and `p.VerifyingIngressClient` verifies certificates against it for the requested host name, so a request fails while Traefik still serves its default certificate. Preview domains get HTTP-01 certificates per host; the DNS-01 wildcard mode isn't tested end to end (see `ingress` and `cli` unit tests).
+
+#### The M2 acceptance test
+
+`TestM2Acceptance` automates the M2 "done when" ([roadmap](roadmap.md), design doc §8 Phase 2) on one platform started with `e2e.StartWithPebble`, with two sites provisioned at the same time:
+
+1. **HTTPS within seconds.** Each preview domain must answer `200` through Traefik with a certificate for the domain that chains to Pebble's root, within 30 seconds (`certWait`) of the end of its provisioning job. The test logs the measured time: about 2.5 seconds locally (Traefik asks for the certificate as soon as the route appears).
+2. **Page cache.** An anonymous home page is a `HIT` (`X-Cache`) the second time, through Traefik; a logged-in cookie, a query string, `wp-login.php`, and `/wp-json/` are `BYPASS`.
+3. **Object cache isolation.** From each site's php container, with its own credentials from `wp-config.php` (phpredis, as the Redis Object Cache plugin connects), GET and DEL of the other site's key, and SELECT, MOVE, COPY ... DB, SWAPDB, FLUSHALL, and KEYS are refused (`NOPERM`), SCAN lists only the site's own keys, and FLUSHDB and `wp cache flush` empty only its own database: the other site's entry, set with `wp cache set`, is still there. The platform's cache purge of one site leaves the other's entries. `objectcache/redis`'s Docker test covers the ACL rules in depth.
+4. **Security set defaults** (#108, #109), through Traefik: `?author=1` is a `404`, the users REST routes are `401` for anonymous visitors (`?rest_route=`: sites use plain permalinks) while other REST routes work, the users sitemap is gone, the security headers are sent once each, and WP-CLI refuses a short and a common password.
+5. **Preview password protection** (#107): `401` without credentials or with a wrong password, `200` with the generated ones, and open again once off.
+6. **Go-live with valid certificates.** Going live on `www.m2.e2e.test` with alias `m2.e2e.test` passes the DNS check, and within `certWait` of the job's end the primary domain answers `200` (with HSTS) and the alias `301` to it, each with a valid certificate of its own. The preview domain redirects to the primary domain.
+7. **Login rate limit**, last, since it uses up the test client's allowance: 20 requests to `wp-login.php` in a row start with `200` and end with `429` (the default burst is 10); the home page still answers.
+
+It then deletes both sites and checks that nothing of their projects is left. The whole test takes about a minute locally once the images are present.
+
 ### Writing a test
 
 ```go
@@ -106,4 +129,4 @@ The harness never runs the `docker` CLI itself. It goes through `compose.Project
 
 ### In CI
 
-The `E2E` workflow (`.github/workflows/e2e.yml`) runs `make test-e2e` on the runner's own Docker Engine. Add the `e2e` label to a PR to run it there. It doesn't use Docker-in-Docker: the control plane mounts the data directory at the host's path and drives the host's Docker daemon, and with a `docker:dind` service those paths would have to exist inside the dind container instead of on the runner.
+The `E2E` workflow (`.github/workflows/e2e.yml`) runs `make test-e2e` on the runner's own Docker Engine. Add the `e2e` label to a PR to run it there. When the push or PR changes `images/`, it first builds the site images the tests use from the tree (`make images SITE_PHP="<two newest PHP branches>"`), since the published ones are stale or, on `main`, still being published by the Images workflow; otherwise the tests pull them from GHCR. It doesn't use Docker-in-Docker: the control plane mounts the data directory at the host's path and drives the host's Docker daemon, and with a `docker:dind` service those paths would have to exist inside the dind container instead of on the runner.

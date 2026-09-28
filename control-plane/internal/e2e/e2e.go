@@ -88,26 +88,75 @@ const (
 	pullTimeout    = 10 * time.Minute
 )
 
-// overrideFile publishes the control plane API on an ephemeral loopback port,
-// so tests reach it the same way on Linux and Docker Desktop (where container
-// IPs aren't routable from the host). It also moves Traefik from the host's
-// ports 80 and 443 to ephemeral loopback ports (TCP only), so platforms can
-// run side by side on one host, and next to anything else using those
-// ports. Compose merges compose.override.yaml automatically, which keeps
-// these test-only changes out of the rendered platform project; !override
-// replaces the rendered port list instead of adding to it.
-//
-// The control plane comes last: Restart appends its environment.
-const overrideFile = `# Written by the e2e test harness (control-plane/internal/e2e).
+// override is the compose.override.yaml the harness writes next to the
+// rendered platform project. It publishes the control plane API on an
+// ephemeral loopback port, so tests reach it the same way on Linux and
+// Docker Desktop (where container IPs aren't routable from the host). It
+// also moves Traefik from the host's ports 80 and 443 to ephemeral loopback
+// ports (TCP only), so platforms can run side by side on one host, and next
+// to anything else using those ports. Compose merges compose.override.yaml
+// automatically, which keeps these test-only changes out of the rendered
+// platform project; !override replaces the rendered port list instead of
+// adding to it.
+type override struct {
+	// services are extra services, as YAML indented to be entries of
+	// services: (see pebble.go).
+	services string
+	// traefikDependsOn are services Traefik starts after.
+	traefikDependsOn []string
+	// dns are the control plane's DNS servers (IP addresses).
+	dns []string
+	// env is extra environment of the control plane, on top of the
+	// rendered one.
+	env map[string]string
+}
+
+// render returns the override file's contents.
+func (o override) render() string {
+	var b strings.Builder
+	b.WriteString(`# Written by the e2e test harness (control-plane/internal/e2e).
 services:
   traefik:
     ports: !override
       - "127.0.0.1::80"
       - "127.0.0.1::443"
-  control-plane:
+`)
+	if len(o.traefikDependsOn) > 0 {
+		b.WriteString("    depends_on:\n")
+		for _, s := range o.traefikDependsOn {
+			b.WriteString("      - " + s + "\n")
+		}
+	}
+	b.WriteString(`  control-plane:
     ports:
       - "127.0.0.1::8080"
-`
+`)
+	if len(o.dns) > 0 {
+		b.WriteString("    dns:\n")
+		for _, ip := range o.dns {
+			b.WriteString("      - " + strconv.Quote(ip) + "\n")
+		}
+	}
+	if len(o.env) > 0 {
+		b.WriteString("    environment:\n")
+		for _, k := range slices.Sorted(maps.Keys(o.env)) {
+			b.WriteString("      " + k + ": " + strconv.Quote(o.env[k]) + "\n")
+		}
+	}
+	b.WriteString(o.services)
+	return b.String()
+}
+
+// write writes the override file into a platform project directory.
+func (o override) write(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "compose.override.yaml"), []byte(o.render()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // Platform is a running platform started by Start.
 type Platform struct {
@@ -128,6 +177,13 @@ type Platform struct {
 	// Client is logged in as the admin with a session cookie, and sends the
 	// session's CSRF token with unsafe requests.
 	Client *client.ClientWithResponses
+	// Pebble is the platform's certificate authority; nil unless the
+	// platform was started with StartWithPebble.
+	Pebble *Pebble
+
+	// override is the compose.override.yaml Start wrote, which Restart
+	// keeps.
+	override override
 }
 
 // Start boots the platform under a unique Compose project name with a
@@ -136,8 +192,18 @@ type Platform struct {
 // networks, when the test ends, whether it passed or not; if it failed, the
 // container logs are written to the test log first.
 //
+// Its ACME directory (ACMECAServer) never resolves, so Traefik serves its
+// self-signed default certificate; StartWithPebble boots a platform that
+// gets real certificates.
+//
 // Start skips the test unless the environment enables Docker tests.
 func Start(t *testing.T) *Platform {
+	t.Helper()
+	return start(t, false)
+}
+
+// start is Start, and with withPebble, StartWithPebble.
+func start(t *testing.T, withPebble bool) *Platform {
 	t.Helper()
 	image := Image(t)
 
@@ -157,6 +223,7 @@ func Start(t *testing.T) *Platform {
 	if err := os.WriteFile(keyFile, []byte(secrets.GenerateMasterKey().Encode().Reveal()+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	dir := layout.PlatformDir()
 	cfg := platform.Config{
 		ProjectName:         "pfe2e-" + randomToken(10),
 		DataDir:             layout.Root,
@@ -171,24 +238,27 @@ func Start(t *testing.T) *Platform {
 		PublicIP:          PublicIP,
 		ACME:              platform.ACMEConfig{CAServer: ACMECAServer},
 	}
-	dir := layout.PlatformDir()
+	var o override
+	if withPebble {
+		cfg.ACME, o = preparePebble(t, dir)
+	}
 	if err := platform.Render(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
-	WriteOverride(t, dir)
+	o.write(t, dir)
 
 	p := Adopt(t, compose.Project{Name: cfg.ProjectName, Dir: dir}, layout.Root)
+	p.override = o
 	p.AdminEmail, p.AdminPassword = "admin@e2e.test", redact.Secret(randomToken(26))
 
 	ctx, cancel := context.WithTimeout(t.Context(), bootTimeout)
 	defer cancel()
 	t.Logf("starting platform project %s in %s", p.Project.Name, p.DataDir)
-	// --wait returns once MariaDB and the control plane pass their
-	// healthchecks, and fails if either exits or turns unhealthy.
-	if err := p.Project.Up(ctx, compose.UpOptions{Wait: true, WaitTimeout: bootTimeout - 30*time.Second}); err != nil {
-		t.Fatalf("starting platform: %v", err)
-	}
+	p.up(ctx, t)
 	p.Connect(ctx, t)
+	if withPebble {
+		p.connectPebble(ctx, t)
+	}
 	p.createAdmin(ctx, t)
 	p.Client = p.Login(t, p.AdminEmail, p.AdminPassword)
 	return p
@@ -214,12 +284,7 @@ func Image(t *testing.T) string {
 // takes the host's ports 80 and 443.
 func WriteOverride(t *testing.T, dir string) {
 	t.Helper()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "compose.override.yaml"), []byte(overrideFile), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	override{}.write(t, dir)
 }
 
 // Restart recreates the control plane with extra PRESSFLEET_* environment
@@ -228,24 +293,29 @@ func WriteOverride(t *testing.T, dir string) {
 // MariaDB and the sites keep running.
 func (p *Platform) Restart(t *testing.T, env map[string]string) {
 	t.Helper()
-	override := overrideFile
-	if len(env) > 0 {
-		override += "    environment:\n"
-		for _, k := range slices.Sorted(maps.Keys(env)) {
-			override += "      " + k + ": " + strconv.Quote(env[k]) + "\n"
-		}
+	o := p.override
+	o.env = maps.Clone(p.override.env)
+	if o.env == nil {
+		o.env = map[string]string{}
 	}
-	if err := os.WriteFile(filepath.Join(p.Project.Dir, "compose.override.yaml"), []byte(override), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	maps.Copy(o.env, env)
+	o.write(t, p.Project.Dir)
 	ctx, cancel := context.WithTimeout(t.Context(), bootTimeout)
 	defer cancel()
 	t.Logf("restarting the control plane of %s", p.Project.Name)
-	if err := p.Project.Up(ctx, compose.UpOptions{Wait: true, WaitTimeout: bootTimeout - 30*time.Second}); err != nil {
-		t.Fatalf("restarting the control plane: %v", err)
-	}
+	p.up(ctx, t)
 	p.Connect(ctx, t)
 	p.Client = p.Login(t, p.AdminEmail, p.AdminPassword)
+}
+
+// up brings the project up and waits until its services are running, and
+// healthy where they have a healthcheck. --wait fails if any exits or turns
+// unhealthy.
+func (p *Platform) up(ctx context.Context, t *testing.T) {
+	t.Helper()
+	if err := p.Project.Up(ctx, compose.UpOptions{Wait: true, WaitTimeout: bootTimeout - 30*time.Second}); err != nil {
+		t.Fatalf("starting platform %s: %v", p.Project.Name, err)
+	}
 }
 
 // Adopt tears down a platform project like Start does when the test ends,
@@ -336,6 +406,24 @@ func (p *Platform) Login(t *testing.T, email string, password redact.Secret) *cl
 // when Traefik offers it.
 func (p *Platform) IngressClient(t *testing.T) *http.Client {
 	t.Helper()
+	return p.ingressClient(t, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // G402: Traefik's self-signed default certificate, see above
+}
+
+// VerifyingIngressClient is IngressClient, but verifies certificates like
+// a browser that trusts Pebble's root does, for the URL's host: a request
+// fails while Traefik still serves its default certificate for the host,
+// before Pebble has issued one. It needs a platform started with
+// StartWithPebble.
+func (p *Platform) VerifyingIngressClient(t *testing.T) *http.Client {
+	t.Helper()
+	if p.Pebble == nil {
+		t.Fatal("e2e: VerifyingIngressClient needs a platform started with StartWithPebble")
+	}
+	return p.ingressClient(t, &tls.Config{RootCAs: p.Pebble.Roots, MinVersion: tls.VersionTLS12})
+}
+
+func (p *Platform) ingressClient(t *testing.T, tlsConfig *tls.Config) *http.Client {
+	t.Helper()
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -351,7 +439,7 @@ func (p *Platform) IngressClient(t *testing.T) *http.Client {
 			}
 			return nil, fmt.Errorf("e2e: ingress client only dials ports 80 and 443, not %s", addr)
 		},
-		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // G402: Traefik's self-signed default certificate, see above
+		TLSClientConfig:   tlsConfig,
 		ForceAttemptHTTP2: true,
 	}
 	t.Cleanup(transport.CloseIdleConnections)

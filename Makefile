@@ -56,10 +56,12 @@ tidy: ## Tidy go.mod/go.sum
 	go mod tidy
 
 IMAGE_REPO ?= $(shell images/matrix.sh registry)
+# PHP branches `make images` builds; empty means every branch in the matrix.
+SITE_PHP ?=
 
 .PHONY: images
-images: ## Build the site image matrix from images/manifest.json (needs jq)
-	@set -e; php="$$(images/matrix.sh php)"; wps="$$(images/matrix.sh wp)"; \
+images: ## Build the site image matrix from images/manifest.json (needs jq; SITE_PHP="8.5 8.4" limits the PHP branches)
+	@set -e; php="$(if $(SITE_PHP),$(SITE_PHP),$$(images/matrix.sh php))"; wps="$$(images/matrix.sh wp)"; \
 	for wp in $$wps; do \
 		sha1="$$(images/matrix.sh sha1 $$wp)"; \
 		docker build -f images/site-nginx/Dockerfile -t $(IMAGE_REPO)/site-nginx:wp$$wp \
