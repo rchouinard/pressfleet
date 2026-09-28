@@ -121,6 +121,7 @@ func TestInitSMTPInteractive(t *testing.T) {
 		"not an address",  // rejected
 		"wp@agency.example",
 		"", // no sender name
+		"", // local backups
 		"", // no DNS provider
 		"yes",
 	}, "\n") + "\n"

@@ -79,6 +79,15 @@ acme:
   dns_credentials: pfenc1:... # encrypted with the master key by pressfleet init
   # dns_resolvers: ["1.1.1.1:53"]
   # ca_certificates: /etc/pressfleet/pebble.minica.pem
+backup:
+  backend: local                 # local, s3; see "Backup repositories"
+  # s3:
+  #   endpoint: https://s3.eu-west-1.amazonaws.com
+  #   bucket: agency-backups
+  #   prefix: pressfleet         # optional
+  #   region: eu-west-1          # optional; default us-east-1
+  #   access_key_id: AKIA...
+  #   secret_access_key: pfenc1:...   # encrypted with the master key by pressfleet init
 ```
 
 ## Settings
@@ -123,6 +132,13 @@ acme:
 | `smtp.password` | `PRESSFLEET_SMTP_PASSWORD` | `--smtp-password-file` (`init` only) | (unset) | Relay password, encrypted with the master key (`pfenc1:...`). `pressfleet init` reads the plaintext from `--smtp-password-file` and writes only the encrypted value; a plaintext value is rejected. The control plane decrypts it at startup and refuses to start if it can't. |
 | `smtp.from_email` | `PRESSFLEET_SMTP_FROM_EMAIL` | `--smtp-from-email` (`init` only) | (unset) | Sender address that replaces WordPress's default `wordpress@<site domain>`, which relays usually refuse. It is also the envelope sender of every message. |
 | `smtp.from_name` | `PRESSFLEET_SMTP_FROM_NAME` | `--smtp-from-name` (`init` only) | (unset) | Sender name that replaces WordPress's default, "WordPress". |
+| `backup.backend` | `PRESSFLEET_BACKUP_BACKEND` | `--backup-backend` (`init` only) | `local` | Where client group backup repositories are created: `local` (under `<data_dir>/backups/repositories/`) or `s3` (an S3-compatible bucket). Existing repositories keep the location they were created with. See [Backup repositories](#backup-repositories). |
+| `backup.s3.endpoint` | `PRESSFLEET_BACKUP_S3_ENDPOINT` | `--backup-s3-endpoint` (`init` only) | (unset) | Required with `s3`. Base URL of the S3 service, `https://` or `http://`, without a path: e.g. `https://s3.eu-west-1.amazonaws.com` or `http://minio.internal:9000`. |
+| `backup.s3.bucket` | `PRESSFLEET_BACKUP_S3_BUCKET` | `--backup-s3-bucket` (`init` only) | (unset) | Required with `s3`. The bucket; restic creates it on first use if the access key may. |
+| `backup.s3.prefix` | `PRESSFLEET_BACKUP_S3_PREFIX` | `--backup-s3-prefix` (`init` only) | (unset) | Optional key prefix inside the bucket, without leading or trailing slashes. Each client group's repository is `<prefix>/<client group ID>`. |
+| `backup.s3.region` | `PRESSFLEET_BACKUP_S3_REGION` | `--backup-s3-region` (`init` only) | `us-east-1` | The bucket's region. Set it for Amazon S3 buckets outside `us-east-1`. |
+| `backup.s3.access_key_id` | `PRESSFLEET_BACKUP_S3_ACCESS_KEY_ID` | `--backup-s3-access-key-id` (`init` only) | (unset) | Required with `s3`. The access key ID. |
+| `backup.s3.secret_access_key` | `PRESSFLEET_BACKUP_S3_SECRET_ACCESS_KEY` | `--backup-s3-secret-access-key-file` (`init` only) | (unset) | Required with `s3`. The secret access key, encrypted with the master key (`pfenc1:...`). `pressfleet init` reads the plaintext from `--backup-s3-secret-access-key-file` and writes only the encrypted value; a plaintext value is rejected. The control plane decrypts it at startup and refuses to start if it can't. |
 | `wordpress_security.block_user_enumeration` | `PRESSFLEET_WORDPRESS_SECURITY_BLOCK_USER_ENUMERATION` | | `true` | Hide which user names exist from visitors. See [WordPress security set](#wordpress-security-set). |
 | `wordpress_security.password_policy.enabled` | `PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_POLICY_ENABLED` | | `true` | Check new WordPress passwords on the server: minimum length and a common-password list. |
 | `wordpress_security.password_policy.min_length` | `PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_POLICY_MIN_LENGTH` | | `12` | Minimum WordPress password length, from 8 to 64 characters. |
@@ -323,6 +339,10 @@ The DNS checks are skipped until `dashboard_domain` and `preview_base_domain` ar
     backups/          state database backups taken before migrations and restores
   platform/           rendered platform services Compose project
   sites/<site-id>/    rendered per-site Compose project and wp-config.php
+  backups/
+    repositories/<client-group-id>/
+                      the client group's Restic repository (backup.backend local;
+                      mode 2770, group 60000; see "Backup repositories")
   tmp/                scratch space, e.g. database dumps during backups
 ```
 
@@ -345,6 +365,31 @@ pressfleet state restore <backup>
 `<backup>` is a path, or a file name in the backups directory. The restore refuses backups from a newer schema than the binary supports, so run it with the PressFleet version that made the backup. The database being replaced is saved to the backups directory first (`...-pre-restore.db`), so a restore can be undone the same way.
 
 **PostgreSQL** is supported for larger installs. PressFleet does not back up or restore PostgreSQL itself; that is the operator's responsibility. Take a backup (`pg_dump`, a managed snapshot, or point-in-time recovery) before upgrading PressFleet, because the control plane migrates the schema on startup and only logs a warning. Dumping from inside the control plane would mean shipping PostgreSQL client tools matched to your server's major version, and PostgreSQL operators usually already have better tools for this. `pressfleet state restore` only supports SQLite.
+
+## Backup repositories
+
+Each client group has its own [Restic](https://restic.net) repository, encrypted with its own random password (design doc §5.3). Sites in a group deduplicate against each other, and offboarding a client means handing over or deleting one repository. The passwords are stored in the state database, encrypted with the master key: **without the master key, no backup can be read**.
+
+Where repositories are created is chosen at install time with `backup.backend`:
+
+- `local`: `<data_dir>/backups/repositories/<client group ID>`. The directory belongs to group 60000 with mode `2770`, and restic keeps new files group-readable, because backup tasks run as each site's own UID with that group added. Local repositories live on the same disk as the sites, so they don't protect against losing the host; copy them elsewhere, or use `s3`.
+- `s3`: `s3:<endpoint>/<bucket>/<prefix>/<client group ID>` on Amazon S3, MinIO, or another S3-compatible service.
+
+A group's repository is created the first time the group needs one, i.e. on its first backup, or ahead of time with `pressfleet repository create`. A client group can't be deleted while its repository exists (`409`), so backups are never lost by accident. To offboard a client, delete its sites, then, inside the control plane container:
+
+```sh
+docker compose exec control-plane pressfleet repository export <client-group-id> /var/lib/pressfleet/tmp/acme
+docker compose exec control-plane pressfleet repository delete <client-group-id> --yes
+```
+
+`export` copies the repository into a new or empty directory (downloading it from S3 if needed) together with a `password.txt` (mode `0600`) and a `README.txt`, and checks with `restic check` that the copy opens with the password file alone. The client needs nothing but restic:
+
+```sh
+restic -r repository --password-file password.txt snapshots
+restic -r repository --password-file password.txt restore latest --tag <site-id> --target restored
+```
+
+Only the data directory is shared between the control plane container and the host, so export under it and move the result off the host; it holds the password in plaintext. Don't export while the repository is being pruned. `delete` removes the repository's files or objects, then its password; it is refused while the group still has sites.
 
 ## Site databases
 

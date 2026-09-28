@@ -49,10 +49,20 @@ func TestClientGroups(t *testing.T) {
 			t.Errorf("List = %+v", list)
 		}
 
+		if err := groups.SetBackupRepository(ctx, acme.ID, "s3:backups/acme"); err != nil {
+			t.Fatal(err)
+		}
+		if err := groups.SetBackupRepository(ctx, id.New(), "x"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("SetBackupRepository on a missing group: err = %v, want ErrNotFound", err)
+		}
+		// Update keeps the repository even when given a stale copy.
 		updated := got
-		updated.Name, updated.Notes, updated.BackupRepository = "Acme Corp", "", "s3:backups/acme"
+		updated.Name, updated.Notes = "Acme Corp", ""
 		if err := groups.Update(ctx, &updated); err != nil {
 			t.Fatal(err)
+		}
+		if updated.BackupRepository != "s3:backups/acme" {
+			t.Errorf("Update BackupRepository = %q, want the stored one", updated.BackupRepository)
 		}
 		if updated.CreatedAt != acme.CreatedAt || updated.UpdatedAt.Before(acme.UpdatedAt) {
 			t.Errorf("Update timestamps: %+v", updated)

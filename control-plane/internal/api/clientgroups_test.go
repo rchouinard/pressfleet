@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -129,6 +130,22 @@ func TestClientGroupsEndpoints(t *testing.T) {
 			t.Errorf("conflict without detail: %+v", p)
 		}
 		if _, err := db.ExecContext(ctx, "DELETE FROM sites WHERE id = ?", siteID); err != nil {
+			t.Fatal(err)
+		}
+		// Refused while the group's backup repository exists.
+		groups := store.NewClientGroups(db)
+		if err := groups.SetBackupRepository(ctx, acme.ID, "/data/backups/repositories/"+acme.ID); err != nil {
+			t.Fatal(err)
+		}
+		code, body = call(http.MethodGet, "/api/v1/client-groups/"+acme.ID, "")
+		if got := decodeJSON[gen.ClientGroup](t, body); code != http.StatusOK || got.BackupRepository == nil {
+			t.Errorf("backup repository: %d %s", code, body)
+		}
+		w = do(t, h, request{authed: true, method: http.MethodDelete, target: "/api/v1/client-groups/" + acme.ID})
+		if p := decodeProblem(t, w); w.Code != http.StatusConflict || !strings.Contains(p.Detail, "backup repository") {
+			t.Fatalf("delete group with a backup repository: %d %+v", w.Code, p)
+		}
+		if err := groups.SetBackupRepository(ctx, acme.ID, ""); err != nil {
 			t.Fatal(err)
 		}
 		if code, body := call(http.MethodDelete, "/api/v1/client-groups/"+acme.ID, ""); code != http.StatusNoContent {

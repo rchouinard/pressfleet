@@ -138,6 +138,12 @@ func (a *app) serveCommand() *cobra.Command {
 				return err
 			}
 			secretStore := secrets.NewStore(db, keys)
+			// Like the SMTP password, backup S3 credentials that don't
+			// decrypt stop the control plane now rather than at the first
+			// backup. The backup engine (#52) will use the manager.
+			if _, err := a.backupRepositories(db, secretStore, keys); err != nil {
+				return err
+			}
 			// Before serving, so Traefik, which waits for them, starts as
 			// soon as possible.
 			if err := a.syncDNSCredentials(cmd.Context(), keys); err != nil {

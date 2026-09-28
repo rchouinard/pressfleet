@@ -146,10 +146,14 @@ func (h *Handlers) DeleteClientGroup(ctx context.Context, req gen.DeleteClientGr
 		if g.SiteCount > 0 {
 			return errGroupHasSites(g.SiteCount)
 		}
+		if g.BackupRepository != "" {
+			return errGroupHasRepository
+		}
 		return groups.Delete(ctx, g.ID)
 	})
 	if errors.Is(err, store.ErrReference) {
-		err = errGroupHasSites(0)
+		// A site or the backup repository was created concurrently.
+		err = fmt.Errorf("%w: the client group still has sites or a backup repository", ErrConflict)
 	}
 	if err != nil {
 		return nil, clientGroupError(err, "")
@@ -158,11 +162,13 @@ func (h *Handlers) DeleteClientGroup(ctx context.Context, req gen.DeleteClientGr
 }
 
 func errGroupHasSites(n int) error {
-	if n == 0 {
-		return fmt.Errorf("%w: the client group still has sites; delete them first", ErrConflict)
-	}
 	return fmt.Errorf("%w: the client group still has %d site(s); delete them first", ErrConflict, n)
 }
+
+// errGroupHasRepository refuses to delete a group whose backups still
+// exist: offboarding exports or deletes them deliberately first.
+var errGroupHasRepository = fmt.Errorf("%w: the client group still has a backup repository; export or delete it first "+
+	"(pressfleet repository export / delete in the control plane container)", ErrConflict)
 
 // clientGroupError maps store errors to API errors.
 func clientGroupError(err error, name string) error {

@@ -1,3 +1,6 @@
 [tools]
 go = "1.27"
 golangci-lint = "2"
+# Restic backs up client group repositories (package internal/backup/repository);
+# its tests run the real binary.
+"aqua:restic/restic" = "0.19.1"

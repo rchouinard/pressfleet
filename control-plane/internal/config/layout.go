@@ -13,7 +13,10 @@ import (
 //	    backups/          pre-migration and pre-restore database backups
 //	  platform/           rendered platform services Compose project
 //	  sites/<site-id>/    rendered per-site Compose project and wp-config.php
-//	  tmp/                scratch space, e.g. database dumps during backups
+//	  backups/
+//	    repositories/<client-group-id>/
+//	                      the group's Restic repository (local backend only)
+//	  tmp/               scratch space, e.g. database dumps during backups
 type Layout struct {
 	Root string
 }
@@ -37,10 +40,32 @@ func (l Layout) TmpDir() string { return filepath.Join(l.Root, "tmp") }
 // SiteDir returns the directory for one site's rendered files. It rejects
 // IDs that would escape the sites directory.
 func (l Layout) SiteDir(siteID string) (string, error) {
-	if siteID == "." || filepath.Base(siteID) != siteID || !filepath.IsLocal(siteID) {
+	if !localName(siteID) {
 		return "", fmt.Errorf("invalid site ID %q", siteID)
 	}
 	return filepath.Join(l.SitesDir(), siteID), nil
+}
+
+// BackupRepositoriesDir holds the client groups' Restic repositories when
+// backups are kept locally (backup.backend local).
+func (l Layout) BackupRepositoriesDir() string {
+	return filepath.Join(l.Root, "backups", "repositories")
+}
+
+// BackupRepositoryDir returns the directory of one client group's local
+// Restic repository. It rejects IDs that would escape the repositories
+// directory.
+func (l Layout) BackupRepositoryDir(clientGroupID string) (string, error) {
+	if !localName(clientGroupID) {
+		return "", fmt.Errorf("invalid client group ID %q", clientGroupID)
+	}
+	return filepath.Join(l.BackupRepositoriesDir(), clientGroupID), nil
+}
+
+// localName reports whether name is a single path element that stays in
+// its directory.
+func localName(name string) bool {
+	return name != "." && filepath.Base(name) == name && filepath.IsLocal(name)
 }
 
 // Ensure creates the top-level directories, readable only by the owner

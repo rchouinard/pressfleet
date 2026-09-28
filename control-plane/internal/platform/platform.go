@@ -168,6 +168,11 @@ type Config struct {
 	// the master key, so the rendered project never holds it in plaintext.
 	// A zero value (no host) leaves outbound email off.
 	SMTP config.SMTPConfig
+	// Backup is passed to the control plane: where client group backup
+	// repositories live (config.Config.Backup). The S3 secret access key is
+	// sealed with the master key. A zero value (or the local backend)
+	// renders nothing, leaving the control plane's default.
+	Backup config.BackupConfig
 	// DashboardDomain is where Traefik serves the control plane's dashboard
 	// and API (config.Config.DashboardDomain). Empty renders no dashboard
 	// route.
@@ -272,6 +277,11 @@ func (c Config) withDefaults() (Config, error) {
 	if err := c.SMTP.Validate(); err != nil {
 		errs = append(errs, err)
 	}
+	if c.Backup.Backend != "" {
+		if err := c.Backup.Validate(); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	if c.DashboardDomain != "" && !config.ValidDomain(c.DashboardDomain) {
 		errs = append(errs, fmt.Errorf("dashboard domain must be a domain name like fleet.example.com, got %q", c.DashboardDomain))
 	}
@@ -314,7 +324,7 @@ func (c Config) withDefaults() (Config, error) {
 
 // templateData is what the templates see. It deliberately has no plaintext
 // secrets: credentials go only into files under secrets/, or are sealed with
-// the master key (SMTP.Password). The object cache admin password's SHA-256
+// the master key (SMTP.Password, BackupS3.SecretAccessKey). The object cache admin password's SHA-256
 // hash is not a secret: it can't be used to authenticate, and the password
 // is 130 random bits, so the hash can't be reversed.
 type templateData struct {
@@ -335,7 +345,8 @@ type templateData struct {
 	SkipPreflight          bool
 	PreviewBaseDomain      string
 	PublicIP               string
-	SMTP                   *config.SMTPConfig // nil when outbound email is off
+	SMTP                   *config.SMTPConfig     // nil when outbound email is off
+	BackupS3               *config.BackupS3Config // nil for local backups
 	ListenPort             int
 	TraefikMemoryMB        int
 	TraefikGoMemLimitMB    int
@@ -466,6 +477,9 @@ func Render(dir string, cfg Config) error {
 	}
 	if cfg.SMTP.Enabled() {
 		data.SMTP = &cfg.SMTP
+	}
+	if cfg.Backup.Backend == config.BackupBackendS3 {
+		data.BackupS3 = &cfg.Backup.S3
 	}
 	tmpl, err := template.New("").Option("missingkey=error").
 		Funcs(template.FuncMap{"q": quote, "yq": yamlQuote, "backquote": backquote}).

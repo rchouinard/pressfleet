@@ -40,3 +40,16 @@ func TestLayoutSiteDir(t *testing.T) {
 		}
 	}
 }
+
+func TestLayoutBackupRepositoryDir(t *testing.T) {
+	l := config.Layout{Root: "/data"}
+	got, err := l.BackupRepositoryDir("group1")
+	if err != nil || got != "/data/backups/repositories/group1" {
+		t.Errorf("BackupRepositoryDir(group1) = %q, %v", got, err)
+	}
+	for _, bad := range []string{"", ".", "..", "../x", "a/b", "/abs"} {
+		if _, err := l.BackupRepositoryDir(bad); err == nil {
+			t.Errorf("BackupRepositoryDir(%q) accepted", bad)
+		}
+	}
+}

@@ -73,6 +73,7 @@ func TestLoadPrecedence(t *testing.T) {
 		Redis:    config.Default().Redis,                           // default
 		Audit:    config.AuditConfig{RetentionDays: 365},           // default
 		SMTP:     config.Default().SMTP,                            // default
+		Backup:   config.BackupConfig{Backend: "local"},            // default
 		// default
 		PlatformProject:   "pressfleet",
 		WordPressSecurity: config.DefaultWordPressSecurity(), // default

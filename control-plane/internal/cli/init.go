@@ -76,7 +76,7 @@ type initFlags struct {
 }
 
 // initAnswers are the settings init collects. Later milestones add the
-// backup repository and alert channels here and in initQuestions.
+// alert channels here and in initQuestions.
 type initAnswers struct {
 	DashboardDomain   string
 	PreviewBaseDomain string
@@ -85,6 +85,7 @@ type initAnswers struct {
 	MasterKeyFile     string
 	AdminEmail        string
 	smtpAnswers
+	backupAnswers
 	ACMEEmail    string
 	ACMECAServer string
 	dnsAnswers
@@ -101,6 +102,9 @@ type initQuestion struct {
 	prompt string
 	// optional questions may be left empty.
 	optional bool
+	// requiredWhen, if set, makes an optional question required given the
+	// answers so far.
+	requiredWhen func(a *initAnswers) bool
 	// flagOnly questions are never prompted for: their answer comes from
 	// the flag, the environment, or the default. They are for settings few
 	// operators change.
@@ -340,6 +344,9 @@ func (i *installer) run(ctx context.Context, given map[string]string) error {
 	if err := answers.readSMTPPassword(); err != nil {
 		return err
 	}
+	if err := answers.readBackupSecret(); err != nil {
+		return err
+	}
 	if i.f.acmeStagingSet {
 		answers.ACMEStaging = i.f.acmeStaging
 	}
@@ -374,6 +381,9 @@ func (i *installer) run(ctx context.Context, given map[string]string) error {
 	if err := answers.sealSMTPPassword(key); err != nil {
 		return err
 	}
+	if err := answers.sealBackupSecret(key); err != nil {
+		return err
+	}
 	if err := answers.sealDNSCredentials(key); err != nil {
 		return err
 	}
@@ -404,6 +414,7 @@ func (i *installer) run(ctx context.Context, given map[string]string) error {
 	if smtp := answers.smtpConfig(); smtp.Enabled() {
 		i.printf("  SMTP relay:       %s:%d (%s)\n", smtp.Host, smtp.EffectivePort(), smtp.Encryption)
 	}
+	i.printBackupSummary(answers)
 	i.printf("  Admin user:       %s\n", auth.NormalizeEmail(answers.AdminEmail))
 	if created && generated {
 		i.printf("  Admin password:   %s\n\nStore the admin password now; it can't be shown again.\n", adminPassword.Reveal())
@@ -437,6 +448,7 @@ func (i *installer) defaults() (initAnswers, error) {
 		DataDir:           cfg.DataDir,
 		MasterKeyFile:     cfg.MasterKeyFile,
 		smtpAnswers:       smtpDefaults(cfg.SMTP),
+		backupAnswers:     backupDefaults(cfg.Backup),
 		ACMEEmail:         cfg.ACME.Email,
 		ACMECAServer:      cfg.ACME.CAServer,
 		dnsAnswers:        dnsDefaults(cfg.ACME),
@@ -494,7 +506,7 @@ func (i *installer) ask(answers *initAnswers, given map[string]string) error {
 // validate checks an answer, including whether a required one is missing.
 func (q initQuestion) validate(v string, a *initAnswers) error {
 	if v == "" {
-		if q.optional {
+		if q.optional && (q.requiredWhen == nil || !q.requiredWhen(a)) {
 			return nil
 		}
 		return errors.New("a value is required")
@@ -565,6 +577,7 @@ func (a initAnswers) config(base config.Config) config.Config {
 	base.PublicIP = a.PublicIP
 	base.MasterKeyFile = a.MasterKeyFile
 	base.SMTP = a.smtpConfig()
+	base.Backup = a.backupConfig()
 	base.ACME = a.acmeConfig()
 	return base
 }
@@ -681,6 +694,8 @@ type fileConfig struct {
 	// SMTP is only written when a relay is configured.
 	SMTP *fileSMTP       `yaml:"smtp,omitempty"`
 	ACME *fileACMEConfig `yaml:"acme,omitempty"`
+	// Backup is only written for the S3 backend; local is the default.
+	Backup *fileBackup `yaml:"backup,omitempty"`
 }
 
 const configHeader = `# PressFleet configuration, written by pressfleet init.
@@ -699,6 +714,7 @@ func (i *installer) writeConfig(a initAnswers) error {
 		MasterKeyFile:     a.MasterKeyFile,
 		SMTP:              a.smtpFileConfig(),
 		ACME:              a.acmeFileConfig(),
+		Backup:            a.backupFileConfig(),
 	})
 	if err != nil {
 		return err
@@ -780,6 +796,7 @@ func (i *installer) startPlatform(ctx context.Context, a initAnswers) error {
 		PreviewBaseDomain:   a.PreviewBaseDomain,
 		PublicIP:            a.PublicIP,
 		SMTP:                a.smtpConfig(),
+		Backup:              a.backupConfig(),
 		DashboardDomain:     a.DashboardDomain,
 		ACME: platform.ACMEConfig{
 			Email:          acme.Email,

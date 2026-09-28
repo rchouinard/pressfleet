@@ -117,6 +117,7 @@ func (a *app) rootCommand() *cobra.Command {
 	root.AddCommand(a.stateCommand())
 	root.AddCommand(a.keyCommand())
 	root.AddCommand(a.userCommand())
+	root.AddCommand(a.repositoryCommand())
 	return root
 }
 

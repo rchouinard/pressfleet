@@ -276,6 +276,7 @@ func TestInitInteractive(t *testing.T) {
 		"acme",              // rejected: not an email address
 		"ops@example.com",
 		"",      // no SMTP relay: the other SMTP questions are skipped
+		"",      // local backups: the S3 questions are skipped
 		"",      // no DNS provider, so no credentials file question
 		"maybe", // not a confirmation
 		"yes",
@@ -342,7 +343,7 @@ func TestInitConfirmWithKeyID(t *testing.T) {
 		done <- cli.Run(context.Background(), []string{"init", "--config", e.configPath,
 			"--dashboard-domain", "fleet.example.com", "--preview-base-domain", "preview.example.com",
 			"--public-ip", "203.0.113.10", "--data-dir", e.dataDir, "--master-key-file", e.keyFile,
-			"--admin-email", "admin@example.com", "--acme-email", "", "--dns-provider", "", "--smtp-host", "", "--control-plane-image", "img:test",
+			"--admin-email", "admin@example.com", "--acme-email", "", "--dns-provider", "", "--smtp-host", "", "--backup-backend", "local", "--control-plane-image", "img:test",
 		}, cli.Options{
 			Version: "v1.2.3-test", Stdin: pr, Stdout: out, Stderr: io.Discard,
 			Env:       func(string) (string, bool) { return "", false },
@@ -386,9 +387,9 @@ func TestInitInteractiveAbort(t *testing.T) {
 	tests := []struct {
 		name, stdin, want string
 	}{
-		{"declined", "fleet.example.com\npreview.example.com\n\n\n\nadmin@example.com\n\n\n\nno\n", "must be stored off-host"},
+		{"declined", "fleet.example.com\npreview.example.com\n\n\n\nadmin@example.com\n\n\n\n\nno\n", "must be stored off-host"},
 		{"input ends", "fleet.example.com\n", "standard input closed"},
-		{"input ends at confirmation", "fleet.example.com\npreview.example.com\n\n\n\nadmin@example.com\n\n\n\n", "standard input closed"},
+		{"input ends at confirmation", "fleet.example.com\npreview.example.com\n\n\n\nadmin@example.com\n\n\n\n\n", "standard input closed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

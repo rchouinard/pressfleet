@@ -38,6 +38,10 @@ Run it as root (or a user in the `docker` group who can write `/etc/pressfleet` 
 | SMTP user name | `--smtp-username` | `PRESSFLEET_SMTP_USERNAME` | (unset) |
 | File holding the SMTP password | `--smtp-password-file` | | (unset) |
 | Sender address and name for site email | `--smtp-from-email`, `--smtp-from-name` | `PRESSFLEET_SMTP_FROM_EMAIL`, `PRESSFLEET_SMTP_FROM_NAME` | WordPress's defaults |
+| Where backup repositories live: `local` or `s3` | `--backup-backend` | `PRESSFLEET_BACKUP_BACKEND` | `local` |
+| S3 endpoint, bucket, key prefix, and region | `--backup-s3-endpoint`, `--backup-s3-bucket`, `--backup-s3-prefix`, `--backup-s3-region` | `PRESSFLEET_BACKUP_S3_ENDPOINT`, `PRESSFLEET_BACKUP_S3_BUCKET`, `PRESSFLEET_BACKUP_S3_PREFIX`, `PRESSFLEET_BACKUP_S3_REGION` | (unset; prefix and region optional) |
+| S3 access key ID | `--backup-s3-access-key-id` | `PRESSFLEET_BACKUP_S3_ACCESS_KEY_ID` | (unset) |
+| File holding the S3 secret access key | `--backup-s3-secret-access-key-file` | | (unset) |
 | DNS provider for a wildcard preview certificate | `--dns-provider` | `PRESSFLEET_ACME_DNS_PROVIDER` | (unset: one HTTP-01 certificate per preview domain) |
 | File with the DNS provider's credentials | `--dns-credentials-file` | | (unset) |
 | DNS servers for DNS-01 propagation checks (not prompted) | `--acme-dns-resolvers` | `PRESSFLEET_ACME_DNS_RESOLVERS` | the host's resolvers |
@@ -47,6 +51,8 @@ The config file is written to `--config`, else `$PRESSFLEET_CONFIG`, else `/etc/
 The dashboard and preview domains must already resolve to this host: the preflight checks look up the dashboard domain and a random name under the preview base domain. Ports 80 and 443 must be free, and reachable from the internet for Let's Encrypt.
 
 The SMTP settings are optional; see [Outbound email](configuration.md#outbound-email). In interactive mode the other SMTP questions are only asked once a relay host is given. `init` reads the relay password from the first line of `--smtp-password-file`, encrypts it with the master key, and writes only the encrypted value to the config file.
+
+Backups go to `<data_dir>/backups/repositories/` unless you choose `s3`; see [Backup repositories](configuration.md#backup-repositories). The S3 questions are only asked for `s3`. `init` reads the secret access key from the first line of `--backup-s3-secret-access-key-file`, encrypts it with the master key, and writes only the encrypted value to the config file.
 
 The DNS provider is optional but recommended; see [Preview certificates](configuration.md#preview-certificates). The credentials file is only asked for once a provider is given. `init` reads it (`VARIABLE=value` lines, as named in the lego documentation), encrypts it with the master key, and writes only the encrypted value to the config file; delete the file afterwards.
 
@@ -122,6 +128,7 @@ The master key is printed on standard output (the line starting with `pfmk1:`); 
 - Saves the previous config file as `pressfleet.yaml.bak` and writes a new one, prefilling its defaults from the old one.
 - Reuses the MariaDB root password in `<data_dir>/platform/secrets/`, which MariaDB only reads when it initializes its data.
 - Keeps the encrypted SMTP password from the old config file unless `--smtp-password-file` gives a new one, after checking that the master key still decrypts it.
+- Keeps the encrypted S3 secret access key the same way unless `--backup-s3-secret-access-key-file` gives a new one.
 - Reuses the object cache admin password in `<data_dir>/platform/secrets/redis_admin_password`, so the running control plane's password stays valid. The object cache server itself only gets its SHA-256 hash, in `<data_dir>/platform/redis/valkey.conf`.
 - Keeps the encrypted DNS provider credentials the same way unless `--dns-credentials-file` gives new ones, in which case it recreates Traefik so it reads them.
 - Leaves an existing admin user with the same email alone. To set a new password, run `pressfleet user reset-password` in the control plane container.

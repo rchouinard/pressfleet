@@ -583,7 +583,7 @@ paths:
       operationId: deleteClientGroup
       tags: [client-groups]
       summary: Delete a client group
-      description: A client group that still has sites can't be deleted (`409`).
+      description: A client group that still has sites or a backup repository can't be deleted (`409`); offboarding exports or deletes the repository first.
       responses:
         "204":
           description: Client group deleted.

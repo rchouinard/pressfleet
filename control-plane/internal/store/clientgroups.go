@@ -15,8 +15,10 @@ type ClientGroup struct {
 	ID    string
 	Name  string
 	Notes string
-	// BackupRepository references the group's Restic repository; empty until
-	// the repository is initialized.
+	// BackupRepository is where the group's Restic repository lives, without
+	// credentials; empty until the repository is created. Package
+	// backup/repository sets it with SetBackupRepository; Create and Update
+	// don't change it.
 	BackupRepository string
 	// SiteCount is the number of sites in the group. Get and List fill it
 	// in; Create and Update leave it as it is.
@@ -62,11 +64,12 @@ func (r ClientGroups) Create(ctx context.Context, g *ClientGroup) error {
 	}
 	created := *g
 	created.ID = id.New()
+	created.BackupRepository = ""
 	created.CreatedAt = now()
 	created.UpdatedAt = created.CreatedAt
 	_, err := r.q.ExecContext(ctx,
 		"INSERT INTO client_groups ("+clientGroupColumns+") VALUES (?, ?, ?, ?, ?, ?)",
-		created.ID, created.Name, created.Notes, created.BackupRepository, created.CreatedAt, created.UpdatedAt)
+		created.ID, created.Name, created.Notes, "", created.CreatedAt, created.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create client group: %w", err)
 	}
@@ -124,22 +127,45 @@ func (r ClientGroups) List(ctx context.Context, f ClientGroupFilter) ([]ClientGr
 	return groups, nil
 }
 
-// Update saves g's name, notes, and backup repository and sets UpdatedAt.
-// It returns ErrNotFound if g doesn't exist and ErrConflict if the new name
-// is taken.
+// Update saves g's name and notes and sets UpdatedAt. It returns
+// ErrNotFound if g doesn't exist and ErrConflict if the new name is taken.
+// The backup repository is left alone, so an update based on a stale read
+// can't undo SetBackupRepository.
 func (r ClientGroups) Update(ctx context.Context, g *ClientGroup) error {
 	if g.Name == "" {
 		return errors.New("update client group: name is required")
 	}
 	updated := now()
-	var createdAt time.Time
+	var (
+		createdAt time.Time
+		repo      string
+	)
 	err := r.q.QueryRowContext(ctx,
-		"UPDATE client_groups SET name = ?, notes = ?, backup_repository = ?, updated_at = ? WHERE id = ? RETURNING created_at",
-		g.Name, g.Notes, g.BackupRepository, updated, g.ID).Scan(&createdAt)
+		"UPDATE client_groups SET name = ?, notes = ?, updated_at = ? WHERE id = ? RETURNING created_at, backup_repository",
+		g.Name, g.Notes, updated, g.ID).Scan(&createdAt, &repo)
 	if err != nil {
 		return fmt.Errorf("update client group %s: %w", g.ID, err)
 	}
-	g.CreatedAt, g.UpdatedAt = createdAt, updated
+	g.CreatedAt, g.UpdatedAt, g.BackupRepository = createdAt, updated, repo
+	return nil
+}
+
+// SetBackupRepository records where the group's backup repository lives
+// (empty when it has none). It returns ErrNotFound if the group doesn't
+// exist.
+func (r ClientGroups) SetBackupRepository(ctx context.Context, groupID, location string) error {
+	res, err := r.q.ExecContext(ctx,
+		"UPDATE client_groups SET backup_repository = ?, updated_at = ? WHERE id = ?", location, now(), groupID)
+	if err != nil {
+		return fmt.Errorf("set backup repository of client group %s: %w", groupID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set backup repository of client group %s: %w", groupID, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("set backup repository of client group %s: %w", groupID, ErrNotFound)
+	}
 	return nil
 }
 

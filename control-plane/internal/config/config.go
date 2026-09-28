@@ -90,6 +90,9 @@ type Config struct {
 	WordPressSecurity WordPressSecurityConfig `yaml:"wordpress_security"`
 	// ACME configures how Traefik obtains TLS certificates.
 	ACME ACMEConfig `yaml:"acme"`
+	// Backup configures where client group backup repositories live
+	// (§4.1, §5.3).
+	Backup BackupConfig `yaml:"backup"`
 }
 
 // Values of smtp.encryption.
@@ -454,6 +457,7 @@ func Default() Config {
 			AdminPasswordFile: "/run/secrets/redis_admin_password",
 		},
 		SMTP:              SMTPConfig{Encryption: SMTPEncryptionSTARTTLS},
+		Backup:            BackupConfig{Backend: BackupBackendLocal},
 		WordPressSecurity: DefaultWordPressSecurity(),
 	}
 }
@@ -495,6 +499,13 @@ var envVars = []struct {
 	{"PRESSFLEET_ACME_CA_CERTIFICATES", func(c *Config) *string { return &c.ACME.CACertificates }},
 	{"PRESSFLEET_ACME_DNS_PROVIDER", func(c *Config) *string { return &c.ACME.DNSProvider }},
 	{"PRESSFLEET_ACME_DNS_CREDENTIALS", func(c *Config) *string { return &c.ACME.DNSCredentials }},
+	{"PRESSFLEET_BACKUP_BACKEND", func(c *Config) *string { return &c.Backup.Backend }},
+	{"PRESSFLEET_BACKUP_S3_ENDPOINT", func(c *Config) *string { return &c.Backup.S3.Endpoint }},
+	{"PRESSFLEET_BACKUP_S3_BUCKET", func(c *Config) *string { return &c.Backup.S3.Bucket }},
+	{"PRESSFLEET_BACKUP_S3_PREFIX", func(c *Config) *string { return &c.Backup.S3.Prefix }},
+	{"PRESSFLEET_BACKUP_S3_REGION", func(c *Config) *string { return &c.Backup.S3.Region }},
+	{"PRESSFLEET_BACKUP_S3_ACCESS_KEY_ID", func(c *Config) *string { return &c.Backup.S3.AccessKeyID }},
+	{"PRESSFLEET_BACKUP_S3_SECRET_ACCESS_KEY", func(c *Config) *string { return &c.Backup.S3.SecretAccessKey }},
 }
 
 // envTrustedProxies sets http.trusted_proxies as a comma-separated list.
@@ -698,6 +709,9 @@ func (c Config) Validate() error {
 		errs = append(errs, err)
 	}
 	if err := c.WordPressSecurity.validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.Backup.Validate(); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)

@@ -70,6 +70,22 @@ services:
       PRESSFLEET_SMTP_FROM_NAME: {{ q .FromName }}
 {{- end }}
 {{- end }}
+{{- with .BackupS3 }}
+      # Client group backup repositories live in this bucket (§5.3). The
+      # secret access key is encrypted with the master key; the control
+      # plane decrypts it at startup.
+      PRESSFLEET_BACKUP_BACKEND: "s3"
+      PRESSFLEET_BACKUP_S3_ENDPOINT: {{ q .Endpoint }}
+      PRESSFLEET_BACKUP_S3_BUCKET: {{ q .Bucket }}
+{{- if .Prefix }}
+      PRESSFLEET_BACKUP_S3_PREFIX: {{ q .Prefix }}
+{{- end }}
+{{- if .Region }}
+      PRESSFLEET_BACKUP_S3_REGION: {{ q .Region }}
+{{- end }}
+      PRESSFLEET_BACKUP_S3_ACCESS_KEY_ID: {{ q .AccessKeyID }}
+      PRESSFLEET_BACKUP_S3_SECRET_ACCESS_KEY: {{ q .SecretAccessKey }}
+{{- end }}
     volumes:
       # The data directory is mounted at the same absolute path as on the host.
       # The control plane starts helper containers (backups, restores) that

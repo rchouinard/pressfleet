@@ -1512,7 +1512,7 @@ type ClientInterface interface {
 
 	// DeleteClientGroup Delete a client group
 	//
-	// A client group that still has sites can't be deleted (`409`).
+	// A client group that still has sites or a backup repository can't be deleted (`409`); offboarding exports or deletes the repository first.
 	//
 	// Corresponds with DELETE /api/v1/client-groups/{client_group_id} (the `DeleteClientGroup` operationId).
 	DeleteClientGroup(ctx context.Context, clientGroupID ClientGroupID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2287,7 +2287,7 @@ func (c *Client) CreateClientGroup(ctx context.Context, body CreateClientGroupJS
 
 // DeleteClientGroup Delete a client group
 //
-// A client group that still has sites can't be deleted (`409`).
+// A client group that still has sites or a backup repository can't be deleted (`409`); offboarding exports or deletes the repository first.
 //
 // Corresponds with DELETE /api/v1/client-groups/{client_group_id} (the `DeleteClientGroup` operationId).
 func (c *Client) DeleteClientGroup(ctx context.Context, clientGroupID ClientGroupID, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -4919,7 +4919,7 @@ type ClientWithResponsesInterface interface {
 
 	// DeleteClientGroupWithResponse Delete a client group
 	//
-	// A client group that still has sites can't be deleted (`409`).
+	// A client group that still has sites or a backup repository can't be deleted (`409`); offboarding exports or deletes the repository first.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -8394,7 +8394,7 @@ func (c *ClientWithResponses) CreateClientGroupWithResponse(ctx context.Context,
 
 // DeleteClientGroupWithResponse Delete a client group
 //
-// A client group that still has sites can't be deleted (`409`).
+// A client group that still has sites or a backup repository can't be deleted (`409`); offboarding exports or deletes the repository first.
 //
 // Returns a wrapper object for the known response body format(s).
 //

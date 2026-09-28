@@ -184,6 +184,7 @@ func TestInitDNSInteractive(t *testing.T) {
 		"admin@example.com",
 		"", // no Let's Encrypt contact
 		"", // no SMTP relay
+		"", // local backups
 		"cloudflare",
 		"relative/dns.env", // rejected: not absolute
 		credsFile,
