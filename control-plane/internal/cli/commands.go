@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/audit"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repomaint"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/restic"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
@@ -168,20 +170,28 @@ func (a *app) serveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			backupWindow := sitebackup.Window{Start: a.cfg.Backup.Schedule.Start(), Length: a.cfg.Backup.Schedule.Window()}
+			backupWindow := a.backupWindow()
 			engine, err := restic.New(restic.Options{
-				DB:           db,
-				Repositories: repos,
-				Databases:    siteDBs,
-				Tasks:        prov,
-				Layout:       layout,
-				Logger:       a.log.With("component", "backup"),
+				DB:                   db,
+				Repositories:         repos,
+				Databases:            siteDBs,
+				Tasks:                prov,
+				Layout:               layout,
+				Retention:            a.backupRetention(),
+				CheckReadDataPercent: a.cfg.Backup.Check.ReadDataPercent,
+				Logger:               a.log.With("component", "backup"),
 			})
 			if err != nil {
 				return err
 			}
 			backups, err := sitebackup.New(sitebackup.Options{
 				DB: db, Engine: engine, Window: backupWindow, Logger: a.log.With("component", "backup"),
+			})
+			if err != nil {
+				return err
+			}
+			repoMaint, err := repomaint.New(repomaint.Options{
+				DB: db, Engine: engine, Timing: a.maintenanceTiming(), Logger: a.log.With("component", "backup"),
 			})
 			if err != nil {
 				return err
@@ -234,7 +244,7 @@ func (a *app) serveCommand() *cobra.Command {
 			if err := pool.Register(audit.CleanupHandler(db, a.cfg.Audit.Retention(), nil)); err != nil {
 				return err
 			}
-			for _, h := range append(siteSvc.Handlers(), backups.Handler()) {
+			for _, h := range slices.Concat(siteSvc.Handlers(), []jobs.Handler{backups.Handler()}, repoMaint.Handlers()) {
 				if err := pool.Register(h); err != nil {
 					return err
 				}
@@ -254,6 +264,10 @@ func (a *app) serveCommand() *cobra.Command {
 			// Best effort, like the reconcile jobs.
 			if err := sitebackup.ReconcileSchedules(cmd.Context(), db, backupWindow); err != nil && cmd.Context().Err() == nil {
 				a.log.Warn("reconciling backup schedules failed", "error", err)
+			}
+			// Likewise every backup repository's prune and check schedules.
+			if err := repomaint.ReconcileSchedules(cmd.Context(), db, a.maintenanceTiming()); err != nil && cmd.Context().Err() == nil {
+				a.log.Warn("reconciling backup repository maintenance schedules failed", "error", err)
 			}
 			// A canceled context means serve is already stopping; the
 			// server below returns at once.

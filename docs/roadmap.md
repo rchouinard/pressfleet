@@ -140,12 +140,13 @@ Done when: a site can be backed up, modified, and restored to its earlier state,
 | [#114](https://github.com/rchouinard/pressfleet/issues/114) | Database export download | P1 | S | #61, #49 |
 | [#115](https://github.com/rchouinard/pressfleet/issues/115) | Temporary database sessions through the SFTP gateway | P1 | M | #61, #62, #23 |
 
-**Status: in progress (2026-09-28).** Backup and restore are in place: #49, #50, #51, #52, #53, and #55 are closed. Decisions made along the way:
+**Status: in progress (2026-09-28).** Backup and restore are in place: #49, #50, #51, #52, #53, #54, and #55 are closed. Decisions made along the way:
 
 - Local Restic repositories are shared by a client group's sites through one platform GID (`provisioner.RepositoryGID`, 60000), since each site's backup task runs as the site's own UID.
 - A group's repository is created lazily on its first backup; a group with a repository can't be deleted until the repository is exported or deleted (`pressfleet repository export|delete`).
 - Restores across client groups are not supported in the MVP (each group has its own key).
-- Prune and check (#54) should take lock key `repo:<group-id>`; backups hold `site:<id>` and wait on Restic's exclusive lock with `--retry-lock`.
+- Prune and check (#54) are per-repository jobs (`backup.prune` daily, `backup.check` every `backup.check.interval_days`) with lock key `repo:<group-id>`, scheduled after the backup window; backups and restores hold `site:<id>` and meet them only at Restic's lock, which everyone waits for with `--retry-lock`. Both run `restic unlock` first to clear stale locks.
+- Retention applies per site (`restic forget --group-by host`); backups whose snapshots are gone get `expired_at` in the API rather than being deleted.
 
 Known gaps to pick up: an S3 endpoint on the platform network isn't reachable from backup tasks (only external endpoints work); nothing sweeps `tmp/` at startup, so a crashed backup can leave a dump behind; site import (#112) must strip `DEFINER` clauses from external dumps.
 
@@ -262,6 +263,6 @@ Planning surfaced these items, which the design document doesn't yet cover. Each
 
 ## Where to start
 
-M1 and M2 are complete, and M3's backup and restore pipeline has landed; continue with M3's remaining P0, retention and integrity checks (#54), then core rollout (#57), the resumable upload API (#111), and the SFTP gateway (#62). Original guidance:
+M1 and M2 are complete, and M3's backup and restore work (including retention and integrity checks, #54) has landed; continue with core rollout (#57), the resumable upload API (#111), and the SFTP gateway (#62). Original guidance:
 
 Begin with [#1](https://github.com/rchouinard/pressfleet/issues/1) (repo scaffolding). After it lands, CI ([#2](https://github.com/rchouinard/pressfleet/issues/2)), core interfaces ([#3](https://github.com/rchouinard/pressfleet/issues/3)), the CLI skeleton ([#4](https://github.com/rchouinard/pressfleet/issues/4)), and the `site-php` image ([#17](https://github.com/rchouinard/pressfleet/issues/17)) can proceed in parallel.

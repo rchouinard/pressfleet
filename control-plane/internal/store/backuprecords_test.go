@@ -187,3 +187,89 @@ func TestBackupKindValid(t *testing.T) {
 		t.Error("unknown kinds are valid")
 	}
 }
+
+func TestBackupRecordsExpire(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		groups := store.NewClientGroups(db)
+		group, otherGroup := &store.ClientGroup{Name: "Acme"}, &store.ClientGroup{Name: "Globex"}
+		for _, g := range []*store.ClientGroup{group, otherGroup} {
+			if err := groups.Create(ctx, g); err != nil {
+				t.Fatal(err)
+			}
+		}
+		records := store.NewBackupRecords(db)
+		create := func(groupID string, succeed bool) store.BackupRecord {
+			t.Helper()
+			r := &store.BackupRecord{SiteID: id.New(), ClientGroupID: groupID, Kind: store.BackupScheduled, WPCoreVersion: "6.9.1"}
+			if err := records.Create(ctx, r); err != nil {
+				t.Fatal(err)
+			}
+			if succeed {
+				if _, err := records.Succeed(ctx, r.ID, store.BackupResult{SnapshotID: "snap-" + r.ID}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := records.Get(ctx, r.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return got
+		}
+		old, kept := create(group.ID, true), create(group.ID, true)
+		running := create(group.ID, false)
+		elsewhere := create(otherGroup.ID, true)
+		time.Sleep(10 * time.Millisecond)
+		listedAt := time.Now()
+		time.Sleep(10 * time.Millisecond)
+		late := create(group.ID, true)
+
+		// Only the group's succeeded backups that finished before the
+		// listing count.
+		got, err := records.Restorable(ctx, group.ID, listedAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 2 || got[0].ID != old.ID || got[1].ID != kept.ID {
+			t.Errorf("Restorable = %+v, want %s and %s", got, old.ID, kept.ID)
+		}
+
+		n, err := records.Expire(ctx, []string{old.ID, running.ID, elsewhere.ID})
+		if err != nil || n != 2 {
+			t.Errorf("Expire = %d, %v; want the two succeeded backups", n, err)
+		}
+		if n, err := records.Expire(ctx, []string{old.ID}); err != nil || n != 0 {
+			t.Errorf("Expire again = %d, %v; want no change", n, err)
+		}
+		if n, err := records.Expire(ctx, nil); err != nil || n != 0 {
+			t.Errorf("Expire of nothing = %d, %v", n, err)
+		}
+		for _, r := range []store.BackupRecord{old, kept, running, elsewhere, late} {
+			got, err := records.Get(ctx, r.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantExpired := r.ID == old.ID || r.ID == elsewhere.ID
+			if got.ExpiredAt.IsZero() == wantExpired {
+				t.Errorf("record %s expired at %v, want expired %v", r.ID, got.ExpiredAt, wantExpired)
+			}
+		}
+		got, err = records.Restorable(ctx, group.ID, time.Now().Add(time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 2 || got[0].ID != kept.ID || got[1].ID != late.ID {
+			t.Errorf("Restorable after expiring = %+v", got)
+		}
+
+		// Many IDs go in batches.
+		ids := make([]string, 1200)
+		for i := range ids {
+			ids[i] = id.New()
+		}
+		ids[1100] = kept.ID
+		if n, err := records.Expire(ctx, ids); err != nil || n != 1 {
+			t.Errorf("Expire of 1200 IDs = %d, %v", n, err)
+		}
+	})
+}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -467,4 +468,73 @@ func TestNewOptions(t *testing.T) {
 			t.Errorf("%s: New succeeded", name)
 		}
 	}
+}
+
+func TestHooks(t *testing.T) {
+	t.Parallel()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		var created, deleted []string
+		fail := errors.New("scheduling failed")
+		var hookErr error
+		f := newFixture(t, db, repository.Options{Deleted: func(_ context.Context, _ store.Querier, groupID string) error {
+			deleted = append(deleted, groupID)
+			return hookErr
+		}, Created: func(ctx context.Context, q store.Querier, groupID string) error {
+			// In the transaction: the record is visible through q.
+			if ids, err := repository.ClientGroupIDs(ctx, q); err != nil || !slices.Contains(ids, groupID) {
+				t.Errorf("in the hook, ClientGroupIDs = %v, %v; want %s", ids, err, groupID)
+			}
+			created = append(created, groupID)
+			return hookErr
+		}})
+		acme, globex := f.group(t, "Acme"), f.group(t, "Globex")
+
+		if ids, err := repository.ClientGroupIDs(ctx, db); err != nil || len(ids) != 0 {
+			t.Errorf("ClientGroupIDs before any repository = %v, %v", ids, err)
+		}
+		// A failing hook rolls the record back, and the next Ensure tries
+		// again.
+		hookErr = fail
+		if _, err := f.m.Ensure(ctx, acme); !errors.Is(err, fail) {
+			t.Errorf("Ensure with a failing hook = %v", err)
+		}
+		if _, err := f.m.Get(ctx, acme); !errors.Is(err, repository.ErrNoRepository) {
+			t.Errorf("Get after the hook failed = %v, want ErrNoRepository", err)
+		}
+		hookErr = nil
+		for _, g := range []string{acme, acme, globex} {
+			if _, err := f.m.Ensure(ctx, g); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Once per new repository.
+		if want := []string{acme, acme, globex}; !slices.Equal(created, want) {
+			t.Errorf("hook calls = %v, want %v", created, want)
+		}
+		want := []string{acme, globex}
+		slices.Sort(want)
+		if ids, err := repository.ClientGroupIDs(ctx, db); err != nil || !slices.Equal(ids, want) {
+			t.Errorf("ClientGroupIDs = %v, %v; want %v", ids, err, want)
+		}
+
+		// A failing Deleted hook keeps the record, so Delete can be
+		// retried; deleting a group without a repository calls nothing.
+		hookErr = fail
+		if err := f.m.Delete(ctx, acme); !errors.Is(err, fail) {
+			t.Errorf("Delete with a failing hook = %v", err)
+		}
+		if _, err := f.m.Get(ctx, acme); err != nil {
+			t.Errorf("Get after the hook failed = %v", err)
+		}
+		hookErr = nil
+		for _, g := range []string{acme, acme} {
+			if err := f.m.Delete(ctx, g); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if want := []string{acme, acme}; !slices.Equal(deleted, want) {
+			t.Errorf("Deleted hook calls = %v, want %v", deleted, want)
+		}
+	})
 }

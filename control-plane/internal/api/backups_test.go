@@ -76,8 +76,17 @@ func TestSiteBackupsEndpoints(t *testing.T) {
 		if !id.Valid(b.ID) || b.SiteID != site.ID || b.ClientGroupID != group.ID || b.Kind != gen.Manual ||
 			b.Status != gen.BackupStatusSucceeded || b.SnapshotID == nil || *b.SnapshotID == "" || b.WpCoreVersion != site.WPCoreVersion ||
 			b.SizeBytes == nil || *b.SizeBytes != 1024 || b.AddedBytes == nil || b.FileCount == nil || b.JobID == nil || *b.JobID != job.ID ||
-			b.FinishedAt == nil || b.Message != "" {
+			b.FinishedAt == nil || b.Message != "" || b.ExpiredAt != nil {
 			t.Errorf("backup = %s", w.Body)
+		}
+
+		// Once retention removed its snapshot, the backup says so.
+		if _, err := store.NewBackupRecords(db).Expire(ctx, []string{b.ID}); err != nil {
+			t.Fatal(err)
+		}
+		w = do(t, h, request{authed: true, method: http.MethodGet, target: backups})
+		if list := decodeJSON[gen.BackupList](t, w.Body.Bytes()); len(list.Items) != 1 || list.Items[0].ExpiredAt == nil {
+			t.Errorf("expired backup = %s", w.Body)
 		}
 
 		// A failed backup has no snapshot or sizes; filters and paging.

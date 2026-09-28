@@ -5,10 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 
 	"github.com/spf13/cobra"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repomaint"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
@@ -53,8 +57,29 @@ func (a *app) backupRepositories(db *store.DB, secretStore secrets.Store, keys *
 		Layout:  a.cfg.Layout(),
 		Backend: a.cfg.Backup.Backend,
 		S3:      s3,
+		Created: repomaint.OnRepositoryCreated(a.maintenanceTiming()),
+		Deleted: repomaint.OnRepositoryDeleted,
 		Logger:  a.log.With("component", "backup-repositories"),
 	})
+}
+
+// backupWindow is the platform's backup window.
+func (a *app) backupWindow() sitebackup.Window {
+	return sitebackup.Window{Start: a.cfg.Backup.Schedule.Start(), Length: a.cfg.Backup.Schedule.Window()}
+}
+
+// maintenanceTiming is when repositories are pruned and checked.
+func (a *app) maintenanceTiming() repomaint.Timing {
+	return repomaint.Timing{Window: a.backupWindow(), CheckInterval: a.cfg.Backup.Check.Interval()}
+}
+
+// backupRetention is the retention policy the backup engine applies.
+func (a *app) backupRetention() backup.Retention {
+	r := a.cfg.Backup.Retention
+	return backup.Retention{
+		KeepLast: r.KeepLast, KeepHourly: r.KeepHourly, KeepDaily: r.KeepDaily,
+		KeepWeekly: r.KeepWeekly, KeepMonthly: r.KeepMonthly, KeepYearly: r.KeepYearly,
+	}
 }
 
 // withRepositories opens the state database and runs fn with the
@@ -90,8 +115,51 @@ repositories").
 Repositories are created on a group's first backup; "create" does it ahead
 of time. Offboarding a client is "export" followed by "delete".`,
 	}
-	cmd.AddCommand(a.repositoryCreateCommand(), a.repositoryExportCommand(), a.repositoryDeleteCommand())
+	cmd.AddCommand(a.repositoryCreateCommand(), a.repositoryExportCommand(), a.repositoryDeleteCommand(),
+		a.repositoryMaintenanceCommand("prune", repomaint.PruneJobType,
+			"Queue a prune of a client group's backup repository now",
+			`Queue a job that applies the retention policy (backup.retention) to a client
+group's backup repository now, instead of at its next scheduled prune: it
+removes the snapshots the policy doesn't keep, and the data only they used.`),
+		a.repositoryMaintenanceCommand("check", repomaint.CheckJobType,
+			"Queue an integrity check of a client group's backup repository now",
+			`Queue a job that checks a client group's backup repository for damage now,
+instead of at its next scheduled check, reading back
+backup.check.read_data_percent of its data.`))
 	return cmd
+}
+
+// repositoryMaintenanceCommand queues a repomaint job. The control plane
+// runs it; it waits for any other prune or check of the repository.
+func (a *app) repositoryMaintenanceCommand(name, jobType, short, long string) *cobra.Command {
+	return &cobra.Command{
+		Use:   name + " <client-group-id>",
+		Short: short,
+		Long:  long + "\n\nThe running control plane runs the job; follow it with GET /api/v1/jobs/<id>.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			db, err := a.openStateDB(ctx)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = db.Close() }()
+			groupID := args[0]
+			ids, err := repository.ClientGroupIDs(ctx, db)
+			if err != nil {
+				return err
+			}
+			if !slices.Contains(ids, groupID) {
+				return fmt.Errorf("client group %s: %w", groupID, repository.ErrNoRepository)
+			}
+			job, err := repomaint.Enqueue(ctx, db, jobType, groupID, "")
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Queued %s job %s for the backup repository of client group %s\n", jobType, job.ID, groupID)
+			return err
+		},
+	}
 }
 
 func (a *app) repositoryCreateCommand() *cobra.Command {

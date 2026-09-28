@@ -44,3 +44,25 @@ func deleteRecord(ctx context.Context, q store.Querier, groupID string) error {
 	}
 	return nil
 }
+
+// ClientGroupIDs returns the IDs of the client groups that have a
+// repository record, in ID order.
+func ClientGroupIDs(ctx context.Context, q store.Querier) ([]string, error) {
+	rows, err := q.QueryContext(ctx, "SELECT client_group_id FROM backup_repositories ORDER BY client_group_id")
+	if err != nil {
+		return nil, fmt.Errorf("listing backup repositories: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	ids := []string{}
+	for rows.Next() {
+		var groupID string
+		if err := rows.Scan(&groupID); err != nil {
+			return nil, fmt.Errorf("listing backup repositories: %w", err)
+		}
+		ids = append(ids, groupID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing backup repositories: %w", err)
+	}
+	return ids, nil
+}

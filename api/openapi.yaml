@@ -2016,7 +2016,7 @@ components:
     Backup:
       type: object
       required: [id, site_id, client_group_id, kind, status, snapshot_id, wp_core_version, size_bytes, added_bytes,
-        file_count, message, job_id, created_at, started_at, finished_at]
+        file_count, message, job_id, created_at, started_at, finished_at, expired_at]
       properties:
         id:
           $ref: "#/components/schemas/ID"
@@ -2080,6 +2080,15 @@ components:
           allOf:
             - $ref: "#/components/schemas/Timestamp"
         finished_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        expired_at:
+          description: |
+            When the backup's snapshot was found to be gone from the
+            repository, normally removed by the retention policy
+            (`backup.retention`); it can no longer be restored. Null while it
+            can.
           oneOf:
             - $ref: "#/components/schemas/Timestamp"
             - type: "null"

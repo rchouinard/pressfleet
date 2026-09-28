@@ -97,6 +97,13 @@ type Options struct {
 	// HTTPClient talks to S3 for export and delete; nil means a default
 	// client.
 	HTTPClient *http.Client
+	// Created, if set, is called in the transaction that records a new
+	// repository, e.g. to schedule its maintenance (package
+	// backup/repomaint). An error rolls the record back.
+	Created func(ctx context.Context, q store.Querier, clientGroupID string) error
+	// Deleted, if set, is called in the transaction that deletes a
+	// repository's record, e.g. to remove its maintenance schedules.
+	Deleted func(ctx context.Context, q store.Querier, clientGroupID string) error
 	// Logger is required.
 	Logger *slog.Logger
 }
@@ -111,6 +118,8 @@ type Manager struct {
 	restic  string
 	gid     int
 	http    *http.Client
+	created func(ctx context.Context, q store.Querier, clientGroupID string) error
+	deleted func(ctx context.Context, q store.Querier, clientGroupID string) error
 	log     *slog.Logger
 	// warnedChgrp says the skipped group ownership was logged.
 	warnedChgrp atomic.Bool
@@ -126,7 +135,7 @@ func New(opts Options) (*Manager, error) {
 	}
 	m := &Manager{
 		db: opts.DB, secrets: opts.Secrets, layout: opts.Layout, backend: opts.Backend, s3: opts.S3,
-		restic: opts.Restic, gid: opts.RepositoryGID, http: opts.HTTPClient, log: opts.Logger,
+		restic: opts.Restic, gid: opts.RepositoryGID, http: opts.HTTPClient, created: opts.Created, deleted: opts.Deleted, log: opts.Logger,
 	}
 	if m.gid == 0 {
 		m.gid = provisioner.RepositoryGID
@@ -233,7 +242,13 @@ func (m *Manager) createRecord(ctx context.Context, groupID string) (Repository,
 		if err := insertRecord(ctx, q, rec); err != nil {
 			return err
 		}
-		return groups.SetBackupRepository(ctx, groupID, location)
+		if err := groups.SetBackupRepository(ctx, groupID, location); err != nil {
+			return err
+		}
+		if m.created != nil {
+			return m.created(ctx, q, groupID)
+		}
+		return nil
 	})
 	if errors.Is(err, store.ErrConflict) {
 		// A concurrent Ensure for this group committed first; our secret
@@ -427,6 +442,11 @@ func (m *Manager) Delete(ctx context.Context, clientGroupID string) error {
 		}
 		if err := m.secrets.With(q).Delete(ctx, rec.SecretRef); err != nil {
 			return err
+		}
+		if m.deleted != nil {
+			if err := m.deleted(ctx, q, clientGroupID); err != nil {
+				return err
+			}
 		}
 		err := store.NewClientGroups(q).SetBackupRepository(ctx, clientGroupID, "")
 		if errors.Is(err, store.ErrNotFound) {

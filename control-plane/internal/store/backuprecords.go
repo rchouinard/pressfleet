@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/id"
@@ -75,6 +77,10 @@ type BackupRecord struct {
 	CreatedAt  time.Time
 	StartedAt  time.Time
 	FinishedAt time.Time
+	// ExpiredAt is when the backup's snapshot was found to be gone from the
+	// repository, normally removed by the retention policy (#54); zero
+	// while it can be restored.
+	ExpiredAt time.Time
 }
 
 // BackupResult is what a successful backup records.
@@ -98,21 +104,24 @@ func NewBackupRecords(q Querier) BackupRecords {
 }
 
 const backupRecordColumns = "id, site_id, client_group_id, kind, status, snapshot_id, wp_core_version, " +
-	"size_bytes, added_bytes, file_count, message, job_id, created_at, started_at, finished_at"
+	"size_bytes, added_bytes, file_count, message, job_id, created_at, started_at, finished_at, expired_at"
 
 func scanBackupRecord(s scanner) (BackupRecord, error) {
 	var (
 		b                  BackupRecord
 		snapshot, job      sql.NullString
 		size, added, files sql.NullInt64
-		finished           sql.NullTime
+		finished, expired  sql.NullTime
 	)
 	err := s.Scan(&b.ID, &b.SiteID, &b.ClientGroupID, &b.Kind, &b.Status, &snapshot, &b.WPCoreVersion,
-		&size, &added, &files, &b.Message, &job, &b.CreatedAt, &b.StartedAt, &finished)
+		&size, &added, &files, &b.Message, &job, &b.CreatedAt, &b.StartedAt, &finished, &expired)
 	b.SnapshotID, b.JobID = snapshot.String, job.String
 	b.SizeBytes, b.AddedBytes, b.FileCount = size.Int64, added.Int64, files.Int64
 	if finished.Valid {
 		b.FinishedAt = finished.Time
+	}
+	if expired.Valid {
+		b.ExpiredAt = expired.Time
 	}
 	return b, err
 }
@@ -135,7 +144,7 @@ func (r BackupRecords) Create(ctx context.Context, b *BackupRecord) error {
 	}
 	created.Status = BackupRunning
 	created.SnapshotID, created.SizeBytes, created.AddedBytes, created.FileCount = "", 0, 0, 0
-	created.Message, created.FinishedAt = "", time.Time{}
+	created.Message, created.FinishedAt, created.ExpiredAt = "", time.Time{}, time.Time{}
 	created.CreatedAt = now()
 	created.StartedAt = created.CreatedAt
 	_, err := r.q.ExecContext(ctx,
@@ -269,6 +278,64 @@ func (r BackupRecords) Fail(ctx context.Context, backupID, message string) (bool
 	return r.exec(ctx, "fail backup "+backupID,
 		"UPDATE backup_records SET status = ?, message = ?, finished_at = ? WHERE id = ? AND status = ?",
 		string(BackupFailed), message, now(), backupID, string(BackupRunning))
+}
+
+// Restorable returns the group's succeeded backups whose snapshots are not
+// known to be gone (not expired) and that finished before t, oldest first.
+// Retention compares them with a listing of the repository started at t: a
+// backup that finished before the listing began has its snapshot in it
+// unless the snapshot was removed.
+func (r BackupRecords) Restorable(ctx context.Context, groupID string, finishedBefore time.Time) ([]BackupRecord, error) {
+	rows, err := r.q.QueryContext(ctx,
+		"SELECT "+backupRecordColumns+" FROM backup_records WHERE client_group_id = ? AND status = ? "+
+			"AND expired_at IS NULL AND finished_at < ? ORDER BY id",
+		groupID, string(BackupSucceeded), finishedBefore)
+	if err != nil {
+		return nil, fmt.Errorf("list restorable backups of client group %s: %w", groupID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []BackupRecord
+	for rows.Next() {
+		b, err := scanBackupRecord(rows)
+		if err != nil {
+			return nil, fmt.Errorf("list restorable backups of client group %s: %w", groupID, err)
+		}
+		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list restorable backups of client group %s: %w", groupID, err)
+	}
+	return out, nil
+}
+
+// expireBatch bounds the IDs in one UPDATE, well below SQLite's limit on
+// bound parameters.
+const expireBatch = 500
+
+// Expire records that the snapshots of the given backups are gone from
+// the repository. Only succeeded backups that aren't expired yet change,
+// so running it again changes nothing; it returns how many changed.
+func (r BackupRecords) Expire(ctx context.Context, backupIDs []string) (int, error) {
+	at := now()
+	total := 0
+	for batch := range slices.Chunk(backupIDs, expireBatch) {
+		args := []any{at, string(BackupSucceeded)}
+		for _, backupID := range batch {
+			args = append(args, backupID)
+		}
+		res, err := r.q.ExecContext(ctx,
+			"UPDATE backup_records SET expired_at = ? WHERE status = ? AND expired_at IS NULL AND id IN (?"+
+				strings.Repeat(", ?", len(batch)-1)+")", args...)
+		if err != nil {
+			return total, fmt.Errorf("expire backups: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return total, fmt.Errorf("expire backups: %w", err)
+		}
+		total += int(n)
+	}
+	return total, nil
 }
 
 // DeleteForClientGroup deletes every record of the group's backups, e.g.

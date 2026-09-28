@@ -288,7 +288,12 @@ type BackupEngine interface {
     Backup(ctx context.Context, siteID string, opts BackupOptions) (Snapshot, error)
     ListSnapshots(ctx context.Context, siteID string) ([]Snapshot, error)
     Restore(ctx context.Context, siteID string, snap SnapshotID, targetSiteID string) error
-    Prune(ctx context.Context, clientGroupID string) error
+    // Prune applies the retention policy (restic forget --prune); Check
+    // verifies the repository (restic check). Both take an exclusive
+    // repository lock.
+    Prune(ctx context.Context, clientGroupID string) (PruneResult, error)
+    Check(ctx context.Context, clientGroupID string) error
+    GroupSnapshots(ctx context.Context, clientGroupID string) ([]Snapshot, error)
 }
 ```
 

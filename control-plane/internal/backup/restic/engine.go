@@ -90,6 +90,12 @@ type Options struct {
 	Layout config.Layout
 	// TaskTimeout bounds one backup task; zero means DefaultTaskTimeout.
 	TaskTimeout time.Duration
+	// Retention is the policy Prune applies; the zero policy keeps every
+	// snapshot.
+	Retention backup.Retention
+	// CheckReadDataPercent is the share of a repository's data, 0 to 100,
+	// that Check reads back.
+	CheckReadDataPercent int
 	// Logger is required.
 	Logger *slog.Logger
 }
@@ -102,6 +108,8 @@ type Engine struct {
 	tasks   provisioner.TaskRunner
 	layout  config.Layout
 	timeout time.Duration
+	keep    backup.Retention
+	readPct int
 	log     *slog.Logger
 }
 
@@ -115,9 +123,18 @@ func New(opts Options) (*Engine, error) {
 	if !filepath.IsAbs(opts.Layout.Root) {
 		return nil, fmt.Errorf("restic: data directory must be an absolute path, got %q", opts.Layout.Root)
 	}
+	if opts.CheckReadDataPercent < 0 || opts.CheckReadDataPercent > 100 {
+		return nil, fmt.Errorf("restic: CheckReadDataPercent must be from 0 to 100, got %d", opts.CheckReadDataPercent)
+	}
+	for _, n := range []int{opts.Retention.KeepLast, opts.Retention.KeepHourly, opts.Retention.KeepDaily,
+		opts.Retention.KeepWeekly, opts.Retention.KeepMonthly, opts.Retention.KeepYearly} {
+		if n < 0 {
+			return nil, fmt.Errorf("restic: invalid retention policy %+v", opts.Retention)
+		}
+	}
 	e := &Engine{
 		db: opts.DB, repos: opts.Repositories, dbs: opts.Databases, tasks: opts.Tasks,
-		layout: opts.Layout, timeout: opts.TaskTimeout, log: opts.Logger,
+		layout: opts.Layout, timeout: opts.TaskTimeout, keep: opts.Retention, readPct: opts.CheckReadDataPercent, log: opts.Logger,
 	}
 	if e.timeout <= 0 {
 		e.timeout = DefaultTaskTimeout
@@ -358,10 +375,4 @@ func parseSnapshots(out []byte) ([]backup.Snapshot, error) {
 		return cmp.Or(a.Time.Compare(b.Time), strings.Compare(string(a.ID), string(b.ID)))
 	})
 	return snaps, nil
-}
-
-// Prune implements backup.Engine. It is not implemented yet.
-func (e *Engine) Prune(_ context.Context, clientGroupID string) error {
-	return fmt.Errorf("prune the repository of client group %s: %w (https://github.com/rchouinard/pressfleet/issues/54)",
-		clientGroupID, errors.ErrUnsupported)
 }

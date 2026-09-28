@@ -2,11 +2,13 @@ package cli_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repomaint"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
 )
@@ -48,6 +50,32 @@ func TestRepositoryCommands(t *testing.T) {
 		t.Errorf("repository not initialized: %v", err)
 	}
 
+	// The new repository's maintenance is scheduled, and can be queued
+	// by hand; the control plane runs the jobs.
+	db, err := store.Open(ctx, store.Config{Driver: store.SQLite, SQLitePath: filepath.Join(dataDir, "state", "pressfleet.db")}, storetest.Logger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	for _, name := range []string{repomaint.PruneScheduleName(groupID), repomaint.CheckScheduleName(groupID)} {
+		if _, err := store.NewSchedules(db).Get(ctx, name); err != nil {
+			t.Errorf("schedule %s: %v", name, err)
+		}
+	}
+	for _, tt := range []struct{ cmd, jobType string }{{"prune", repomaint.PruneJobType}, {"check", repomaint.CheckJobType}} {
+		r := repoCmd(tt.cmd, groupID)
+		if r.code != 0 || !strings.Contains(r.stdout, "Queued "+tt.jobType+" job") {
+			t.Fatalf("%s: exit %d, stdout %s, stderr %s", tt.cmd, r.code, r.stdout, r.stderr)
+		}
+		page, err := store.NewJobs(db).List(ctx, store.JobFilter{Types: []string{tt.jobType}})
+		if err != nil || len(page.Jobs) != 1 || page.Jobs[0].TargetID != groupID || page.Jobs[0].LockKey != "repo:"+groupID {
+			t.Errorf("%s jobs = %+v, %v", tt.jobType, page, err)
+		}
+	}
+	if r := repoCmd("prune", createGroup(t, dataDir, "Globex")); r.code == 0 || !strings.Contains(r.stderr, "no backup repository") {
+		t.Errorf("prune of a group without a repository: exit %d, stderr %s", r.code, r.stderr)
+	}
+
 	dest := filepath.Join(dataDir, "tmp", "acme-export")
 	if r := repoCmd("export", groupID, dest); r.code != 0 || !strings.Contains(r.stdout, filepath.Join(dest, "password.txt")) {
 		t.Fatalf("export: exit %d, stdout %s, stderr %s", r.code, r.stdout, r.stderr)
@@ -68,6 +96,11 @@ func TestRepositoryCommands(t *testing.T) {
 	}
 	if _, err := os.Stat(repoDir); !os.IsNotExist(err) {
 		t.Errorf("repository directory after delete: %v", err)
+	}
+	for _, name := range []string{repomaint.PruneScheduleName(groupID), repomaint.CheckScheduleName(groupID)} {
+		if _, err := store.NewSchedules(db).Get(ctx, name); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("schedule %s after delete: %v", name, err)
+		}
 	}
 	if r := repoCmd("create", "not-an-id"); r.code == 0 {
 		t.Error("create with an invalid ID succeeded")

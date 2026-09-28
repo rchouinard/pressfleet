@@ -43,8 +43,8 @@ func TestFakeBackupAndRestore(t *testing.T) {
 		t.Errorf("Restore of another site's snapshot err = %v, want ErrSnapshotNotFound", err)
 	}
 
-	if err := f.Prune(ctx, "group1"); err != nil {
-		t.Fatal(err)
+	if res, err := f.Prune(ctx, "group1"); err != nil || len(res.Forgotten) != 0 {
+		t.Fatalf("Prune without a policy = %+v, %v", res, err)
 	}
 	calls := f.Calls()
 	if last := calls[len(calls)-1]; last.Op != "Prune" || last.ClientGroupID != "group1" {
@@ -61,10 +61,48 @@ func TestFakeFaultInjection(t *testing.T) {
 		}
 		return nil
 	}
-	if err := f.Prune(context.Background(), "group1"); !errors.Is(err, injected) {
+	if _, err := f.Prune(context.Background(), "group1"); !errors.Is(err, injected) {
 		t.Errorf("Prune err = %v, want injected", err)
 	}
-	if err := f.Prune(context.Background(), "group2"); err != nil {
+	if _, err := f.Prune(context.Background(), "group2"); err != nil {
 		t.Errorf("Prune(group2) err = %v", err)
+	}
+}
+
+func TestFakeRetention(t *testing.T) {
+	ctx := context.Background()
+	f := backuptest.New()
+	f.KeepLast = 1
+	f.SetGroup("a", "g1")
+	f.SetGroup("b", "g1")
+	f.SetGroup("c", "g2")
+	a1, _ := f.Backup(ctx, "a", backup.Options{})
+	a2, _ := f.Backup(ctx, "a", backup.Options{})
+	b1, _ := f.Backup(ctx, "b", backup.Options{})
+	c1, _ := f.Backup(ctx, "c", backup.Options{})
+	c2, _ := f.Backup(ctx, "c", backup.Options{})
+
+	snaps, err := f.GroupSnapshots(ctx, "g1")
+	if err != nil || len(snaps) != 3 {
+		t.Fatalf("GroupSnapshots(g1) = %v, %v", snaps, err)
+	}
+	res, err := f.Prune(ctx, "g1")
+	if err != nil || !slices.Equal(res.Forgotten, []backup.SnapshotID{a1.ID}) {
+		t.Errorf("Prune(g1) = %+v, %v; want %s forgotten", res, err, a1.ID)
+	}
+	var ids []backup.SnapshotID
+	snaps, _ = f.GroupSnapshots(ctx, "g1")
+	for _, s := range snaps {
+		ids = append(ids, s.ID)
+	}
+	slices.Sort(ids)
+	if want := []backup.SnapshotID{a2.ID, b1.ID}; !slices.Equal(ids, want) {
+		t.Errorf("after Prune(g1): %v, want %v", ids, want)
+	}
+	if snaps, _ := f.ListSnapshots(ctx, "c"); len(snaps) != 2 || snaps[0].ID != c1.ID || snaps[1].ID != c2.ID {
+		t.Errorf("another group's snapshots changed: %v", snaps)
+	}
+	if err := f.Check(ctx, "g2"); err != nil {
+		t.Errorf("Check = %v", err)
 	}
 }

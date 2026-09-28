@@ -456,10 +456,30 @@ func Default() Config {
 			AdminUser:         "pressfleet",
 			AdminPasswordFile: "/run/secrets/redis_admin_password",
 		},
-		SMTP:              SMTPConfig{Encryption: SMTPEncryptionSTARTTLS},
-		Backup:            BackupConfig{Backend: BackupBackendLocal, Schedule: DefaultBackupSchedule()},
+		SMTP: SMTPConfig{Encryption: SMTPEncryptionSTARTTLS},
+		Backup: BackupConfig{
+			Backend: BackupBackendLocal, Schedule: DefaultBackupSchedule(),
+			Retention: DefaultBackupRetention(), Check: DefaultBackupCheck(),
+		},
 		WordPressSecurity: DefaultWordPressSecurity(),
 	}
+}
+
+// intEnvVars maps environment variables to the whole-number fields they
+// set.
+var intEnvVars = []struct {
+	name  string
+	field func(*Config) *int
+}{
+	{"PRESSFLEET_BACKUP_SCHEDULE_WINDOW_HOURS", func(c *Config) *int { return &c.Backup.Schedule.WindowHours }},
+	{"PRESSFLEET_BACKUP_RETENTION_KEEP_LAST", func(c *Config) *int { return &c.Backup.Retention.KeepLast }},
+	{"PRESSFLEET_BACKUP_RETENTION_KEEP_HOURLY", func(c *Config) *int { return &c.Backup.Retention.KeepHourly }},
+	{"PRESSFLEET_BACKUP_RETENTION_KEEP_DAILY", func(c *Config) *int { return &c.Backup.Retention.KeepDaily }},
+	{"PRESSFLEET_BACKUP_RETENTION_KEEP_WEEKLY", func(c *Config) *int { return &c.Backup.Retention.KeepWeekly }},
+	{"PRESSFLEET_BACKUP_RETENTION_KEEP_MONTHLY", func(c *Config) *int { return &c.Backup.Retention.KeepMonthly }},
+	{"PRESSFLEET_BACKUP_RETENTION_KEEP_YEARLY", func(c *Config) *int { return &c.Backup.Retention.KeepYearly }},
+	{"PRESSFLEET_BACKUP_CHECK_INTERVAL_DAYS", func(c *Config) *int { return &c.Backup.Check.IntervalDays }},
+	{"PRESSFLEET_BACKUP_CHECK_READ_DATA_PERCENT", func(c *Config) *int { return &c.Backup.Check.ReadDataPercent }},
 }
 
 // envVars maps environment variables to the fields they set.
@@ -573,12 +593,14 @@ func ApplyEnv(cfg *Config, env LookupEnv) error {
 		}
 		cfg.Audit.RetentionDays = n
 	}
-	if val, ok := env("PRESSFLEET_BACKUP_SCHEDULE_WINDOW_HOURS"); ok {
-		n, err := strconv.Atoi(val)
-		if err != nil {
-			return fmt.Errorf("PRESSFLEET_BACKUP_SCHEDULE_WINDOW_HOURS must be a whole number, got %q", val)
+	for _, v := range intEnvVars {
+		if val, ok := env(v.name); ok {
+			n, err := strconv.Atoi(val)
+			if err != nil {
+				return fmt.Errorf("%s must be a whole number, got %q", v.name, val)
+			}
+			*v.field(cfg) = n
 		}
-		cfg.Backup.Schedule.WindowHours = n
 	}
 	if val, ok := env("PRESSFLEET_SMTP_PORT"); ok {
 		n, err := strconv.Atoi(val)
@@ -723,6 +745,12 @@ func (c Config) Validate() error {
 		errs = append(errs, err)
 	}
 	if err := c.Backup.Schedule.Validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.Backup.Retention.Validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.Backup.Check.Validate(); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)

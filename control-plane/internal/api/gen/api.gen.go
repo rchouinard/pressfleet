@@ -503,6 +503,12 @@ type Backup struct {
 	// CreatedAt Examples: 2026-09-26T17:25:00Z
 	CreatedAt Timestamp `json:"created_at"`
 
+	// ExpiredAt When the backup's snapshot was found to be gone from the
+	// repository, normally removed by the retention policy
+	// (`backup.retention`); it can no longer be restored. Null while it
+	// can.
+	ExpiredAt *Timestamp `json:"expired_at"`
+
 	// FileCount The number of files backed up; null until the backup has succeeded.
 	FileCount  *int64     `json:"file_count"`
 	FinishedAt *Timestamp `json:"finished_at"`

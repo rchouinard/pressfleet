@@ -205,5 +205,9 @@ func backupResponse(r store.BackupRecord) gen.Backup {
 		finished := r.FinishedAt
 		out.FinishedAt = &finished
 	}
+	if !r.ExpiredAt.IsZero() {
+		expired := r.ExpiredAt
+		out.ExpiredAt = &expired
+	}
 	return out
 }

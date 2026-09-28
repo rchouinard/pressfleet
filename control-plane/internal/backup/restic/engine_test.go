@@ -68,7 +68,8 @@ type fixture struct {
 	output func(task provisioner.Task) (*provisioner.TaskResult, error)
 }
 
-func newFixture(t *testing.T, db *store.DB) *fixture {
+// newFixture returns a fixture; opts adjust the engine's options.
+func newFixture(t *testing.T, db *store.DB, opts ...func(*restic.Options)) *fixture {
 	t.Helper()
 	f := &fixture{
 		db: db, prov: provisionertest.New(), dbs: sitedbtest.New(),
@@ -89,9 +90,13 @@ func newFixture(t *testing.T, db *store.DB) *fixture {
 	f.prov.RunTaskFunc = func(siteID string, task provisioner.Task) (*provisioner.TaskResult, error) {
 		return f.runTask(t, siteID, task)
 	}
-	f.engine, err = restic.New(restic.Options{
+	o := restic.Options{
 		DB: db, Repositories: f.repos, Databases: f.dbs, Tasks: f.prov, Layout: f.layout, Logger: storetest.Logger(),
-	})
+	}
+	for _, fn := range opts {
+		fn(&o)
+	}
+	f.engine, err = restic.New(o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -718,16 +723,22 @@ func TestRestoreErrors(t *testing.T) {
 	})
 }
 
-func TestPruneIsNotImplemented(t *testing.T) {
-	f := newFixture(t, storetest.Open(t, store.SQLite))
-	ctx := context.Background()
-	if err := f.engine.Prune(ctx, id.New()); !errors.Is(err, errors.ErrUnsupported) || !strings.Contains(err.Error(), "/issues/54") {
-		t.Errorf("Prune = %v", err)
-	}
-}
-
 func TestNewRequiresDependencies(t *testing.T) {
 	if _, err := restic.New(restic.Options{}); err == nil {
 		t.Error("New accepted no dependencies")
+	}
+	db := storetest.Open(t, store.SQLite)
+	for name, edit := range map[string]func(*restic.Options){
+		"negative retention": func(o *restic.Options) { o.Retention.KeepDaily = -1 },
+		"read too much":      func(o *restic.Options) { o.CheckReadDataPercent = 101 },
+	} {
+		o := restic.Options{
+			DB: db, Repositories: &repository.Manager{}, Databases: sitedbtest.New(), Tasks: provisionertest.New(),
+			Layout: config.Layout{Root: t.TempDir()}, Logger: storetest.Logger(),
+		}
+		edit(&o)
+		if _, err := restic.New(o); err == nil {
+			t.Errorf("%s: New accepted %+v", name, o)
+		}
 	}
 }

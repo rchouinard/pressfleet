@@ -75,7 +75,9 @@ func (m *Manager) exec(ctx context.Context, env map[string]string, secretEnv map
 	}
 	msg := strings.TrimSpace(stderr.String())
 	if len(msg) > maxStderr {
-		msg = msg[:maxStderr] + "..."
+		// Both ends: restic says what it was doing first and ends with
+		// its fatal error.
+		msg = msg[:maxStderr/2] + "\n...\n" + msg[len(msg)-maxStderr/2:]
 	}
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {

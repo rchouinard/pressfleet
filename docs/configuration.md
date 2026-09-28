@@ -91,6 +91,14 @@ backup:
   schedule:
     window_start: "02:00"        # UTC; see "Scheduled backups"
     window_hours: 4
+  retention:                     # per site; see "Retention and integrity checks"
+    keep_last: 3
+    keep_daily: 7
+    keep_weekly: 4
+    keep_monthly: 6
+  check:
+    interval_days: 7
+    read_data_percent: 10
 ```
 
 ## Settings
@@ -144,6 +152,14 @@ backup:
 | `backup.s3.secret_access_key` | `PRESSFLEET_BACKUP_S3_SECRET_ACCESS_KEY` | `--backup-s3-secret-access-key-file` (`init` only) | (unset) | Required with `s3`. The secret access key, encrypted with the master key (`pfenc1:...`). `pressfleet init` reads the plaintext from `--backup-s3-secret-access-key-file` and writes only the encrypted value; a plaintext value is rejected. The control plane decrypts it at startup and refuses to start if it can't. |
 | `backup.schedule.window_start` | `PRESSFLEET_BACKUP_SCHEDULE_WINDOW_START` | | `02:00` | UTC time of day (`HH:MM`) when the backup window opens. Sites' scheduled backups start within the window unless a site has chosen an hour of its own. See [Scheduled backups](#scheduled-backups). |
 | `backup.schedule.window_hours` | `PRESSFLEET_BACKUP_SCHEDULE_WINDOW_HOURS` | | `4` | Length of the backup window in hours, from 1 to 24. A longer window spreads backups out more. |
+| `backup.retention.keep_last` | `PRESSFLEET_BACKUP_RETENTION_KEEP_LAST` | | `3` | Each site keeps its newest this many snapshots. From 0 to 10000. See [Retention and integrity checks](#retention-and-integrity-checks). |
+| `backup.retention.keep_hourly` | `PRESSFLEET_BACKUP_RETENTION_KEEP_HOURLY` | | `0` | Each site keeps its newest snapshot of each of the last this many hours that have one. |
+| `backup.retention.keep_daily` | `PRESSFLEET_BACKUP_RETENTION_KEEP_DAILY` | | `7` | Likewise for days. |
+| `backup.retention.keep_weekly` | `PRESSFLEET_BACKUP_RETENTION_KEEP_WEEKLY` | | `4` | Likewise for weeks. |
+| `backup.retention.keep_monthly` | `PRESSFLEET_BACKUP_RETENTION_KEEP_MONTHLY` | | `6` | Likewise for months. |
+| `backup.retention.keep_yearly` | `PRESSFLEET_BACKUP_RETENTION_KEEP_YEARLY` | | `0` | Likewise for years. With every `keep_*` setting `0`, no snapshot is ever removed. |
+| `backup.check.interval_days` | `PRESSFLEET_BACKUP_CHECK_INTERVAL_DAYS` | | `7` | Days between integrity checks of each backup repository, from 1 to 365. |
+| `backup.check.read_data_percent` | `PRESSFLEET_BACKUP_CHECK_READ_DATA_PERCENT` | | `10` | Share of a repository's data, from 0 to 100, that each check downloads and verifies, chosen at random each time. `0` checks only the repository's structure. On S3, each check downloads this share of the repository. |
 | `wordpress_security.block_user_enumeration` | `PRESSFLEET_WORDPRESS_SECURITY_BLOCK_USER_ENUMERATION` | | `true` | Hide which user names exist from visitors. See [WordPress security set](#wordpress-security-set). |
 | `wordpress_security.password_policy.enabled` | `PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_POLICY_ENABLED` | | `true` | Check new WordPress passwords on the server: minimum length and a common-password list. |
 | `wordpress_security.password_policy.min_length` | `PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_POLICY_MIN_LENGTH` | | `12` | Minimum WordPress password length, from 8 to 64 characters. |
@@ -396,6 +412,25 @@ restic -r repository --password-file password.txt restore latest --tag site:<sit
 
 Only the data directory is shared between the control plane container and the host, so export under it and move the result off the host; it holds the password in plaintext. Don't export while the repository is being pruned. `delete` removes the repository's files or objects, then its password; it is refused while the group still has sites.
 
+### Retention and integrity checks
+
+Every repository is pruned daily and checked every `backup.check.interval_days` days, by jobs of type `backup.prune` and `backup.check` whose target is the client group. Both start after the backup window closes (by 02:00 to 04:00 UTC with the default window), at a time derived from the group's ID; checks also fall on a day of their interval derived from it.
+
+A prune applies the retention policy (`backup.retention`) to each site's snapshots separately, with `restic forget`, then removes the data that only the forgotten snapshots used (`restic prune`). A snapshot is kept if any rule keeps it: by default, a site keeps its last 3 snapshots, the newest of each of the last 7 days, 4 weeks, and 6 months. While a site has snapshots from fewer days (weeks, ...) than a rule asks for, its oldest snapshot is kept too, so the policy covers as much time as it can (restic 0.17 and later). Every kind of snapshot counts, including pre-restore ones. The snapshots of deleted sites follow the same policy, so their newest ones stay until the repository is deleted. Backups whose snapshots are gone are then marked with an `expired_at` time in the API; they stay in the list, but can't be restored.
+
+A check runs `restic check`, reading back `backup.check.read_data_percent` of the data. If it finds damage, its job fails and logs the errors; repair the repository with restic (`restic repair index`, `restic repair snapshots`; see restic's troubleshooting guide) from inside the control plane container. Other failures, such as a lost connection to S3, are retried.
+
+Prune and check take restic's exclusive lock on the repository, and never run at the same time as each other. Backups and restores of the group's sites wait for them (for up to 30 minutes, then the backup job retries), and they wait for running backups; they don't overlap. Before either runs, stale locks left by restic processes that died (for example a backup container that was killed) are removed; live locks are not.
+
+To prune or check a repository now, inside the control plane container:
+
+```sh
+docker compose exec control-plane pressfleet repository prune <client-group-id>
+docker compose exec control-plane pressfleet repository check <client-group-id>
+```
+
+Each queues the job and prints its ID; follow it with `GET /api/v1/jobs/{id}`. Changed retention and check settings apply after the control plane restarts.
+
 ## Site backups
 
 `POST /api/v1/sites/{id}/backups` queues a backup of a site; `GET` on the same path lists the site's backups, including running and failed ones. A backup job dumps the site's database from the control plane into a transfer directory under `<data_dir>/tmp/`, then runs `restic backup` in a short-lived container on the site's network (the control plane image, `task_image`), with the site's `wp-content` mounted read-only. The transfer directory is removed afterwards, whether or not the backup worked. WordPress core and `wp-config.php` are never backed up: they are rebuilt from the site's WordPress version and settings.
@@ -407,7 +442,7 @@ Every snapshot holds the same two paths, for every site, so sites deduplicate ag
 | `/site/wp-content/` | The site's `wp-content` |
 | `/transfer/database.sql` | The site's database, as SQL from `mariadb-dump`, without `CREATE DATABASE`/`USE` and with `DEFINER` clauses removed |
 
-Snapshots are tagged `site:<site ID>`, `wp-core:<WordPress version>`, `kind:<manual, scheduled, or pre_restore>`, and `backup:<backup ID>` (the ID the API lists), and their host name is `site-<site ID>`, so `restic forget` retention policies and restic's change detection work per site.
+Snapshots are tagged `site:<site ID>`, `wp-core:<WordPress version>`, `kind:<manual, scheduled, or pre_restore>`, and `backup:<backup ID>` (the ID the API lists), and their host name is `site-<site ID>`, so retention (`restic forget --group-by host`) and restic's change detection work per site.
 
 A backup that can't read some files (for example a file in `wp-content` that the site's own user can't read) still succeeds, without those files; the backup's `message` lists them. Backups of different sites run at the same time, also in one repository; a site is never backed up twice at once, and a backup waits for the site's other jobs (an update, a deletion) to finish.
 

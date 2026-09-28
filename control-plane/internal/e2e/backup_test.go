@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -29,7 +30,12 @@ import (
 //     neither WordPress core nor wp-config.php; its tags and host name
 //     follow the documented layout;
 //   - the transfer directory holding the dump is gone;
-//   - a second backup of the site is listed too, newest first.
+//   - a second backup of the site is listed too, newest first;
+//   - with the default retention policy (the last 3 snapshots, and one a
+//     day, which keeps the oldest too while there are fewer days than
+//     keep_daily), a prune after three more backups removes the second
+//     snapshot and marks its backup expired, a check of the pruned
+//     repository passes, and the site can still be backed up into it (#54).
 func TestSiteBackup(t *testing.T) {
 	projectDir := t.TempDir()
 	var siteProject compose.Project
@@ -221,5 +227,42 @@ func TestSiteBackup(t *testing.T) {
 		if backups[0].AddedBytes != nil && *backups[0].AddedBytes >= *b.AddedBytes {
 			t.Errorf("second backup added %d bytes, the first %d", *backups[0].AddedBytes, *b.AddedBytes)
 		}
+	})
+
+	t.Run("retention and check", func(t *testing.T) {
+		// The control plane process prunes and checks a repository that
+		// the sites' backup tasks, each with its own UID, wrote to.
+		maintain := func(t *testing.T, command string) {
+			t.Helper()
+			out, err := p.Project.Exec(ctx, e2e.Service, "pressfleet", "repository", command, groupID)
+			if err != nil {
+				t.Fatalf("repository %s: %v: %s", command, err, out)
+			}
+			m := regexp.MustCompile(`job (\S+) for`).FindStringSubmatch(string(out))
+			if m == nil {
+				t.Fatalf("repository %s printed no job: %s", command, out)
+			}
+			start := time.Now()
+			waitJob(t, p, m[1])
+			job := finalJob(t, p, m[1])
+			t.Logf("%s job %s finished in %s: %v", command, m[1], time.Since(start).Round(time.Millisecond), job.Result)
+		}
+		for range 3 {
+			backup(t)
+		}
+		maintain(t, "prune")
+		backups := list(t)
+		if len(backups) != 5 {
+			t.Fatalf("backups = %+v", backups)
+		}
+		for i, bk := range backups {
+			// Newest first: the second backup is next to last.
+			if expired := bk.ExpiredAt != nil; expired != (i == 3) {
+				t.Errorf("backup %d (%s) expired at %v", i, bk.ID, bk.ExpiredAt)
+			}
+		}
+		maintain(t, "check")
+		// New files the prune wrote don't keep the next backup task out.
+		backup(t)
 	})
 }

@@ -95,11 +95,27 @@
 // different sites in one repository run at the same time (their jobs have
 // different lock keys, site:<id>). Two backups of the same site must not run
 // at once: they would share a transfer directory; the site's lock key
-// prevents it. Prune and check (#54) take restic's exclusive lock: their
-// jobs should use the lock key repo:<client group ID> (package jobs), which
-// serializes them with each other; backups meet them only at restic's own
-// lock, which backups wait for with --retry-lock (up to LockWait), so a
-// backup that starts during a prune waits for it rather than failing.
+// prevents it. Prune and Check take restic's exclusive lock: their jobs
+// use the lock key repo:<client group ID> (package backup/repomaint), which
+// serializes them with each other; backups and restores meet them only at
+// restic's own lock, which every command here waits for with --retry-lock
+// (up to LockWait), so a backup that starts during a prune waits for it
+// rather than failing, and the other way around. Prune and Check first run
+// `restic unlock`, which removes only stale locks (those of restic
+// processes that died, such as a killed backup task's), so a crash doesn't
+// block them.
+//
+// # Retention and checks
+//
+// Prune applies Options.Retention with `restic forget --group-by host`: a
+// site's snapshots share a host (Host), so each site keeps its own last n
+// snapshots, days, and so on, whatever the snapshots' tags. It then runs
+// `restic prune` even if nothing was forgotten, so a retry finishes what a
+// failed attempt started. Check runs `restic check`, reading back
+// Options.CheckReadDataPercent of the data, and reports damage as
+// backup.ErrRepositoryDamaged. Both run in the control plane process
+// (repository.Manager.Restic), which reaches S3 endpoints on the platform
+// network too.
 //
 // # Listing
 //

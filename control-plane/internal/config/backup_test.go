@@ -72,7 +72,7 @@ func TestBackupSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := config.BackupConfig{Backend: "s3", Schedule: config.DefaultBackupSchedule(), S3: config.BackupS3Config{
+	want := config.BackupConfig{Backend: "s3", Schedule: config.DefaultBackupSchedule(), Retention: config.DefaultBackupRetention(), Check: config.DefaultBackupCheck(), S3: config.BackupS3Config{
 		Endpoint: "https://s3.example.com", Bucket: "backups", Prefix: "pressfleet/prod", Region: "eu-west-1",
 		AccessKeyID: "AKIAEXAMPLE", SecretAccessKey: "pfenc1:abc:ZGVm",
 	}}
@@ -88,7 +88,7 @@ func TestBackupSettings(t *testing.T) {
 		"PRESSFLEET_BACKUP_S3_BUCKET":            "",
 		"PRESSFLEET_BACKUP_S3_SECRET_ACCESS_KEY": "",
 	}))
-	if err != nil || cfg.Backup != (config.BackupConfig{Backend: "local", Schedule: config.DefaultBackupSchedule()}) {
+	if err != nil || cfg.Backup != (config.BackupConfig{Backend: "local", Schedule: config.DefaultBackupSchedule(), Retention: config.DefaultBackupRetention(), Check: config.DefaultBackupCheck()}) {
 		t.Errorf("Backup from env = %+v, %v; want local", cfg.Backup, err)
 	}
 }
@@ -142,5 +142,67 @@ func TestValidateBackup(t *testing.T) {
 				t.Errorf("error %q reveals the secret", err)
 			}
 		})
+	}
+}
+
+func TestBackupRetentionAndCheckSettings(t *testing.T) {
+	def := config.Default().Backup
+	if def.Retention != (config.BackupRetentionConfig{KeepLast: 3, KeepDaily: 7, KeepWeekly: 4, KeepMonthly: 6}) || def.Retention.KeepsEverything() {
+		t.Errorf("default retention = %+v", def.Retention)
+	}
+	if def.Check != (config.BackupCheckConfig{IntervalDays: 7, ReadDataPercent: 10}) || def.Check.Interval() != 7*24*time.Hour {
+		t.Errorf("default check = %+v", def.Check)
+	}
+	path := writeFile(t, "backup:\n  retention:\n    keep_last: 1\n    keep_daily: 0\n  check:\n    interval_days: 1\n")
+	cfg, err := config.Load(path, env(map[string]string{
+		"PRESSFLEET_BACKUP_RETENTION_KEEP_HOURLY":   "24",
+		"PRESSFLEET_BACKUP_RETENTION_KEEP_YEARLY":   "2",
+		"PRESSFLEET_BACKUP_CHECK_READ_DATA_PERCENT": "0",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Keys the file leaves out keep their defaults.
+	if want := (config.BackupRetentionConfig{KeepLast: 1, KeepHourly: 24, KeepWeekly: 4, KeepMonthly: 6, KeepYearly: 2}); cfg.Backup.Retention != want {
+		t.Errorf("Retention = %+v, want %+v", cfg.Backup.Retention, want)
+	}
+	if want := (config.BackupCheckConfig{IntervalDays: 1}); cfg.Backup.Check != want {
+		t.Errorf("Check = %+v, want %+v", cfg.Backup.Check, want)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v", err)
+	}
+	if _, err := config.Load(path, env(map[string]string{"PRESSFLEET_BACKUP_RETENTION_KEEP_LAST": "all"})); err == nil ||
+		!strings.Contains(err.Error(), "PRESSFLEET_BACKUP_RETENTION_KEEP_LAST") {
+		t.Errorf("Load of a keep_last that isn't a number = %v", err)
+	}
+	if !(config.BackupRetentionConfig{}).KeepsEverything() {
+		t.Error("an empty policy doesn't keep everything")
+	}
+
+	for _, tt := range []struct {
+		name string
+		edit func(*config.BackupConfig)
+		want string // empty: valid
+	}{
+		{"keep nothing is keep everything", func(b *config.BackupConfig) { b.Retention = config.BackupRetentionConfig{} }, ""},
+		{"negative", func(b *config.BackupConfig) { b.Retention.KeepWeekly = -1 }, "backup.retention.keep_weekly"},
+		{"too many", func(b *config.BackupConfig) { b.Retention.KeepYearly = 10001 }, "backup.retention.keep_yearly"},
+		{"check every day", func(b *config.BackupConfig) { b.Check.IntervalDays = 1 }, ""},
+		{"no interval", func(b *config.BackupConfig) { b.Check.IntervalDays = 0 }, "backup.check.interval_days"},
+		{"long interval", func(b *config.BackupConfig) { b.Check.IntervalDays = 366 }, "backup.check.interval_days"},
+		{"read all", func(b *config.BackupConfig) { b.Check.ReadDataPercent = 100 }, ""},
+		{"read more than all", func(b *config.BackupConfig) { b.Check.ReadDataPercent = 101 }, "backup.check.read_data_percent"},
+		{"read negative", func(b *config.BackupConfig) { b.Check.ReadDataPercent = -5 }, "backup.check.read_data_percent"},
+	} {
+		cfg := config.Default()
+		tt.edit(&cfg.Backup)
+		err := cfg.Validate()
+		switch {
+		case tt.want == "" && err != nil:
+			t.Errorf("%s: Validate() = %v, want nil", tt.name, err)
+		case tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)):
+			t.Errorf("%s: Validate() = %v, want error mentioning %q", tt.name, err, tt.want)
+		}
 	}
 }
