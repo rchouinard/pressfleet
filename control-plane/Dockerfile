@@ -10,9 +10,15 @@
 ARG GO_IMAGE=golang:1.27.1-trixie@sha256:7bffdb405cd12940d2980daa49a86ef575ed4525a17ee7d0c9562547357ab46a
 # Source of the docker CLI and Compose v2 plugin. Both are static binaries.
 ARG DOCKER_CLI_IMAGE=docker:29.8.1-cli@sha256:6602978e2be3c20e530e33773b8cadcef5fe998a71a534ee24516f1176973cdf
-# Debian rather than distroless: restic and mariadb-dump join this image for
-# backups later, and are easiest to install from Debian packages.
+# Debian rather than distroless: the MariaDB client for backups comes from
+# Debian packages.
 ARG BASE_IMAGE=debian:13.7-slim@sha256:7792b1f7702a86946cd518db72b6a407302c3e9bc1635634368b878189e8221c
+# Backup tools (design doc §5.3). Backup tasks run in this image
+# (provisioner.Task). restic is the upstream static binary, verified against
+# the release's SHA256SUMS; the MariaDB client is the Debian trixie package.
+ARG RESTIC_VERSION=0.19.1
+ARG RESTIC_SHA256=f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c
+ARG MARIADB_CLIENT_VERSION=1:11.8.6-0+deb13u1
 
 FROM ${GO_IMAGE} AS build
 WORKDIR /src
@@ -28,11 +34,30 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 FROM ${DOCKER_CLI_IMAGE} AS docker-cli
 
-FROM ${BASE_IMAGE}
-# ca-certificates: TLS to registries, S3 backup targets, and ACME endpoints.
+# mariadb-dump is in mariadb-client, which pulls in Perl for scripts the
+# control plane never runs; only the binary is copied out of this stage.
+FROM ${BASE_IMAGE} AS backup-tools
+ARG RESTIC_VERSION
+ARG RESTIC_SHA256
+ARG MARIADB_CLIENT_VERSION
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends bzip2 "mariadb-client=${MARIADB_CLIENT_VERSION}" \
     && rm -rf /var/lib/apt/lists/*
+ADD --checksum=sha256:${RESTIC_SHA256} \
+    https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_amd64.bz2 \
+    /tmp/restic.bz2
+RUN bunzip2 -c /tmp/restic.bz2 > /usr/local/bin/restic && chmod 0755 /usr/local/bin/restic
+
+FROM ${BASE_IMAGE}
+ARG MARIADB_CLIENT_VERSION
+# ca-certificates: TLS to registries, S3 backup targets, and ACME endpoints.
+# mariadb-client-core: the `mariadb` client and the libraries mariadb-dump
+# links against, without mariadb-client's Perl dependencies.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates "mariadb-client-core=${MARIADB_CLIENT_VERSION}" \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=backup-tools /usr/bin/mariadb-dump /usr/bin/mariadb-dump
+COPY --from=backup-tools /usr/local/bin/restic /usr/local/bin/restic
 # The Compose driver shells out to `docker compose` (package
 # internal/provisioner/compose), talking to the host daemon through the
 # mounted /var/run/docker.sock.

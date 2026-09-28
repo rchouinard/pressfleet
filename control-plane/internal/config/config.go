@@ -78,6 +78,12 @@ type Config struct {
 	// which names their containers: the provisioner connects the
 	// platform's MariaDB and object cache containers to each site network.
 	PlatformProject string `yaml:"platform_project"`
+	// TaskImage is the image of the short-lived containers that run backup
+	// and restore tasks against site data (provisioner.Task): the control
+	// plane's own image, which ships restic and the MariaDB client. The
+	// platform Compose project sets it to the control plane's image. Empty
+	// means such tasks can't run.
+	TaskImage string `yaml:"task_image"`
 	// SMTP is the relay sites send email through (§5.6).
 	SMTP SMTPConfig `yaml:"smtp"`
 	// WordPressSecurity is the install-wide WordPress security set (§6.1).
@@ -477,6 +483,7 @@ var envVars = []struct {
 	{"PRESSFLEET_REDIS_ADMIN_USER", func(c *Config) *string { return &c.Redis.AdminUser }},
 	{"PRESSFLEET_REDIS_ADMIN_PASSWORD_FILE", func(c *Config) *string { return &c.Redis.AdminPasswordFile }},
 	{"PRESSFLEET_PLATFORM_PROJECT", func(c *Config) *string { return &c.PlatformProject }},
+	{"PRESSFLEET_TASK_IMAGE", func(c *Config) *string { return &c.TaskImage }},
 	{"PRESSFLEET_SMTP_HOST", func(c *Config) *string { return &c.SMTP.Host }},
 	{"PRESSFLEET_SMTP_USERNAME", func(c *Config) *string { return &c.SMTP.Username }},
 	{"PRESSFLEET_SMTP_PASSWORD", func(c *Config) *string { return &c.SMTP.Password }},
@@ -684,6 +691,9 @@ func (c Config) Validate() error {
 	if !composeProjectName.MatchString(c.PlatformProject) {
 		errs = append(errs, fmt.Errorf("platform_project must be a Compose project name (lowercase letters, digits, - and _), got %q", c.PlatformProject))
 	}
+	if c.TaskImage != "" && !imageRef.MatchString(c.TaskImage) {
+		errs = append(errs, fmt.Errorf("task_image must be an image reference like ghcr.io/rchouinard/pressfleet/control-plane:v1.2.3, got %q", c.TaskImage))
+	}
 	if err := c.SMTP.Validate(); err != nil {
 		errs = append(errs, err)
 	}
@@ -692,6 +702,10 @@ func (c Config) Validate() error {
 	}
 	return errors.Join(errs...)
 }
+
+// imageRef loosely matches container image references (name, optional
+// :tag, optional @digest); Docker checks the details when it uses one.
+var imageRef = regexp.MustCompile(`^[a-z0-9][a-z0-9._/:-]*(@sha256:[0-9a-f]{64})?$`)
 
 // composeProjectName matches the project names Docker Compose accepts.
 var composeProjectName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)

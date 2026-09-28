@@ -397,6 +397,41 @@ func TestPlatformProjectSetting(t *testing.T) {
 	}
 }
 
+func TestTaskImageSetting(t *testing.T) {
+	if got := config.Default().TaskImage; got != "" {
+		t.Errorf("default task_image = %q, want unset", got)
+	}
+	path := writeFile(t, "task_image: pressfleet-control-plane:dev\n")
+	cfg, err := config.Load(path, env(nil))
+	if err != nil || cfg.TaskImage != "pressfleet-control-plane:dev" {
+		t.Fatalf("Load = %q, %v", cfg.TaskImage, err)
+	}
+	const fromEnv = "ghcr.io/rchouinard/pressfleet/control-plane:v1.2.3"
+	cfg, err = config.Load(path, env(map[string]string{"PRESSFLEET_TASK_IMAGE": fromEnv}))
+	if err != nil || cfg.TaskImage != fromEnv {
+		t.Fatalf("Load from env = %q, %v", cfg.TaskImage, err)
+	}
+	for _, tc := range []struct {
+		image string
+		ok    bool
+	}{
+		{"", true},
+		{fromEnv, true},
+		{"localhost:5000/pf/control-plane@sha256:" + strings.Repeat("a", 64), true},
+		{"-v", false},
+		{"has space", false},
+		{"Upper:tag", false},
+		{"image\n", false},
+	} {
+		cfg := config.Default()
+		cfg.TaskImage = tc.image
+		err := cfg.Validate()
+		if tc.ok != (err == nil) || (err != nil && !strings.Contains(err.Error(), "task_image")) {
+			t.Errorf("Validate(task_image %q) = %v, want ok = %v", tc.image, err, tc.ok)
+		}
+	}
+}
+
 func TestSMTPSettings(t *testing.T) {
 	if got := config.Default().SMTP; got.Enabled() || got.Encryption != config.SMTPEncryptionSTARTTLS {
 		t.Errorf("default smtp = %+v, want disabled with starttls", got)

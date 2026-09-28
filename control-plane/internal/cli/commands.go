@@ -48,6 +48,7 @@ func (a *app) siteRuntime(cat *catalog.Catalog, secretStore secrets.Store, keys 
 		MariaDBContainer:  platform.MariaDBContainer(a.cfg.PlatformProject),
 		RedisContainer:    platform.RedisContainer(a.cfg.PlatformProject),
 		TraefikContainer:  platform.TraefikContainer(a.cfg.PlatformProject),
+		TaskImage:         a.cfg.TaskImage,
 		PlatformProject:   a.cfg.PlatformProject,
 		TraefikDynamicDir: filepath.Join(a.cfg.Layout().PlatformDir(), platform.TraefikDynamicDir),
 		WordPressSecurity: a.cfg.WordPressSecurity,

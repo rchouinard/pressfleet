@@ -199,12 +199,19 @@ func TestFakeStatsAndTasks(t *testing.T) {
 	f.RunTaskFunc = func(_ string, task provisioner.Task) (*provisioner.TaskResult, error) {
 		return &provisioner.TaskResult{Stdout: task.Command[0]}, nil
 	}
-	task := provisioner.Task{Image: "tools", Command: []string{"restic"}, WPContent: provisioner.MountReadOnly}
+	task := provisioner.Task{
+		Image: "tools", Command: []string{"restic"}, WPContent: provisioner.MountReadOnly,
+		Env:           map[string]string{"RESTIC_REPOSITORY": provisioner.TaskRepositoryPath},
+		RepositoryDir: "/data/backups/repositories/g1",
+	}
 	if res, err := f.RunTask(ctx, "a", task); err != nil || res.Stdout != "restic" {
 		t.Errorf("RunTask = %+v, %v", res, err)
 	}
+	task.Env["RESTIC_REPOSITORY"] = "changed"
 	calls := f.Calls()
-	if last := calls[len(calls)-1]; last.Task == nil || last.Task.WPContent != provisioner.MountReadOnly {
+	if last := calls[len(calls)-1]; last.Task == nil || last.Task.WPContent != provisioner.MountReadOnly ||
+		last.Task.RepositoryDir != "/data/backups/repositories/g1" ||
+		last.Task.Env["RESTIC_REPOSITORY"] != provisioner.TaskRepositoryPath {
 		t.Errorf("RunTask call not recorded with task: %+v", last)
 	}
 	if _, err := f.RunTask(ctx, "missing", task); !errors.Is(err, provisioner.ErrSiteNotFound) {

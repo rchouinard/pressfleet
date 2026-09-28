@@ -26,6 +26,9 @@ services:
       # Names the platform containers the control plane connects to site
       # networks, such as MariaDB.
       PRESSFLEET_PLATFORM_PROJECT: "pressfleet"
+      # Backup and restore tasks run in the control plane's own image, which
+      # ships restic and the MariaDB client (design doc §5.3).
+      PRESSFLEET_TASK_IMAGE: "ghcr.io/rchouinard/pressfleet/control-plane:v1.2.3"
       PRESSFLEET_PREVIEW_BASE_DOMAIN: "preview.agency.example"
       PRESSFLEET_DASHBOARD_DOMAIN: "fleet.agency.example"
       # Where custom domains must point for a site to go live (§5.2).

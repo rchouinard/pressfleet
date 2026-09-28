@@ -133,12 +133,21 @@ func (p *Provisioner) phpUser(ctx context.Context, siteID string) (string, error
 	if !found || !info.State.Running {
 		return "", fmt.Errorf("site %s: %w", siteID, ErrSiteNotRunning)
 	}
-	uid, gid, _ := strings.Cut(info.Config.User, ":")
-	n, err := strconv.Atoi(uid)
-	if err != nil || gid != uid || n < provisioner.MinSiteUID || n > provisioner.MaxSiteUID {
-		return "", fmt.Errorf("site %s: %w: user is %q", siteID, ErrUnexpectedUser, info.Config.User)
+	if _, err := siteUID(info.Config.User); err != nil {
+		return "", fmt.Errorf("site %s: %w", siteID, err)
 	}
 	return info.Config.User, nil
+}
+
+// siteUID checks that a container's user ("uid:gid") is a site UID, with
+// the GID equal to the UID as the site template sets it, and returns the UID.
+func siteUID(user string) (int, error) {
+	uid, gid, _ := strings.Cut(user, ":")
+	n, err := strconv.Atoi(uid)
+	if err != nil || gid != uid || n < provisioner.MinSiteUID || n > provisioner.MaxSiteUID {
+		return 0, fmt.Errorf("%w: user is %q", ErrUnexpectedUser, user)
+	}
+	return n, nil
 }
 
 // exitCoder is implemented by *exec.ExitError, and by test fakes.

@@ -21,11 +21,14 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/wpconfig"
 )
 
-// The Compose provisioner implements the Provisioner part of the driver.
-// LogReader, StatsReader, and TaskRunner come with the issues that need them
-// (#78, #68, the backup pipeline), and the full provisioner.Driver assertion
-// with them; stubbing them now would only hide which parts are missing.
-var _ provisioner.Provisioner = (*Provisioner)(nil)
+// The Compose provisioner implements the Provisioner and TaskRunner parts of
+// the driver. LogReader and StatsReader come with the issues that need them
+// (#78, #68), and the full provisioner.Driver assertion with them; stubbing
+// them now would only hide which parts are missing.
+var (
+	_ provisioner.Provisioner = (*Provisioner)(nil)
+	_ provisioner.TaskRunner  = (*Provisioner)(nil)
+)
 
 // ErrSharedServiceUnavailable means a platform container that sites depend
 // on, such as MariaDB, does not exist, so a site network can't be attached
@@ -86,6 +89,15 @@ type ProvisionerConfig struct {
 	TraefikDynamicDir string
 	// Docker runs the docker CLI; nil means DockerExec. Tests inject a fake.
 	Docker ExecFunc
+	// DockerStream runs the docker CLI for commands whose standard error
+	// matters even when they succeed: RunTask's attached task container.
+	// Nil means DockerStreamExec, or, when Docker is set, an adapter over
+	// Docker that only sees standard error on failure.
+	DockerStream StreamExecFunc
+	// TaskImage is the image RunTask uses for a provisioner.Task without an
+	// Image: the control plane's own image (config.Config.TaskImage). Empty
+	// makes such tasks fail with ErrInvalidTask.
+	TaskImage string
 	// Logger receives lifecycle events; nil discards them.
 	Logger *slog.Logger
 	// WaitTimeout bounds how long starting a site waits for its containers
@@ -127,6 +139,9 @@ type Provisioner struct {
 	wpcliDocker    ExecFunc // docker, but with bounded output
 	wpcliTimeout   time.Duration
 	wpcliMaxOutput int
+
+	taskDocker StreamExecFunc
+	taskImage  string
 }
 
 // sharedService is a platform container that joins every site network under
@@ -160,6 +175,11 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 	if cfg.WPCLIMaxOutput < 0 {
 		errs = append(errs, errors.New("WP-CLI output limit must not be negative"))
 	}
+	if cfg.TaskImage != "" {
+		if err := validImage(cfg.TaskImage); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, fmt.Errorf("compose provisioner: %w", err)
 	}
@@ -185,12 +205,20 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 		wpcliDocker:    cfg.Docker,
 		wpcliTimeout:   cfg.WPCLITimeout,
 		wpcliMaxOutput: cfg.WPCLIMaxOutput,
+		taskDocker:     cfg.DockerStream,
+		taskImage:      cfg.TaskImage,
 	}
 	if p.wpcliTimeout == 0 {
 		p.wpcliTimeout = DefaultWPCLITimeout
 	}
 	if p.wpcliMaxOutput == 0 {
 		p.wpcliMaxOutput = DefaultWPCLIMaxOutput
+	}
+	if p.taskDocker == nil {
+		p.taskDocker = DockerStreamExec
+		if p.docker != nil {
+			p.taskDocker = streamAdapter(p.docker)
+		}
 	}
 	if p.docker == nil {
 		p.docker = DockerExec
@@ -635,9 +663,16 @@ type containerInfo struct {
 		User string `json:"User"`
 	} `json:"Config"`
 	State struct {
+		Status    string    `json:"Status"` // e.g. "created", "running", "exited"
 		Running   bool      `json:"Running"`
+		ExitCode  int       `json:"ExitCode"`
 		StartedAt time.Time `json:"StartedAt"`
 	} `json:"State"`
+	Mounts []struct {
+		Type        string `json:"Type"` // "volume", "bind", ...
+		Name        string `json:"Name"` // volume name
+		Destination string `json:"Destination"`
+	} `json:"Mounts"`
 	NetworkSettings struct {
 		Networks map[string]json.RawMessage `json:"Networks"`
 	} `json:"NetworkSettings"`

@@ -26,6 +26,9 @@ services:
       # Names the platform containers the control plane connects to site
       # networks, such as MariaDB.
       PRESSFLEET_PLATFORM_PROJECT: {{ q .ProjectName }}
+      # Backup and restore tasks run in the control plane's own image, which
+      # ships restic and the MariaDB client (design doc §5.3).
+      PRESSFLEET_TASK_IMAGE: {{ q .Images.ControlPlane }}
 {{- if .PreviewBaseDomain }}
       PRESSFLEET_PREVIEW_BASE_DOMAIN: {{ q .PreviewBaseDomain }}
 {{- end }}

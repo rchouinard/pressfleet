@@ -5,6 +5,7 @@ package provisionertest
 import (
 	"context"
 	"iter"
+	"maps"
 	"slices"
 	"sync"
 
@@ -327,7 +328,12 @@ func (f *Fake) RunTask(_ context.Context, siteID string, task provisioner.Task) 
 		f.mu.Unlock()
 		return nil, err
 	}
+	// A copy, so the caller changing its maps or slices afterwards doesn't
+	// change the record. TransferDir and RepositoryDir are recorded as given.
 	t := task
+	t.Command = slices.Clone(task.Command)
+	t.Env = maps.Clone(task.Env)
+	t.SecretEnv = maps.Clone(task.SecretEnv)
 	f.calls[len(f.calls)-1].Task = &t
 	if _, err := f.lookup(siteID); err != nil {
 		f.mu.Unlock()

@@ -106,6 +106,7 @@ const (
 // Inside the task:
 //   - wp-content is at TaskWPContentPath (if WPContent is not MountNone)
 //   - TransferDir is at TaskTransferPath (if set)
+//   - RepositoryDir is at TaskRepositoryPath (if set)
 //   - the platform services the site can reach (MariaDB, Redis) are reachable
 //     the same way the site reaches them
 type Task struct {
@@ -127,14 +128,20 @@ type Task struct {
 	// task. The Compose driver relies on the data directory being mounted at
 	// the same path on the host and in the control plane container.
 	TransferDir string
+	// RepositoryDir, if set, is a directory under the control plane's data
+	// directory holding a local Restic repository, bind-mounted read-write at
+	// TaskRepositoryPath. Like TransferDir, it relies on the data directory
+	// being at the same path on the host and in the control plane container.
+	RepositoryDir string
 	// Timeout bounds the task's run time; zero means no limit beyond ctx.
 	Timeout time.Duration
 }
 
 // Paths inside a task container.
 const (
-	TaskWPContentPath = "/site/wp-content"
-	TaskTransferPath  = "/transfer"
+	TaskWPContentPath  = "/site/wp-content"
+	TaskTransferPath   = "/transfer"
+	TaskRepositoryPath = "/repository"
 )
 
 // TaskResult is the outcome of a task that ran to completion.
