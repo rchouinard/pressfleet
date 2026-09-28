@@ -3,7 +3,9 @@ package api_test
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -156,6 +158,94 @@ func TestSiteBackupsEndpoints(t *testing.T) {
 			return ev.Action == "backup.create" && ev.Result == store.AuditDenied
 		}) {
 			t.Error("the viewer's denied backup isn't in the audit log")
+		}
+	})
+}
+
+func TestSiteBackupScheduleEndpoints(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		e := newSiteEnv(t, db, testPreviewBase)
+		h := newHandler(t, api.Options{DB: db, Authenticator: &fakeAuth{}, Sites: e.svc, Backups: e.backups})
+		group := &store.ClientGroup{Name: "Acme"}
+		if err := store.NewClientGroups(db).Create(ctx, group); err != nil {
+			t.Fatal(err)
+		}
+		site, _, err := e.svc.Create(ctx, sites.NewSite{ClientGroupID: group.ID, Name: "Acme", AdminEmail: "o@example.com", PHPVersion: "8.4"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		target := "/api/v1/sites/" + site.ID + "/backup-schedule"
+
+		// New sites are backed up daily in the default window.
+		w := do(t, h, request{authed: true, method: http.MethodGet, target: target})
+		got := decodeJSON[gen.BackupSchedule](t, w.Body.Bytes())
+		if w.Code != http.StatusOK || !got.Enabled || got.IntervalHours != 24 || got.Hour != nil || got.NextRunAt == nil {
+			t.Fatalf("default schedule: %d %s", w.Code, w.Body)
+		}
+		if h := got.NextRunAt.UTC().Hour(); h < 2 || h >= 6 {
+			t.Errorf("next run at %s, want in the 02:00-06:00 UTC window", got.NextRunAt)
+		}
+
+		put := func(body string) *httptest.ResponseRecorder {
+			return do(t, h, request{authed: true, method: http.MethodPut, target: target, body: body, contentType: "application/json"})
+		}
+		w = put(`{"enabled": true, "interval_hours": 12, "hour": 3}`)
+		got = decodeJSON[gen.BackupSchedule](t, w.Body.Bytes())
+		if w.Code != http.StatusOK || got.IntervalHours != 12 || got.Hour == nil || *got.Hour != 3 || got.NextRunAt == nil ||
+			got.NextRunAt.UTC().Hour()%12 != 3 {
+			t.Errorf("12-hourly at 3: %d %s", w.Code, w.Body)
+		}
+		w = put(`{"enabled": false}`)
+		got = decodeJSON[gen.BackupSchedule](t, w.Body.Bytes())
+		if w.Code != http.StatusOK || got.Enabled || got.IntervalHours != 24 || got.Hour != nil || got.NextRunAt != nil {
+			t.Errorf("disabled: %d %s", w.Code, w.Body)
+		}
+		if w := do(t, h, request{authed: true, method: http.MethodGet, target: target}); !strings.Contains(w.Body.String(), `"next_run_at":null`) {
+			t.Errorf("disabled schedule: %s", w.Body)
+		}
+
+		for _, body := range []string{
+			`{"enabled": true, "interval_hours": 5}`,
+			`{"enabled": true, "interval_hours": 200}`,
+			`{"enabled": true, "hour": 24}`,
+			`{"interval_hours": 24}`,
+			`{"enabled": true, "minute": 5}`,
+		} {
+			if w := put(body); w.Code != http.StatusUnprocessableEntity && w.Code != http.StatusBadRequest {
+				t.Errorf("PUT %s: %d %s", body, w.Code, w.Body)
+			}
+		}
+		if w := put(`{"enabled": true, "interval_hours": 5}`); w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "/interval_hours") {
+			t.Errorf("bad interval: %d %s", w.Code, w.Body)
+		}
+
+		missing := "/api/v1/sites/" + id.New() + "/backup-schedule"
+		if w := do(t, h, request{authed: true, method: http.MethodGet, target: missing}); w.Code != http.StatusNotFound {
+			t.Errorf("GET of a missing site: %d %s", w.Code, w.Body)
+		}
+		if w := do(t, h, request{authed: true, method: http.MethodPut, target: missing, body: `{"enabled": true}`, contentType: "application/json"}); w.Code != http.StatusNotFound {
+			t.Errorf("PUT of a missing site: %d %s", w.Code, w.Body)
+		}
+
+		// Changes are audited as site updates; viewers may only look.
+		events, err := store.NewAuditEvents(db).List(ctx, store.AuditFilter{TargetType: "site", TargetID: site.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.ContainsFunc(events.Events, func(ev store.AuditEvent) bool {
+			return ev.Action == "site.update" && ev.Result == store.AuditSuccess
+		}) {
+			t.Error("the schedule change isn't in the audit log")
+		}
+		viewer := newHandler(t, api.Options{DB: db, Authenticator: &fakeAuth{principal: &auth.Principal{
+			UserID: "01j9zq3v6t8k4m2n5p7r9s1x3y", Role: store.RoleViewer, Method: auth.MethodSession, SessionID: "v",
+		}}, Sites: e.svc, Backups: e.backups})
+		if w := do(t, viewer, request{authed: true, method: http.MethodGet, target: target}); w.Code != http.StatusOK {
+			t.Errorf("viewer GET: %d %s", w.Code, w.Body)
+		}
+		if w := do(t, viewer, request{authed: true, method: http.MethodPut, target: target, body: `{"enabled": true}`, contentType: "application/json"}); w.Code != http.StatusForbidden {
+			t.Errorf("viewer PUT: %d %s", w.Code, w.Body)
 		}
 	})
 }

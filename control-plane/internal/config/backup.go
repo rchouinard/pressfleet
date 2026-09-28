@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Values of backup.backend.
@@ -31,6 +32,52 @@ type BackupConfig struct {
 	Backend string `yaml:"backend"`
 	// S3 is the bucket used by BackupBackendS3.
 	S3 BackupS3Config `yaml:"s3"`
+	// Schedule is when sites are backed up unless they choose otherwise.
+	Schedule BackupScheduleConfig `yaml:"schedule"`
+}
+
+// BackupScheduleConfig is the window that scheduled backups start in (#53).
+// Each site's daily backup starts at a time within the window derived from
+// the site's ID, so backups are spread out instead of all starting at once,
+// and a site is backed up at the same time every day. A site can choose
+// another interval or hour (store.SiteBackupSchedule).
+type BackupScheduleConfig struct {
+	// WindowStart is the UTC time of day the window opens, "HH:MM".
+	WindowStart string `yaml:"window_start"`
+	// WindowHours is the window's length in hours, 1 to 24.
+	WindowHours int `yaml:"window_hours"`
+}
+
+// DefaultBackupSchedule is the default backup window: 02:00 to 06:00 UTC.
+func DefaultBackupSchedule() BackupScheduleConfig {
+	return BackupScheduleConfig{WindowStart: "02:00", WindowHours: 4}
+}
+
+// Start returns WindowStart as the time since midnight UTC. It is only
+// meaningful once Validate has accepted the config.
+func (s BackupScheduleConfig) Start() time.Duration {
+	t, err := time.Parse("15:04", s.WindowStart)
+	if err != nil {
+		return 0
+	}
+	return time.Duration(t.Hour())*time.Hour + time.Duration(t.Minute())*time.Minute
+}
+
+// Window returns WindowHours as a duration.
+func (s BackupScheduleConfig) Window() time.Duration {
+	return time.Duration(s.WindowHours) * time.Hour
+}
+
+// Validate reports every problem with the backup window, or nil.
+func (s BackupScheduleConfig) Validate() error {
+	var errs []error
+	if _, err := time.Parse("15:04", s.WindowStart); err != nil || len(s.WindowStart) != len("15:04") {
+		errs = append(errs, fmt.Errorf("backup.schedule.window_start must be a UTC time of day like 02:00, got %q", s.WindowStart))
+	}
+	if s.WindowHours < 1 || s.WindowHours > 24 {
+		errs = append(errs, fmt.Errorf("backup.schedule.window_hours must be from 1 to 24, got %d", s.WindowHours))
+	}
+	return errors.Join(errs...)
 }
 
 // BackupS3Config is an S3-compatible bucket holding one repository per
@@ -69,7 +116,9 @@ var (
 	s3Region = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 )
 
-// Validate reports every problem with the backup settings, or nil.
+// Validate reports every problem with where repositories live (Backend
+// and S3), or nil. The platform Compose project, which passes them to the
+// control plane, checks them too. Config.Validate also checks Schedule.
 func (b BackupConfig) Validate() error {
 	var errs []error
 	switch b.Backend {

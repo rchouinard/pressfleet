@@ -81,8 +81,58 @@ func (h *Handlers) CreateSiteBackup(ctx context.Context, req gen.CreateSiteBacku
 	}, nil
 }
 
+// GetSiteBackupSchedule returns the site's backup schedule (#53).
+func (h *Handlers) GetSiteBackupSchedule(ctx context.Context, req gen.GetSiteBackupScheduleRequestObject) (gen.GetSiteBackupScheduleResponseObject, error) {
+	if _, err := h.authorize(ctx, authz.ViewBackups, authz.Site(req.SiteID)); err != nil {
+		return nil, err
+	}
+	if h.backups == nil {
+		return nil, errNoBackups
+	}
+	s, err := h.backups.Schedule(ctx, req.SiteID)
+	if err != nil {
+		return nil, backupError(err)
+	}
+	return gen.GetSiteBackupSchedule200JSONResponse(backupScheduleResponse(s)), nil
+}
+
+// SetSiteBackupSchedule replaces the site's backup schedule. It is a site
+// setting, so it is authorized (and audited) as a site update.
+func (h *Handlers) SetSiteBackupSchedule(ctx context.Context, req gen.SetSiteBackupScheduleRequestObject) (gen.SetSiteBackupScheduleResponseObject, error) {
+	if _, err := h.authorize(ctx, authz.UpdateSite, authz.Site(req.SiteID)); err != nil {
+		return nil, err
+	}
+	if h.backups == nil {
+		return nil, errNoBackups
+	}
+	b := deref(req.Body)
+	in := store.DefaultSiteBackupSchedule()
+	in.Enabled, in.Hour = b.Enabled, b.Hour
+	if b.IntervalHours != nil {
+		in.IntervalHours = *b.IntervalHours
+	}
+	s, err := h.backups.SetSchedule(ctx, req.SiteID, in)
+	if err != nil {
+		return nil, backupError(err)
+	}
+	return gen.SetSiteBackupSchedule200JSONResponse(backupScheduleResponse(s)), nil
+}
+
+func backupScheduleResponse(s sitebackup.ScheduleState) gen.BackupSchedule {
+	out := gen.BackupSchedule{Enabled: s.Enabled, IntervalHours: s.IntervalHours, Hour: s.Hour}
+	if !s.NextRunAt.IsZero() {
+		next := s.NextRunAt
+		out.NextRunAt = &next
+	}
+	return out
+}
+
 // backupError maps backup errors to API errors.
 func backupError(err error) error {
+	var se *sitebackup.ScheduleError
+	if errors.As(err, &se) {
+		return &ValidationError{Fields: []httpserver.FieldError{{Field: se.Field, Detail: se.Detail}}}
+	}
 	switch {
 	case errors.Is(err, sitebackup.ErrSiteNotFound):
 		return fmt.Errorf("%w: %w", ErrNotFound, sitebackup.ErrSiteNotFound)

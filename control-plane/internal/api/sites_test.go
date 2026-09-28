@@ -48,6 +48,8 @@ var implementedSiteOps = map[string]bool{
 	"retrieveSiteAdminCredentials":  true,
 	"listSiteBackups":               true,
 	"createSiteBackup":              true,
+	"getSiteBackupSchedule":         true,
+	"setSiteBackupSchedule":         true,
 }
 
 func orEmpty(s *string) string {

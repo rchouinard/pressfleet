@@ -287,7 +287,7 @@ func TestBackupOfDeletedSite(t *testing.T) {
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
 		e := newEnv(t, db)
 		site := e.site(t, "acme", store.SiteRunning)
-		job, err := sitebackup.Enqueue(ctx, db, site.ID, store.BackupScheduled, "")
+		job, err := sitebackup.Enqueue(ctx, db, site.ID, store.BackupManual, "")
 		if err != nil {
 			t.Fatal(err)
 		}

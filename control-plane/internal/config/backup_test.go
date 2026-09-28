@@ -3,9 +3,61 @@ package config_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 )
+
+func TestBackupScheduleSettings(t *testing.T) {
+	def := config.Default().Backup.Schedule
+	if def.Start() != 2*time.Hour || def.Window() != 4*time.Hour {
+		t.Errorf("default window = %s + %s, want 02:00 for 4h", def.Start(), def.Window())
+	}
+	path := writeFile(t, "backup:\n  schedule:\n    window_start: \"23:30\"\n")
+	cfg, err := config.Load(path, env(map[string]string{"PRESSFLEET_BACKUP_SCHEDULE_WINDOW_HOURS": "2"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := cfg.Backup.Schedule
+	if s != (config.BackupScheduleConfig{WindowStart: "23:30", WindowHours: 2}) || s.Start() != 23*time.Hour+30*time.Minute {
+		t.Errorf("Schedule = %+v (start %s)", s, s.Start())
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v", err)
+	}
+	cfg, err = config.Load(path, env(map[string]string{"PRESSFLEET_BACKUP_SCHEDULE_WINDOW_START": "04:15"}))
+	if err != nil || cfg.Backup.Schedule.WindowStart != "04:15" {
+		t.Errorf("window start from env = %+v, %v", cfg.Backup.Schedule, err)
+	}
+	if _, err := config.Load(path, env(map[string]string{"PRESSFLEET_BACKUP_SCHEDULE_WINDOW_HOURS": "four"})); err == nil {
+		t.Error("Load accepted a window that isn't a number")
+	}
+
+	for _, tt := range []struct {
+		start string
+		hours int
+		want  string // empty: valid
+	}{
+		{"00:00", 24, ""},
+		{"23:59", 1, ""},
+		{"2:00", 4, "window_start"},
+		{"24:00", 4, "window_start"},
+		{"02:00 UTC", 4, "window_start"},
+		{"", 4, "window_start"},
+		{"02:00", 0, "window_hours"},
+		{"02:00", 25, "window_hours"},
+	} {
+		cfg := config.Default()
+		cfg.Backup.Schedule = config.BackupScheduleConfig{WindowStart: tt.start, WindowHours: tt.hours}
+		err := cfg.Validate()
+		switch {
+		case tt.want == "" && err != nil:
+			t.Errorf("%q, %d: Validate() = %v, want nil", tt.start, tt.hours, err)
+		case tt.want != "" && (err == nil || !strings.Contains(err.Error(), "backup.schedule."+tt.want)):
+			t.Errorf("%q, %d: Validate() = %v, want error mentioning %q", tt.start, tt.hours, err, tt.want)
+		}
+	}
+}
 
 func TestBackupSettings(t *testing.T) {
 	if got := config.Default().Backup; got.Backend != config.BackupBackendLocal {
@@ -20,7 +72,7 @@ func TestBackupSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := config.BackupConfig{Backend: "s3", S3: config.BackupS3Config{
+	want := config.BackupConfig{Backend: "s3", Schedule: config.DefaultBackupSchedule(), S3: config.BackupS3Config{
 		Endpoint: "https://s3.example.com", Bucket: "backups", Prefix: "pressfleet/prod", Region: "eu-west-1",
 		AccessKeyID: "AKIAEXAMPLE", SecretAccessKey: "pfenc1:abc:ZGVm",
 	}}
@@ -36,7 +88,7 @@ func TestBackupSettings(t *testing.T) {
 		"PRESSFLEET_BACKUP_S3_BUCKET":            "",
 		"PRESSFLEET_BACKUP_S3_SECRET_ACCESS_KEY": "",
 	}))
-	if err != nil || cfg.Backup != (config.BackupConfig{Backend: "local"}) {
+	if err != nil || cfg.Backup != (config.BackupConfig{Backend: "local", Schedule: config.DefaultBackupSchedule()}) {
 		t.Errorf("Backup from env = %+v, %v; want local", cfg.Backup, err)
 	}
 }

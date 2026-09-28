@@ -7,7 +7,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/id"
 	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache/objectcachetest"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
@@ -130,6 +132,9 @@ func TestProvisioning(t *testing.T) {
 		}
 		if _, err := store.NewSchedules(db).Get(ctx, sitecron.ScheduleName(site.ID)); err != nil {
 			t.Errorf("cron schedule: %v", err)
+		}
+		if sch, err := store.NewSchedules(db).Get(ctx, sitebackup.ScheduleName(site.ID)); err != nil || sch.Interval != 24*time.Hour {
+			t.Errorf("backup schedule: %+v, %v", sch, err)
 		}
 		if _, err := e.svc.TakeAdminCredentials(ctx, site.ID); !errors.Is(err, sites.ErrNotReady) {
 			t.Errorf("credentials before provisioning: err = %v, want ErrNotReady", err)
@@ -280,6 +285,9 @@ func TestFailedProvisioningLeavesNothingBehind(t *testing.T) {
 		}
 		if _, err := store.NewSchedules(db).Get(ctx, sitecron.ScheduleName(site.ID)); !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("cron schedule: err = %v, want ErrNotFound", err)
+		}
+		if _, err := store.NewSchedules(db).Get(ctx, sitebackup.ScheduleName(site.ID)); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("backup schedule: err = %v, want ErrNotFound", err)
 		}
 		// The site stays, failed, with the reason.
 		got := e.site(t, site.ID)

@@ -457,7 +457,7 @@ func Default() Config {
 			AdminPasswordFile: "/run/secrets/redis_admin_password",
 		},
 		SMTP:              SMTPConfig{Encryption: SMTPEncryptionSTARTTLS},
-		Backup:            BackupConfig{Backend: BackupBackendLocal},
+		Backup:            BackupConfig{Backend: BackupBackendLocal, Schedule: DefaultBackupSchedule()},
 		WordPressSecurity: DefaultWordPressSecurity(),
 	}
 }
@@ -506,6 +506,7 @@ var envVars = []struct {
 	{"PRESSFLEET_BACKUP_S3_REGION", func(c *Config) *string { return &c.Backup.S3.Region }},
 	{"PRESSFLEET_BACKUP_S3_ACCESS_KEY_ID", func(c *Config) *string { return &c.Backup.S3.AccessKeyID }},
 	{"PRESSFLEET_BACKUP_S3_SECRET_ACCESS_KEY", func(c *Config) *string { return &c.Backup.S3.SecretAccessKey }},
+	{"PRESSFLEET_BACKUP_SCHEDULE_WINDOW_START", func(c *Config) *string { return &c.Backup.Schedule.WindowStart }},
 }
 
 // envTrustedProxies sets http.trusted_proxies as a comma-separated list.
@@ -571,6 +572,13 @@ func ApplyEnv(cfg *Config, env LookupEnv) error {
 			return fmt.Errorf("PRESSFLEET_AUDIT_RETENTION_DAYS must be a whole number, got %q", val)
 		}
 		cfg.Audit.RetentionDays = n
+	}
+	if val, ok := env("PRESSFLEET_BACKUP_SCHEDULE_WINDOW_HOURS"); ok {
+		n, err := strconv.Atoi(val)
+		if err != nil {
+			return fmt.Errorf("PRESSFLEET_BACKUP_SCHEDULE_WINDOW_HOURS must be a whole number, got %q", val)
+		}
+		cfg.Backup.Schedule.WindowHours = n
 	}
 	if val, ok := env("PRESSFLEET_SMTP_PORT"); ok {
 		n, err := strconv.Atoi(val)
@@ -712,6 +720,9 @@ func (c Config) Validate() error {
 		errs = append(errs, err)
 	}
 	if err := c.Backup.Validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.Backup.Schedule.Validate(); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)

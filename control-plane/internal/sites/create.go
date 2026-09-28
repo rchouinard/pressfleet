@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
@@ -77,7 +78,7 @@ func (s *Service) prepareCreate(ctx context.Context, r *jobs.Run) error {
 
 // failProvisioning is the last Undo of a failed site.create job: the steps
 // after it have removed the stack, the object cache user, and the database. It deletes the secrets
-// and the cron schedule created with the site and marks the site failed,
+// and the cron and backup schedules created with the site and marks the site failed,
 // unless another request has changed its status meanwhile (a deletion).
 func (s *Service) failProvisioning(ctx context.Context, r *jobs.Run) error {
 	siteID := r.Job().TargetID
@@ -95,6 +96,9 @@ func (s *Service) failProvisioning(ctx context.Context, r *jobs.Run) error {
 			return err
 		}
 		if err := sitecron.RemoveSchedule(ctx, q, siteID); err != nil {
+			return err
+		}
+		if err := sitebackup.RemoveSchedule(ctx, q, siteID); err != nil {
 			return err
 		}
 		_, err = sites.SetStatus(ctx, siteID, store.SiteFailed, msg, store.SiteProvisioning)

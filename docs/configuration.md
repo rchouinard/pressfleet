@@ -88,6 +88,9 @@ backup:
   #   region: eu-west-1          # optional; default us-east-1
   #   access_key_id: AKIA...
   #   secret_access_key: pfenc1:...   # encrypted with the master key by pressfleet init
+  schedule:
+    window_start: "02:00"        # UTC; see "Scheduled backups"
+    window_hours: 4
 ```
 
 ## Settings
@@ -139,6 +142,8 @@ backup:
 | `backup.s3.region` | `PRESSFLEET_BACKUP_S3_REGION` | `--backup-s3-region` (`init` only) | `us-east-1` | The bucket's region. Set it for Amazon S3 buckets outside `us-east-1`. |
 | `backup.s3.access_key_id` | `PRESSFLEET_BACKUP_S3_ACCESS_KEY_ID` | `--backup-s3-access-key-id` (`init` only) | (unset) | Required with `s3`. The access key ID. |
 | `backup.s3.secret_access_key` | `PRESSFLEET_BACKUP_S3_SECRET_ACCESS_KEY` | `--backup-s3-secret-access-key-file` (`init` only) | (unset) | Required with `s3`. The secret access key, encrypted with the master key (`pfenc1:...`). `pressfleet init` reads the plaintext from `--backup-s3-secret-access-key-file` and writes only the encrypted value; a plaintext value is rejected. The control plane decrypts it at startup and refuses to start if it can't. |
+| `backup.schedule.window_start` | `PRESSFLEET_BACKUP_SCHEDULE_WINDOW_START` | | `02:00` | UTC time of day (`HH:MM`) when the backup window opens. Sites' scheduled backups start within the window unless a site has chosen an hour of its own. See [Scheduled backups](#scheduled-backups). |
+| `backup.schedule.window_hours` | `PRESSFLEET_BACKUP_SCHEDULE_WINDOW_HOURS` | | `4` | Length of the backup window in hours, from 1 to 24. A longer window spreads backups out more. |
 | `wordpress_security.block_user_enumeration` | `PRESSFLEET_WORDPRESS_SECURITY_BLOCK_USER_ENUMERATION` | | `true` | Hide which user names exist from visitors. See [WordPress security set](#wordpress-security-set). |
 | `wordpress_security.password_policy.enabled` | `PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_POLICY_ENABLED` | | `true` | Check new WordPress passwords on the server: minimum length and a common-password list. |
 | `wordpress_security.password_policy.min_length` | `PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_POLICY_MIN_LENGTH` | | `12` | Minimum WordPress password length, from 8 to 64 characters. |
@@ -407,6 +412,22 @@ Snapshots are tagged `site:<site ID>`, `wp-core:<WordPress version>`, `kind:<man
 A backup that can't read some files (for example a file in `wp-content` that the site's own user can't read) still succeeds, without those files; the backup's `message` lists them. Backups of different sites run at the same time, also in one repository; a site is never backed up twice at once, and a backup waits for the site's other jobs (an update, a deletion) to finish.
 
 With the `s3` backend, the backup container reaches S3 from the site's network, which has the same outbound access as the site itself (the site network is an ordinary Docker bridge network). Amazon S3 and other services on the Internet work; an endpoint must be reachable from site containers, so it can't be a container name on the platform's network (`http://minio:9000` next to the platform won't work; use an address the host routes to, such as `http://minio.internal:9000` on another host). The control plane image the container runs has the usual CA certificates.
+
+### Scheduled backups
+
+Every site is backed up once a day, from the moment it is created. Its backup starts at a time within the backup window (`backup.schedule`, 02:00 to 06:00 UTC by default) that is derived from the site's ID: the same every day, and different between sites, so backups are spread over the window instead of all starting at once. A scheduled backup is listed like a manual one, with kind `scheduled`, and waits for any other job working on the site.
+
+Each site can change its schedule with `PUT /api/v1/sites/{id}/backup-schedule` (`GET` shows it and when the next backup is due):
+
+```json
+{"enabled": true, "interval_hours": 12, "hour": 3}
+```
+
+- `interval_hours` is the time between backups: 1, 2, 3, 4, 6, 8, or 12, or whole days up to a week (24, 48, ..., 168). The default is 24.
+- `hour` is the UTC hour the site's backups start in, instead of the window; with an interval shorter than a day, one of the day's backups starts in that hour. Omitted or `null` means the window.
+- `"enabled": false` stops scheduled backups; the site's existing backups stay and manual backups still work. Omitted fields take their defaults, so `{"enabled": true}` restores the daily backup in the window.
+
+Changing the schedule takes effect at once. Backups due while the control plane was down run when it starts again, once however many were missed. The control plane checks every site's schedule when it starts, so a changed backup window moves the schedules of the sites that use it, and sites created before scheduled backups existed get one. Sites that are being deleted, or whose provisioning failed, have no schedule; if a scheduled backup finds its site gone or being deleted, it is skipped (the job succeeds and says why in its log).
 
 ## Site databases
 

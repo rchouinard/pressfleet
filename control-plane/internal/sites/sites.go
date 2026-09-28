@@ -165,6 +165,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/domains"
@@ -253,6 +254,10 @@ type Options struct {
 	// (config.WordPressSecurityConfig.TwoFactor): unless it is
 	// config.TwoFactorOff or empty, sites get the Two Factor plugin.
 	TwoFactor string
+	// BackupWindow is the platform's backup window, which new sites'
+	// backup schedules start in (sitebackup.EnsureSchedule); zero means
+	// sitebackup.DefaultWindow.
+	BackupWindow sitebackup.Window
 	// Logger defaults to discarding output.
 	Logger *slog.Logger
 	// Now defaults to time.Now; tests fix it for the catalog's support
@@ -275,6 +280,7 @@ type Service struct {
 	twoFactor   bool
 	dashboard   string
 	dns         DNSChecker
+	backups     sitebackup.Window
 	log         *slog.Logger
 	now         func() time.Time
 
@@ -313,6 +319,7 @@ func New(opts Options) (*Service, error) {
 		twoFactor:   opts.TwoFactor != "" && opts.TwoFactor != config.TwoFactorOff,
 		dashboard:   strings.TrimSuffix(strings.ToLower(opts.DashboardDomain), "."),
 		dns:         opts.DNSChecker,
+		backups:     opts.BackupWindow,
 		log:         opts.Logger,
 		now:         opts.Now,
 
@@ -517,6 +524,9 @@ func (s *Service) create(ctx context.Context, site store.Site, req NewSite) (sto
 			return err
 		}
 		if err := sitecron.EnsureSchedule(ctx, q, site.ID); err != nil {
+			return err
+		}
+		if err := sitebackup.EnsureSchedule(ctx, q, site.ID, s.backups); err != nil {
 			return err
 		}
 		job, err = jobs.Enqueue(ctx, q, jobs.Spec{

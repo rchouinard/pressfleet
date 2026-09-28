@@ -545,6 +545,19 @@ type Backup struct {
 	WpCoreVersion string `json:"wp_core_version"`
 }
 
+// BackupHour The UTC hour, 0 to 23, that the site's backups start in, at a
+// minute that is the same every day. With an interval shorter than a
+// day, one of the day's backups starts in this hour. Null means a time
+// within the platform's backup window.
+type BackupHour = int
+
+// BackupIntervalHours Hours between backups: a divisor of 24 (1, 2, 3, 4, 6, 8, or 12) or a
+// whole number of days up to a week (24, 48, ..., 168), so backups
+// start at the same times every day.
+//
+// Examples: 24
+type BackupIntervalHours = int
+
 // BackupKind What asked for the backup: a user (`manual`), the site's backup
 // schedule (`scheduled`), or a restore, which backs up its target site
 // first so the restore can be undone (`pre_restore`).
@@ -564,6 +577,52 @@ type BackupRepository struct {
 	//
 	// Examples: s3:https://s3.example.com/pressfleet-backups/01J9ZQ3V6T8K4M2N5P7R9S1X3Y
 	Location string `json:"location"`
+}
+
+// BackupSchedule defines model for BackupSchedule.
+type BackupSchedule struct {
+	// Enabled Whether the site is backed up on a schedule.
+	Enabled bool `json:"enabled"`
+
+	// Hour The UTC hour, 0 to 23, that the site's backups start in, at a
+	// minute that is the same every day. With an interval shorter than a
+	// day, one of the day's backups starts in this hour. Null means a time
+	// within the platform's backup window.
+	Hour *BackupHour `json:"hour"`
+
+	// IntervalHours Hours between backups: a divisor of 24 (1, 2, 3, 4, 6, 8, or 12) or a
+	// whole number of days up to a week (24, 48, ..., 168), so backups
+	// start at the same times every day.
+	//
+	//
+	// Examples: 24
+	IntervalHours BackupIntervalHours `json:"interval_hours"`
+
+	// NextRunAt When the next scheduled backup is due; null if the schedule is
+	// off or the site can't be backed up (it is being deleted, or its
+	// provisioning failed). The backup starts then, or after any other
+	// job working on the site.
+	NextRunAt *Timestamp `json:"next_run_at"`
+}
+
+// BackupScheduleUpdate defines model for BackupScheduleUpdate.
+type BackupScheduleUpdate struct {
+	// Enabled Whether the site is backed up on a schedule.
+	Enabled bool `json:"enabled"`
+
+	// Hour The UTC hour, 0 to 23, that the site's backups start in, at a
+	// minute that is the same every day. With an interval shorter than a
+	// day, one of the day's backups starts in this hour. Null means a time
+	// within the platform's backup window.
+	Hour *BackupHour `json:"hour,omitempty"`
+
+	// IntervalHours Hours between backups: a divisor of 24 (1, 2, 3, 4, 6, 8, or 12) or a
+	// whole number of days up to a week (24, 48, ..., 168), so backups
+	// start at the same times every day.
+	//
+	//
+	// Examples: 24
+	IntervalHours *BackupIntervalHours `json:"interval_hours,omitempty"`
 }
 
 // BackupStatus defines model for BackupStatus.
@@ -1414,6 +1473,9 @@ type UpdateSiteJSONRequestBody = SiteUpdate
 // SetSiteAliasesJSONRequestBody defines body for SetSiteAliases for application/json ContentType.
 type SetSiteAliasesJSONRequestBody = SiteAliases
 
+// SetSiteBackupScheduleJSONRequestBody defines body for SetSiteBackupSchedule for application/json ContentType.
+type SetSiteBackupScheduleJSONRequestBody = BackupScheduleUpdate
+
 // GoLiveSiteJSONRequestBody defines body for GoLiveSite for application/json ContentType.
 type GoLiveSiteJSONRequestBody = SiteGoLive
 
@@ -1494,6 +1556,12 @@ type ServerInterface interface {
 	// SetSiteAliases Replace a live site's aliases
 	// (PUT /api/v1/sites/{site_id}/aliases)
 	SetSiteAliases(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// GetSiteBackupSchedule Get a site's backup schedule
+	// (GET /api/v1/sites/{site_id}/backup-schedule)
+	GetSiteBackupSchedule(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// SetSiteBackupSchedule Change a site's backup schedule
+	// (PUT /api/v1/sites/{site_id}/backup-schedule)
+	SetSiteBackupSchedule(w http.ResponseWriter, r *http.Request, siteID SiteID)
 	// ListSiteBackups List a site's backups
 	// (GET /api/v1/sites/{site_id}/backups)
 	ListSiteBackups(w http.ResponseWriter, r *http.Request, siteID SiteID, params ListSiteBackupsParams)
@@ -2281,6 +2349,58 @@ func (siw *ServerInterfaceWrapper) SetSiteAliases(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetSiteBackupSchedule operation middleware
+func (siw *ServerInterfaceWrapper) GetSiteBackupSchedule(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSiteBackupSchedule(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetSiteBackupSchedule operation middleware
+func (siw *ServerInterfaceWrapper) SetSiteBackupSchedule(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetSiteBackupSchedule(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListSiteBackups operation middleware
 func (siw *ServerInterfaceWrapper) ListSiteBackups(w http.ResponseWriter, r *http.Request) {
 
@@ -2864,6 +2984,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/preview-password", wrapper.RegenerateSitePreviewPassword)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/backups", wrapper.ListSiteBackups)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/backups", wrapper.CreateSiteBackup)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/backup-schedule", wrapper.GetSiteBackupSchedule)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/sites/{site_id}/backup-schedule", wrapper.SetSiteBackupSchedule)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs", wrapper.ListJobs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs/{job_id}", wrapper.GetJob)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit-events", wrapper.ListAuditEvents)
@@ -5203,6 +5325,213 @@ func (response SetSiteAliasesdefaultApplicationProblemPlusJSONResponse) VisitSet
 	return err
 }
 
+type GetSiteBackupScheduleRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+}
+
+type GetSiteBackupScheduleResponseObject interface {
+	VisitGetSiteBackupScheduleResponse(w http.ResponseWriter) error
+}
+
+type GetSiteBackupSchedule200JSONResponse BackupSchedule
+
+func (response GetSiteBackupSchedule200JSONResponse) VisitGetSiteBackupScheduleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteBackupSchedule401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetSiteBackupSchedule401ApplicationProblemPlusJSONResponse) VisitGetSiteBackupScheduleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteBackupSchedule403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetSiteBackupSchedule403ApplicationProblemPlusJSONResponse) VisitGetSiteBackupScheduleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteBackupSchedule404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response GetSiteBackupSchedule404ApplicationProblemPlusJSONResponse) VisitGetSiteBackupScheduleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteBackupScheduledefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetSiteBackupScheduledefaultApplicationProblemPlusJSONResponse) VisitGetSiteBackupScheduleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteBackupScheduleRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+	Body   *SetSiteBackupScheduleJSONRequestBody
+}
+
+type SetSiteBackupScheduleResponseObject interface {
+	VisitSetSiteBackupScheduleResponse(w http.ResponseWriter) error
+}
+
+type SetSiteBackupSchedule200JSONResponse BackupSchedule
+
+func (response SetSiteBackupSchedule200JSONResponse) VisitSetSiteBackupScheduleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteBackupSchedule400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteBackupSchedule400ApplicationProblemPlusJSONResponse) VisitSetSiteBackupScheduleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteBackupSchedule401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteBackupSchedule401ApplicationProblemPlusJSONResponse) VisitSetSiteBackupScheduleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteBackupSchedule403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteBackupSchedule403ApplicationProblemPlusJSONResponse) VisitSetSiteBackupScheduleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteBackupSchedule404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteBackupSchedule404ApplicationProblemPlusJSONResponse) VisitSetSiteBackupScheduleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteBackupSchedule422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteBackupSchedule422ApplicationProblemPlusJSONResponse) VisitSetSiteBackupScheduleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteBackupScheduledefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response SetSiteBackupScheduledefaultApplicationProblemPlusJSONResponse) VisitSetSiteBackupScheduleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListSiteBackupsRequestObject struct {
 	SiteID SiteID `json:"site_id"`
 	Params ListSiteBackupsParams
@@ -6828,6 +7157,12 @@ type StrictServerInterface interface {
 	// SetSiteAliases Replace a live site's aliases
 	// (PUT /api/v1/sites/{site_id}/aliases)
 	SetSiteAliases(ctx context.Context, request SetSiteAliasesRequestObject) (SetSiteAliasesResponseObject, error)
+	// GetSiteBackupSchedule Get a site's backup schedule
+	// (GET /api/v1/sites/{site_id}/backup-schedule)
+	GetSiteBackupSchedule(ctx context.Context, request GetSiteBackupScheduleRequestObject) (GetSiteBackupScheduleResponseObject, error)
+	// SetSiteBackupSchedule Change a site's backup schedule
+	// (PUT /api/v1/sites/{site_id}/backup-schedule)
+	SetSiteBackupSchedule(ctx context.Context, request SetSiteBackupScheduleRequestObject) (SetSiteBackupScheduleResponseObject, error)
 	// ListSiteBackups List a site's backups
 	// (GET /api/v1/sites/{site_id}/backups)
 	ListSiteBackups(ctx context.Context, request ListSiteBackupsRequestObject) (ListSiteBackupsResponseObject, error)
@@ -7521,6 +7856,65 @@ func (sh *strictHandler) SetSiteAliases(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(SetSiteAliasesResponseObject); ok {
 		if err := validResponse.VisitSetSiteAliasesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetSiteBackupSchedule operation middleware
+func (sh *strictHandler) GetSiteBackupSchedule(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request GetSiteBackupScheduleRequestObject
+
+	request.SiteID = siteID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSiteBackupSchedule(ctx, request.(GetSiteBackupScheduleRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSiteBackupSchedule")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetSiteBackupScheduleResponseObject); ok {
+		if err := validResponse.VisitGetSiteBackupScheduleResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetSiteBackupSchedule operation middleware
+func (sh *strictHandler) SetSiteBackupSchedule(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request SetSiteBackupScheduleRequestObject
+
+	request.SiteID = siteID
+
+	var body SetSiteBackupScheduleJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetSiteBackupSchedule(ctx, request.(SetSiteBackupScheduleRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetSiteBackupSchedule")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetSiteBackupScheduleResponseObject); ok {
+		if err := validResponse.VisitSetSiteBackupScheduleResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

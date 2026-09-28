@@ -545,6 +545,19 @@ type Backup struct {
 	WpCoreVersion string `json:"wp_core_version"`
 }
 
+// BackupHour The UTC hour, 0 to 23, that the site's backups start in, at a
+// minute that is the same every day. With an interval shorter than a
+// day, one of the day's backups starts in this hour. Null means a time
+// within the platform's backup window.
+type BackupHour = int
+
+// BackupIntervalHours Hours between backups: a divisor of 24 (1, 2, 3, 4, 6, 8, or 12) or a
+// whole number of days up to a week (24, 48, ..., 168), so backups
+// start at the same times every day.
+//
+// Examples: 24
+type BackupIntervalHours = int
+
 // BackupKind What asked for the backup: a user (`manual`), the site's backup
 // schedule (`scheduled`), or a restore, which backs up its target site
 // first so the restore can be undone (`pre_restore`).
@@ -564,6 +577,52 @@ type BackupRepository struct {
 	//
 	// Examples: s3:https://s3.example.com/pressfleet-backups/01J9ZQ3V6T8K4M2N5P7R9S1X3Y
 	Location string `json:"location"`
+}
+
+// BackupSchedule defines model for BackupSchedule.
+type BackupSchedule struct {
+	// Enabled Whether the site is backed up on a schedule.
+	Enabled bool `json:"enabled"`
+
+	// Hour The UTC hour, 0 to 23, that the site's backups start in, at a
+	// minute that is the same every day. With an interval shorter than a
+	// day, one of the day's backups starts in this hour. Null means a time
+	// within the platform's backup window.
+	Hour *BackupHour `json:"hour"`
+
+	// IntervalHours Hours between backups: a divisor of 24 (1, 2, 3, 4, 6, 8, or 12) or a
+	// whole number of days up to a week (24, 48, ..., 168), so backups
+	// start at the same times every day.
+	//
+	//
+	// Examples: 24
+	IntervalHours BackupIntervalHours `json:"interval_hours"`
+
+	// NextRunAt When the next scheduled backup is due; null if the schedule is
+	// off or the site can't be backed up (it is being deleted, or its
+	// provisioning failed). The backup starts then, or after any other
+	// job working on the site.
+	NextRunAt *Timestamp `json:"next_run_at"`
+}
+
+// BackupScheduleUpdate defines model for BackupScheduleUpdate.
+type BackupScheduleUpdate struct {
+	// Enabled Whether the site is backed up on a schedule.
+	Enabled bool `json:"enabled"`
+
+	// Hour The UTC hour, 0 to 23, that the site's backups start in, at a
+	// minute that is the same every day. With an interval shorter than a
+	// day, one of the day's backups starts in this hour. Null means a time
+	// within the platform's backup window.
+	Hour *BackupHour `json:"hour,omitempty"`
+
+	// IntervalHours Hours between backups: a divisor of 24 (1, 2, 3, 4, 6, 8, or 12) or a
+	// whole number of days up to a week (24, 48, ..., 168), so backups
+	// start at the same times every day.
+	//
+	//
+	// Examples: 24
+	IntervalHours *BackupIntervalHours `json:"interval_hours,omitempty"`
 }
 
 // BackupStatus defines model for BackupStatus.
@@ -1414,6 +1473,9 @@ type UpdateSiteJSONRequestBody = SiteUpdate
 // SetSiteAliasesJSONRequestBody defines body for SetSiteAliases for application/json ContentType.
 type SetSiteAliasesJSONRequestBody = SiteAliases
 
+// SetSiteBackupScheduleJSONRequestBody defines body for SetSiteBackupSchedule for application/json ContentType.
+type SetSiteBackupScheduleJSONRequestBody = BackupScheduleUpdate
+
 // GoLiveSiteJSONRequestBody defines body for GoLiveSite for application/json ContentType.
 type GoLiveSiteJSONRequestBody = SiteGoLive
 
@@ -1861,6 +1923,49 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /api/v1/sites/{site_id}/aliases (the `SetSiteAliases` operationId).
 	SetSiteAliases(ctx context.Context, siteID SiteID, body SetSiteAliasesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSiteBackupSchedule Get a site's backup schedule
+	//
+	// When the site is backed up automatically (design doc §5.3), and when
+	// its next scheduled backup is due. Every site is backed up daily by
+	// default, at a time within the platform's backup window
+	// (`backup.schedule` in the config file) that stays the same from day
+	// to day and differs between sites, so backups are spread out.
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/backup-schedule (the `GetSiteBackupSchedule` operationId).
+	GetSiteBackupSchedule(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetSiteBackupScheduleWithBody Change a site's backup schedule
+	//
+	// Replaces the site's backup schedule; omitted fields take their
+	// defaults, so `{"enabled": true}` restores the daily backup in the
+	// platform's window. The change applies at once, without a job: the
+	// response says when the next backup is due. Scheduled backups are
+	// recorded like manual ones, with kind `scheduled`. A backup that is
+	// due while the control plane is down runs when it starts again, once
+	// however many were missed. Turning the schedule off doesn't affect
+	// existing backups or manual ones.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /api/v1/sites/{site_id}/backup-schedule (the `SetSiteBackupSchedule` operationId).
+	SetSiteBackupScheduleWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetSiteBackupSchedule Change a site's backup schedule
+	//
+	// Replaces the site's backup schedule; omitted fields take their
+	// defaults, so `{"enabled": true}` restores the daily backup in the
+	// platform's window. The change applies at once, without a job: the
+	// response says when the next backup is due. Scheduled backups are
+	// recorded like manual ones, with kind `scheduled`. A backup that is
+	// due while the control plane is down runs when it starts again, once
+	// however many were missed. Turning the schedule off doesn't affect
+	// existing backups or manual ones.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /api/v1/sites/{site_id}/backup-schedule (the `SetSiteBackupSchedule` operationId).
+	SetSiteBackupSchedule(ctx context.Context, siteID SiteID, body SetSiteBackupScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSiteBackups List a site's backups
 	//
@@ -2815,6 +2920,79 @@ func (c *Client) SetSiteAliasesWithBody(ctx context.Context, siteID SiteID, cont
 // Corresponds with PUT /api/v1/sites/{site_id}/aliases (the `SetSiteAliases` operationId).
 func (c *Client) SetSiteAliases(ctx context.Context, siteID SiteID, body SetSiteAliasesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetSiteAliasesRequest(c.Server, siteID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetSiteBackupSchedule Get a site's backup schedule
+//
+// When the site is backed up automatically (design doc §5.3), and when
+// its next scheduled backup is due. Every site is backed up daily by
+// default, at a time within the platform's backup window
+// (`backup.schedule` in the config file) that stays the same from day
+// to day and differs between sites, so backups are spread out.
+//
+// Corresponds with GET /api/v1/sites/{site_id}/backup-schedule (the `GetSiteBackupSchedule` operationId).
+func (c *Client) GetSiteBackupSchedule(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSiteBackupScheduleRequest(c.Server, siteID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetSiteBackupScheduleWithBody Change a site's backup schedule
+//
+// Replaces the site's backup schedule; omitted fields take their
+// defaults, so `{"enabled": true}` restores the daily backup in the
+// platform's window. The change applies at once, without a job: the
+// response says when the next backup is due. Scheduled backups are
+// recorded like manual ones, with kind `scheduled`. A backup that is
+// due while the control plane is down runs when it starts again, once
+// however many were missed. Turning the schedule off doesn't affect
+// existing backups or manual ones.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /api/v1/sites/{site_id}/backup-schedule (the `SetSiteBackupSchedule` operationId).
+func (c *Client) SetSiteBackupScheduleWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSiteBackupScheduleRequestWithBody(c.Server, siteID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetSiteBackupSchedule Change a site's backup schedule
+//
+// Replaces the site's backup schedule; omitted fields take their
+// defaults, so `{"enabled": true}` restores the daily backup in the
+// platform's window. The change applies at once, without a job: the
+// response says when the next backup is due. Scheduled backups are
+// recorded like manual ones, with kind `scheduled`. A backup that is
+// due while the control plane is down runs when it starts again, once
+// however many were missed. Turning the schedule off doesn't affect
+// existing backups or manual ones.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /api/v1/sites/{site_id}/backup-schedule (the `SetSiteBackupSchedule` operationId).
+func (c *Client) SetSiteBackupSchedule(ctx context.Context, siteID SiteID, body SetSiteBackupScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSiteBackupScheduleRequest(c.Server, siteID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4410,6 +4588,87 @@ func NewSetSiteAliasesRequestWithBody(server string, siteID SiteID, contentType 
 	return req, nil
 }
 
+// NewGetSiteBackupScheduleRequest constructs an http.Request for the GetSiteBackupSchedule method
+func NewGetSiteBackupScheduleRequest(server string, siteID SiteID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/backup-schedule", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSetSiteBackupScheduleRequest calls the generic SetSiteBackupSchedule builder with application/json body
+func NewSetSiteBackupScheduleRequest(server string, siteID SiteID, body SetSiteBackupScheduleJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetSiteBackupScheduleRequestWithBody(server, siteID, "application/json", bodyReader)
+}
+
+// NewSetSiteBackupScheduleRequestWithBody constructs an http.Request for the SetSiteBackupSchedule method, with any body, and a specified content type
+func NewSetSiteBackupScheduleRequestWithBody(server string, siteID SiteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/backup-schedule", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListSiteBackupsRequest constructs an http.Request for the ListSiteBackups method
 func NewListSiteBackupsRequest(server string, siteID SiteID, params *ListSiteBackupsParams) (*http.Request, error) {
 	var err error
@@ -5479,6 +5738,51 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /api/v1/sites/{site_id}/aliases (the `SetSiteAliases` operationId).
 	SetSiteAliasesWithResponse(ctx context.Context, siteID SiteID, body SetSiteAliasesJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSiteAliasesResponse, error)
+
+	// GetSiteBackupScheduleWithResponse Get a site's backup schedule
+	//
+	// When the site is backed up automatically (design doc §5.3), and when
+	// its next scheduled backup is due. Every site is backed up daily by
+	// default, at a time within the platform's backup window
+	// (`backup.schedule` in the config file) that stays the same from day
+	// to day and differs between sites, so backups are spread out.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/backup-schedule (the `GetSiteBackupSchedule` operationId).
+	GetSiteBackupScheduleWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*GetSiteBackupScheduleResponse, error)
+
+	// SetSiteBackupScheduleWithBodyWithResponse Change a site's backup schedule
+	//
+	// Replaces the site's backup schedule; omitted fields take their
+	// defaults, so `{"enabled": true}` restores the daily backup in the
+	// platform's window. The change applies at once, without a job: the
+	// response says when the next backup is due. Scheduled backups are
+	// recorded like manual ones, with kind `scheduled`. A backup that is
+	// due while the control plane is down runs when it starts again, once
+	// however many were missed. Turning the schedule off doesn't affect
+	// existing backups or manual ones.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v1/sites/{site_id}/backup-schedule (the `SetSiteBackupSchedule` operationId).
+	SetSiteBackupScheduleWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSiteBackupScheduleResponse, error)
+
+	// SetSiteBackupScheduleWithResponse Change a site's backup schedule
+	//
+	// Replaces the site's backup schedule; omitted fields take their
+	// defaults, so `{"enabled": true}` restores the daily backup in the
+	// platform's window. The change applies at once, without a job: the
+	// response says when the next backup is due. Scheduled backups are
+	// recorded like manual ones, with kind `scheduled`. A backup that is
+	// due while the control plane is down runs when it starts again, once
+	// however many were missed. Turning the schedule off doesn't affect
+	// existing backups or manual ones.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v1/sites/{site_id}/backup-schedule (the `SetSiteBackupSchedule` operationId).
+	SetSiteBackupScheduleWithResponse(ctx context.Context, siteID SiteID, body SetSiteBackupScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSiteBackupScheduleResponse, error)
 
 	// ListSiteBackupsWithResponse List a site's backups
 	//
@@ -7510,6 +7814,158 @@ func (r SetSiteAliasesResponse) ContentType() string {
 	return ""
 }
 
+type GetSiteBackupScheduleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BackupSchedule
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetSiteBackupScheduleResponse) GetJSON200() *BackupSchedule {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetSiteBackupScheduleResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetSiteBackupScheduleResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetSiteBackupScheduleResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetSiteBackupScheduleResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetSiteBackupScheduleResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetSiteBackupScheduleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetSiteBackupScheduleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetSiteBackupScheduleResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetSiteBackupScheduleResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BackupSchedule
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetSiteBackupScheduleResponse) GetJSON200() *BackupSchedule {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r SetSiteBackupScheduleResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r SetSiteBackupScheduleResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r SetSiteBackupScheduleResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r SetSiteBackupScheduleResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r SetSiteBackupScheduleResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SetSiteBackupScheduleResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SetSiteBackupScheduleResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetSiteBackupScheduleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetSiteBackupScheduleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetSiteBackupScheduleResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListSiteBackupsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -9240,6 +9696,69 @@ func (c *ClientWithResponses) SetSiteAliasesWithResponse(ctx context.Context, si
 		return nil, err
 	}
 	return ParseSetSiteAliasesResponse(rsp)
+}
+
+// GetSiteBackupScheduleWithResponse Get a site's backup schedule
+//
+// When the site is backed up automatically (design doc §5.3), and when
+// its next scheduled backup is due. Every site is backed up daily by
+// default, at a time within the platform's backup window
+// (`backup.schedule` in the config file) that stays the same from day
+// to day and differs between sites, so backups are spread out.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/sites/{site_id}/backup-schedule (the `GetSiteBackupSchedule` operationId).
+func (c *ClientWithResponses) GetSiteBackupScheduleWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*GetSiteBackupScheduleResponse, error) {
+	rsp, err := c.GetSiteBackupSchedule(ctx, siteID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSiteBackupScheduleResponse(rsp)
+}
+
+// SetSiteBackupScheduleWithBodyWithResponse Change a site's backup schedule
+//
+// Replaces the site's backup schedule; omitted fields take their
+// defaults, so `{"enabled": true}` restores the daily backup in the
+// platform's window. The change applies at once, without a job: the
+// response says when the next backup is due. Scheduled backups are
+// recorded like manual ones, with kind `scheduled`. A backup that is
+// due while the control plane is down runs when it starts again, once
+// however many were missed. Turning the schedule off doesn't affect
+// existing backups or manual ones.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v1/sites/{site_id}/backup-schedule (the `SetSiteBackupSchedule` operationId).
+func (c *ClientWithResponses) SetSiteBackupScheduleWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSiteBackupScheduleResponse, error) {
+	rsp, err := c.SetSiteBackupScheduleWithBody(ctx, siteID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSiteBackupScheduleResponse(rsp)
+}
+
+// SetSiteBackupScheduleWithResponse Change a site's backup schedule
+//
+// Replaces the site's backup schedule; omitted fields take their
+// defaults, so `{"enabled": true}` restores the daily backup in the
+// platform's window. The change applies at once, without a job: the
+// response says when the next backup is due. Scheduled backups are
+// recorded like manual ones, with kind `scheduled`. A backup that is
+// due while the control plane is down runs when it starts again, once
+// however many were missed. Turning the schedule off doesn't affect
+// existing backups or manual ones.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v1/sites/{site_id}/backup-schedule (the `SetSiteBackupSchedule` operationId).
+func (c *ClientWithResponses) SetSiteBackupScheduleWithResponse(ctx context.Context, siteID SiteID, body SetSiteBackupScheduleJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSiteBackupScheduleResponse, error) {
+	rsp, err := c.SetSiteBackupSchedule(ctx, siteID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSiteBackupScheduleResponse(rsp)
 }
 
 // ListSiteBackupsWithResponse List a site's backups
@@ -11125,6 +11644,128 @@ func ParseSetSiteAliasesResponse(rsp *http.Response) (*SetSiteAliasesResponse, e
 			headers.Location = &value
 		}
 		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetSiteBackupScheduleResponse parses an HTTP response from a GetSiteBackupScheduleWithResponse call
+func ParseGetSiteBackupScheduleResponse(rsp *http.Response) (*GetSiteBackupScheduleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetSiteBackupScheduleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BackupSchedule
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetSiteBackupScheduleResponse parses an HTTP response from a SetSiteBackupScheduleWithResponse call
+func ParseSetSiteBackupScheduleResponse(rsp *http.Response) (*SetSiteBackupScheduleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetSiteBackupScheduleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BackupSchedule
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
 	}
 
 	return response, nil

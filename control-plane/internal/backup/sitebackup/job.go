@@ -89,6 +89,12 @@ func (s *Service) record(ctx context.Context, r *jobs.Run, kindOf kindFunc) erro
 	}
 	siteID := r.Job().TargetID
 	site, err := backupableSite(ctx, s.db, siteID)
+	if kind == store.BackupScheduled && (errors.Is(err, ErrSiteNotFound) || errors.Is(err, ErrNotBackupable)) {
+		// Nobody asked for this backup, so there is no one to tell it
+		// failed: the site went away or can't be backed up right now, and
+		// the next run tries again if it still has a schedule.
+		return s.skip(ctx, r, err)
+	}
 	if errors.Is(err, ErrSiteNotFound) || errors.Is(err, ErrNotBackupable) {
 		return jobs.Permanent(err)
 	}
@@ -122,6 +128,29 @@ func (s *Service) record(ctx context.Context, r *jobs.Run, kindOf kindFunc) erro
 	return nil
 }
 
+// skip ends a scheduled backup without taking one. The schedule of a site
+// that no longer exists should have gone with it; it is removed in case it
+// didn't, so it stops queuing jobs for nothing.
+func (s *Service) skip(ctx context.Context, r *jobs.Run, reason error) error {
+	if errors.Is(reason, ErrSiteNotFound) {
+		if err := RemoveSchedule(ctx, s.db, r.Job().TargetID); err != nil {
+			return err
+		}
+	}
+	if err := r.Set(dataSkipped, true); err != nil {
+		return err
+	}
+	r.Logf("Skipped the scheduled backup: %v.", reason)
+	return nil
+}
+
+// skipped reports whether the job's scheduled backup was skipped.
+func skipped(r *jobs.Run) (bool, error) {
+	var skip bool
+	_, err := r.Get(dataSkipped, &skip)
+	return skip, err
+}
+
 // failRecord marks the job's backup failed, unless it finished.
 func (s *Service) failRecord(ctx context.Context, r *jobs.Run) error {
 	var backupID string
@@ -145,6 +174,9 @@ func (s *Service) failRecord(ctx context.Context, r *jobs.Run) error {
 
 // snapshot takes the snapshot and finishes the record.
 func (s *Service) snapshot(ctx context.Context, r *jobs.Run) error {
+	if skip, err := skipped(r); err != nil || skip {
+		return err
+	}
 	var backupID string
 	found, err := r.Get(DataBackupID, &backupID)
 	if err != nil {
@@ -204,6 +236,13 @@ func permanent(err error) bool {
 
 // finish puts the backup in the job's result.
 func (s *Service) finish(ctx context.Context, r *jobs.Run) error {
+	skip, err := skipped(r)
+	if err != nil {
+		return err
+	}
+	if skip {
+		return r.SetResult("site_id", r.Job().TargetID)
+	}
 	rec, found, err := s.JobBackup(ctx, r)
 	if err != nil {
 		return err

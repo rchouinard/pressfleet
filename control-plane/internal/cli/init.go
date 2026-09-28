@@ -577,7 +577,10 @@ func (a initAnswers) config(base config.Config) config.Config {
 	base.PublicIP = a.PublicIP
 	base.MasterKeyFile = a.MasterKeyFile
 	base.SMTP = a.smtpConfig()
+	// Init doesn't ask about the backup window; keep what base has.
+	schedule := base.Backup.Schedule
 	base.Backup = a.backupConfig()
+	base.Backup.Schedule = schedule
 	base.ACME = a.acmeConfig()
 	return base
 }

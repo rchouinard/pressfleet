@@ -9,9 +9,10 @@
 //
 //   - The API (POST /sites/{id}/backups) calls [Service.Backup], which
 //     checks the site and queues a manual backup.
-//   - Scheduled backups (#53) queue [JobType] jobs from a schedule
-//     (jobs.ScheduleSpec) with Payload JobPayload{Kind: store.BackupScheduled}
-//     and LockKey [LockKey](site ID), or with [Enqueue].
+//   - Each site's backup schedule (#53, [EnsureSchedule]) queues [JobType]
+//     jobs with Payload JobPayload{Kind: store.BackupScheduled}. A
+//     scheduled job for a site that can't be backed up any more (deleted,
+//     being deleted, or never provisioned) skips the backup and succeeds.
 //   - Code that must back up a site as part of its own job, such as a
 //     restore's pre-restore snapshot (#55), appends [Service.Steps] to its
 //     job's steps and reads the result with [Service.JobBackup]. It can't
@@ -74,6 +75,10 @@ const (
 // backup record they created (jobs.Run.Get).
 const DataBackupID = "backup_id"
 
+// dataSkipped is the job data key that says a scheduled backup was
+// skipped, so the later steps do nothing.
+const dataSkipped = "skipped"
+
 // Sentinel errors.
 var (
 	// ErrSiteNotFound means the site doesn't exist.
@@ -121,6 +126,9 @@ type Options struct {
 	DB *store.DB
 	// Engine takes the snapshots. Required.
 	Engine backup.Engine
+	// Window is the platform's backup window for scheduled backups; zero
+	// means DefaultWindow.
+	Window Window
 	// Logger defaults to discarding output.
 	Logger *slog.Logger
 }
@@ -129,6 +137,7 @@ type Options struct {
 type Service struct {
 	db     *store.DB
 	engine backup.Engine
+	window Window
 	log    *slog.Logger
 }
 
@@ -137,7 +146,7 @@ func New(opts Options) (*Service, error) {
 	if opts.DB == nil || opts.Engine == nil {
 		return nil, errors.New("sitebackup: DB and Engine are required")
 	}
-	s := &Service{db: opts.DB, engine: opts.Engine, log: opts.Logger}
+	s := &Service{db: opts.DB, engine: opts.Engine, window: opts.Window.orDefault(), log: opts.Logger}
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}

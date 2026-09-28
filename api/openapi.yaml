@@ -1254,6 +1254,73 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/sites/{site_id}/backup-schedule:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    get:
+      operationId: getSiteBackupSchedule
+      tags: [backups]
+      summary: Get a site's backup schedule
+      description: |
+        When the site is backed up automatically (design doc §5.3), and when
+        its next scheduled backup is due. Every site is backed up daily by
+        default, at a time within the platform's backup window
+        (`backup.schedule` in the config file) that stays the same from day
+        to day and differs between sites, so backups are spread out.
+      responses:
+        "200":
+          description: The site's backup schedule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupSchedule"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      operationId: setSiteBackupSchedule
+      tags: [backups]
+      summary: Change a site's backup schedule
+      description: |
+        Replaces the site's backup schedule; omitted fields take their
+        defaults, so `{"enabled": true}` restores the daily backup in the
+        platform's window. The change applies at once, without a job: the
+        response says when the next backup is due. Scheduled backups are
+        recorded like manual ones, with kind `scheduled`. A backup that is
+        due while the control plane is down runs when it starts again, once
+        however many were missed. Turning the schedule off doesn't affect
+        existing backups or manual ones.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BackupScheduleUpdate"
+      responses:
+        "200":
+          description: The site's new backup schedule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupSchedule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/jobs:
     get:
       operationId: listJobs
@@ -1949,6 +2016,64 @@ components:
             $ref: "#/components/schemas/Backup"
         next_cursor:
           $ref: "#/components/schemas/NextCursor"
+
+    BackupIntervalHours:
+      type: integer
+      description: |
+        Hours between backups: a divisor of 24 (1, 2, 3, 4, 6, 8, or 12) or a
+        whole number of days up to a week (24, 48, ..., 168), so backups
+        start at the same times every day.
+      minimum: 1
+      maximum: 168
+      default: 24
+      examples: [24]
+
+    BackupHour:
+      description: |
+        The UTC hour, 0 to 23, that the site's backups start in, at a
+        minute that is the same every day. With an interval shorter than a
+        day, one of the day's backups starts in this hour. Null means a time
+        within the platform's backup window.
+      oneOf:
+        - type: integer
+          minimum: 0
+          maximum: 23
+          examples: [3]
+        - type: "null"
+
+    BackupSchedule:
+      type: object
+      required: [enabled, interval_hours, hour, next_run_at]
+      properties:
+        enabled:
+          type: boolean
+          description: Whether the site is backed up on a schedule.
+        interval_hours:
+          $ref: "#/components/schemas/BackupIntervalHours"
+        hour:
+          $ref: "#/components/schemas/BackupHour"
+        next_run_at:
+          description: |
+            When the next scheduled backup is due; null if the schedule is
+            off or the site can't be backed up (it is being deleted, or its
+            provisioning failed). The backup starts then, or after any other
+            job working on the site.
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+
+    BackupScheduleUpdate:
+      type: object
+      required: [enabled]
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+          description: Whether the site is backed up on a schedule.
+        interval_hours:
+          $ref: "#/components/schemas/BackupIntervalHours"
+        hour:
+          $ref: "#/components/schemas/BackupHour"
 
     BackupRepository:
       type: object

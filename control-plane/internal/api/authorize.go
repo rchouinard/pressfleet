@@ -49,8 +49,11 @@ var operationActions = map[string]authz.Action{
 	"goLiveSite":                    authz.ManageSiteDomains,
 	"setSiteAliases":                authz.ManageSiteDomains,
 
-	"listSiteBackups":  authz.ViewBackups,
-	"createSiteBackup": authz.CreateBackup,
+	"listSiteBackups":       authz.ViewBackups,
+	"createSiteBackup":      authz.CreateBackup,
+	"getSiteBackupSchedule": authz.ViewBackups,
+	// The backup schedule is a site setting.
+	"setSiteBackupSchedule": authz.UpdateSite,
 
 	"listJobs": authz.ViewJobs,
 	"getJob":   authz.ViewJobs,

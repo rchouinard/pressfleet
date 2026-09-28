@@ -168,6 +168,7 @@ func (a *app) serveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			backupWindow := sitebackup.Window{Start: a.cfg.Backup.Schedule.Start(), Length: a.cfg.Backup.Schedule.Window()}
 			siteSvc, err := sites.New(sites.Options{
 				DB:                db,
 				Secrets:           secretStore,
@@ -179,6 +180,7 @@ func (a *app) serveCommand() *cobra.Command {
 				TwoFactor:         a.cfg.WordPressSecurity.TwoFactor,
 				DashboardDomain:   a.cfg.DashboardDomain,
 				DNSChecker:        a.dnsChecker(),
+				BackupWindow:      backupWindow,
 				Logger:            a.log.With("component", "sites"),
 			})
 			if err != nil {
@@ -198,7 +200,9 @@ func (a *app) serveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			backups, err := sitebackup.New(sitebackup.Options{DB: db, Engine: engine, Logger: a.log.With("component", "backup")})
+			backups, err := sitebackup.New(sitebackup.Options{
+				DB: db, Engine: engine, Window: backupWindow, Logger: a.log.With("component", "backup"),
+			})
 			if err != nil {
 				return err
 			}
@@ -242,6 +246,12 @@ func (a *app) serveCommand() *cobra.Command {
 			// the API from starting.
 			if _, err := siteSvc.EnqueueReconcile(cmd.Context()); err != nil && cmd.Context().Err() == nil {
 				a.log.Warn("queuing site reconciliation failed", "error", err)
+			}
+			// Sites created before scheduled backups existed get a backup
+			// schedule, and a changed backup window moves every schedule.
+			// Best effort, like the reconcile jobs.
+			if err := sitebackup.ReconcileSchedules(cmd.Context(), db, backupWindow); err != nil && cmd.Context().Err() == nil {
+				a.log.Warn("reconciling backup schedules failed", "error", err)
 			}
 			// A canceled context means serve is already stopping; the
 			// server below returns at once.
