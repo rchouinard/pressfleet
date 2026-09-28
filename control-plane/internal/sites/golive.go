@@ -88,9 +88,9 @@ const dataURLRewriteStarted = "url_rewrite_started"
 // MaxAliases is how many aliases a site may have.
 const MaxAliases = 20
 
-// ErrNotRunning means the site must be running for the request, which needs
-// WP-CLI.
-var ErrNotRunning = errors.New("the site must be running to go live; start it first")
+// ErrNotRunning means the site must be running for the request (going live,
+// restoring), which needs WP-CLI.
+var ErrNotRunning = errors.New("the site must be running for this; start it first")
 
 // DNSCheckError means a request's domains failed the DNS check, or the
 // check couldn't run. Nothing was changed; the request can be sent again

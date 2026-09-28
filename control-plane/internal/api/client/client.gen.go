@@ -1179,6 +1179,21 @@ type SiteMaintenance struct {
 	Enabled bool `json:"enabled"`
 }
 
+// SiteRestore defines model for SiteRestore.
+type SiteRestore struct {
+	// SnapshotID The snapshot to restore: a backup's `snapshot_id`, or a prefix
+	// of it of at least 8 characters.
+	//
+	//
+	// Examples: 3be90c95b9962949a5d839b7fd7adbef112b4a3d667f214a32989f615ce4f20b
+	SnapshotID string `json:"snapshot_id"`
+
+	// SourceSiteID The site the snapshot is of, in the same client group; omit it
+	// to restore one of the site's own snapshots. The source may have
+	// been deleted, as long as its backups are in the repository.
+	SourceSiteID *ID `json:"source_site_id,omitempty"`
+}
+
 // SiteRuntime The live state of the site's containers, observed when the site was
 // read. Only `GET /api/v1/sites/{site_id}` includes it; listings report
 // the recorded `status` alone.
@@ -1481,6 +1496,9 @@ type GoLiveSiteJSONRequestBody = SiteGoLive
 
 // SetSiteMaintenanceJSONRequestBody defines body for SetSiteMaintenance for application/json ContentType.
 type SetSiteMaintenanceJSONRequestBody = SiteMaintenance
+
+// RestoreSiteJSONRequestBody defines body for RestoreSite for application/json ContentType.
+type RestoreSiteJSONRequestBody = SiteRestore
 
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody = UserCreate
@@ -2172,6 +2190,100 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/preview-password (the `RegenerateSitePreviewPassword` operationId).
 	RegenerateSitePreviewPassword(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RestoreSiteWithBody Restore a site from a snapshot
+	//
+	// Queues a job that restores a snapshot into the site (design doc
+	// §5.4). The snapshot is one of the site's own (`snapshot_id` of a
+	// backup from `GET /api/v1/sites/{site_id}/backups`), or of another
+	// site in the same client group, named by `source_site_id`, whose
+	// content then replaces this site's. The job:
+	//
+	// 1. takes a pre-restore backup of the site (kind `pre_restore`), so
+	//    the restore can be undone;
+	// 2. puts the site in maintenance mode;
+	// 3. if the snapshot was taken on a newer WordPress core than the
+	//    site runs, moves the site to the oldest site image with at least
+	//    that version;
+	// 4. replaces the site's `wp-content` with the snapshot's (files added
+	//    since are removed) and its database with the snapshot's,
+	//    restarts the site's containers, and runs `wp core update-db`;
+	// 5. if the restored database names another host than the site's
+	//    URL (a snapshot of another site, or from before go-live),
+	//    rewrites its URLs to the site's with `wp search-replace`, as
+	//    go-live does, and sets `home` and `siteurl`;
+	// 6. purges the object cache and the page cache, and takes the site
+	//    out of maintenance mode (unless it was in maintenance mode
+	//    before).
+	//
+	// The response contains the site with status `updating`, and the
+	// job, whose result holds `pre_restore_backup_id`. If the job fails
+	// once the site's data was touched, it restores the pre-restore
+	// backup (and the previous WordPress core), and the site **stays in
+	// maintenance mode** with `status_message` saying what happened; turn
+	// maintenance mode off once the site has been checked. If rolling
+	// back fails too, the site is `failed` and `status_message` names the
+	// pre-restore backup, which can be restored like any other.
+	//
+	// A snapshot that isn't the source site's, a source site in another
+	// client group (restores stay within a client group, whose sites
+	// share one backup repository), or a snapshot from a WordPress core
+	// newer than any site image returns `422`, and nothing changes. The
+	// site must be `running` (`409` otherwise); a site that is
+	// `provisioning`, `updating`, or `deleting`, or whose provisioning
+	// failed, returns `409` too.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/restore (the `RestoreSite` operationId).
+	RestoreSiteWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RestoreSite Restore a site from a snapshot
+	//
+	// Queues a job that restores a snapshot into the site (design doc
+	// §5.4). The snapshot is one of the site's own (`snapshot_id` of a
+	// backup from `GET /api/v1/sites/{site_id}/backups`), or of another
+	// site in the same client group, named by `source_site_id`, whose
+	// content then replaces this site's. The job:
+	//
+	// 1. takes a pre-restore backup of the site (kind `pre_restore`), so
+	//    the restore can be undone;
+	// 2. puts the site in maintenance mode;
+	// 3. if the snapshot was taken on a newer WordPress core than the
+	//    site runs, moves the site to the oldest site image with at least
+	//    that version;
+	// 4. replaces the site's `wp-content` with the snapshot's (files added
+	//    since are removed) and its database with the snapshot's,
+	//    restarts the site's containers, and runs `wp core update-db`;
+	// 5. if the restored database names another host than the site's
+	//    URL (a snapshot of another site, or from before go-live),
+	//    rewrites its URLs to the site's with `wp search-replace`, as
+	//    go-live does, and sets `home` and `siteurl`;
+	// 6. purges the object cache and the page cache, and takes the site
+	//    out of maintenance mode (unless it was in maintenance mode
+	//    before).
+	//
+	// The response contains the site with status `updating`, and the
+	// job, whose result holds `pre_restore_backup_id`. If the job fails
+	// once the site's data was touched, it restores the pre-restore
+	// backup (and the previous WordPress core), and the site **stays in
+	// maintenance mode** with `status_message` saying what happened; turn
+	// maintenance mode off once the site has been checked. If rolling
+	// back fails too, the site is `failed` and `status_message` names the
+	// pre-restore backup, which can be restored like any other.
+	//
+	// A snapshot that isn't the source site's, a source site in another
+	// client group (restores stay within a client group, whose sites
+	// share one backup repository), or a snapshot from a WordPress core
+	// newer than any site image returns `422`, and nothing changes. The
+	// site must be `running` (`409` otherwise); a site that is
+	// `provisioning`, `updating`, or `deleting`, or whose provisioning
+	// failed, returns `409` too.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/restore (the `RestoreSite` operationId).
+	RestoreSite(ctx context.Context, siteID SiteID, body RestoreSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// StartSite Start a stopped site
 	//
@@ -3279,6 +3391,120 @@ func (c *Client) SetSiteMaintenance(ctx context.Context, siteID SiteID, body Set
 // Corresponds with POST /api/v1/sites/{site_id}/preview-password (the `RegenerateSitePreviewPassword` operationId).
 func (c *Client) RegenerateSitePreviewPassword(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRegenerateSitePreviewPasswordRequest(c.Server, siteID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RestoreSiteWithBody Restore a site from a snapshot
+//
+// Queues a job that restores a snapshot into the site (design doc
+// §5.4). The snapshot is one of the site's own (`snapshot_id` of a
+// backup from `GET /api/v1/sites/{site_id}/backups`), or of another
+// site in the same client group, named by `source_site_id`, whose
+// content then replaces this site's. The job:
+//
+//  1. takes a pre-restore backup of the site (kind `pre_restore`), so
+//     the restore can be undone;
+//  2. puts the site in maintenance mode;
+//  3. if the snapshot was taken on a newer WordPress core than the
+//     site runs, moves the site to the oldest site image with at least
+//     that version;
+//  4. replaces the site's `wp-content` with the snapshot's (files added
+//     since are removed) and its database with the snapshot's,
+//     restarts the site's containers, and runs `wp core update-db`;
+//  5. if the restored database names another host than the site's
+//     URL (a snapshot of another site, or from before go-live),
+//     rewrites its URLs to the site's with `wp search-replace`, as
+//     go-live does, and sets `home` and `siteurl`;
+//  6. purges the object cache and the page cache, and takes the site
+//     out of maintenance mode (unless it was in maintenance mode
+//     before).
+//
+// The response contains the site with status `updating`, and the
+// job, whose result holds `pre_restore_backup_id`. If the job fails
+// once the site's data was touched, it restores the pre-restore
+// backup (and the previous WordPress core), and the site **stays in
+// maintenance mode** with `status_message` saying what happened; turn
+// maintenance mode off once the site has been checked. If rolling
+// back fails too, the site is `failed` and `status_message` names the
+// pre-restore backup, which can be restored like any other.
+//
+// A snapshot that isn't the source site's, a source site in another
+// client group (restores stay within a client group, whose sites
+// share one backup repository), or a snapshot from a WordPress core
+// newer than any site image returns `422`, and nothing changes. The
+// site must be `running` (`409` otherwise); a site that is
+// `provisioning`, `updating`, or `deleting`, or whose provisioning
+// failed, returns `409` too.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/restore (the `RestoreSite` operationId).
+func (c *Client) RestoreSiteWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRestoreSiteRequestWithBody(c.Server, siteID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RestoreSite Restore a site from a snapshot
+//
+// Queues a job that restores a snapshot into the site (design doc
+// §5.4). The snapshot is one of the site's own (`snapshot_id` of a
+// backup from `GET /api/v1/sites/{site_id}/backups`), or of another
+// site in the same client group, named by `source_site_id`, whose
+// content then replaces this site's. The job:
+//
+//  1. takes a pre-restore backup of the site (kind `pre_restore`), so
+//     the restore can be undone;
+//  2. puts the site in maintenance mode;
+//  3. if the snapshot was taken on a newer WordPress core than the
+//     site runs, moves the site to the oldest site image with at least
+//     that version;
+//  4. replaces the site's `wp-content` with the snapshot's (files added
+//     since are removed) and its database with the snapshot's,
+//     restarts the site's containers, and runs `wp core update-db`;
+//  5. if the restored database names another host than the site's
+//     URL (a snapshot of another site, or from before go-live),
+//     rewrites its URLs to the site's with `wp search-replace`, as
+//     go-live does, and sets `home` and `siteurl`;
+//  6. purges the object cache and the page cache, and takes the site
+//     out of maintenance mode (unless it was in maintenance mode
+//     before).
+//
+// The response contains the site with status `updating`, and the
+// job, whose result holds `pre_restore_backup_id`. If the job fails
+// once the site's data was touched, it restores the pre-restore
+// backup (and the previous WordPress core), and the site **stays in
+// maintenance mode** with `status_message` saying what happened; turn
+// maintenance mode off once the site has been checked. If rolling
+// back fails too, the site is `failed` and `status_message` names the
+// pre-restore backup, which can be restored like any other.
+//
+// A snapshot that isn't the source site's, a source site in another
+// client group (restores stay within a client group, whose sites
+// share one backup repository), or a snapshot from a WordPress core
+// newer than any site image returns `422`, and nothing changes. The
+// site must be `running` (`409` otherwise); a site that is
+// `provisioning`, `updating`, or `deleting`, or whose provisioning
+// failed, returns `409` too.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/restore (the `RestoreSite` operationId).
+func (c *Client) RestoreSite(ctx context.Context, siteID SiteID, body RestoreSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRestoreSiteRequest(c.Server, siteID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4950,6 +5176,53 @@ func NewRegenerateSitePreviewPasswordRequest(server string, siteID SiteID) (*htt
 	return req, nil
 }
 
+// NewRestoreSiteRequest calls the generic RestoreSite builder with application/json body
+func NewRestoreSiteRequest(server string, siteID SiteID, body RestoreSiteJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRestoreSiteRequestWithBody(server, siteID, "application/json", bodyReader)
+}
+
+// NewRestoreSiteRequestWithBody constructs an http.Request for the RestoreSite method, with any body, and a specified content type
+func NewRestoreSiteRequestWithBody(server string, siteID SiteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/restore", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewStartSiteRequest constructs an http.Request for the StartSite method
 func NewStartSiteRequest(server string, siteID SiteID) (*http.Request, error) {
 	var err error
@@ -5997,6 +6270,100 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/preview-password (the `RegenerateSitePreviewPassword` operationId).
 	RegenerateSitePreviewPasswordWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*RegenerateSitePreviewPasswordResponse, error)
+
+	// RestoreSiteWithBodyWithResponse Restore a site from a snapshot
+	//
+	// Queues a job that restores a snapshot into the site (design doc
+	// §5.4). The snapshot is one of the site's own (`snapshot_id` of a
+	// backup from `GET /api/v1/sites/{site_id}/backups`), or of another
+	// site in the same client group, named by `source_site_id`, whose
+	// content then replaces this site's. The job:
+	//
+	// 1. takes a pre-restore backup of the site (kind `pre_restore`), so
+	//    the restore can be undone;
+	// 2. puts the site in maintenance mode;
+	// 3. if the snapshot was taken on a newer WordPress core than the
+	//    site runs, moves the site to the oldest site image with at least
+	//    that version;
+	// 4. replaces the site's `wp-content` with the snapshot's (files added
+	//    since are removed) and its database with the snapshot's,
+	//    restarts the site's containers, and runs `wp core update-db`;
+	// 5. if the restored database names another host than the site's
+	//    URL (a snapshot of another site, or from before go-live),
+	//    rewrites its URLs to the site's with `wp search-replace`, as
+	//    go-live does, and sets `home` and `siteurl`;
+	// 6. purges the object cache and the page cache, and takes the site
+	//    out of maintenance mode (unless it was in maintenance mode
+	//    before).
+	//
+	// The response contains the site with status `updating`, and the
+	// job, whose result holds `pre_restore_backup_id`. If the job fails
+	// once the site's data was touched, it restores the pre-restore
+	// backup (and the previous WordPress core), and the site **stays in
+	// maintenance mode** with `status_message` saying what happened; turn
+	// maintenance mode off once the site has been checked. If rolling
+	// back fails too, the site is `failed` and `status_message` names the
+	// pre-restore backup, which can be restored like any other.
+	//
+	// A snapshot that isn't the source site's, a source site in another
+	// client group (restores stay within a client group, whose sites
+	// share one backup repository), or a snapshot from a WordPress core
+	// newer than any site image returns `422`, and nothing changes. The
+	// site must be `running` (`409` otherwise); a site that is
+	// `provisioning`, `updating`, or `deleting`, or whose provisioning
+	// failed, returns `409` too.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/restore (the `RestoreSite` operationId).
+	RestoreSiteWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RestoreSiteResponse, error)
+
+	// RestoreSiteWithResponse Restore a site from a snapshot
+	//
+	// Queues a job that restores a snapshot into the site (design doc
+	// §5.4). The snapshot is one of the site's own (`snapshot_id` of a
+	// backup from `GET /api/v1/sites/{site_id}/backups`), or of another
+	// site in the same client group, named by `source_site_id`, whose
+	// content then replaces this site's. The job:
+	//
+	// 1. takes a pre-restore backup of the site (kind `pre_restore`), so
+	//    the restore can be undone;
+	// 2. puts the site in maintenance mode;
+	// 3. if the snapshot was taken on a newer WordPress core than the
+	//    site runs, moves the site to the oldest site image with at least
+	//    that version;
+	// 4. replaces the site's `wp-content` with the snapshot's (files added
+	//    since are removed) and its database with the snapshot's,
+	//    restarts the site's containers, and runs `wp core update-db`;
+	// 5. if the restored database names another host than the site's
+	//    URL (a snapshot of another site, or from before go-live),
+	//    rewrites its URLs to the site's with `wp search-replace`, as
+	//    go-live does, and sets `home` and `siteurl`;
+	// 6. purges the object cache and the page cache, and takes the site
+	//    out of maintenance mode (unless it was in maintenance mode
+	//    before).
+	//
+	// The response contains the site with status `updating`, and the
+	// job, whose result holds `pre_restore_backup_id`. If the job fails
+	// once the site's data was touched, it restores the pre-restore
+	// backup (and the previous WordPress core), and the site **stays in
+	// maintenance mode** with `status_message` saying what happened; turn
+	// maintenance mode off once the site has been checked. If rolling
+	// back fails too, the site is `failed` and `status_message` names the
+	// pre-restore backup, which can be restored like any other.
+	//
+	// A snapshot that isn't the source site's, a source site in another
+	// client group (restores stay within a client group, whose sites
+	// share one backup repository), or a snapshot from a WordPress core
+	// newer than any site image returns `422`, and nothing changes. The
+	// site must be `running` (`409` otherwise); a site that is
+	// `provisioning`, `updating`, or `deleting`, or whose provisioning
+	// failed, returns `409` too.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/restore (the `RestoreSite` operationId).
+	RestoreSiteWithResponse(ctx context.Context, siteID SiteID, body RestoreSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*RestoreSiteResponse, error)
 
 	// StartSiteWithResponse Start a stopped site
 	//
@@ -8486,6 +8853,103 @@ func (r RegenerateSitePreviewPasswordResponse) ContentType() string {
 	return ""
 }
 
+// RestoreSiteResponse202Headers the declared response headers of an HTTP 202 response for RestoreSite
+type RestoreSiteResponse202Headers struct {
+	Location *string
+}
+
+type RestoreSiteResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *SiteAccepted
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *RestoreSiteResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r RestoreSiteResponse) GetJSON202() *SiteAccepted {
+	return r.JSON202
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RestoreSiteResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RestoreSiteResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RestoreSiteResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RestoreSiteResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RestoreSiteResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r RestoreSiteResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RestoreSiteResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RestoreSiteResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RestoreSiteResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RestoreSiteResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RestoreSiteResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // StartSiteResponse202Headers the declared response headers of an HTTP 202 response for StartSite
 type StartSiteResponse202Headers struct {
 	Location *string
@@ -10021,6 +10485,112 @@ func (c *ClientWithResponses) RegenerateSitePreviewPasswordWithResponse(ctx cont
 		return nil, err
 	}
 	return ParseRegenerateSitePreviewPasswordResponse(rsp)
+}
+
+// RestoreSiteWithBodyWithResponse Restore a site from a snapshot
+//
+// Queues a job that restores a snapshot into the site (design doc
+// §5.4). The snapshot is one of the site's own (`snapshot_id` of a
+// backup from `GET /api/v1/sites/{site_id}/backups`), or of another
+// site in the same client group, named by `source_site_id`, whose
+// content then replaces this site's. The job:
+//
+//  1. takes a pre-restore backup of the site (kind `pre_restore`), so
+//     the restore can be undone;
+//  2. puts the site in maintenance mode;
+//  3. if the snapshot was taken on a newer WordPress core than the
+//     site runs, moves the site to the oldest site image with at least
+//     that version;
+//  4. replaces the site's `wp-content` with the snapshot's (files added
+//     since are removed) and its database with the snapshot's,
+//     restarts the site's containers, and runs `wp core update-db`;
+//  5. if the restored database names another host than the site's
+//     URL (a snapshot of another site, or from before go-live),
+//     rewrites its URLs to the site's with `wp search-replace`, as
+//     go-live does, and sets `home` and `siteurl`;
+//  6. purges the object cache and the page cache, and takes the site
+//     out of maintenance mode (unless it was in maintenance mode
+//     before).
+//
+// The response contains the site with status `updating`, and the
+// job, whose result holds `pre_restore_backup_id`. If the job fails
+// once the site's data was touched, it restores the pre-restore
+// backup (and the previous WordPress core), and the site **stays in
+// maintenance mode** with `status_message` saying what happened; turn
+// maintenance mode off once the site has been checked. If rolling
+// back fails too, the site is `failed` and `status_message` names the
+// pre-restore backup, which can be restored like any other.
+//
+// A snapshot that isn't the source site's, a source site in another
+// client group (restores stay within a client group, whose sites
+// share one backup repository), or a snapshot from a WordPress core
+// newer than any site image returns `422`, and nothing changes. The
+// site must be `running` (`409` otherwise); a site that is
+// `provisioning`, `updating`, or `deleting`, or whose provisioning
+// failed, returns `409` too.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/restore (the `RestoreSite` operationId).
+func (c *ClientWithResponses) RestoreSiteWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RestoreSiteResponse, error) {
+	rsp, err := c.RestoreSiteWithBody(ctx, siteID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRestoreSiteResponse(rsp)
+}
+
+// RestoreSiteWithResponse Restore a site from a snapshot
+//
+// Queues a job that restores a snapshot into the site (design doc
+// §5.4). The snapshot is one of the site's own (`snapshot_id` of a
+// backup from `GET /api/v1/sites/{site_id}/backups`), or of another
+// site in the same client group, named by `source_site_id`, whose
+// content then replaces this site's. The job:
+//
+//  1. takes a pre-restore backup of the site (kind `pre_restore`), so
+//     the restore can be undone;
+//  2. puts the site in maintenance mode;
+//  3. if the snapshot was taken on a newer WordPress core than the
+//     site runs, moves the site to the oldest site image with at least
+//     that version;
+//  4. replaces the site's `wp-content` with the snapshot's (files added
+//     since are removed) and its database with the snapshot's,
+//     restarts the site's containers, and runs `wp core update-db`;
+//  5. if the restored database names another host than the site's
+//     URL (a snapshot of another site, or from before go-live),
+//     rewrites its URLs to the site's with `wp search-replace`, as
+//     go-live does, and sets `home` and `siteurl`;
+//  6. purges the object cache and the page cache, and takes the site
+//     out of maintenance mode (unless it was in maintenance mode
+//     before).
+//
+// The response contains the site with status `updating`, and the
+// job, whose result holds `pre_restore_backup_id`. If the job fails
+// once the site's data was touched, it restores the pre-restore
+// backup (and the previous WordPress core), and the site **stays in
+// maintenance mode** with `status_message` saying what happened; turn
+// maintenance mode off once the site has been checked. If rolling
+// back fails too, the site is `failed` and `status_message` names the
+// pre-restore backup, which can be restored like any other.
+//
+// A snapshot that isn't the source site's, a source site in another
+// client group (restores stay within a client group, whose sites
+// share one backup repository), or a snapshot from a WordPress core
+// newer than any site image returns `422`, and nothing changes. The
+// site must be `running` (`409` otherwise); a site that is
+// `provisioning`, `updating`, or `deleting`, or whose provisioning
+// failed, returns `409` too.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/restore (the `RestoreSite` operationId).
+func (c *ClientWithResponses) RestoreSiteWithResponse(ctx context.Context, siteID SiteID, body RestoreSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*RestoreSiteResponse, error) {
+	rsp, err := c.RestoreSite(ctx, siteID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRestoreSiteResponse(rsp)
 }
 
 // StartSiteWithResponse Start a stopped site
@@ -12224,6 +12794,94 @@ func ParseRegenerateSitePreviewPasswordResponse(rsp *http.Response) (*Regenerate
 			}
 			headers.CacheControl = &value
 		}
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRestoreSiteResponse parses an HTTP response from a RestoreSiteWithResponse call
+func ParseRestoreSiteResponse(rsp *http.Response) (*RestoreSiteResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RestoreSiteResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest SiteAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers RestoreSiteResponse202Headers
 		if values := rsp.Header.Values("Location"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {

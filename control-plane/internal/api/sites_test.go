@@ -50,6 +50,7 @@ var implementedSiteOps = map[string]bool{
 	"createSiteBackup":              true,
 	"getSiteBackupSchedule":         true,
 	"setSiteBackupSchedule":         true,
+	"restoreSite":                   true,
 }
 
 func orEmpty(s *string) string {
@@ -89,16 +90,16 @@ func newSiteEnv(t *testing.T, db *store.DB, previewBase string) *siteEnv {
 		}
 		return "", nil
 	}
-	e.svc, err = sites.New(sites.Options{
-		DB: db, Secrets: sec, Catalog: cat, PreviewBaseDomain: previewBase,
-		Provisioner: e.prov, Databases: e.dbs, ObjectCaches: objectcachetest.New(), Logger: storetest.Logger(),
-		DNSChecker: e.dns,
-	})
+	e.engine = backuptest.New()
+	e.backups, err = sitebackup.New(sitebackup.Options{DB: db, Engine: e.engine, Logger: storetest.Logger()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.engine = backuptest.New()
-	e.backups, err = sitebackup.New(sitebackup.Options{DB: db, Engine: e.engine, Logger: storetest.Logger()})
+	e.svc, err = sites.New(sites.Options{
+		DB: db, Secrets: sec, Catalog: cat, PreviewBaseDomain: previewBase,
+		Provisioner: e.prov, Databases: e.dbs, ObjectCaches: objectcachetest.New(), Logger: storetest.Logger(),
+		DNSChecker: e.dns, Backups: e.backups, BackupEngine: e.engine,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

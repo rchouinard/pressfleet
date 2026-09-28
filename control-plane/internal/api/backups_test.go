@@ -12,6 +12,8 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
+	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/id"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
@@ -246,6 +248,103 @@ func TestSiteBackupScheduleEndpoints(t *testing.T) {
 		}
 		if w := do(t, viewer, request{authed: true, method: http.MethodPut, target: target, body: `{"enabled": true}`, contentType: "application/json"}); w.Code != http.StatusForbidden {
 			t.Errorf("viewer PUT: %d %s", w.Code, w.Body)
+		}
+	})
+}
+
+func TestSiteRestoreEndpoint(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		e := newSiteEnv(t, db, testPreviewBase)
+		h := newHandler(t, api.Options{DB: db, Authenticator: &fakeAuth{}, Sites: e.svc, Backups: e.backups})
+		now := time.Now()
+		if _, err := db.ExecContext(ctx, "INSERT INTO users (id, email, password_hash, role, created_at, updated_at) VALUES (?, ?, 'x', 'admin', ?, ?)",
+			"01j9zq3v6t8k4m2n5p7r9s1x3y", "admin@example.com", now, now); err != nil {
+			t.Fatal(err)
+		}
+		group := &store.ClientGroup{Name: "Acme"}
+		if err := store.NewClientGroups(db).Create(ctx, group); err != nil {
+			t.Fatal(err)
+		}
+		site, _, err := e.svc.Create(ctx, sites.NewSite{ClientGroupID: group.ID, Name: "Acme", AdminEmail: "o@example.com", PHPVersion: "8.4"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.runJobs(t)
+		snap, err := e.engine.Backup(ctx, site.ID, backup.Options{Kind: "manual"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		restore := "/api/v1/sites/" + site.ID + "/restore"
+
+		// Problems with the request: 422 for the body, the snapshot,
+		// or the source, 404 for the site.
+		for _, tt := range []struct {
+			target, body string
+			code         int
+			field        string
+		}{
+			{restore, `{}`, http.StatusUnprocessableEntity, ""},
+			{restore, `{"snapshot_id":"x","extra":1}`, http.StatusUnprocessableEntity, ""},
+			{restore, `{"snapshot_id":"nope-nope-nope"}`, http.StatusUnprocessableEntity, "/snapshot_id"},
+			{restore, `{"snapshot_id":"` + string(snap.ID) + `","source_site_id":"` + id.New() + `"}`, http.StatusUnprocessableEntity, "/source_site_id"},
+			{"/api/v1/sites/" + id.New() + "/restore", `{"snapshot_id":"` + string(snap.ID) + `"}`, http.StatusNotFound, ""},
+		} {
+			w := do(t, h, request{authed: true, method: http.MethodPost, target: tt.target, body: tt.body})
+			if w.Code != tt.code {
+				t.Errorf("restore %s: %d %s, want %d", tt.body, w.Code, w.Body, tt.code)
+				continue
+			}
+			if tt.field != "" {
+				p := decodeJSON[gen.Problem](t, w.Body.Bytes())
+				if p.Errors == nil || len(*p.Errors) != 1 || (*p.Errors)[0].Field != tt.field {
+					t.Errorf("restore %s: problem %s, want an error on %s", tt.body, w.Body, tt.field)
+				}
+			}
+		}
+
+		// Viewers may not restore.
+		viewer := newHandler(t, api.Options{DB: db, Authenticator: &fakeAuth{principal: &auth.Principal{
+			UserID: "01j9zq3v6t8k4m2n5p7r9s1x3y", Role: store.RoleViewer, Method: auth.MethodSession, SessionID: "v",
+		}}, Sites: e.svc, Backups: e.backups})
+		body := `{"snapshot_id":"` + string(snap.ID) + `"}`
+		if w := do(t, viewer, request{authed: true, method: http.MethodPost, target: restore, body: body}); w.Code != http.StatusForbidden {
+			t.Errorf("viewer restore: %d %s", w.Code, w.Body)
+		}
+
+		// Operators may: 202 with the site, now updating, and the job.
+		operator := newHandler(t, api.Options{DB: db, Authenticator: &fakeAuth{principal: &auth.Principal{
+			UserID: "01j9zq3v6t8k4m2n5p7r9s1x3y", Role: store.RoleOperator, Method: auth.MethodSession, SessionID: "o",
+		}}, Sites: e.svc, Backups: e.backups})
+		w := do(t, operator, request{authed: true, method: http.MethodPost, target: restore, body: body})
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("restore: %d %s", w.Code, w.Body)
+		}
+		accepted := decodeJSON[gen.SiteAccepted](t, w.Body.Bytes())
+		if accepted.Site.ID != site.ID || accepted.Site.Status != gen.SiteStatusUpdating || accepted.Job.Type != sites.RestoreJobType ||
+			accepted.Job.Target.ID != site.ID || accepted.Job.State != gen.JobStateQueued || accepted.Job.CreatedBy == nil {
+			t.Errorf("restore response = %s", w.Body)
+		}
+		if loc := w.Header().Get("Location"); loc != "/api/v1/jobs/"+accepted.Job.ID {
+			t.Errorf("Location = %q", loc)
+		}
+		// A second restore waits for the first: the site is busy.
+		if w := do(t, h, request{authed: true, method: http.MethodPost, target: restore, body: body}); w.Code != http.StatusConflict {
+			t.Errorf("restore while restoring: %d %s", w.Code, w.Body)
+		}
+
+		events, err := store.NewAuditEvents(db).List(ctx, store.AuditFilter{TargetType: "site", TargetID: site.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		results := map[store.AuditResult]int{}
+		for _, ev := range events.Events {
+			if ev.Action == string(authz.RestoreBackup) {
+				results[ev.Result]++
+			}
+		}
+		if results[store.AuditSuccess] != 1 || results[store.AuditDenied] != 1 || results[store.AuditFailure] < 3 {
+			t.Errorf("backup.restore audit events = %v", results)
 		}
 	})
 }

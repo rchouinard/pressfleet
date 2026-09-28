@@ -54,6 +54,7 @@ var operationActions = map[string]authz.Action{
 	"getSiteBackupSchedule": authz.ViewBackups,
 	// The backup schedule is a site setting.
 	"setSiteBackupSchedule": authz.UpdateSite,
+	"restoreSite":           authz.RestoreBackup,
 
 	"listJobs": authz.ViewJobs,
 	"getJob":   authz.ViewJobs,

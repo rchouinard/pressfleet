@@ -429,6 +429,23 @@ Each site can change its schedule with `PUT /api/v1/sites/{id}/backup-schedule` 
 
 Changing the schedule takes effect at once. Backups due while the control plane was down run when it starts again, once however many were missed. The control plane checks every site's schedule when it starts, so a changed backup window moves the schedules of the sites that use it, and sites created before scheduled backups existed get one. Sites that are being deleted, or whose provisioning failed, have no schedule; if a scheduled backup finds its site gone or being deleted, it is skipped (the job succeeds and says why in its log).
 
+## Site restores
+
+`POST /api/v1/sites/{id}/restore` with `{"snapshot_id": "..."}` restores one of the site's snapshots into it; add `"source_site_id"` to restore a snapshot of another site of the same client group (its content then replaces this site's). The site must be running. The job:
+
+1. takes a pre-restore backup of the site (kind `pre_restore`, listed with its other backups);
+2. puts the site in maintenance mode;
+3. moves the site to a newer WordPress core first, if the snapshot was taken on a newer one than the site runs (the oldest site image with at least that version; a snapshot from a core newer than any image is refused up front);
+4. replaces `wp-content` with the snapshot's, removing files added since, and the database with the snapshot's dump, restarts the site's containers (so PHP doesn't keep running cached code of replaced plugins), and runs `wp core update-db`;
+5. rewrites the database's URLs to the site's own with `wp search-replace` if they name another host (a snapshot of another site, or one taken before go-live);
+6. purges the caches and takes the site out of maintenance mode, unless it was in maintenance mode before the restore.
+
+The files are restored by `restic restore` in a short-lived container that runs as the site's user, so they belong to the site, whichever site the snapshot is of. The database dump is extracted into a transfer directory under `<data_dir>/tmp/` (`restore-<site ID>-<snapshot>`), which is removed afterwards.
+
+**Failures.** A failed step is retried; the ones that can't succeed on a retry (a missing snapshot, WordPress failing to load the restored site) fail at once. If the job fails after the site's data was touched, it restores the pre-restore backup, moves the site back to its previous WordPress core, and leaves the site **in maintenance mode** with the error in its `status_message`: check the site, then turn maintenance mode off (`PUT /api/v1/sites/{id}/maintenance`). If even the pre-restore backup can't be restored, the site is marked `failed` and the status message names the pre-restore backup; restore it like any other once the cause is fixed.
+
+**Client groups.** Restores stay within a client group: each group's repository has its own key, and a restore task opens one repository. Restoring a snapshot into a site of another group is refused with `422`.
+
 ## Site databases
 
 Each site's database lives on the platform's shared MariaDB server. The control plane connects as `mariadb.admin_user` to create a database and a user for each site, both named `pf_<site-id>`. Each site user has a random password, stored encrypted in the state database, and privileges on its own database only. It is also limited to 20 simultaneous connections (`MAX_USER_CONNECTIONS`), so one site can't use up the server's 150 connections. With PHP-FPM's `ondemand` mode, idle sites hold no connections.

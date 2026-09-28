@@ -1321,6 +1321,84 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/sites/{site_id}/restore:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    post:
+      operationId: restoreSite
+      tags: [backups]
+      summary: Restore a site from a snapshot
+      description: |
+        Queues a job that restores a snapshot into the site (design doc
+        §5.4). The snapshot is one of the site's own (`snapshot_id` of a
+        backup from `GET /api/v1/sites/{site_id}/backups`), or of another
+        site in the same client group, named by `source_site_id`, whose
+        content then replaces this site's. The job:
+
+        1. takes a pre-restore backup of the site (kind `pre_restore`), so
+           the restore can be undone;
+        2. puts the site in maintenance mode;
+        3. if the snapshot was taken on a newer WordPress core than the
+           site runs, moves the site to the oldest site image with at least
+           that version;
+        4. replaces the site's `wp-content` with the snapshot's (files added
+           since are removed) and its database with the snapshot's,
+           restarts the site's containers, and runs `wp core update-db`;
+        5. if the restored database names another host than the site's
+           URL (a snapshot of another site, or from before go-live),
+           rewrites its URLs to the site's with `wp search-replace`, as
+           go-live does, and sets `home` and `siteurl`;
+        6. purges the object cache and the page cache, and takes the site
+           out of maintenance mode (unless it was in maintenance mode
+           before).
+
+        The response contains the site with status `updating`, and the
+        job, whose result holds `pre_restore_backup_id`. If the job fails
+        once the site's data was touched, it restores the pre-restore
+        backup (and the previous WordPress core), and the site **stays in
+        maintenance mode** with `status_message` saying what happened; turn
+        maintenance mode off once the site has been checked. If rolling
+        back fails too, the site is `failed` and `status_message` names the
+        pre-restore backup, which can be restored like any other.
+
+        A snapshot that isn't the source site's, a source site in another
+        client group (restores stay within a client group, whose sites
+        share one backup repository), or a snapshot from a WordPress core
+        newer than any site image returns `422`, and nothing changes. The
+        site must be `running` (`409` otherwise); a site that is
+        `provisioning`, `updating`, or `deleting`, or whose provisioning
+        failed, returns `409` too.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SiteRestore"
+      responses:
+        "202":
+          description: The site, now updating, and the restore job.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/jobs:
     get:
       operationId: listJobs
@@ -2074,6 +2152,27 @@ components:
           $ref: "#/components/schemas/BackupIntervalHours"
         hour:
           $ref: "#/components/schemas/BackupHour"
+
+    SiteRestore:
+      type: object
+      required: [snapshot_id]
+      additionalProperties: false
+      properties:
+        snapshot_id:
+          type: string
+          description: |
+            The snapshot to restore: a backup's `snapshot_id`, or a prefix
+            of it of at least 8 characters.
+          minLength: 1
+          maxLength: 64
+          examples: ["3be90c95b9962949a5d839b7fd7adbef112b4a3d667f214a32989f615ce4f20b"]
+        source_site_id:
+          description: |
+            The site the snapshot is of, in the same client group; omit it
+            to restore one of the site's own snapshots. The source may have
+            been deleted, as long as its backups are in the repository.
+          allOf:
+            - $ref: "#/components/schemas/ID"
 
     BackupRepository:
       type: object

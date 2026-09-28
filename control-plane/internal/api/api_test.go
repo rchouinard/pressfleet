@@ -136,6 +136,7 @@ var sampleBodies = map[string]string{
 	"goLiveSite":            `{"primary_domain":"www.acme.example"}`,
 	"setSiteAliases":        `{"aliases":["acme.example"]}`,
 	"setSiteBackupSchedule": `{"enabled":true}`,
+	"restoreSite":           `{"snapshot_id":"3be90c95"}`,
 }
 
 func TestOpenAPIDocumentIsValid(t *testing.T) {

@@ -169,26 +169,6 @@ func (a *app) serveCommand() *cobra.Command {
 				return err
 			}
 			backupWindow := sitebackup.Window{Start: a.cfg.Backup.Schedule.Start(), Length: a.cfg.Backup.Schedule.Window()}
-			siteSvc, err := sites.New(sites.Options{
-				DB:                db,
-				Secrets:           secretStore,
-				Catalog:           cat,
-				PreviewBaseDomain: a.cfg.PreviewBaseDomain,
-				Provisioner:       prov,
-				Databases:         siteDBs,
-				ObjectCaches:      caches,
-				TwoFactor:         a.cfg.WordPressSecurity.TwoFactor,
-				DashboardDomain:   a.cfg.DashboardDomain,
-				DNSChecker:        a.dnsChecker(),
-				BackupWindow:      backupWindow,
-				Logger:            a.log.With("component", "sites"),
-			})
-			if err != nil {
-				return err
-			}
-			if a.cfg.PreviewBaseDomain == "" {
-				a.log.Warn("preview_base_domain is not set; site creation is refused until it is")
-			}
 			engine, err := restic.New(restic.Options{
 				DB:           db,
 				Repositories: repos,
@@ -205,6 +185,28 @@ func (a *app) serveCommand() *cobra.Command {
 			})
 			if err != nil {
 				return err
+			}
+			siteSvc, err := sites.New(sites.Options{
+				DB:                db,
+				Secrets:           secretStore,
+				Catalog:           cat,
+				PreviewBaseDomain: a.cfg.PreviewBaseDomain,
+				Provisioner:       prov,
+				Databases:         siteDBs,
+				ObjectCaches:      caches,
+				Backups:           backups,
+				BackupEngine:      engine,
+				TwoFactor:         a.cfg.WordPressSecurity.TwoFactor,
+				DashboardDomain:   a.cfg.DashboardDomain,
+				DNSChecker:        a.dnsChecker(),
+				BackupWindow:      backupWindow,
+				Logger:            a.log.With("component", "sites"),
+			})
+			if err != nil {
+				return err
+			}
+			if a.cfg.PreviewBaseDomain == "" {
+				a.log.Warn("preview_base_domain is not set; site creation is refused until it is")
 			}
 			handler, err := api.NewHandler(api.Options{
 				Logger:         a.log,

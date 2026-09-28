@@ -11,6 +11,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/id"
+	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
 
@@ -125,6 +126,43 @@ func backupScheduleResponse(s sitebackup.ScheduleState) gen.BackupSchedule {
 		out.NextRunAt = &next
 	}
 	return out
+}
+
+// RestoreSite checks the snapshot and queues the job that restores it into
+// the site (#55), returning 202 with the site and the job. The caller's
+// right to restore is checked on the target site alone: the source must be
+// in the same client group, which the authorization check resolves both
+// sites to.
+func (h *Handlers) RestoreSite(ctx context.Context, req gen.RestoreSiteRequestObject) (gen.RestoreSiteResponseObject, error) {
+	p, err := h.authorize(ctx, authz.RestoreBackup, authz.Site(req.SiteID))
+	if err != nil {
+		return nil, err
+	}
+	if h.sites == nil {
+		return nil, errNoSites
+	}
+	b := deref(req.Body)
+	site, job, err := h.sites.Restore(ctx, req.SiteID, sites.Restore{
+		SnapshotID:      b.SnapshotID,
+		SourceSiteID:    deref(b.SourceSiteID),
+		CreatedByUserID: p.UserID,
+	})
+	if err != nil {
+		return nil, siteError(err)
+	}
+	_, aliases, err := h.sites.Get(ctx, site.ID)
+	if err != nil {
+		return nil, siteError(err)
+	}
+	j, err := jobResponse(job, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	location := jobLocation(job)
+	return gen.RestoreSite202JSONResponse{
+		Body:    gen.SiteAccepted{Site: siteResponse(site, aliases), Job: j},
+		Headers: gen.RestoreSite202ResponseHeaders{Location: &location},
+	}, nil
 }
 
 // backupError maps backup errors to API errors.

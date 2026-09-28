@@ -1179,6 +1179,21 @@ type SiteMaintenance struct {
 	Enabled bool `json:"enabled"`
 }
 
+// SiteRestore defines model for SiteRestore.
+type SiteRestore struct {
+	// SnapshotID The snapshot to restore: a backup's `snapshot_id`, or a prefix
+	// of it of at least 8 characters.
+	//
+	//
+	// Examples: 3be90c95b9962949a5d839b7fd7adbef112b4a3d667f214a32989f615ce4f20b
+	SnapshotID string `json:"snapshot_id"`
+
+	// SourceSiteID The site the snapshot is of, in the same client group; omit it
+	// to restore one of the site's own snapshots. The source may have
+	// been deleted, as long as its backups are in the repository.
+	SourceSiteID *ID `json:"source_site_id,omitempty"`
+}
+
 // SiteRuntime The live state of the site's containers, observed when the site was
 // read. Only `GET /api/v1/sites/{site_id}` includes it; listings report
 // the recorded `status` alone.
@@ -1482,6 +1497,9 @@ type GoLiveSiteJSONRequestBody = SiteGoLive
 // SetSiteMaintenanceJSONRequestBody defines body for SetSiteMaintenance for application/json ContentType.
 type SetSiteMaintenanceJSONRequestBody = SiteMaintenance
 
+// RestoreSiteJSONRequestBody defines body for RestoreSite for application/json ContentType.
+type RestoreSiteJSONRequestBody = SiteRestore
+
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody = UserCreate
 
@@ -1580,6 +1598,9 @@ type ServerInterface interface {
 	// RegenerateSitePreviewPassword Generate a new preview password (shown once)
 	// (POST /api/v1/sites/{site_id}/preview-password)
 	RegenerateSitePreviewPassword(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// RestoreSite Restore a site from a snapshot
+	// (POST /api/v1/sites/{site_id}/restore)
+	RestoreSite(w http.ResponseWriter, r *http.Request, siteID SiteID)
 	// StartSite Start a stopped site
 	// (POST /api/v1/sites/{site_id}/start)
 	StartSite(w http.ResponseWriter, r *http.Request, siteID SiteID)
@@ -2599,6 +2620,32 @@ func (siw *ServerInterfaceWrapper) RegenerateSitePreviewPassword(w http.Response
 	handler.ServeHTTP(w, r)
 }
 
+// RestoreSite operation middleware
+func (siw *ServerInterfaceWrapper) RestoreSite(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RestoreSite(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // StartSite operation middleware
 func (siw *ServerInterfaceWrapper) StartSite(w http.ResponseWriter, r *http.Request) {
 
@@ -2986,6 +3033,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/backups", wrapper.CreateSiteBackup)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/backup-schedule", wrapper.GetSiteBackupSchedule)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/sites/{site_id}/backup-schedule", wrapper.SetSiteBackupSchedule)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/restore", wrapper.RestoreSite)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs", wrapper.ListJobs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs/{job_id}", wrapper.GetJob)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit-events", wrapper.ListAuditEvents)
@@ -6271,6 +6319,152 @@ func (response RegenerateSitePreviewPassworddefaultApplicationProblemPlusJSONRes
 	return err
 }
 
+type RestoreSiteRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+	Body   *RestoreSiteJSONRequestBody
+}
+
+type RestoreSiteResponseObject interface {
+	VisitRestoreSiteResponse(w http.ResponseWriter) error
+}
+
+type RestoreSite202ResponseHeaders struct {
+	Location *string
+}
+
+type RestoreSite202JSONResponse struct {
+	Body    SiteAccepted
+	Headers RestoreSite202ResponseHeaders
+}
+
+func (response RestoreSite202JSONResponse) VisitRestoreSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RestoreSite400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response RestoreSite400ApplicationProblemPlusJSONResponse) VisitRestoreSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RestoreSite401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response RestoreSite401ApplicationProblemPlusJSONResponse) VisitRestoreSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RestoreSite403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response RestoreSite403ApplicationProblemPlusJSONResponse) VisitRestoreSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RestoreSite404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response RestoreSite404ApplicationProblemPlusJSONResponse) VisitRestoreSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RestoreSite409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response RestoreSite409ApplicationProblemPlusJSONResponse) VisitRestoreSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RestoreSite422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response RestoreSite422ApplicationProblemPlusJSONResponse) VisitRestoreSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RestoreSitedefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response RestoreSitedefaultApplicationProblemPlusJSONResponse) VisitRestoreSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type StartSiteRequestObject struct {
 	SiteID SiteID `json:"site_id"`
 }
@@ -7181,6 +7375,9 @@ type StrictServerInterface interface {
 	// RegenerateSitePreviewPassword Generate a new preview password (shown once)
 	// (POST /api/v1/sites/{site_id}/preview-password)
 	RegenerateSitePreviewPassword(ctx context.Context, request RegenerateSitePreviewPasswordRequestObject) (RegenerateSitePreviewPasswordResponseObject, error)
+	// RestoreSite Restore a site from a snapshot
+	// (POST /api/v1/sites/{site_id}/restore)
+	RestoreSite(ctx context.Context, request RestoreSiteRequestObject) (RestoreSiteResponseObject, error)
 	// StartSite Start a stopped site
 	// (POST /api/v1/sites/{site_id}/start)
 	StartSite(ctx context.Context, request StartSiteRequestObject) (StartSiteResponseObject, error)
@@ -8086,6 +8283,39 @@ func (sh *strictHandler) RegenerateSitePreviewPassword(w http.ResponseWriter, r 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RegenerateSitePreviewPasswordResponseObject); ok {
 		if err := validResponse.VisitRegenerateSitePreviewPasswordResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RestoreSite operation middleware
+func (sh *strictHandler) RestoreSite(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request RestoreSiteRequestObject
+
+	request.SiteID = siteID
+
+	var body RestoreSiteJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RestoreSite(ctx, request.(RestoreSiteRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RestoreSite")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RestoreSiteResponseObject); ok {
+		if err := validResponse.VisitRestoreSiteResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

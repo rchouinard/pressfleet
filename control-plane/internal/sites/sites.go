@@ -109,6 +109,13 @@
 // the site's object cache and then purges its page cache (cache.go). The
 // status doesn't change.
 //
+// # Restore
+//
+// [Service.Restore] checks a snapshot and queues a [RestoreJobType] job
+// that takes a pre-restore backup of the site, puts it in maintenance
+// mode, restores the snapshot into it, and rolls it back to the
+// pre-restore backup if anything fails; see restore.go.
+//
 // Updating, going live, starting, stopping, and purging are refused with ErrBusy while
 // a job is provisioning, updating, or deleting the site, and with
 // ErrNotProvisioned for a site whose provisioning failed, which has nothing
@@ -165,6 +172,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
@@ -243,6 +251,12 @@ type Options struct {
 	Provisioner  provisioner.Provisioner
 	Databases    sitedb.Manager
 	ObjectCaches objectcache.Manager
+	// Backups and BackupEngine restore sites (restore.go): Backups takes
+	// the pre-restore backup and BackupEngine restores snapshots. Without
+	// both, Restore fails with ErrNoBackups and the restore job isn't
+	// registered.
+	Backups      *sitebackup.Service
+	BackupEngine backup.Engine
 	// DashboardDomain is config.Config.DashboardDomain, which no site may
 	// use.
 	DashboardDomain string
@@ -270,19 +284,21 @@ type Options struct {
 
 // Service runs the site workflows.
 type Service struct {
-	db          *store.DB
-	secrets     secrets.Store
-	catalog     *catalog.Catalog
-	previewBase string
-	prov        provisioner.Provisioner
-	databases   sitedb.Manager
-	caches      objectcache.Manager
-	twoFactor   bool
-	dashboard   string
-	dns         DNSChecker
-	backups     sitebackup.Window
-	log         *slog.Logger
-	now         func() time.Time
+	db           *store.DB
+	secrets      secrets.Store
+	catalog      *catalog.Catalog
+	previewBase  string
+	prov         provisioner.Provisioner
+	databases    sitedb.Manager
+	caches       objectcache.Manager
+	backups      *sitebackup.Service
+	engine       backup.Engine
+	twoFactor    bool
+	dashboard    string
+	dns          DNSChecker
+	backupWindow sitebackup.Window
+	log          *slog.Logger
+	now          func() time.Time
 
 	statusTimeout time.Duration
 }
@@ -309,19 +325,21 @@ func New(opts Options) (*Service, error) {
 		return nil, fmt.Errorf("sites: %w", err)
 	}
 	s := &Service{
-		db:          opts.DB,
-		secrets:     opts.Secrets,
-		catalog:     opts.Catalog,
-		previewBase: strings.TrimSuffix(strings.ToLower(opts.PreviewBaseDomain), "."),
-		prov:        opts.Provisioner,
-		databases:   opts.Databases,
-		caches:      opts.ObjectCaches,
-		twoFactor:   opts.TwoFactor != "" && opts.TwoFactor != config.TwoFactorOff,
-		dashboard:   strings.TrimSuffix(strings.ToLower(opts.DashboardDomain), "."),
-		dns:         opts.DNSChecker,
-		backups:     opts.BackupWindow,
-		log:         opts.Logger,
-		now:         opts.Now,
+		db:           opts.DB,
+		secrets:      opts.Secrets,
+		catalog:      opts.Catalog,
+		previewBase:  strings.TrimSuffix(strings.ToLower(opts.PreviewBaseDomain), "."),
+		prov:         opts.Provisioner,
+		databases:    opts.Databases,
+		caches:       opts.ObjectCaches,
+		backups:      opts.Backups,
+		engine:       opts.BackupEngine,
+		twoFactor:    opts.TwoFactor != "" && opts.TwoFactor != config.TwoFactorOff,
+		dashboard:    strings.TrimSuffix(strings.ToLower(opts.DashboardDomain), "."),
+		dns:          opts.DNSChecker,
+		backupWindow: opts.BackupWindow,
+		log:          opts.Logger,
+		now:          opts.Now,
 
 		statusTimeout: opts.StatusTimeout,
 	}
@@ -526,7 +544,7 @@ func (s *Service) create(ctx context.Context, site store.Site, req NewSite) (sto
 		if err := sitecron.EnsureSchedule(ctx, q, site.ID); err != nil {
 			return err
 		}
-		if err := sitebackup.EnsureSchedule(ctx, q, site.ID, s.backups); err != nil {
+		if err := sitebackup.EnsureSchedule(ctx, q, site.ID, s.backupWindow); err != nil {
 			return err
 		}
 		job, err = jobs.Enqueue(ctx, q, jobs.Spec{
@@ -637,10 +655,14 @@ func (s *Service) TakeAdminCredentials(ctx context.Context, siteID string) (Admi
 // Handlers returns the job handlers of the site workflows, to register on
 // the job pool.
 func (s *Service) Handlers() []jobs.Handler {
-	return []jobs.Handler{
+	handlers := []jobs.Handler{
 		s.createHandler(), s.deleteHandler(), s.updateHandler(), s.startHandler(), s.stopHandler(),
 		s.reconcileHandler(), s.purgeCacheHandler(), s.maintenanceHandler(), s.goLiveHandler(), s.aliasesHandler(),
 	}
+	if s.restores() {
+		handlers = append(handlers, s.restoreHandler())
+	}
+	return handlers
 }
 
 // SharedServiceAttacher reconnects the platform services to a site's
