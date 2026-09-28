@@ -136,7 +136,8 @@ func (c *Conn) Do(ctx context.Context, args ...string) (any, error) {
 		deadline = d
 	}
 	if err := c.c.SetDeadline(deadline); err != nil {
-		return nil, fmt.Errorf("resp: %w", err)
+		// A connection the server already closed fails here.
+		return nil, c.ioError(ctx, args[0], err)
 	}
 	// Abort a blocked read or write when ctx is canceled.
 	stop := context.AfterFunc(ctx, func() { _ = c.c.SetDeadline(time.Unix(1, 0)) })
