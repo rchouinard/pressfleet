@@ -50,3 +50,45 @@ func TestSiteMaintenance(t *testing.T) {
 		}
 	})
 }
+
+// TestSiteWPCoreVersion covers moving a site to another core version, as a
+// restore does (#55), including the conditional update.
+func TestSiteWPCoreVersion(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		sites := store.NewSites(db)
+		s := newTestSite(createGroup(ctx, t, db), "acme", 20000)
+		if err := sites.Create(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+		old := s.WPCoreVersion
+		for _, step := range []struct {
+			version string
+			from    []string
+			changed bool
+			want    string
+		}{
+			{"9.9.9", []string{"0.1"}, false, old},
+			{"9.9.9", []string{old}, true, "9.9.9"},
+			{old, nil, true, old},
+		} {
+			changed, err := sites.SetWPCoreVersion(ctx, s.ID, step.version, step.from...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := sites.Get(ctx, s.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if changed != step.changed || got.WPCoreVersion != step.want {
+				t.Errorf("SetWPCoreVersion(%s, %v) = %v, version %s; want %v, %s", step.version, step.from, changed, got.WPCoreVersion, step.changed, step.want)
+			}
+		}
+		if _, err := sites.SetWPCoreVersion(ctx, s.ID, ""); err == nil {
+			t.Error("SetWPCoreVersion accepted an empty version")
+		}
+		if changed, err := sites.SetWPCoreVersion(ctx, id.New(), "7.0"); err != nil || changed {
+			t.Errorf("SetWPCoreVersion on a missing site = %v, %v", changed, err)
+		}
+	})
+}

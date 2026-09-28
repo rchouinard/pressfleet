@@ -22,6 +22,11 @@ var (
 	// ErrSiteNotFound is returned when the platform knows nothing of the
 	// site: it has no site record and no backup records.
 	ErrSiteNotFound = errors.New("backup: site not found")
+	// ErrCrossGroup is returned when a snapshot would be restored into a
+	// site of another client group. Each group has its own repository and
+	// key, and a restore task reaches one repository only, so the MVP
+	// restores within a group.
+	ErrCrossGroup = errors.New("backup: the snapshot is in another client group's repository; restores stay within a client group")
 )
 
 // SnapshotID identifies a snapshot within a client group repository.
@@ -76,10 +81,16 @@ type Engine interface {
 	// repository, oldest first; none if there are none. It returns
 	// ErrSiteNotFound if the platform knows nothing of the site.
 	ListSnapshots(ctx context.Context, siteID string) ([]Snapshot, error)
-	// Restore restores snapshot snap, taken of siteID, into targetSiteID.
-	// The target may be siteID itself or a different site (e.g. a future
-	// staging clone). Returns ErrSnapshotNotFound if snap does not belong to
-	// siteID.
+	// Restore restores snapshot snap, taken of siteID, into targetSiteID:
+	// it replaces the target's wp-content with the snapshot's, removing
+	// files the snapshot doesn't have, and its database with the
+	// snapshot's dump. The target may be siteID itself or a different site
+	// of the same client group (e.g. a future staging clone). It changes
+	// nothing else: maintenance mode, URLs, and caches are the caller's.
+	// Restoring again converges on the same state. Returns
+	// ErrSnapshotNotFound if snap does not belong to siteID, ErrSiteNotFound
+	// if the target doesn't exist, and ErrCrossGroup if the target is in
+	// another client group.
 	Restore(ctx context.Context, siteID string, snap SnapshotID, targetSiteID string) error
 	// Prune applies the retention policy to a client group repository.
 	// Pruning takes an exclusive repository lock, so callers must serialize

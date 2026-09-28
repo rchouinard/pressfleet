@@ -269,6 +269,38 @@ func (c *Catalog) WordPressVersions() []WordPressVersion {
 	return slices.Clone(c.wordpress)
 }
 
+// WordPressAtLeast returns the oldest WordPress release images are built
+// for that is at least version, and whether there is one. A restore uses
+// it to move a site to a core that can run a database from a newer one
+// (§5.4) while changing as little as possible. A malformed version is
+// ErrInvalidVersion.
+func (c *Catalog) WordPressAtLeast(version string) (WordPressVersion, bool, error) {
+	if !wpVersionRE.MatchString(version) {
+		return WordPressVersion{}, false, fmt.Errorf("%w: WordPress version %q", ErrInvalidVersion, version)
+	}
+	var best WordPressVersion
+	found := false
+	for _, w := range c.wordpress {
+		if compareVersions(w.Version, version) >= 0 && (!found || compareVersions(w.Version, best.Version) < 0) {
+			best, found = w, true
+		}
+	}
+	return best, found, nil
+}
+
+// CompareWordPressVersions orders two WordPress versions like cmp.Compare:
+// negative if a is older than b, zero if they are the same release ("6.9"
+// and "6.9.0" are), positive if a is newer. Malformed versions are
+// ErrInvalidVersion.
+func CompareWordPressVersions(a, b string) (int, error) {
+	for _, v := range []string{a, b} {
+		if !wpVersionRE.MatchString(v) {
+			return 0, fmt.Errorf("%w: WordPress version %q", ErrInvalidVersion, v)
+		}
+	}
+	return compareVersions(a, b), nil
+}
+
 // Images returns the image references for a PHP branch and WordPress
 // release. It checks only the version formats, not that the pair is in the
 // manifest: images for versions that have left the build matrix stay

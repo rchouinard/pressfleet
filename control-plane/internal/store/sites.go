@@ -350,6 +350,23 @@ func (r Sites) SetMaintenance(ctx context.Context, siteID string, enabled bool, 
 	return r.exec(ctx, "set maintenance of site "+siteID, query, args...)
 }
 
+// SetWPCoreVersion records the site's WordPress core version, which selects
+// its images together with its PHP version. If from is given, only a site
+// whose version is currently from changes. It reports whether the site
+// changed; a missing site is not an error.
+func (r Sites) SetWPCoreVersion(ctx context.Context, siteID, version string, from ...string) (bool, error) {
+	if version == "" {
+		return false, fmt.Errorf("set WordPress core version of site %s: version is empty", siteID)
+	}
+	query := "UPDATE sites SET wp_core_version = ?, updated_at = ? WHERE id = ?"
+	args := []any{version, now(), siteID}
+	if len(from) > 0 {
+		query += " AND wp_core_version = ?"
+		args = append(args, from[0])
+	}
+	return r.exec(ctx, "set WordPress core version of site "+siteID, query, args...)
+}
+
 // SiteDomains are a site's custom domains (§5.2): its primary domain, empty
 // until go-live, the aliases that redirect to it, and the host names whose
 // URLs are still to be rewritten to it (Site.URLRewriteFrom). Jobs record

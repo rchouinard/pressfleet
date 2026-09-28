@@ -67,9 +67,11 @@ type Repositories interface {
 	Restic(ctx context.Context, clientGroupID string, args ...string) ([]byte, error)
 }
 
-// Dumper dumps a site's database; sitedb.Manager implements it.
-type Dumper interface {
+// Databases dumps and imports site databases; sitedb.Manager implements
+// it.
+type Databases interface {
 	Dump(ctx context.Context, siteID, destPath string) error
+	Import(ctx context.Context, siteID, srcPath string) error
 }
 
 // Options configure an Engine.
@@ -78,8 +80,8 @@ type Options struct {
 	DB *store.DB
 	// Repositories opens client group repositories. Required.
 	Repositories Repositories
-	// Databases dumps site databases. Required.
-	Databases Dumper
+	// Databases dumps and imports site databases. Required.
+	Databases Databases
 	// Tasks runs restic next to the site's data. Required. Tasks use the
 	// driver's default image (config task_image), the control plane image,
 	// which ships restic.
@@ -96,7 +98,7 @@ type Options struct {
 type Engine struct {
 	db      *store.DB
 	repos   Repositories
-	dbs     Dumper
+	dbs     Databases
 	tasks   provisioner.TaskRunner
 	layout  config.Layout
 	timeout time.Duration
@@ -232,14 +234,21 @@ func backupCommand(siteID, coreVersion string, opts backup.Options) []string {
 // transferDir creates an empty transfer directory for the backup, named
 // after it so a retry replaces what an earlier attempt left.
 func (e *Engine) transferDir(siteID, backupID string) (string, error) {
+	return e.newTransferDir("backup-", siteID, backupID)
+}
+
+// newTransferDir creates an empty transfer directory named
+// <prefix><site ID>-<name>, with a random name if name is empty, replacing
+// one an earlier attempt left.
+func (e *Engine) newTransferDir(prefix, siteID, name string) (string, error) {
 	tmp := e.layout.TmpDir()
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
 		return "", fmt.Errorf("creating the transfer directory: %w", err)
 	}
-	if backupID == "" {
-		backupID = strings.ToLower(rand.Text()[:10])
+	if name == "" {
+		name = strings.ToLower(rand.Text()[:10])
 	}
-	dir := filepath.Join(tmp, "backup-"+siteID+"-"+backupID)
+	dir := filepath.Join(tmp, prefix+siteID+"-"+name)
 	if err := os.RemoveAll(dir); err != nil {
 		return "", fmt.Errorf("removing an earlier attempt's transfer directory: %w", err)
 	}
@@ -349,12 +358,6 @@ func parseSnapshots(out []byte) ([]backup.Snapshot, error) {
 		return cmp.Or(a.Time.Compare(b.Time), strings.Compare(string(a.ID), string(b.ID)))
 	})
 	return snaps, nil
-}
-
-// Restore implements backup.Engine. It is not implemented yet.
-func (e *Engine) Restore(_ context.Context, siteID string, snap backup.SnapshotID, targetSiteID string) error {
-	return fmt.Errorf("restore snapshot %s of site %s into site %s: %w (https://github.com/rchouinard/pressfleet/issues/55)",
-		snap, siteID, targetSiteID, errors.ErrUnsupported)
 }
 
 // Prune implements backup.Engine. It is not implemented yet.

@@ -24,6 +24,35 @@
 // paths restic is given. Both are reproducible from the site image and the
 // site record (§5.5).
 //
+// # Restoring
+//
+// Engine.Restore, of a snapshot of one site into a target site (the same
+// site or another):
+//
+//  1. checks that the target exists and is in the same client group as
+//     the snapshot's site (backup.ErrCrossGroup otherwise: a task reaches
+//     one repository, with one key, so restores stay within a group), and
+//     that the snapshot is one of the site's (backup.ErrSnapshotNotFound);
+//  2. creates a transfer directory (restore-<target ID>-<short snapshot
+//     ID>, so a retry replaces what a crashed attempt left);
+//  3. extracts the dump into it in a task without wp-content (`restic
+//     restore <snap>:/transfer --include /database.sql`), which changes
+//     nothing on the site, so a snapshot without a dump fails first;
+//  4. replaces the target's wp-content in a task that mounts it read-write
+//     (`restic restore <snap>:/site/wp-content --target /site/wp-content
+//     --delete`): afterwards it holds exactly the snapshot's files, owned
+//     by the target site's UID, which the task runs as;
+//  5. imports the dump into the target's database (sitedb.Manager.Import,
+//     which drops and recreates it first);
+//  6. removes the transfer directory, whether or not the restore worked.
+//
+// Every run converges on the snapshot's state, so a retried restore just
+// restores again. Any restic error fails the restore, including files it
+// couldn't write: the caller (the restore job in package sites) rolls the
+// site back to its pre-restore snapshot. Restore changes nothing but
+// wp-content and the database; maintenance mode, the site's URLs, its core
+// version, and its caches are the caller's to handle.
+//
 // # Snapshot layout
 //
 // Restore (#55) and anyone reading an exported repository depend on this;

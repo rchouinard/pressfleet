@@ -37,6 +37,10 @@ type message struct {
 	TotalFilesProcessed int64     `json:"total_files_processed"`
 	TotalBytesProcessed int64     `json:"total_bytes_processed"`
 	DataAddedPacked     int64     `json:"data_added_packed"`
+	// restore summary
+	TotalFiles    int64 `json:"total_files"`
+	FilesRestored int64 `json:"files_restored"`
+	FilesDeleted  int64 `json:"files_deleted"`
 	// error
 	Error *struct {
 		Message string `json:"message"`
@@ -113,6 +117,40 @@ func (o output) detail() string {
 		msg = msg[:maxMessage] + "..."
 	}
 	return msg
+}
+
+// restoreResult turns a restore task's outcome into restic's summary. Any
+// problem fails the restore, even one restic got past (exit status 3): a
+// restore that left files out isn't the state the user asked for, and the
+// restore job then rolls the site back.
+func restoreResult(res *provisioner.TaskResult, runErr error) (*message, error) {
+	var (
+		ee *provisioner.ExecError
+		o  output
+	)
+	switch {
+	case runErr == nil:
+		o = parseOutput(res.Stdout, res.Stderr)
+	case errors.As(runErr, &ee):
+		o = parseOutput(ee.Stdout, ee.Stderr)
+		err := fmt.Errorf("%w (exit status %d): %s", ErrRestoreFailed, ee.ExitCode, o.detail())
+		switch ee.ExitCode {
+		case exitLocked:
+			err = fmt.Errorf("%w: %w", repository.ErrLocked, err)
+		case exitWrongPassword:
+			err = fmt.Errorf("%w: %w", repository.ErrWrongPassword, err)
+		}
+		return nil, err
+	default:
+		return nil, fmt.Errorf("running the restore task: %w", runErr)
+	}
+	if len(o.errors) > 0 {
+		return nil, fmt.Errorf("%w: %s", ErrRestoreFailed, o.detail())
+	}
+	if o.summary == nil {
+		return &message{}, nil
+	}
+	return o.summary, nil
 }
 
 // backupResult turns a backup task's outcome into a snapshot. A backup that

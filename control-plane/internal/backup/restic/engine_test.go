@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,6 +61,9 @@ type fixture struct {
 	siteRoots map[string]string
 	// dumps records the dump each task found in its transfer directory.
 	dumps []string
+	// snapPaths maps the (full) ID of each snapshot a backup task took to
+	// the host paths it backed up.
+	snapPaths map[string]snapPaths
 	// output, if set, replaces the task's result.
 	output func(task provisioner.Task) (*provisioner.TaskResult, error)
 }
@@ -69,6 +73,7 @@ func newFixture(t *testing.T, db *store.DB) *fixture {
 	f := &fixture{
 		db: db, prov: provisionertest.New(), dbs: sitedbtest.New(),
 		layout: config.Layout{Root: t.TempDir()}, restic: resticBinary(t), siteRoots: map[string]string{},
+		snapPaths: map[string]snapPaths{},
 	}
 	if err := f.layout.Ensure(); err != nil {
 		t.Fatal(err)
@@ -96,7 +101,6 @@ func newFixture(t *testing.T, db *store.DB) *fixture {
 // runTask runs the task's restic command on the host.
 func (f *fixture) runTask(t *testing.T, siteID string, task provisioner.Task) (*provisioner.TaskResult, error) {
 	f.mu.Lock()
-	root := f.siteRoots[siteID]
 	dump, _ := os.ReadFile(filepath.Join(task.TransferDir, restic.DatabaseDumpName))
 	f.dumps = append(f.dumps, string(dump))
 	output := f.output
@@ -104,6 +108,15 @@ func (f *fixture) runTask(t *testing.T, siteID string, task provisioner.Task) (*
 	if output != nil {
 		return output(task)
 	}
+	return f.runTaskDirect(t, siteID, task)
+}
+
+// runTaskDirect runs the task's restic command on the host, whatever
+// f.output says.
+func (f *fixture) runTaskDirect(t *testing.T, siteID string, task provisioner.Task) (*provisioner.TaskResult, error) {
+	f.mu.Lock()
+	root := f.siteRoots[siteID]
+	f.mu.Unlock()
 	paths := strings.NewReplacer(
 		provisioner.TaskWPContentPath, filepath.Join(root, "wp-content"),
 		provisioner.TaskTransferPath, task.TransferDir,
@@ -114,6 +127,20 @@ func (f *fixture) runTask(t *testing.T, siteID string, task provisioner.Task) (*
 	}
 	cmd := exec.Command(f.restic, task.Command[1:]...)
 	for i, a := range cmd.Args {
+		// A restore's <snapshot>:<path> names a path in the snapshot,
+		// which holds the host paths of the backup's task.
+		if snap, path, ok := strings.Cut(a, ":"); ok && len(snap) >= 8 && strings.HasPrefix(path, "/") {
+			f.mu.Lock()
+			sp, known := f.snapPaths[snap]
+			f.mu.Unlock()
+			if known {
+				cmd.Args[i] = snap + ":" + strings.NewReplacer(
+					provisioner.TaskWPContentPath, sp.wpContent,
+					provisioner.TaskTransferPath, sp.transfer,
+				).Replace(path)
+				continue
+			}
+		}
 		cmd.Args[i] = paths.Replace(a)
 	}
 	cmd.Env = []string{"HOME=" + t.TempDir()}
@@ -133,7 +160,25 @@ func (f *fixture) runTask(t *testing.T, siteID string, task provisioner.Task) (*
 	if err != nil {
 		return nil, err
 	}
+	if task.Command[1] == "backup" {
+		var summary struct {
+			SnapshotID string `json:"snapshot_id"`
+		}
+		for line := range strings.Lines(stdout.String()) {
+			if json.Unmarshal([]byte(line), &summary) == nil && summary.SnapshotID != "" {
+				f.mu.Lock()
+				f.snapPaths[summary.SnapshotID] = snapPaths{wpContent: filepath.Join(root, "wp-content"), transfer: task.TransferDir}
+				f.mu.Unlock()
+			}
+		}
+	}
 	return &provisioner.TaskResult{Stdout: stdout.String(), Stderr: stderr.String()}, nil
+}
+
+// snapPaths are the host paths a snapshot's task backed up, standing for
+// /site/wp-content and /transfer.
+type snapPaths struct {
+	wpContent, transfer string
 }
 
 // site creates a site record, its runtime in the fake provisioner, its
@@ -468,12 +513,214 @@ func TestBackupErrors(t *testing.T) {
 	})
 }
 
-func TestRestoreAndPruneAreNotImplemented(t *testing.T) {
+// wpContent returns the site's wp-content files and their contents.
+func (f *fixture) wpContent(t *testing.T, siteID string) map[string]string {
+	t.Helper()
+	dir := filepath.Join(f.siteRoots[siteID], "wp-content")
+	out := map[string]string{}
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, p)
+		out[rel] = string(b)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRestore(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		f := newFixture(t, db)
+		groupID := f.group(t, "Acme")
+		site := f.site(t, groupID, "acme")
+		other := f.site(t, groupID, "acme-shop")
+		snap, err := f.engine.Backup(ctx, site.ID, backup.Options{Kind: "manual", BackupID: id.New()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := f.wpContent(t, site.ID)
+		dumpBefore, _ := f.dbs.Data(site.ID)
+
+		// The site changes: a new file, a changed one, a deleted one, and
+		// new database contents.
+		wpc := filepath.Join(f.siteRoots[site.ID], "wp-content")
+		writeFile(t, filepath.Join(wpc, "uploads/2026/10/new.jpg"), "new")
+		writeFile(t, filepath.Join(wpc, "plugins/hello/hello.php"), "<?php // changed")
+		if err := os.Remove(filepath.Join(wpc, "themes/twentytwenty/style.css")); err != nil {
+			t.Fatal(err)
+		}
+		f.dbs.SetData(site.ID, []byte("-- changed"))
+		tasksBefore := len(f.tasks())
+
+		if err := f.engine.Restore(ctx, site.ID, snap.ID, site.ID); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.wpContent(t, site.ID); !maps.Equal(got, before) {
+			t.Errorf("wp-content after the restore = %v, want %v", got, before)
+		}
+		if got, _ := f.dbs.Data(site.ID); string(got) != string(dumpBefore) {
+			t.Errorf("database after the restore = %q, want %q", got, dumpBefore)
+		}
+		tasks := f.tasks()[tasksBefore:]
+		if len(tasks) != 2 {
+			t.Fatalf("restore tasks = %+v", tasks)
+		}
+		repoDir, _ := f.layout.BackupRepositoryDir(groupID)
+		lock := []string{"restic", "restore", "--json", "--quiet", "--retry-lock", "30m0s"}
+		wantDump := append(slices.Clone(lock), string(snap.ID)+":/transfer", "--target", "/transfer", "--include", "/database.sql")
+		wantFiles := append(slices.Clone(lock), string(snap.ID)+":/site/wp-content", "--target", "/site/wp-content", "--delete")
+		if d := tasks[0]; !slices.Equal(d.Command, wantDump) || d.WPContent != provisioner.MountNone ||
+			filepath.Dir(d.TransferDir) != f.layout.TmpDir() || d.RepositoryDir != repoDir || d.SecretEnv["RESTIC_PASSWORD"] == "" {
+			t.Errorf("dump task = %+v\nwant command %q", d, wantDump)
+		}
+		if w := tasks[1]; !slices.Equal(w.Command, wantFiles) || w.WPContent != provisioner.MountReadWrite ||
+			w.TransferDir != "" || w.RepositoryDir != repoDir {
+			t.Errorf("wp-content task = %+v\nwant command %q", w, wantFiles)
+		}
+		if left := f.tmpEntries(t); len(left) != 0 {
+			t.Errorf("left in tmp/: %v", left)
+		}
+
+		// Restoring again converges; a short ID works too.
+		if err := f.engine.Restore(ctx, site.ID, snap.ID[:8], site.ID); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.wpContent(t, site.ID); !maps.Equal(got, before) {
+			t.Errorf("wp-content after restoring again = %v", got)
+		}
+
+		// Into another site of the group: its wp-content and database
+		// become the snapshot's.
+		writeFile(t, filepath.Join(f.siteRoots[other.ID], "wp-content/only-in-shop.txt"), "shop")
+		if err := f.engine.Restore(ctx, site.ID, snap.ID, other.ID); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.wpContent(t, other.ID); !maps.Equal(got, before) {
+			t.Errorf("other site's wp-content = %v, want %v", got, before)
+		}
+		if got, _ := f.dbs.Data(other.ID); string(got) != string(dumpBefore) {
+			t.Errorf("other site's database = %q, want %q", got, dumpBefore)
+		}
+		if c := f.prov.Calls(); c[len(c)-1].SiteID != other.ID {
+			t.Errorf("the last task ran on site %s, want the target %s", c[len(c)-1].SiteID, other.ID)
+		}
+	})
+}
+
+func TestRestoreErrors(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		f := newFixture(t, db)
+		groupID := f.group(t, "Acme")
+		site := f.site(t, groupID, "acme")
+		other := f.site(t, groupID, "acme-shop")
+		stranger := f.site(t, f.group(t, "Globex"), "globex")
+		snap, err := f.engine.Backup(ctx, site.ID, backup.Options{Kind: "manual"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		otherSnap, err := f.engine.Backup(ctx, other.ID, backup.Options{Kind: "manual"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		tasksBefore := len(f.tasks())
+
+		for _, tt := range []struct {
+			name         string
+			site, target string
+			snap         backup.SnapshotID
+			want         error
+		}{
+			{"unknown snapshot", site.ID, site.ID, "0123456789abcdef", backup.ErrSnapshotNotFound},
+			{"malformed snapshot", site.ID, site.ID, "latest", backup.ErrSnapshotNotFound},
+			{"another site's snapshot", site.ID, site.ID, otherSnap.ID, backup.ErrSnapshotNotFound},
+			{"missing target", site.ID, id.New(), snap.ID, backup.ErrSiteNotFound},
+			{"unknown source", id.New(), site.ID, snap.ID, backup.ErrSiteNotFound},
+			{"another client group", site.ID, stranger.ID, snap.ID, backup.ErrCrossGroup},
+		} {
+			if err := f.engine.Restore(ctx, tt.site, tt.snap, tt.target); !errors.Is(err, tt.want) {
+				t.Errorf("%s: Restore = %v, want %v", tt.name, err, tt.want)
+			}
+		}
+		if err := f.engine.Restore(ctx, "../x", snap.ID, site.ID); err == nil {
+			t.Error("Restore accepted an invalid site ID")
+		}
+		if n := len(f.tasks()) - tasksBefore; n != 0 {
+			t.Errorf("rejected restores ran %d tasks", n)
+		}
+
+		// A failing task: restic's reason in the error, the database
+		// untouched, nothing left behind.
+		f.dbs.SetData(site.ID, []byte("-- current"))
+		f.output = func(task provisioner.Task) (*provisioner.TaskResult, error) {
+			if task.WPContent == provisioner.MountReadWrite {
+				return nil, &provisioner.ExecError{ExitCode: 1, Stderr: `{"message_type":"exit_error","code":1,"message":"Fatal: disk full"}` + "\n"}
+			}
+			return &provisioner.TaskResult{}, nil
+		}
+		// The dump task "succeeds" without writing a dump.
+		if err := f.engine.Restore(ctx, site.ID, snap.ID, site.ID); !errors.Is(err, restic.ErrRestoreFailed) || !strings.Contains(err.Error(), "no database dump") {
+			t.Errorf("Restore of a snapshot without a dump: %v", err)
+		}
+		f.output = nil
+		failWrite := func(task provisioner.Task) (*provisioner.TaskResult, error) {
+			if task.WPContent == provisioner.MountReadWrite {
+				return nil, &provisioner.ExecError{ExitCode: 1, Stderr: `{"message_type":"exit_error","code":1,"message":"Fatal: disk full"}` + "\n"}
+			}
+			return f.runTaskDirect(t, site.ID, task)
+		}
+		f.output = failWrite
+		err = f.engine.Restore(ctx, site.ID, snap.ID, site.ID)
+		if !errors.Is(err, restic.ErrRestoreFailed) || !strings.Contains(err.Error(), "Fatal: disk full") {
+			t.Errorf("Restore with a failing task: %v", err)
+		}
+		f.output = nil
+		if got, _ := f.dbs.Data(site.ID); string(got) != "-- current" {
+			t.Errorf("a failed wp-content restore imported the database: %q", got)
+		}
+		if left := f.tmpEntries(t); len(left) != 0 {
+			t.Errorf("left in tmp/ after a failed restore: %v", left)
+		}
+
+		// A failing import.
+		f.dbs.Err = func(op, _ string) error {
+			if op == "Import" {
+				return errors.New("import exploded")
+			}
+			return nil
+		}
+		if err := f.engine.Restore(ctx, site.ID, snap.ID, site.ID); err == nil || !strings.Contains(err.Error(), "import exploded") {
+			t.Errorf("Restore with a failing import: %v", err)
+		}
+		f.dbs.Err = nil
+		if left := f.tmpEntries(t); len(left) != 0 {
+			t.Errorf("left in tmp/ after a failed import: %v", left)
+		}
+	})
+}
+
+func TestPruneIsNotImplemented(t *testing.T) {
 	f := newFixture(t, storetest.Open(t, store.SQLite))
 	ctx := context.Background()
-	if err := f.engine.Restore(ctx, id.New(), "abc", id.New()); !errors.Is(err, errors.ErrUnsupported) || !strings.Contains(err.Error(), "/issues/55") {
-		t.Errorf("Restore = %v", err)
-	}
 	if err := f.engine.Prune(ctx, id.New()); !errors.Is(err, errors.ErrUnsupported) || !strings.Contains(err.Error(), "/issues/54") {
 		t.Errorf("Prune = %v", err)
 	}

@@ -262,3 +262,41 @@ func TestCompareVersions(t *testing.T) {
 		}
 	}
 }
+
+func TestWordPressAtLeast(t *testing.T) {
+	c := mustParse(t)
+	tests := []struct {
+		version string
+		want    string
+		found   bool
+	}{
+		{"6.8.3", "6.9", true},
+		{"6.9", "6.9", true},
+		{"6.9.0", "6.9", true},
+		{"6.9.1", "7.1.2", true},
+		{"7.1.2", "7.1.2", true},
+		{"7.1.3", "", false},
+		{"8.0", "", false},
+	}
+	for _, tt := range tests {
+		got, found, err := c.WordPressAtLeast(tt.version)
+		if err != nil || found != tt.found || got.Version != tt.want {
+			t.Errorf("WordPressAtLeast(%s) = %q, %v, %v; want %q, %v", tt.version, got.Version, found, err, tt.want, tt.found)
+		}
+	}
+	if _, _, err := c.WordPressAtLeast("latest"); !errors.Is(err, ErrInvalidVersion) {
+		t.Errorf("WordPressAtLeast(latest) error = %v, want ErrInvalidVersion", err)
+	}
+}
+
+func TestCompareWordPressVersions(t *testing.T) {
+	if n, err := CompareWordPressVersions("6.9", "6.9.0"); n != 0 || err != nil {
+		t.Errorf("CompareWordPressVersions(6.9, 6.9.0) = %d, %v", n, err)
+	}
+	if n, err := CompareWordPressVersions("7.1.2", "6.9"); n <= 0 || err != nil {
+		t.Errorf("CompareWordPressVersions(7.1.2, 6.9) = %d, %v", n, err)
+	}
+	if _, err := CompareWordPressVersions("6.9", "x"); !errors.Is(err, ErrInvalidVersion) {
+		t.Errorf("CompareWordPressVersions(6.9, x) error = %v", err)
+	}
+}
