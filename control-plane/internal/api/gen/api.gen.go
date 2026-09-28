@@ -39,6 +39,48 @@ func (e AuditResult) Valid() bool {
 	}
 }
 
+// Defines values for BackupKind.
+const (
+	Manual     BackupKind = "manual"
+	PreRestore BackupKind = "pre_restore"
+	Scheduled  BackupKind = "scheduled"
+)
+
+// Valid indicates whether the value is a known member of the BackupKind enum.
+func (e BackupKind) Valid() bool {
+	switch e {
+	case Manual:
+		return true
+	case PreRestore:
+		return true
+	case Scheduled:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BackupStatus.
+const (
+	BackupStatusFailed    BackupStatus = "failed"
+	BackupStatusRunning   BackupStatus = "running"
+	BackupStatusSucceeded BackupStatus = "succeeded"
+)
+
+// Valid indicates whether the value is a known member of the BackupStatus enum.
+func (e BackupStatus) Valid() bool {
+	switch e {
+	case BackupStatusFailed:
+		return true
+	case BackupStatusRunning:
+		return true
+	case BackupStatusSucceeded:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CurrentUserAuthMethod.
 const (
 	AuthMethodSession CurrentUserAuthMethod = "session"
@@ -449,6 +491,73 @@ type AuditEventList struct {
 // * `denied`: the caller's role or token scope doesn't allow the action.
 type AuditResult string
 
+// Backup defines model for Backup.
+type Backup struct {
+	// AddedBytes What the backup added to the repository after deduplication and
+	// compression; null until the backup has succeeded.
+	AddedBytes *int64 `json:"added_bytes"`
+
+	// ClientGroupID The client group whose backup repository holds the snapshot.
+	ClientGroupID ID `json:"client_group_id"`
+
+	// CreatedAt Examples: 2026-09-26T17:25:00Z
+	CreatedAt Timestamp `json:"created_at"`
+
+	// FileCount The number of files backed up; null until the backup has succeeded.
+	FileCount  *int64     `json:"file_count"`
+	FinishedAt *Timestamp `json:"finished_at"`
+
+	// ID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ID ID `json:"id"`
+
+	// JobID The job that took the backup; null once the job is gone.
+	JobID *ID `json:"job_id"`
+
+	// Kind What asked for the backup: a user (`manual`), the site's backup
+	// schedule (`scheduled`), or a restore, which backs up its target site
+	// first so the restore can be undone (`pre_restore`).
+	Kind BackupKind `json:"kind"`
+
+	// Message Why the backup failed, or a warning about a backup that succeeded
+	// without some files it couldn't read. Empty otherwise.
+	Message string `json:"message"`
+
+	// SiteID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	SiteID ID `json:"site_id"`
+
+	// SizeBytes The size of the files backed up (the database dump and `wp-content`); null until the backup has succeeded.
+	SizeBytes *int64 `json:"size_bytes"`
+
+	// SnapshotID The Restic snapshot's ID; null until the backup has succeeded.
+	SnapshotID *string `json:"snapshot_id"`
+
+	// StartedAt When the latest attempt at the backup began.
+	StartedAt Timestamp    `json:"started_at"`
+	Status    BackupStatus `json:"status"`
+
+	// WpCoreVersion The site's WordPress core version when it was backed up. A restore needs at least this version.
+	//
+	// Examples: 6.9.1
+	WpCoreVersion string `json:"wp_core_version"`
+}
+
+// BackupKind What asked for the backup: a user (`manual`), the site's backup
+// schedule (`scheduled`), or a restore, which backs up its target site
+// first so the restore can be undone (`pre_restore`).
+type BackupKind string
+
+// BackupList defines model for BackupList.
+type BackupList struct {
+	Items []Backup `json:"items"`
+
+	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
+	NextCursor *NextCursor `json:"next_cursor"`
+}
+
 // BackupRepository defines model for BackupRepository.
 type BackupRepository struct {
 	// Location Where the Restic repository lives (a local path or S3 URL), without credentials.
@@ -456,6 +565,9 @@ type BackupRepository struct {
 	// Examples: s3:https://s3.example.com/pressfleet-backups/01J9ZQ3V6T8K4M2N5P7R9S1X3Y
 	Location string `json:"location"`
 }
+
+// BackupStatus defines model for BackupStatus.
+type BackupStatus string
 
 // ClientGroup defines model for ClientGroup.
 type ClientGroup struct {
@@ -1254,6 +1366,18 @@ type ListSitesParams struct {
 	Status *SiteStatus `form:"status,omitempty" json:"status,omitempty"`
 }
 
+// ListSiteBackupsParams defines parameters for ListSiteBackups.
+type ListSiteBackupsParams struct {
+	// Limit Maximum number of items to return.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Status Only return backups with this status.
+	Status *BackupStatus `form:"status,omitempty" json:"status,omitempty"`
+}
+
 // ListUsersParams defines parameters for ListUsers.
 type ListUsersParams struct {
 	// Limit Maximum number of items to return.
@@ -1370,6 +1494,12 @@ type ServerInterface interface {
 	// SetSiteAliases Replace a live site's aliases
 	// (PUT /api/v1/sites/{site_id}/aliases)
 	SetSiteAliases(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// ListSiteBackups List a site's backups
+	// (GET /api/v1/sites/{site_id}/backups)
+	ListSiteBackups(w http.ResponseWriter, r *http.Request, siteID SiteID, params ListSiteBackupsParams)
+	// CreateSiteBackup Back up a site
+	// (POST /api/v1/sites/{site_id}/backups)
+	CreateSiteBackup(w http.ResponseWriter, r *http.Request, siteID SiteID)
 	// PurgeSiteCache Purge a site's caches
 	// (POST /api/v1/sites/{site_id}/cache/purge)
 	PurgeSiteCache(w http.ResponseWriter, r *http.Request, siteID SiteID)
@@ -2151,6 +2281,100 @@ func (siw *ServerInterfaceWrapper) SetSiteAliases(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// ListSiteBackups operation middleware
+func (siw *ServerInterfaceWrapper) ListSiteBackups(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListSiteBackupsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "status"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSiteBackups(w, r, siteID, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateSiteBackup operation middleware
+func (siw *ServerInterfaceWrapper) CreateSiteBackup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateSiteBackup(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PurgeSiteCache operation middleware
 func (siw *ServerInterfaceWrapper) PurgeSiteCache(w http.ResponseWriter, r *http.Request) {
 
@@ -2638,6 +2862,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/go-live", wrapper.GoLiveSite)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/sites/{site_id}/aliases", wrapper.SetSiteAliases)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/preview-password", wrapper.RegenerateSitePreviewPassword)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/backups", wrapper.ListSiteBackups)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/backups", wrapper.CreateSiteBackup)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs", wrapper.ListJobs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs/{job_id}", wrapper.GetJob)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit-events", wrapper.ListAuditEvents)
@@ -4977,6 +5203,223 @@ func (response SetSiteAliasesdefaultApplicationProblemPlusJSONResponse) VisitSet
 	return err
 }
 
+type ListSiteBackupsRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+	Params ListSiteBackupsParams
+}
+
+type ListSiteBackupsResponseObject interface {
+	VisitListSiteBackupsResponse(w http.ResponseWriter) error
+}
+
+type ListSiteBackups200JSONResponse BackupList
+
+func (response ListSiteBackups200JSONResponse) VisitListSiteBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteBackups400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response ListSiteBackups400ApplicationProblemPlusJSONResponse) VisitListSiteBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteBackups401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ListSiteBackups401ApplicationProblemPlusJSONResponse) VisitListSiteBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteBackups403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ListSiteBackups403ApplicationProblemPlusJSONResponse) VisitListSiteBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteBackups404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response ListSiteBackups404ApplicationProblemPlusJSONResponse) VisitListSiteBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteBackupsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ListSiteBackupsdefaultApplicationProblemPlusJSONResponse) VisitListSiteBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteBackupRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+}
+
+type CreateSiteBackupResponseObject interface {
+	VisitCreateSiteBackupResponse(w http.ResponseWriter) error
+}
+
+type CreateSiteBackup202ResponseHeaders struct {
+	Location *string
+}
+
+type CreateSiteBackup202JSONResponse struct {
+	Body    JobAccepted
+	Headers CreateSiteBackup202ResponseHeaders
+}
+
+func (response CreateSiteBackup202JSONResponse) VisitCreateSiteBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteBackup401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response CreateSiteBackup401ApplicationProblemPlusJSONResponse) VisitCreateSiteBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteBackup403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response CreateSiteBackup403ApplicationProblemPlusJSONResponse) VisitCreateSiteBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteBackup404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response CreateSiteBackup404ApplicationProblemPlusJSONResponse) VisitCreateSiteBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteBackup409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response CreateSiteBackup409ApplicationProblemPlusJSONResponse) VisitCreateSiteBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteBackupdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response CreateSiteBackupdefaultApplicationProblemPlusJSONResponse) VisitCreateSiteBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type PurgeSiteCacheRequestObject struct {
 	SiteID SiteID `json:"site_id"`
 }
@@ -6385,6 +6828,12 @@ type StrictServerInterface interface {
 	// SetSiteAliases Replace a live site's aliases
 	// (PUT /api/v1/sites/{site_id}/aliases)
 	SetSiteAliases(ctx context.Context, request SetSiteAliasesRequestObject) (SetSiteAliasesResponseObject, error)
+	// ListSiteBackups List a site's backups
+	// (GET /api/v1/sites/{site_id}/backups)
+	ListSiteBackups(ctx context.Context, request ListSiteBackupsRequestObject) (ListSiteBackupsResponseObject, error)
+	// CreateSiteBackup Back up a site
+	// (POST /api/v1/sites/{site_id}/backups)
+	CreateSiteBackup(ctx context.Context, request CreateSiteBackupRequestObject) (CreateSiteBackupResponseObject, error)
 	// PurgeSiteCache Purge a site's caches
 	// (POST /api/v1/sites/{site_id}/cache/purge)
 	PurgeSiteCache(ctx context.Context, request PurgeSiteCacheRequestObject) (PurgeSiteCacheResponseObject, error)
@@ -7072,6 +7521,59 @@ func (sh *strictHandler) SetSiteAliases(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(SetSiteAliasesResponseObject); ok {
 		if err := validResponse.VisitSetSiteAliasesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListSiteBackups operation middleware
+func (sh *strictHandler) ListSiteBackups(w http.ResponseWriter, r *http.Request, siteID SiteID, params ListSiteBackupsParams) {
+	var request ListSiteBackupsRequestObject
+
+	request.SiteID = siteID
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListSiteBackups(ctx, request.(ListSiteBackupsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListSiteBackups")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListSiteBackupsResponseObject); ok {
+		if err := validResponse.VisitListSiteBackupsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateSiteBackup operation middleware
+func (sh *strictHandler) CreateSiteBackup(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request CreateSiteBackupRequestObject
+
+	request.SiteID = siteID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateSiteBackup(ctx, request.(CreateSiteBackupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateSiteBackup")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateSiteBackupResponseObject); ok {
+		if err := validResponse.VisitCreateSiteBackupResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

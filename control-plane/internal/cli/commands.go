@@ -16,6 +16,8 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/audit"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/restic"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/domains"
@@ -140,8 +142,9 @@ func (a *app) serveCommand() *cobra.Command {
 			secretStore := secrets.NewStore(db, keys)
 			// Like the SMTP password, backup S3 credentials that don't
 			// decrypt stop the control plane now rather than at the first
-			// backup. The backup engine (#52) will use the manager.
-			if _, err := a.backupRepositories(db, secretStore, keys); err != nil {
+			// backup.
+			repos, err := a.backupRepositories(db, secretStore, keys)
+			if err != nil {
 				return err
 			}
 			// Before serving, so Traefik, which waits for them, starts as
@@ -184,6 +187,21 @@ func (a *app) serveCommand() *cobra.Command {
 			if a.cfg.PreviewBaseDomain == "" {
 				a.log.Warn("preview_base_domain is not set; site creation is refused until it is")
 			}
+			engine, err := restic.New(restic.Options{
+				DB:           db,
+				Repositories: repos,
+				Databases:    siteDBs,
+				Tasks:        prov,
+				Layout:       layout,
+				Logger:       a.log.With("component", "backup"),
+			})
+			if err != nil {
+				return err
+			}
+			backups, err := sitebackup.New(sitebackup.Options{DB: db, Engine: engine, Logger: a.log.With("component", "backup")})
+			if err != nil {
+				return err
+			}
 			handler, err := api.NewHandler(api.Options{
 				Logger:         a.log,
 				Readiness:      readiness,
@@ -191,6 +209,7 @@ func (a *app) serveCommand() *cobra.Command {
 				Auth:           authn,
 				Authenticator:  api.NewAuthenticator(authn),
 				Sites:          siteSvc,
+				Backups:        backups,
 				TrustedProxies: proxies,
 				SecureCookies:  a.cfg.HTTP.SecureCookies == config.SecureCookiesAlways,
 			})
@@ -209,7 +228,7 @@ func (a *app) serveCommand() *cobra.Command {
 			if err := pool.Register(audit.CleanupHandler(db, a.cfg.Audit.Retention(), nil)); err != nil {
 				return err
 			}
-			for _, h := range siteSvc.Handlers() {
+			for _, h := range append(siteSvc.Handlers(), backups.Handler()) {
 				if err := pool.Register(h); err != nil {
 					return err
 				}

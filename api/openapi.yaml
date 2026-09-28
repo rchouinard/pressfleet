@@ -93,6 +93,8 @@ tags:
     description: Client groups own sites and a backup repository.
   - name: sites
     description: WordPress sites.
+  - name: backups
+    description: Site backups, kept in the site's client group backup repository.
   - name: jobs
     description: Long-running operations.
   - name: audit
@@ -1177,6 +1179,81 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/sites/{site_id}/backups:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    get:
+      operationId: listSiteBackups
+      tags: [backups]
+      summary: List a site's backups
+      description: |
+        The platform's record of every backup of the site, newest first,
+        including backups that are running or failed. Listing reads the
+        records alone; it doesn't open the backup repository. A backup
+        whose snapshot has since been removed from the repository (by the
+        retention policy) is still listed.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: status
+          in: query
+          description: Only return backups with this status.
+          schema:
+            $ref: "#/components/schemas/BackupStatus"
+      responses:
+        "200":
+          description: A page of backups.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createSiteBackup
+      tags: [backups]
+      summary: Back up a site
+      description: |
+        Queues a job that backs up the site (design doc §5.3): it dumps the
+        site's database and snapshots the dump together with the site's
+        `wp-content` into the client group's backup repository, which it
+        creates on the group's first backup. WordPress core and
+        `wp-config.php` are not backed up; both are reproducible from the
+        site's WordPress version and settings. The site keeps serving
+        throughout, and stopped sites can be backed up too. The job's result
+        holds `backup_id` and `snapshot_id`; the backup is listed at once
+        with status `running`. The job runs after any other job working on
+        the site. A site that is `provisioning` or `deleting`, or whose
+        provisioning failed, returns `409`.
+      responses:
+        "202":
+          description: Backup job queued.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/jobs:
     get:
       operationId: listJobs
@@ -1778,6 +1855,100 @@ components:
           $ref: "#/components/schemas/Timestamp"
         updated_at:
           $ref: "#/components/schemas/Timestamp"
+
+    BackupKind:
+      type: string
+      description: |
+        What asked for the backup: a user (`manual`), the site's backup
+        schedule (`scheduled`), or a restore, which backs up its target site
+        first so the restore can be undone (`pre_restore`).
+      enum: [manual, scheduled, pre_restore]
+
+    BackupStatus:
+      type: string
+      enum: [running, succeeded, failed]
+
+    Backup:
+      type: object
+      required: [id, site_id, client_group_id, kind, status, snapshot_id, wp_core_version, size_bytes, added_bytes,
+        file_count, message, job_id, created_at, started_at, finished_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        site_id:
+          $ref: "#/components/schemas/ID"
+        client_group_id:
+          description: The client group whose backup repository holds the snapshot.
+          allOf:
+            - $ref: "#/components/schemas/ID"
+        kind:
+          $ref: "#/components/schemas/BackupKind"
+        status:
+          $ref: "#/components/schemas/BackupStatus"
+        snapshot_id:
+          description: The Restic snapshot's ID; null until the backup has succeeded.
+          oneOf:
+            - type: string
+              examples: ["3be90c95b9962949a5d839b7fd7adbef112b4a3d667f214a32989f615ce4f20b"]
+            - type: "null"
+        wp_core_version:
+          type: string
+          description: The site's WordPress core version when it was backed up. A restore needs at least this version.
+          examples: ["6.9.1"]
+        size_bytes:
+          description: The size of the files backed up (the database dump and `wp-content`); null until the backup has succeeded.
+          oneOf:
+            - type: integer
+              format: int64
+              minimum: 0
+            - type: "null"
+        added_bytes:
+          description: |
+            What the backup added to the repository after deduplication and
+            compression; null until the backup has succeeded.
+          oneOf:
+            - type: integer
+              format: int64
+              minimum: 0
+            - type: "null"
+        file_count:
+          description: The number of files backed up; null until the backup has succeeded.
+          oneOf:
+            - type: integer
+              format: int64
+              minimum: 0
+            - type: "null"
+        message:
+          type: string
+          description: |
+            Why the backup failed, or a warning about a backup that succeeded
+            without some files it couldn't read. Empty otherwise.
+        job_id:
+          description: The job that took the backup; null once the job is gone.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        started_at:
+          description: When the latest attempt at the backup began.
+          allOf:
+            - $ref: "#/components/schemas/Timestamp"
+        finished_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+
+    BackupList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Backup"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
 
     BackupRepository:
       type: object

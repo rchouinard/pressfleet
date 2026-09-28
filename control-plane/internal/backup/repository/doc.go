@@ -47,5 +47,6 @@
 // A client group can't be deleted while its repository exists (a foreign
 // key backs this up), so backups are never lost by accident. Offboarding
 // runs Export, hands over the result, and then Delete, which removes the
-// repository's data and then its record and password.
+// repository's data and then its record, its password, and the group's
+// backup records (store.BackupRecords).
 package repository

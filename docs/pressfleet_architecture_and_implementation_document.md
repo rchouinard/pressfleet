@@ -273,11 +273,20 @@ type DatabaseManager interface {
 
 type SnapshotID string
 
+// Snapshot describes a snapshot: its ID and time, the site ID, WordPress core
+// version, and backup kind read back from its tags, and its sizes.
+type Snapshot struct { /* ... */ }
+
+// BackupOptions record why a backup was taken (manual, scheduled,
+// pre-restore) and the platform's backup ID, which also makes Backup
+// idempotent.
+type BackupOptions struct { /* ... */ }
+
 // BackupEngine creates and restores site snapshots.
 // Each client group has its own Restic repository; snapshots are tagged by site ID.
 type BackupEngine interface {
-    Backup(ctx context.Context, siteID string) (SnapshotID, error)
-    ListSnapshots(ctx context.Context, siteID string) ([]SnapshotID, error)
+    Backup(ctx context.Context, siteID string, opts BackupOptions) (Snapshot, error)
+    ListSnapshots(ctx context.Context, siteID string) ([]Snapshot, error)
     Restore(ctx context.Context, siteID string, snap SnapshotID, targetSiteID string) error
     Prune(ctx context.Context, clientGroupID string) error
 }

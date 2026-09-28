@@ -14,22 +14,32 @@ func TestFakeBackupAndRestore(t *testing.T) {
 	ctx := context.Background()
 	f := backuptest.New()
 
-	s1, err := f.Backup(ctx, "a")
+	s1, err := f.Backup(ctx, "a", backup.Options{Kind: "manual", BackupID: "b1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	s2, _ := f.Backup(ctx, "a")
-	other, _ := f.Backup(ctx, "b")
+	if s1.SiteID != "a" || s1.Kind != "manual" || s1.BackupID != "b1" || s1.SizeBytes == 0 {
+		t.Errorf("snapshot = %+v", s1)
+	}
+	if again, _ := f.Backup(ctx, "a", backup.Options{BackupID: "b1"}); again.ID != s1.ID {
+		t.Errorf("Backup with the same BackupID took %s, want %s again", again.ID, s1.ID)
+	}
+	s2, _ := f.Backup(ctx, "a", backup.Options{})
+	other, _ := f.Backup(ctx, "b", backup.Options{})
 
 	got, err := f.ListSnapshots(ctx, "a")
-	if err != nil || !slices.Equal(got, []backup.SnapshotID{s1, s2}) {
-		t.Fatalf("ListSnapshots = %v, %v; want [%s %s]", got, err, s1, s2)
+	var ids []backup.SnapshotID
+	for _, s := range got {
+		ids = append(ids, s.ID)
+	}
+	if err != nil || !slices.Equal(ids, []backup.SnapshotID{s1.ID, s2.ID}) {
+		t.Fatalf("ListSnapshots = %v, %v; want [%s %s]", ids, err, s1.ID, s2.ID)
 	}
 
-	if err := f.Restore(ctx, "a", s1, "a-staging"); err != nil {
+	if err := f.Restore(ctx, "a", s1.ID, "a-staging"); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
-	if err := f.Restore(ctx, "a", other, "a"); !errors.Is(err, backup.ErrSnapshotNotFound) {
+	if err := f.Restore(ctx, "a", other.ID, "a"); !errors.Is(err, backup.ErrSnapshotNotFound) {
 		t.Errorf("Restore of another site's snapshot err = %v, want ErrSnapshotNotFound", err)
 	}
 

@@ -39,6 +39,48 @@ func (e AuditResult) Valid() bool {
 	}
 }
 
+// Defines values for BackupKind.
+const (
+	Manual     BackupKind = "manual"
+	PreRestore BackupKind = "pre_restore"
+	Scheduled  BackupKind = "scheduled"
+)
+
+// Valid indicates whether the value is a known member of the BackupKind enum.
+func (e BackupKind) Valid() bool {
+	switch e {
+	case Manual:
+		return true
+	case PreRestore:
+		return true
+	case Scheduled:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for BackupStatus.
+const (
+	BackupStatusFailed    BackupStatus = "failed"
+	BackupStatusRunning   BackupStatus = "running"
+	BackupStatusSucceeded BackupStatus = "succeeded"
+)
+
+// Valid indicates whether the value is a known member of the BackupStatus enum.
+func (e BackupStatus) Valid() bool {
+	switch e {
+	case BackupStatusFailed:
+		return true
+	case BackupStatusRunning:
+		return true
+	case BackupStatusSucceeded:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CurrentUserAuthMethod.
 const (
 	AuthMethodSession CurrentUserAuthMethod = "session"
@@ -449,6 +491,73 @@ type AuditEventList struct {
 // * `denied`: the caller's role or token scope doesn't allow the action.
 type AuditResult string
 
+// Backup defines model for Backup.
+type Backup struct {
+	// AddedBytes What the backup added to the repository after deduplication and
+	// compression; null until the backup has succeeded.
+	AddedBytes *int64 `json:"added_bytes"`
+
+	// ClientGroupID The client group whose backup repository holds the snapshot.
+	ClientGroupID ID `json:"client_group_id"`
+
+	// CreatedAt Examples: 2026-09-26T17:25:00Z
+	CreatedAt Timestamp `json:"created_at"`
+
+	// FileCount The number of files backed up; null until the backup has succeeded.
+	FileCount  *int64     `json:"file_count"`
+	FinishedAt *Timestamp `json:"finished_at"`
+
+	// ID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ID ID `json:"id"`
+
+	// JobID The job that took the backup; null once the job is gone.
+	JobID *ID `json:"job_id"`
+
+	// Kind What asked for the backup: a user (`manual`), the site's backup
+	// schedule (`scheduled`), or a restore, which backs up its target site
+	// first so the restore can be undone (`pre_restore`).
+	Kind BackupKind `json:"kind"`
+
+	// Message Why the backup failed, or a warning about a backup that succeeded
+	// without some files it couldn't read. Empty otherwise.
+	Message string `json:"message"`
+
+	// SiteID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	SiteID ID `json:"site_id"`
+
+	// SizeBytes The size of the files backed up (the database dump and `wp-content`); null until the backup has succeeded.
+	SizeBytes *int64 `json:"size_bytes"`
+
+	// SnapshotID The Restic snapshot's ID; null until the backup has succeeded.
+	SnapshotID *string `json:"snapshot_id"`
+
+	// StartedAt When the latest attempt at the backup began.
+	StartedAt Timestamp    `json:"started_at"`
+	Status    BackupStatus `json:"status"`
+
+	// WpCoreVersion The site's WordPress core version when it was backed up. A restore needs at least this version.
+	//
+	// Examples: 6.9.1
+	WpCoreVersion string `json:"wp_core_version"`
+}
+
+// BackupKind What asked for the backup: a user (`manual`), the site's backup
+// schedule (`scheduled`), or a restore, which backs up its target site
+// first so the restore can be undone (`pre_restore`).
+type BackupKind string
+
+// BackupList defines model for BackupList.
+type BackupList struct {
+	Items []Backup `json:"items"`
+
+	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
+	NextCursor *NextCursor `json:"next_cursor"`
+}
+
 // BackupRepository defines model for BackupRepository.
 type BackupRepository struct {
 	// Location Where the Restic repository lives (a local path or S3 URL), without credentials.
@@ -456,6 +565,9 @@ type BackupRepository struct {
 	// Examples: s3:https://s3.example.com/pressfleet-backups/01J9ZQ3V6T8K4M2N5P7R9S1X3Y
 	Location string `json:"location"`
 }
+
+// BackupStatus defines model for BackupStatus.
+type BackupStatus string
 
 // ClientGroup defines model for ClientGroup.
 type ClientGroup struct {
@@ -1254,6 +1366,18 @@ type ListSitesParams struct {
 	Status *SiteStatus `form:"status,omitempty" json:"status,omitempty"`
 }
 
+// ListSiteBackupsParams defines parameters for ListSiteBackups.
+type ListSiteBackupsParams struct {
+	// Limit Maximum number of items to return.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Status Only return backups with this status.
+	Status *BackupStatus `form:"status,omitempty" json:"status,omitempty"`
+}
+
 // ListUsersParams defines parameters for ListUsers.
 type ListUsersParams struct {
 	// Limit Maximum number of items to return.
@@ -1737,6 +1861,34 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /api/v1/sites/{site_id}/aliases (the `SetSiteAliases` operationId).
 	SetSiteAliases(ctx context.Context, siteID SiteID, body SetSiteAliasesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSiteBackups List a site's backups
+	//
+	// The platform's record of every backup of the site, newest first,
+	// including backups that are running or failed. Listing reads the
+	// records alone; it doesn't open the backup repository. A backup
+	// whose snapshot has since been removed from the repository (by the
+	// retention policy) is still listed.
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/backups (the `ListSiteBackups` operationId).
+	ListSiteBackups(ctx context.Context, siteID SiteID, params *ListSiteBackupsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateSiteBackup Back up a site
+	//
+	// Queues a job that backs up the site (design doc §5.3): it dumps the
+	// site's database and snapshots the dump together with the site's
+	// `wp-content` into the client group's backup repository, which it
+	// creates on the group's first backup. WordPress core and
+	// `wp-config.php` are not backed up; both are reproducible from the
+	// site's WordPress version and settings. The site keeps serving
+	// throughout, and stopped sites can be backed up too. The job's result
+	// holds `backup_id` and `snapshot_id`; the backup is listed at once
+	// with status `running`. The job runs after any other job working on
+	// the site. A site that is `provisioning` or `deleting`, or whose
+	// provisioning failed, returns `409`.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/backups (the `CreateSiteBackup` operationId).
+	CreateSiteBackup(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PurgeSiteCache Purge a site's caches
 	//
@@ -2663,6 +2815,54 @@ func (c *Client) SetSiteAliasesWithBody(ctx context.Context, siteID SiteID, cont
 // Corresponds with PUT /api/v1/sites/{site_id}/aliases (the `SetSiteAliases` operationId).
 func (c *Client) SetSiteAliases(ctx context.Context, siteID SiteID, body SetSiteAliasesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetSiteAliasesRequest(c.Server, siteID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListSiteBackups List a site's backups
+//
+// The platform's record of every backup of the site, newest first,
+// including backups that are running or failed. Listing reads the
+// records alone; it doesn't open the backup repository. A backup
+// whose snapshot has since been removed from the repository (by the
+// retention policy) is still listed.
+//
+// Corresponds with GET /api/v1/sites/{site_id}/backups (the `ListSiteBackups` operationId).
+func (c *Client) ListSiteBackups(ctx context.Context, siteID SiteID, params *ListSiteBackupsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSiteBackupsRequest(c.Server, siteID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateSiteBackup Back up a site
+//
+// Queues a job that backs up the site (design doc §5.3): it dumps the
+// site's database and snapshots the dump together with the site's
+// `wp-content` into the client group's backup repository, which it
+// creates on the group's first backup. WordPress core and
+// `wp-config.php` are not backed up; both are reproducible from the
+// site's WordPress version and settings. The site keeps serving
+// throughout, and stopped sites can be backed up too. The job's result
+// holds `backup_id` and `snapshot_id`; the backup is listed at once
+// with status `running`. The job runs after any other job working on
+// the site. A site that is `provisioning` or `deleting`, or whose
+// provisioning failed, returns `409`.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/backups (the `CreateSiteBackup` operationId).
+func (c *Client) CreateSiteBackup(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateSiteBackupRequest(c.Server, siteID)
 	if err != nil {
 		return nil, err
 	}
@@ -4210,6 +4410,125 @@ func NewSetSiteAliasesRequestWithBody(server string, siteID SiteID, contentType 
 	return req, nil
 }
 
+// NewListSiteBackupsRequest constructs an http.Request for the ListSiteBackups method
+func NewListSiteBackupsRequest(server string, siteID SiteID, params *ListSiteBackupsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/backups", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Status != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateSiteBackupRequest constructs an http.Request for the CreateSiteBackup method
+func NewCreateSiteBackupRequest(server string, siteID SiteID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/backups", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewPurgeSiteCacheRequest constructs an http.Request for the PurgeSiteCache method
 func NewPurgeSiteCacheRequest(server string, siteID SiteID) (*http.Request, error) {
 	var err error
@@ -5160,6 +5479,38 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /api/v1/sites/{site_id}/aliases (the `SetSiteAliases` operationId).
 	SetSiteAliasesWithResponse(ctx context.Context, siteID SiteID, body SetSiteAliasesJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSiteAliasesResponse, error)
+
+	// ListSiteBackupsWithResponse List a site's backups
+	//
+	// The platform's record of every backup of the site, newest first,
+	// including backups that are running or failed. Listing reads the
+	// records alone; it doesn't open the backup repository. A backup
+	// whose snapshot has since been removed from the repository (by the
+	// retention policy) is still listed.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/backups (the `ListSiteBackups` operationId).
+	ListSiteBackupsWithResponse(ctx context.Context, siteID SiteID, params *ListSiteBackupsParams, reqEditors ...RequestEditorFn) (*ListSiteBackupsResponse, error)
+
+	// CreateSiteBackupWithResponse Back up a site
+	//
+	// Queues a job that backs up the site (design doc §5.3): it dumps the
+	// site's database and snapshots the dump together with the site's
+	// `wp-content` into the client group's backup repository, which it
+	// creates on the group's first backup. WordPress core and
+	// `wp-config.php` are not backed up; both are reproducible from the
+	// site's WordPress version and settings. The site keeps serving
+	// throughout, and stopped sites can be backed up too. The job's result
+	// holds `backup_id` and `snapshot_id`; the backup is listed at once
+	// with status `running`. The job runs after any other job working on
+	// the site. A site that is `provisioning` or `deleting`, or whose
+	// provisioning failed, returns `409`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/backups (the `CreateSiteBackup` operationId).
+	CreateSiteBackupWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*CreateSiteBackupResponse, error)
 
 	// PurgeSiteCacheWithResponse Purge a site's caches
 	//
@@ -7159,6 +7510,165 @@ func (r SetSiteAliasesResponse) ContentType() string {
 	return ""
 }
 
+type ListSiteBackupsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BackupList
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListSiteBackupsResponse) GetJSON200() *BackupList {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListSiteBackupsResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListSiteBackupsResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListSiteBackupsResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ListSiteBackupsResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListSiteBackupsResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListSiteBackupsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSiteBackupsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSiteBackupsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListSiteBackupsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CreateSiteBackupResponse202Headers the declared response headers of an HTTP 202 response for CreateSiteBackup
+type CreateSiteBackupResponse202Headers struct {
+	Location *string
+}
+
+type CreateSiteBackupResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *JobAccepted
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *CreateSiteBackupResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r CreateSiteBackupResponse) GetJSON202() *JobAccepted {
+	return r.JSON202
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CreateSiteBackupResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CreateSiteBackupResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r CreateSiteBackupResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CreateSiteBackupResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateSiteBackupResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateSiteBackupResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateSiteBackupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateSiteBackupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateSiteBackupResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // PurgeSiteCacheResponse202Headers the declared response headers of an HTTP 202 response for PurgeSiteCache
 type PurgeSiteCacheResponse202Headers struct {
 	Location *string
@@ -8730,6 +9240,50 @@ func (c *ClientWithResponses) SetSiteAliasesWithResponse(ctx context.Context, si
 		return nil, err
 	}
 	return ParseSetSiteAliasesResponse(rsp)
+}
+
+// ListSiteBackupsWithResponse List a site's backups
+//
+// The platform's record of every backup of the site, newest first,
+// including backups that are running or failed. Listing reads the
+// records alone; it doesn't open the backup repository. A backup
+// whose snapshot has since been removed from the repository (by the
+// retention policy) is still listed.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/sites/{site_id}/backups (the `ListSiteBackups` operationId).
+func (c *ClientWithResponses) ListSiteBackupsWithResponse(ctx context.Context, siteID SiteID, params *ListSiteBackupsParams, reqEditors ...RequestEditorFn) (*ListSiteBackupsResponse, error) {
+	rsp, err := c.ListSiteBackups(ctx, siteID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSiteBackupsResponse(rsp)
+}
+
+// CreateSiteBackupWithResponse Back up a site
+//
+// Queues a job that backs up the site (design doc §5.3): it dumps the
+// site's database and snapshots the dump together with the site's
+// `wp-content` into the client group's backup repository, which it
+// creates on the group's first backup. WordPress core and
+// `wp-config.php` are not backed up; both are reproducible from the
+// site's WordPress version and settings. The site keeps serving
+// throughout, and stopped sites can be backed up too. The job's result
+// holds `backup_id` and `snapshot_id`; the backup is listed at once
+// with status `running`. The job runs after any other job working on
+// the site. A site that is `provisioning` or `deleting`, or whose
+// provisioning failed, returns `409`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/backups (the `CreateSiteBackup` operationId).
+func (c *ClientWithResponses) CreateSiteBackupWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*CreateSiteBackupResponse, error) {
+	rsp, err := c.CreateSiteBackup(ctx, siteID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateSiteBackupResponse(rsp)
 }
 
 // PurgeSiteCacheWithResponse Purge a site's caches
@@ -10563,6 +11117,141 @@ func ParseSetSiteAliasesResponse(rsp *http.Response) (*SetSiteAliasesResponse, e
 	switch {
 	case rsp.StatusCode == 202:
 		var headers SetSiteAliasesResponse202Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListSiteBackupsResponse parses an HTTP response from a ListSiteBackupsWithResponse call
+func ParseListSiteBackupsResponse(rsp *http.Response) (*ListSiteBackupsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSiteBackupsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BackupList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateSiteBackupResponse parses an HTTP response from a CreateSiteBackupWithResponse call
+func ParseCreateSiteBackupResponse(rsp *http.Response) (*CreateSiteBackupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateSiteBackupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest JobAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers CreateSiteBackupResponse202Headers
 		if values := rsp.Header.Values("Location"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {

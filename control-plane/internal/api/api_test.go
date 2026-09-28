@@ -185,7 +185,8 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 	}
 	fa := &fakeAuth{principal: &auth.Principal{UserID: u.ID, Email: u.Email, Role: u.Role, Method: auth.MethodSession, SessionID: "none"}}
 	db := storetest.Open(t, store.SQLite)
-	h := newHandler(t, api.Options{Authenticator: fa, Auth: svc, DB: db, Sites: newSiteEnv(t, db, testPreviewBase).svc})
+	env := newSiteEnv(t, db, testPreviewBase)
+	h := newHandler(t, api.Options{Authenticator: fa, Auth: svc, DB: db, Sites: env.svc, Backups: env.backups})
 	for _, op := range ops {
 		t.Run(op.ID, func(t *testing.T) {
 			req := request{method: op.Method, target: samplePath(op.Path), body: sampleBodies[op.ID]}

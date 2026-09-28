@@ -13,6 +13,8 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/backuptest"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/id"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
@@ -44,6 +46,8 @@ var implementedSiteOps = map[string]bool{
 	"stopSite":                      true,
 	"purgeSiteCache":                true,
 	"retrieveSiteAdminCredentials":  true,
+	"listSiteBackups":               true,
+	"createSiteBackup":              true,
 }
 
 func orEmpty(s *string) string {
@@ -53,13 +57,16 @@ func orEmpty(s *string) string {
 	return *s
 }
 
-// siteEnv is a site service on fakes, with a job pool to run its jobs.
+// siteEnv is a site service and a backup service on fakes, with a job pool
+// to run their jobs.
 type siteEnv struct {
-	dns  *fakeDNS
-	svc  *sites.Service
-	prov *provisionertest.Fake
-	dbs  *sitedbtest.Fake
-	pool *jobs.Pool
+	dns     *fakeDNS
+	svc     *sites.Service
+	prov    *provisionertest.Fake
+	dbs     *sitedbtest.Fake
+	engine  *backuptest.Fake
+	backups *sitebackup.Service
+	pool    *jobs.Pool
 }
 
 func newSiteEnv(t *testing.T, db *store.DB, previewBase string) *siteEnv {
@@ -88,8 +95,13 @@ func newSiteEnv(t *testing.T, db *store.DB, previewBase string) *siteEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.engine = backuptest.New()
+	e.backups, err = sitebackup.New(sitebackup.Options{DB: db, Engine: e.engine, Logger: storetest.Logger()})
+	if err != nil {
+		t.Fatal(err)
+	}
 	e.pool = jobs.NewPool(db, jobs.Options{Logger: storetest.Logger(), Backoff: func(int) time.Duration { return 0 }, Secrets: sec})
-	for _, h := range e.svc.Handlers() {
+	for _, h := range append(e.svc.Handlers(), e.backups.Handler()) {
 		if err := e.pool.Register(h); err != nil {
 			t.Fatal(err)
 		}

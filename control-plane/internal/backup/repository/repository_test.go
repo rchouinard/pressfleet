@@ -348,6 +348,10 @@ func TestDelete(t *testing.T) {
 		if _, err := db.ExecContext(ctx, "DELETE FROM sites WHERE id = ?", siteID); err != nil {
 			t.Fatal(err)
 		}
+		// The records of the deleted site's backups go with the repository.
+		if err := store.NewBackupRecords(db).Create(ctx, &store.BackupRecord{SiteID: siteID, ClientGroupID: groupID, Kind: store.BackupManual}); err != nil {
+			t.Fatal(err)
+		}
 
 		if err := f.m.Delete(ctx, groupID); err != nil {
 			t.Fatal(err)
@@ -355,7 +359,7 @@ func TestDelete(t *testing.T) {
 		if _, err := os.Stat(r.Location); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("repository directory still exists: %v", err)
 		}
-		if n := f.count(t, "secrets") + f.count(t, "backup_repositories"); n != 0 {
+		if n := f.count(t, "secrets") + f.count(t, "backup_repositories") + f.count(t, "backup_records"); n != 0 {
 			t.Errorf("rows left behind: %d", n)
 		}
 		if g, err := store.NewClientGroups(db).Get(ctx, groupID); err != nil || g.BackupRepository != "" {

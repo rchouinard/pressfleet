@@ -240,14 +240,23 @@ PressFleet: restic 0.17 or later and the password file are enough.
   password.txt    its password; keep it safe, the backups can't be read
                   without it
 
-Each snapshot holds one site's wp-content and database dump. Snapshots are
-tagged with the site's ID and WordPress core version.
+Each snapshot holds one site's wp-content and database dump:
 
-List the snapshots:
+  /site/wp-content/        the site's wp-content directory
+  /transfer/database.sql   its database, as SQL from mariadb-dump
+
+Snapshots are tagged site:<site ID>, wp-core:<WordPress core version>, and
+kind:<manual, scheduled, or pre_restore>; their host name is
+site-<site ID>. WordPress core and wp-config.php are not in the backups:
+install the WordPress version from the wp-core tag and write a new
+wp-config.php for the restored database.
+
+List the snapshots, or one site's:
 
   restic -r repository --password-file password.txt snapshots
+  restic -r repository --password-file password.txt snapshots --tag site:<site ID>
 
-Restore one (use an ID from the list, or "latest" with --tag <site ID>):
+Restore one (use an ID from the list, or "latest" with --tag site:<site ID>):
 
   restic -r repository --password-file password.txt restore <snapshot> --target restored
 

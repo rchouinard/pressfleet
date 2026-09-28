@@ -90,6 +90,10 @@ Deleting the site at the end runs through its job.
 
 After the site is deleted, its primary domain gets Traefik's `404`. Valid certificates for custom domains need a certificate authority; the M2 acceptance test with Pebble (#48) checks them.
 
+#### Backups
+
+`TestSiteBackup` provisions one site with the default local backup repositories, writes a file into its `wp-content` and an option into its database, and backs it up through `POST /api/v1/sites/{id}/backups` (#52). The job must succeed and `GET /api/v1/sites/{id}/backups` must list the backup as `succeeded`, with its snapshot ID, sizes, and the site's WordPress version. It then exports the client group's repository with `pressfleet repository export` inside the control plane container and reads it with plain restic, as an offboarded client would: the snapshot has the documented host name (`site-<id>`), tags, and paths (`/site/wp-content`, `/transfer/database.sql`), holds the file and a dump with the option (and no `CREATE DATABASE` or `DEFINER`), and holds nothing else: no WordPress core and no `wp-config.php`. No transfer directory may be left under `tmp/`. A second backup is listed first and adds less to the repository than the first. The test takes under a minute locally once the images are present.
+
 #### Certificates from Pebble
 
 `e2e.StartWithPebble` boots a platform whose Traefik gets real certificates, with the HTTP-01 challenge, from [Pebble](https://github.com/letsencrypt/pebble), Let's Encrypt's ACME test server. The override adds two services on the platform network, pinned by digest in `e2e/pebble.go`:

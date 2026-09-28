@@ -395,7 +395,8 @@ func (m *Manager) Restic(ctx context.Context, clientGroupID string, args ...stri
 }
 
 // Delete removes the group's repository: first its data, then its record,
-// password, and the group's backup_repository. It succeeds if the group has
+// password, the group's backup_repository, and the records of the backups
+// it held (store.BackupRecords). It succeeds if the group has
 // no repository, so a failed delete can be retried. It refuses with
 // ErrGroupHasSites while the group has sites.
 func (m *Manager) Delete(ctx context.Context, clientGroupID string) error {
@@ -417,6 +418,10 @@ func (m *Manager) Delete(ctx context.Context, clientGroupID string) error {
 		return fmt.Errorf("delete backup repository of client group %s: %w", clientGroupID, err)
 	}
 	err = m.db.InTx(ctx, func(q store.Querier) error {
+		// The backups those records describe are gone with the data.
+		if _, err := store.NewBackupRecords(q).DeleteForClientGroup(ctx, clientGroupID); err != nil {
+			return err
+		}
 		if err := deleteRecord(ctx, q, clientGroupID); err != nil {
 			return err
 		}

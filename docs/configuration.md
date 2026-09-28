@@ -386,10 +386,27 @@ docker compose exec control-plane pressfleet repository delete <client-group-id>
 
 ```sh
 restic -r repository --password-file password.txt snapshots
-restic -r repository --password-file password.txt restore latest --tag <site-id> --target restored
+restic -r repository --password-file password.txt restore latest --tag site:<site-id> --target restored
 ```
 
 Only the data directory is shared between the control plane container and the host, so export under it and move the result off the host; it holds the password in plaintext. Don't export while the repository is being pruned. `delete` removes the repository's files or objects, then its password; it is refused while the group still has sites.
+
+## Site backups
+
+`POST /api/v1/sites/{id}/backups` queues a backup of a site; `GET` on the same path lists the site's backups, including running and failed ones. A backup job dumps the site's database from the control plane into a transfer directory under `<data_dir>/tmp/`, then runs `restic backup` in a short-lived container on the site's network (the control plane image, `task_image`), with the site's `wp-content` mounted read-only. The transfer directory is removed afterwards, whether or not the backup worked. WordPress core and `wp-config.php` are never backed up: they are rebuilt from the site's WordPress version and settings.
+
+Every snapshot holds the same two paths, for every site, so sites deduplicate against each other and a snapshot restores into any site:
+
+| Path | Contents |
+| --- | --- |
+| `/site/wp-content/` | The site's `wp-content` |
+| `/transfer/database.sql` | The site's database, as SQL from `mariadb-dump`, without `CREATE DATABASE`/`USE` and with `DEFINER` clauses removed |
+
+Snapshots are tagged `site:<site ID>`, `wp-core:<WordPress version>`, `kind:<manual, scheduled, or pre_restore>`, and `backup:<backup ID>` (the ID the API lists), and their host name is `site-<site ID>`, so `restic forget` retention policies and restic's change detection work per site.
+
+A backup that can't read some files (for example a file in `wp-content` that the site's own user can't read) still succeeds, without those files; the backup's `message` lists them. Backups of different sites run at the same time, also in one repository; a site is never backed up twice at once, and a backup waits for the site's other jobs (an update, a deletion) to finish.
+
+With the `s3` backend, the backup container reaches S3 from the site's network, which has the same outbound access as the site itself (the site network is an ordinary Docker bridge network). Amazon S3 and other services on the Internet work; an endpoint must be reachable from site containers, so it can't be a container name on the platform's network (`http://minio:9000` next to the platform won't work; use an address the host routes to, such as `http://minio.internal:9000` on another host). The control plane image the container runs has the usual CA certificates.
 
 ## Site databases
 
