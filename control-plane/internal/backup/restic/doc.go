@@ -133,7 +133,9 @@
 // A task runs on the site's network, which is a plain bridge network, so
 // it reaches the Internet (and so Amazon S3 and other public S3 services)
 // like the site does; the control plane image it runs has CA certificates.
-// It does not reach the platform network: an S3 endpoint must be reachable
-// from site containers, i.e. by a public or host-resolvable name, not a
-// container name on the platform's own network.
+// Tasks for S3 repositories also join the platform's backup network
+// (repository.TaskAccess.BackupNetwork, platform.BackupNetwork), which the
+// control plane is on too, so an S3 service on this host attached to it is
+// reached by the same container name from both. Tasks never join the
+// platform network itself.
 package restic

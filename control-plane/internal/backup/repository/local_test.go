@@ -28,6 +28,9 @@ func TestLocalRepositoryIsShared(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := access.RepositoryDir
+	if access.BackupNetwork {
+		t.Error("a local repository's tasks join the backup network")
+	}
 	if info, err := os.Stat(filepath.Dir(dir)); err != nil || info.Mode().Perm() != 0o700 {
 		t.Errorf("repositories directory: %v, %v; want mode 0700", info, err)
 	}

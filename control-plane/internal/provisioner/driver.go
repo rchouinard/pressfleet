@@ -136,6 +136,10 @@ type Task struct {
 	// group, so the repository must be group-writable by RepositoryGID (see
 	// there), not owned by the site's UID: other sites share it.
 	RepositoryDir string
+	// BackupNetwork asks for the platform's backup network too, where a
+	// self-hosted S3 service holding the repository may live. Drivers
+	// without one ignore it.
+	BackupNetwork bool
 	// Timeout bounds the task's run time; zero means no limit beyond ctx.
 	Timeout time.Duration
 }

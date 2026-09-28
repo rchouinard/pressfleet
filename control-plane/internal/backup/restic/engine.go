@@ -205,6 +205,7 @@ func (e *Engine) Backup(ctx context.Context, siteID string, opts backup.Options)
 		WPContent:     provisioner.MountReadOnly,
 		TransferDir:   transfer,
 		RepositoryDir: access.RepositoryDir,
+		BackupNetwork: access.BackupNetwork,
 		Timeout:       e.timeout,
 	})
 	snap, err := backupResult(res, runErr)

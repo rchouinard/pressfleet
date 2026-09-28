@@ -146,9 +146,10 @@ Done when: a site can be backed up, modified, and restored to its earlier state,
 - A group's repository is created lazily on its first backup; a group with a repository can't be deleted until the repository is exported or deleted (`pressfleet repository export|delete`).
 - Restores across client groups are not supported in the MVP (each group has its own key).
 - Prune and check (#54) are per-repository jobs (`backup.prune` daily, `backup.check` every `backup.check.interval_days`) with lock key `repo:<group-id>`, scheduled after the backup window; backups and restores hold `site:<id>` and meet them only at Restic's lock, which everyone waits for with `--retry-lock`. Both run `restic unlock` first to clear stale locks.
+- A self-hosted S3 service on the same host attaches to the platform's internal backup network (`<project>_backup`), which the control plane and S3 backup/restore tasks join; PressFleet doesn't bundle one.
 - Retention applies per site (`restic forget --group-by host`); backups whose snapshots are gone get `expired_at` in the API rather than being deleted.
 
-Known gaps to pick up: an S3 endpoint on the platform network isn't reachable from backup tasks (only external endpoints work); nothing sweeps `tmp/` at startup, so a crashed backup can leave a dump behind; site import (#112) must strip `DEFINER` clauses from external dumps.
+Known gaps to pick up: nothing sweeps `tmp/` at startup, so a crashed backup can leave a dump behind; site import (#112) must strip `DEFINER` clauses from external dumps.
 
 ### M4: Monitoring & Alerting
 

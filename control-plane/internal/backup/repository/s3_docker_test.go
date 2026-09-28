@@ -119,7 +119,7 @@ func TestS3Backend(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if access.RepositoryDir != "" || access.Env["RESTIC_REPOSITORY"] != a.Location ||
+		if access.RepositoryDir != "" || !access.BackupNetwork || access.Env["RESTIC_REPOSITORY"] != a.Location ||
 			access.SecretEnv["AWS_ACCESS_KEY_ID"] != s3TestAccessKey || access.SecretEnv["AWS_SECRET_ACCESS_KEY"] != s3TestSecretKey ||
 			access.SecretEnv["RESTIC_PASSWORD"].Reveal() != pwA {
 			t.Errorf("TaskAccess = %+v", access)

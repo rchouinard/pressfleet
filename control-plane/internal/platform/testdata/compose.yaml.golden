@@ -53,6 +53,8 @@ services:
       - redis_admin_password
     networks:
       - platform
+      # Where a self-hosted S3 service for backups lives; see below.
+      - backup
     # Traefik serves the dashboard and API on the dashboard domain.
     labels:
       pressfleet.platform: "pressfleet"
@@ -278,6 +280,14 @@ services:
 
 networks:
   platform: {}
+  # For an S3-compatible service on this host that holds the backup
+  # repositories (backup.backend s3). The control plane and every backup and
+  # restore task join it, so both reach the service by the same name, e.g.
+  # http://minio:9000; attach the service to it as an external network
+  # (docs/configuration.md, "Self-hosted S3"). Internal: nothing on it has a
+  # route out of the host through it.
+  backup:
+    internal: true
   # Only Traefik and the socket proxy; no route out of the host.
   socket-proxy:
     internal: true

@@ -228,17 +228,23 @@ func TestRenderedCompose(t *testing.T) {
 		t.Errorf("services = %d, want 6", len(file.Services))
 	}
 	// Every service is on the platform network except the socket proxy,
-	// which only Traefik can reach.
+	// which only Traefik can reach. The control plane is on the backup
+	// network too, where a self-hosted S3 service may be.
 	wantNetworks := map[string][]string{
-		"control-plane": {"platform"},
+		"control-plane": {"platform", "backup"},
 		"mariadb":       {"platform"},
 		"redis":         {"platform"},
 		"traefik":       {"platform", "socket-proxy"},
 		"socket-proxy":  {"socket-proxy"},
 		"maintenance":   {"platform"},
 	}
-	if !file.Networks["socket-proxy"].Internal {
-		t.Error("socket-proxy network is not internal")
+	for _, n := range []string{"socket-proxy", "backup"} {
+		if !file.Networks[n].Internal {
+			t.Errorf("%s network is not internal", n)
+		}
+	}
+	if got := platform.BackupNetwork(cfg.ProjectName); got != cfg.ProjectName+"_backup" {
+		t.Errorf("BackupNetwork = %q", got)
 	}
 	socketMounts := map[string]bool{} // service -> read-only
 	for name, svc := range file.Services {

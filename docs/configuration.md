@@ -394,7 +394,7 @@ Each client group has its own [Restic](https://restic.net) repository, encrypted
 Where repositories are created is chosen at install time with `backup.backend`:
 
 - `local`: `<data_dir>/backups/repositories/<client group ID>`. The directory belongs to group 60000 with mode `2770`, and restic keeps new files group-readable, because backup tasks run as each site's own UID with that group added. Local repositories live on the same disk as the sites, so they don't protect against losing the host; copy them elsewhere, or use `s3`.
-- `s3`: `s3:<endpoint>/<bucket>/<prefix>/<client group ID>` on Amazon S3, MinIO, or another S3-compatible service.
+- `s3`: `s3:<endpoint>/<bucket>/<prefix>/<client group ID>` on Amazon S3, MinIO, or another S3-compatible service, elsewhere or on the same host (see [Self-hosted S3](#self-hosted-s3)).
 
 A group's repository is created the first time the group needs one, i.e. on its first backup, or ahead of time with `pressfleet repository create`. A client group can't be deleted while its repository exists (`409`), so backups are never lost by accident. To offboard a client, delete its sites, then, inside the control plane container:
 
@@ -411,6 +411,38 @@ restic -r repository --password-file password.txt restore latest --tag site:<sit
 ```
 
 Only the data directory is shared between the control plane container and the host, so export under it and move the result off the host; it holds the password in plaintext. Don't export while the repository is being pruned. `delete` removes the repository's files or objects, then its password; it is refused while the group still has sites.
+
+### Self-hosted S3
+
+For development, demos, or a small install that wants S3 without a cloud account, run an S3-compatible service such as MinIO or RustFS on the same host and attach it to the platform's **backup network**, `<platform_project>_backup` (`pressfleet_backup` by default). The control plane and every backup and restore container join that network, so both reach the service by its container name; nothing else does. The network is internal: it gives no route out of the host, and sites can't reach it.
+
+A Compose project for the service, in a directory of its own (not the platform's, which `pressfleet init` and `upgrade` rewrite):
+
+```yaml
+# s3/compose.yaml; start it after the platform (docker compose up -d),
+# which creates the network.
+services:
+  s3:
+    image: rustfs/rustfs:1.0.0      # or a MinIO image
+    restart: unless-stopped
+    environment:
+      RUSTFS_ACCESS_KEY: pressfleet
+      RUSTFS_SECRET_KEY: change-me-to-a-long-random-string
+    volumes:
+      - s3-data:/data
+    networks:
+      - backup
+networks:
+  backup:
+    name: pressfleet_backup         # <platform_project>_backup
+    external: true
+volumes:
+  s3-data: {}
+```
+
+Then point PressFleet at it, with `pressfleet init --backup-backend s3 --backup-s3-endpoint http://s3:9000 --backup-s3-bucket pressfleet --backup-s3-access-key-id pressfleet --backup-s3-secret-access-key-file <file>` (restic creates the bucket on first use). The service's data volume holds every backup, so it lives on the same disk as the sites: it protects against mistakes, not against losing the host. Stop the service before the platform when taking everything down (`docker compose down` refuses to remove a network that containers are still attached to).
+
+To reach the service from the host too, for example its web console, publish a port on another network of its own; the backup network can't publish ports.
 
 ### Retention and integrity checks
 
@@ -446,7 +478,7 @@ Snapshots are tagged `site:<site ID>`, `wp-core:<WordPress version>`, `kind:<man
 
 A backup that can't read some files (for example a file in `wp-content` that the site's own user can't read) still succeeds, without those files; the backup's `message` lists them. Backups of different sites run at the same time, also in one repository; a site is never backed up twice at once, and a backup waits for the site's other jobs (an update, a deletion) to finish.
 
-With the `s3` backend, the backup container reaches S3 from the site's network, which has the same outbound access as the site itself (the site network is an ordinary Docker bridge network). Amazon S3 and other services on the Internet work; an endpoint must be reachable from site containers, so it can't be a container name on the platform's network (`http://minio:9000` next to the platform won't work; use an address the host routes to, such as `http://minio.internal:9000` on another host). The control plane image the container runs has the usual CA certificates.
+With the `s3` backend, the backup container reaches S3 from the site's network, which has the same outbound access as the site itself (the site network is an ordinary Docker bridge network), so Amazon S3 and other services on the Internet work; the control plane image it runs has the usual CA certificates. It also joins the platform's backup network, where an S3 service on the same host is reached by its container name (see [Self-hosted S3](#self-hosted-s3)). It never joins the platform network, so services there, such as MariaDB, aren't reachable under their platform names.
 
 ### Scheduled backups
 

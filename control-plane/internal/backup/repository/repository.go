@@ -527,6 +527,10 @@ type TaskAccess struct {
 	// repositories. It belongs to the repository group
 	// (provisioner.RepositoryGID), which tasks get as a supplementary group.
 	RepositoryDir string
+	// BackupNetwork says the task should join the platform's backup network
+	// (provisioner.Task.BackupNetwork): true for S3 repositories, whose
+	// service may live there.
+	BackupNetwork bool
 }
 
 // TaskAccess ensures the group's repository exists (see Ensure) and returns
@@ -557,6 +561,7 @@ func (m *Manager) TaskAccess(ctx context.Context, clientGroupID string) (TaskAcc
 			return TaskAccess{}, ErrS3NotConfigured
 		}
 		a.Env["RESTIC_REPOSITORY"] = rec.Location
+		a.BackupNetwork = true
 		maps.Copy(a.Env, s3Env(m.s3))
 		a.SecretEnv["AWS_ACCESS_KEY_ID"] = m.s3.AccessKeyID
 		a.SecretEnv["AWS_SECRET_ACCESS_KEY"] = m.s3.SecretAccessKey

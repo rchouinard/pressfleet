@@ -184,7 +184,25 @@ type Platform struct {
 	// override is the compose.override.yaml Start wrote, which Restart
 	// keeps.
 	override override
+	// masterKey is the platform's master key, for SealSetting.
+	masterKey secrets.MasterKey
 }
+
+// SealSetting encrypts a setting with the platform's master key, as
+// pressfleet init writes secrets into the config file (e.g.
+// config.BackupS3SecretAccessKeySetting), for Restart's environment.
+func (p *Platform) SealSetting(t *testing.T, name string, plaintext redact.Secret) string {
+	t.Helper()
+	keys, err := secrets.NewKeyring(p.masterKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return keys.SealSetting(name, plaintext)
+}
+
+// BackupNetwork is the platform's backup network, where a self-hosted S3
+// service for backups is attached (platform.BackupNetwork).
+func (p *Platform) BackupNetwork() string { return platform.BackupNetwork(p.Project.Name) }
 
 // Start boots the platform under a unique Compose project name with a
 // temporary data directory, waits until the control plane is ready, creates
@@ -220,7 +238,8 @@ func start(t *testing.T, withPebble bool) *Platform {
 	images.ControlPlane = image
 	// serve requires the master key outside the data directory (§4.1).
 	keyFile := filepath.Join(t.TempDir(), "master.key")
-	if err := os.WriteFile(keyFile, []byte(secrets.GenerateMasterKey().Encode().Reveal()+"\n"), 0o600); err != nil {
+	masterKey := secrets.GenerateMasterKey()
+	if err := os.WriteFile(keyFile, []byte(masterKey.Encode().Reveal()+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	dir := layout.PlatformDir()
@@ -249,6 +268,7 @@ func start(t *testing.T, withPebble bool) *Platform {
 
 	p := Adopt(t, compose.Project{Name: cfg.ProjectName, Dir: dir}, layout.Root)
 	p.override = o
+	p.masterKey = masterKey
 	p.AdminEmail, p.AdminPassword = "admin@e2e.test", redact.Secret(randomToken(26))
 
 	ctx, cancel := context.WithTimeout(t.Context(), bootTimeout)

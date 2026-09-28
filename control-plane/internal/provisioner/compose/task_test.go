@@ -39,6 +39,8 @@ type taskDocker struct {
 	stdout, stderr string
 	startErr       error
 	block          bool
+	// connectErr is what `docker network connect` returns.
+	connectErr error
 
 	calls      []string
 	createArgs []string
@@ -76,6 +78,8 @@ func (f *taskDocker) exec(_ context.Context, _ io.Reader, args ...string) ([]byt
 			f.envContent = string(b)
 		}
 		return []byte("0123abcd\n"), nil
+	case args[0] == "network" && args[1] == "connect":
+		return nil, f.connectErr
 	case args[0] == "container" && args[1] == "rm":
 		f.removed = append(f.removed, args[len(args)-1])
 		return nil, nil
@@ -126,14 +130,16 @@ func (f *taskDocker) inspect(name string) ([]byte, error) {
 // created reports whether a task container was created.
 func (f *taskDocker) created() bool { return f.createArgs != nil }
 
-func newTaskProvisioner(t *testing.T, taskImage string) (*compose.Provisioner, *taskDocker, config.Layout) {
+// newTaskProvisioner returns a provisioner on a fake docker CLI; edit
+// adjusts its configuration.
+func newTaskProvisioner(t *testing.T, taskImage string, edit ...func(*compose.ProvisionerConfig)) (*compose.Provisioner, *taskDocker, config.Layout) {
 	t.Helper()
 	layout := config.Layout{Root: t.TempDir()}
 	if err := layout.Ensure(); err != nil {
 		t.Fatal(err)
 	}
 	f := &taskDocker{t: t}
-	prov, err := compose.NewProvisioner(compose.ProvisionerConfig{
+	cfg := compose.ProvisionerConfig{
 		Layout:           layout,
 		Secrets:          memSecrets{},
 		Images:           imageMap{},
@@ -141,7 +147,11 @@ func newTaskProvisioner(t *testing.T, taskImage string) (*compose.Provisioner, *
 		Docker:           f.exec,
 		DockerStream:     f.stream,
 		TaskImage:        taskImage,
-	})
+	}
+	for _, e := range edit {
+		e(&cfg)
+	}
+	prov, err := compose.NewProvisioner(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,6 +245,52 @@ func TestRunTaskImage(t *testing.T) {
 			}
 			if slices.Contains(f.createArgs, "--group-add") {
 				t.Errorf("task without a repository joins the repository group: %q", f.createArgs)
+			}
+		})
+	}
+}
+
+func TestRunTaskBackupNetwork(t *testing.T) {
+	const network = "pressfleet_backup"
+	for _, tc := range []struct {
+		name       string
+		configured string
+		join       bool
+		connectErr error
+		wantErr    bool
+		connected  bool
+	}{
+		{name: "joins", configured: network, join: true, connected: true},
+		{name: "not asked", configured: network},
+		{name: "no network configured", join: true},
+		{name: "network missing", configured: network, join: true, connected: true,
+			connectErr: &compose.CommandError{Stderr: "Error response from daemon: network " + network + " not found", Err: errors.New("exit status 1")}},
+		{name: "connect fails", configured: network, join: true, connected: true, wantErr: true,
+			connectErr: &compose.CommandError{Stderr: "Error response from daemon: permission denied", Err: errors.New("exit status 1")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prov, f, _ := newTaskProvisioner(t, testTaskImage, func(c *compose.ProvisionerConfig) { c.BackupNetwork = tc.configured })
+			f.connectErr = tc.connectErr
+			_, err := prov.RunTask(context.Background(), testSiteID, provisioner.Task{Command: []string{"restic", "snapshots"}, BackupNetwork: tc.join})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("RunTask = %v, want error %v", err, tc.wantErr)
+			}
+			name := f.createArgs[slices.Index(f.createArgs, "--name")+1]
+			want := "network connect --gw-priority -1 " + network + " " + name
+			connectAt := slices.Index(f.calls, want)
+			if (connectAt >= 0) != tc.connected {
+				t.Errorf("calls = %q; want connected %v", f.calls, tc.connected)
+			}
+			// Connected before it starts, and removed whatever happened.
+			startAt := slices.IndexFunc(f.calls, func(c string) bool { return strings.HasPrefix(c, "container start") })
+			if tc.connected && !tc.wantErr && (startAt < 0 || startAt < connectAt) {
+				t.Errorf("calls = %q; want connect before start", f.calls)
+			}
+			if tc.wantErr && startAt >= 0 {
+				t.Errorf("started after connecting failed: %q", f.calls)
+			}
+			if !slices.Equal(f.removed, []string{name}) {
+				t.Errorf("removed %q, want %s", f.removed, name)
 			}
 		})
 	}

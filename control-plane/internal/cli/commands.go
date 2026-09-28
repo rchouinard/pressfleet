@@ -54,6 +54,7 @@ func (a *app) siteRuntime(cat *catalog.Catalog, secretStore secrets.Store, keys 
 		TraefikContainer:  platform.TraefikContainer(a.cfg.PlatformProject),
 		TaskImage:         a.cfg.TaskImage,
 		PlatformProject:   a.cfg.PlatformProject,
+		BackupNetwork:     platform.BackupNetwork(a.cfg.PlatformProject),
 		TraefikDynamicDir: filepath.Join(a.cfg.Layout().PlatformDir(), platform.TraefikDynamicDir),
 		WordPressSecurity: a.cfg.WordPressSecurity,
 		Logger:            a.log.With("component", "provisioner"),

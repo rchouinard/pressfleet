@@ -82,6 +82,11 @@ type ProvisionerConfig struct {
 	// only tests that don't need routing do that.
 	TraefikContainer string
 	PlatformProject  string
+	// BackupNetwork is the platform's backup network
+	// (platform.BackupNetwork), which tasks with provisioner.Task
+	// BackupNetwork join. Empty, or a network that doesn't exist, leaves
+	// them on the site network alone.
+	BackupNetwork string
 	// TraefikDynamicDir is the directory of Traefik's file provider
 	// (platform.TraefikDynamicDir in the platform directory), where
 	// SetMaintenance puts sites' maintenance routes. Empty makes maintenance
@@ -140,8 +145,9 @@ type Provisioner struct {
 	wpcliTimeout   time.Duration
 	wpcliMaxOutput int
 
-	taskDocker StreamExecFunc
-	taskImage  string
+	taskDocker    StreamExecFunc
+	taskImage     string
+	backupNetwork string // ProvisionerConfig.BackupNetwork
 }
 
 // sharedService is a platform container that joins every site network under
@@ -207,6 +213,7 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 		wpcliMaxOutput: cfg.WPCLIMaxOutput,
 		taskDocker:     cfg.DockerStream,
 		taskImage:      cfg.TaskImage,
+		backupNetwork:  cfg.BackupNetwork,
 	}
 	if p.wpcliTimeout == 0 {
 		p.wpcliTimeout = DefaultWPCLITimeout

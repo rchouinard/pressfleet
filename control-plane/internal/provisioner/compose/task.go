@@ -97,7 +97,9 @@ func streamAdapter(docker ExecFunc) StreamExecFunc {
 // and waits for it to finish (provisioner.TaskRunner).
 //
 // The container joins the site's network, so it reaches the platform
-// services under the same aliases as the site, and runs as the site's UID
+// services under the same aliases as the site, and, with Task.BackupNetwork,
+// the platform's backup network (ProvisionerConfig.BackupNetwork), where a
+// self-hosted S3 service may live. It runs as the site's UID
 // and GID (read from its php container), so it reads and writes wp-content
 // as the site does. Its root filesystem is read-only, with a tmpfs at /tmp
 // (also HOME), all capabilities dropped, and no-new-privileges. The site's
@@ -162,6 +164,11 @@ func (p *Provisioner) RunTask(ctx context.Context, siteID string, task provision
 	if err := p.createTask(ctx, spec, task); err != nil {
 		return nil, fmt.Errorf("run task on site %s: %w", siteID, err)
 	}
+	if task.BackupNetwork {
+		if err := p.connectBackupNetwork(ctx, siteID, name); err != nil {
+			return nil, fmt.Errorf("run task on site %s: %w", siteID, err)
+		}
+	}
 	stdout := &headBuffer{max: taskMaxOutput + 1}
 	stderr := &tailBuffer{max: taskMaxStderr}
 	runErr := p.taskDocker(ctx, stdout, stderr, "container", "start", "--attach", "--", name)
@@ -178,6 +185,29 @@ func (p *Provisioner) RunTask(ctx context.Context, siteID string, task provision
 		return res, fmt.Errorf("run task on site %s: %w to the first %d bytes", siteID, ErrOutputTruncated, taskMaxOutput)
 	}
 	return res, nil
+}
+
+// connectBackupNetwork connects a created task container to the platform's
+// backup network. A platform without one (a project rendered before it
+// existed, or none at all in development) is not an error: S3 services
+// elsewhere are still reachable through the site network.
+func (p *Provisioner) connectBackupNetwork(ctx context.Context, siteID, container string) error {
+	if p.backupNetwork == "" {
+		return nil
+	}
+	// --gw-priority -1 keeps the site network as the default gateway; the
+	// backup network is internal and has no route out anyway.
+	_, err := p.docker(ctx, nil, "network", "connect", "--gw-priority", "-1", p.backupNetwork, container)
+	switch {
+	case err == nil:
+		return nil
+	case stderrContains(err, "not found", "no such network"):
+		p.log.WarnContext(ctx, "the platform's backup network doesn't exist; the task reaches S3 through the site network only",
+			"site_id", siteID, "network", p.backupNetwork)
+		return nil
+	default:
+		return fmt.Errorf("connecting the task to the backup network %s: %w", p.backupNetwork, err)
+	}
 }
 
 // taskResult turns the attached run into RunTask's result. The container's

@@ -72,6 +72,7 @@ func (e *Engine) Restore(ctx context.Context, siteID string, snap backup.Snapsho
 		Env:           access.Env,
 		SecretEnv:     access.SecretEnv,
 		RepositoryDir: access.RepositoryDir,
+		BackupNetwork: access.BackupNetwork,
 		Timeout:       e.timeout,
 	}
 

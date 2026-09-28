@@ -546,6 +546,15 @@ func MariaDBContainer(projectName string) string {
 	return projectName + "-mariadb-1"
 }
 
+// BackupNetwork is the name of the backup network of the platform project
+// called projectName: an internal network (no route out of the host) that
+// the control plane and every backup and restore task join, so they reach a
+// self-hosted S3-compatible service attached to it by the same name
+// (design doc §5.3). Compose names it <project>_<network>.
+func BackupNetwork(projectName string) string {
+	return projectName + "_backup"
+}
+
 // RedisContainer is the name of the object cache container of the platform
 // project called projectName. Like MariaDB, the Compose provisioner connects
 // it to each site network.
