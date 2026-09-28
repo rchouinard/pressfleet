@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -109,7 +110,8 @@ func streamAdapter(docker ExecFunc) StreamExecFunc {
 // hands TransferDir and everything in it to the site's UID, so the task can
 // read what the control plane put there and write its own files; the
 // control plane, as root, can read them afterwards. RepositoryDir is left
-// as it is, and must be writable by the site's UID.
+// as it is: it belongs to provisioner.RepositoryGID, which a task with a
+// repository gets as a supplementary group.
 //
 // Secret environment variables reach the docker CLI through an env-file
 // (mode 0600 in the data directory's tmp/, removed as soon as the container
@@ -443,7 +445,11 @@ func taskCreateArgs(spec taskSpec, task provisioner.Task) []string {
 		args = append(args, "--mount", "type=bind,source="+spec.transferDir+",target="+provisioner.TaskTransferPath)
 	}
 	if spec.repositoryDir != "" {
-		args = append(args, "--mount", "type=bind,source="+spec.repositoryDir+",target="+provisioner.TaskRepositoryPath)
+		// Still the site's UID, but in the group that owns the repositories,
+		// which the client group's sites share.
+		args = append(args,
+			"--group-add", strconv.Itoa(provisioner.RepositoryGID),
+			"--mount", "type=bind,source="+spec.repositoryDir+",target="+provisioner.TaskRepositoryPath)
 	}
 	args = append(args, "--", spec.image)
 	return append(args, task.Command[1:]...)

@@ -51,6 +51,21 @@ const (
 	MaxSiteUID = 59999
 )
 
+// RepositoryGID is the GID that owns local backup repositories
+// (Task.RepositoryDir). The sites of a client group share one repository
+// but each runs as its own UID, so tasks that use a repository also run
+// with this supplementary group; on Kubernetes it maps to the Pod's
+// supplementalGroups. It sits just above the site UID range, below 65534
+// (nogroup) and the subordinate ID ranges user namespaces use.
+//
+// A repository is owned by root:RepositoryGID, with setgid directories
+// (mode 2770), so everything created in it keeps the group, and a config
+// file that is group-readable, which makes restic (0.14 and later) create
+// new files group-readable and directories group-writable. Restic never
+// modifies a file in place, so group-readable files in group-writable
+// directories are enough for any member to back up, forget, and prune.
+const RepositoryGID = 60000
+
 // SiteConfig describes the desired runtime state of a site. It is expressed
 // as data and must stay free of orchestrator-specific fields (§4.2).
 type SiteConfig struct {

@@ -183,7 +183,7 @@ func TestRunTask(t *testing.T) {
 		"--user " + testPHPUser,
 		"--mount type=volume,source=" + testSiteVolume + ",target=/site/wp-content,readonly",
 		"--mount type=bind,source=" + transfer + ",target=/transfer",
-		"--mount type=bind,source=" + repo + ",target=/repository",
+		"--group-add 60000 --mount type=bind,source=" + repo + ",target=/repository",
 		"--env RESTIC_REPOSITORY=/repository",
 		"--entrypoint=restic",
 		"-- " + testTaskImage + " backup /site/wp-content",
@@ -232,6 +232,9 @@ func TestRunTaskImage(t *testing.T) {
 			}
 			if slices.ContainsFunc(f.createArgs, func(a string) bool { return strings.HasPrefix(a, "type=volume") }) {
 				t.Errorf("MountNone task mounts wp-content: %q", f.createArgs)
+			}
+			if slices.Contains(f.createArgs, "--group-add") {
+				t.Errorf("task without a repository joins the repository group: %q", f.createArgs)
 			}
 		})
 	}

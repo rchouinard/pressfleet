@@ -70,6 +70,7 @@ func TestTaskCreateArgs(t *testing.T) {
 				"--env", "A=1", "--env", "B=two words", "--env", "RESTIC_REPOSITORY=/repository",
 				"--env-file", "/data/tmp/task-env-1",
 				"--mount", "type=volume,source=pf-site1_wp-content,target=/site/wp-content",
+				"--group-add", "60000",
 				"--mount", "type=bind,source=/data/backups/repositories/g1,target=/repository",
 				"--", "pressfleet-control-plane:dev", "restore", "latest",
 			},

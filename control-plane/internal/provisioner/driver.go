@@ -132,6 +132,9 @@ type Task struct {
 	// directory holding a local Restic repository, bind-mounted read-write at
 	// TaskRepositoryPath. Like TransferDir, it relies on the data directory
 	// being at the same path on the host and in the control plane container.
+	// The task keeps the site's UID and gets RepositoryGID as a supplementary
+	// group, so the repository must be group-writable by RepositoryGID (see
+	// there), not owned by the site's UID: other sites share it.
 	RepositoryDir string
 	// Timeout bounds the task's run time; zero means no limit beyond ctx.
 	Timeout time.Duration
