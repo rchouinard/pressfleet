@@ -96,6 +96,21 @@ Done when: a new site is reachable over HTTPS on its preview domain within secon
 | [#108](https://github.com/rchouinard/pressfleet/issues/108) | WordPress security set: configuration and must-use plugin modules | P1 | M | #21 |
 | [#109](https://github.com/rchouinard/pressfleet/issues/109) | site-nginx: login rate limiting and security headers | P1 | S | #108 |
 
+**Status: complete (2026-09-27).** All issues are implemented, and `TestM2Acceptance` automates the "done when" criteria against Pebble (see [testing.md](testing.md)). The shared object cache runs Valkey, which isolates each site in its own ACL user and logical database; that closes the `SCAN` leak listed under the design document gaps below.
+
+Follow-ups carried out of M2:
+
+- Rebuild and publish the site images from main: e2e pulls them from GHCR unless `images/` changed, and the published images predate the bundled plugins (#43).
+- Refresh the §4.1 memory budget: Traefik now needs 96 MiB, the socket proxy 24 MiB, the maintenance page 24 MiB, and Valkey 64 MiB of overhead above `maxmemory`; `pressfleet doctor`'s budget doesn't include them yet.
+- Watch the Traefik container (like the object cache manager does for Valkey) so a recreated Traefik rejoins site networks without a control plane restart; MariaDB has the same limitation.
+- Enforce domain uniqueness across primary domains and aliases in the database (a shared domains table); today it's checked in the application only.
+- Let operators change DNS provider credentials and SMTP settings without `pressfleet init --force` (with `pressfleet upgrade`, #95).
+- Move preview protection routing to Traefik's file provider so toggling it doesn't recreate nginx.
+- Trusted proxies for IPv6 site networks (`NGINX_TRUSTED_PROXIES=local` covers IPv4 only).
+- Decide on permalinks for new sites: with plain permalinks, `/wp-json/` and sitemap paths redirect.
+- Cover the DNS-01 wildcard path end to end (needs a propagation-check setting and an exec-provider script for challtestsrv).
+- Password policy gaps: WP-CLI paths that call `wp_set_password()` directly are caught only after saving, and custom forms (e.g. WooCommerce) aren't covered.
+
 ### M3: Backup Engine & File Management
 
 Goal: encrypted, deduplicated backups per client group with safe, automatically rolled-back restores, and platform-managed core updates.
@@ -232,6 +247,6 @@ Planning surfaced these items, which the design document doesn't yet cover. Each
 
 ## Where to start
 
-M1 is complete; continue with M2, starting from its P0 issues. Original guidance:
+M1 and M2 are complete; continue with M3, starting with the open decisions it depends on (#56, #59, #60, #61). Original guidance:
 
 Begin with [#1](https://github.com/rchouinard/pressfleet/issues/1) (repo scaffolding). After it lands, CI ([#2](https://github.com/rchouinard/pressfleet/issues/2)), core interfaces ([#3](https://github.com/rchouinard/pressfleet/issues/3)), the CLI skeleton ([#4](https://github.com/rchouinard/pressfleet/issues/4)), and the `site-php` image ([#17](https://github.com/rchouinard/pressfleet/issues/17)) can proceed in parallel.
