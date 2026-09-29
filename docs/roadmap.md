@@ -140,7 +140,7 @@ Done when: a site can be backed up, modified, and restored to its earlier state,
 | [#114](https://github.com/rchouinard/pressfleet/issues/114) | Database export download | P1 | S | #61, #49 |
 | [#115](https://github.com/rchouinard/pressfleet/issues/115) | Temporary database sessions through the SFTP gateway | P1 | M | #61, #62, #23 |
 
-**Status: implemented (2026-09-29), pending a green E2E run in CI.** All issues are implemented: #49–#55, #57, #58, #62, #63, and #111–#115. The M3 acceptance tests (see [testing.md](testing.md)) pass locally against both the local and S3 backends; the full E2E suite now takes about 25 minutes, so the E2E job's timeout is 75 minutes. Decisions made along the way:
+**Status: complete (2026-09-29).** All issues are closed, and the M3 acceptance tests (see [testing.md](testing.md)) pass in CI against both the local and S3 backends (E2E green on 074aacf). The full E2E suite takes about 27 minutes in CI, so the E2E job's timeout is 75 minutes. Decisions made along the way:
 
 Backup and restore:
 
