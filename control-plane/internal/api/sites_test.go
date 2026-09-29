@@ -51,6 +51,8 @@ var implementedSiteOps = map[string]bool{
 	"getSiteBackupSchedule":         true,
 	"setSiteBackupSchedule":         true,
 	"restoreSite":                   true,
+	"exportSiteDatabase":            true,
+	"downloadSiteDatabaseExport":    true,
 }
 
 func orEmpty(s *string) string {

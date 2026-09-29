@@ -97,6 +97,8 @@ tags:
     description: Site backups, kept in the site's client group backup repository.
   - name: uploads
     description: Resumable uploads of large files for site imports and code deployments.
+  - name: database
+    description: Access to a site's database without its password (exports).
   - name: jobs
     description: Long-running operations.
   - name: audit
@@ -1599,6 +1601,95 @@ paths:
           $ref: "#/components/responses/Conflict"
         "422":
           $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/sites/{site_id}/database/export:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    post:
+      operationId: exportSiteDatabase
+      tags: [database]
+      summary: Export a site's database
+      description: |
+        Queues a job that dumps the site's database and compresses it with
+        gzip (design doc §5.8). The dump is plain SQL without `CREATE
+        DATABASE` or `USE` statements, so it imports into whichever database
+        the importer selects, e.g. `gunzip < dump.sql.gz | mariadb mydb`.
+        The site's own database password is never revealed. The site keeps
+        serving throughout, and stopped sites can be exported too. The job
+        runs after any other job working on the site.
+
+        When the job has succeeded, its result holds `export_id`,
+        `download_url` (the `GET` below), `size_bytes`, and `expires_at`.
+        Download the dump with the same session or API token before it
+        expires, one hour after it is ready by default
+        (`database_export.ttl_seconds`); the file is then deleted. Every
+        export and every download is recorded in the audit log.
+
+        A site that is `provisioning` or `deleting`, or whose provisioning
+        failed, returns `409`.
+      responses:
+        "202":
+          description: Export job queued.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/sites/{site_id}/database/exports/{export_id}/download:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+      - name: export_id
+        in: path
+        required: true
+        description: The `export_id` from the export job's result.
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: downloadSiteDatabaseExport
+      tags: [database]
+      summary: Download a database export
+      description: |
+        Returns the compressed dump of a finished export
+        (`POST /api/v1/sites/{site_id}/database/export`) as
+        `application/gzip`. It needs the same permission as starting an
+        export (Operators and Admins; not `read-only` tokens), and each
+        download is recorded in the audit log. An export that doesn't
+        exist, isn't finished, belongs to another site, or has expired
+        returns `404`; an expired export's file has been deleted.
+      responses:
+        "200":
+          description: The compressed dump.
+          headers:
+            Content-Disposition:
+              description: '`attachment` with the file name, `<site slug>-<export ID>.sql.gz`.'
+              schema:
+                type: string
+          content:
+            application/gzip:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         default:
           $ref: "#/components/responses/Error"
 

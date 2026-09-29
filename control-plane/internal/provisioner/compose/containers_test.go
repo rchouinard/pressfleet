@@ -104,4 +104,16 @@ func TestRunContainer(t *testing.T) {
 	if _, err := compose.RunContainer(ctx, r.exec, compose.RunOptions{}); !errors.Is(err, compose.ErrInvalidProject) {
 		t.Errorf("without an image: err = %v", err)
 	}
+
+	// Standard input needs --interactive.
+	if _, err := compose.RunContainer(ctx, r.exec, compose.RunOptions{
+		Image: "mariadb:11.8", Command: []string{"cat"}, Stdin: strings.NewReader("SELECT 1;"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	last := r.args[len(r.args)-1]
+	if !slices.Contains(last, "--interactive") || slices.Index(last, "--interactive") > slices.Index(last, "--") ||
+		r.stdin[len(r.stdin)-1] != "SELECT 1;" {
+		t.Errorf("args = %q, stdin %q", last, r.stdin[len(r.stdin)-1])
+	}
 }

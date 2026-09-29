@@ -95,6 +95,8 @@ type Config struct {
 	Backup BackupConfig `yaml:"backup"`
 	// Uploads configures the resumable upload API for large files (#111).
 	Uploads UploadsConfig `yaml:"uploads"`
+	// DatabaseExport configures database exports (§5.8).
+	DatabaseExport DatabaseExportConfig `yaml:"database_export"`
 }
 
 // Values of smtp.encryption.
@@ -341,6 +343,25 @@ func (a AuditConfig) Retention() time.Duration {
 // MaxAuditRetentionDays bounds audit.retention_days at about ten years.
 const MaxAuditRetentionDays = 3660
 
+// DatabaseExportConfig configures database exports (§5.8).
+type DatabaseExportConfig struct {
+	// TTLSeconds is how long an export can be downloaded once it is ready;
+	// then its file is deleted.
+	TTLSeconds int `yaml:"ttl_seconds"`
+}
+
+// TTL returns TTLSeconds as a duration.
+func (d DatabaseExportConfig) TTL() time.Duration {
+	return time.Duration(d.TTLSeconds) * time.Second
+}
+
+// Bounds of database_export.ttl_seconds: short enough to test expiry, and
+// at most a day, since the file holds a whole site's data.
+const (
+	MinDatabaseExportTTLSeconds = 10
+	MaxDatabaseExportTTLSeconds = 86400
+)
+
 // MariaDBConfig configures the control plane's admin connection to the
 // shared MariaDB server.
 type MariaDBConfig struct {
@@ -465,6 +486,7 @@ func Default() Config {
 		},
 		WordPressSecurity: DefaultWordPressSecurity(),
 		Uploads:           DefaultUploads(),
+		DatabaseExport:    DatabaseExportConfig{TTLSeconds: 3600},
 	}
 }
 
@@ -485,6 +507,7 @@ var intEnvVars = []struct {
 	{"PRESSFLEET_BACKUP_CHECK_READ_DATA_PERCENT", func(c *Config) *int { return &c.Backup.Check.ReadDataPercent }},
 	{"PRESSFLEET_UPLOADS_MAX_SIZE_MB", func(c *Config) *int { return &c.Uploads.MaxSizeMB }},
 	{"PRESSFLEET_UPLOADS_EXPIRY_HOURS", func(c *Config) *int { return &c.Uploads.ExpiryHours }},
+	{"PRESSFLEET_DATABASE_EXPORT_TTL_SECONDS", func(c *Config) *int { return &c.DatabaseExport.TTLSeconds }},
 }
 
 // envVars maps environment variables to the fields they set.
@@ -709,6 +732,10 @@ func (c Config) Validate() error {
 	}
 	if c.Audit.RetentionDays < 1 || c.Audit.RetentionDays > MaxAuditRetentionDays {
 		errs = append(errs, fmt.Errorf("audit.retention_days must be between 1 and %d, got %d", MaxAuditRetentionDays, c.Audit.RetentionDays))
+	}
+	if t := c.DatabaseExport.TTLSeconds; t < MinDatabaseExportTTLSeconds || t > MaxDatabaseExportTTLSeconds {
+		errs = append(errs, fmt.Errorf("database_export.ttl_seconds must be between %d and %d, got %d",
+			MinDatabaseExportTTLSeconds, MaxDatabaseExportTTLSeconds, t))
 	}
 	if host, port, err := net.SplitHostPort(c.MariaDB.Address); err != nil || host == "" || !validPort(port) {
 		errs = append(errs, fmt.Errorf("mariadb.address must be host:port, like mariadb:3306, got %q", c.MariaDB.Address))

@@ -1997,6 +1997,84 @@
       ]
     },
     {
+      "id": "b06fbf9d-636e-5e71-bd49-40233a702ce3",
+      "name": "Database",
+      "description": "Access to a site's database without its password: exports to download (design doc \u00a75.8).",
+      "item": [
+        {
+          "id": "c930db50-c0cd-50df-894f-cb9aa9be3b51",
+          "name": "Export site database",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/database/export",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "database",
+                "export"
+              ]
+            },
+            "description": "Queues a job that dumps the site's database and compresses it with gzip. Follow it with **Jobs \u2192 Get job**, which saves the result's `export_id` for **Download database export**. The export can be downloaded until `expires_at` in the job's result (an hour by default, `database_export.ttl_seconds`); then it is deleted."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "77190d65-5db0-512e-81cb-6f0e990b206c",
+          "name": "Download database export",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/database/exports/{{export_id}}/download",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "database",
+                "exports",
+                "{{export_id}}",
+                "download"
+              ]
+            },
+            "description": "The compressed dump (`application/gzip`) of `export_id`; use **Send and Download** to save it. Import it with `gunzip < dump.sql.gz | mariadb mydb`. An expired or unknown export returns `404`. Every download is recorded in the audit log."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"is gzip\", () => pm.expect(pm.response.headers.get(\"Content-Type\")).to.eql(\"application/gzip\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "e6e4ae4e-bd53-5c62-929c-0923010ae276",
       "name": "Jobs",
       "description": "Long-running operations.",
@@ -2105,6 +2183,9 @@
                   "    pm.execution.setNextRequest(pm.info.requestId);",
                   "} else {",
                   "    pm.variables.set(\"job_polls\", 0);",
+                  "    if (job.state === \"succeeded\" && job.result && job.result.export_id) {",
+                  "        pm.environment.set(\"export_id\", job.result.export_id);",
+                  "    }",
                   "    pm.test(`job ${job.type} succeeded`, () => {",
                   "        pm.expect(job.state, job.error || \"\").to.eql(\"succeeded\");",
                   "    });",

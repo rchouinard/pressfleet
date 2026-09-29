@@ -76,8 +76,9 @@ func TestLoadPrecedence(t *testing.T) {
 		Backup:   config.Default().Backup,                          // default
 		// default
 		PlatformProject:   "pressfleet",
-		WordPressSecurity: config.DefaultWordPressSecurity(), // default
-		Uploads:           config.DefaultUploads(),           // default
+		WordPressSecurity: config.DefaultWordPressSecurity(),             // default
+		Uploads:           config.DefaultUploads(),                       // default
+		DatabaseExport:    config.DatabaseExportConfig{TTLSeconds: 3600}, // default
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("Load() = %+v, want %+v", cfg, want)
@@ -272,6 +273,34 @@ func TestAuditSettings(t *testing.T) {
 		cfg.Audit.RetentionDays = n
 		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "audit.retention_days") {
 			t.Errorf("retention %d: Validate() = %v", n, err)
+		}
+	}
+}
+
+func TestDatabaseExportSettings(t *testing.T) {
+	if got := config.Default().DatabaseExport; got.TTLSeconds != 3600 || got.TTL() != time.Hour {
+		t.Errorf("default database export config = %+v", got)
+	}
+	path := writeFile(t, "database_export:\n  ttl_seconds: 900\n")
+	cfg, err := config.Load(path, env(nil))
+	if err != nil || cfg.DatabaseExport.TTL() != 15*time.Minute {
+		t.Fatalf("from file: %+v, %v", cfg.DatabaseExport, err)
+	}
+	cfg, err = config.Load(path, env(map[string]string{"PRESSFLEET_DATABASE_EXPORT_TTL_SECONDS": "30"}))
+	if err != nil || cfg.DatabaseExport.TTLSeconds != 30 {
+		t.Fatalf("from env: %+v, %v", cfg.DatabaseExport, err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v", err)
+	}
+	if _, err := config.Load(path, env(map[string]string{"PRESSFLEET_DATABASE_EXPORT_TTL_SECONDS": "1h"})); err == nil {
+		t.Error("non-numeric PRESSFLEET_DATABASE_EXPORT_TTL_SECONDS accepted")
+	}
+	for _, n := range []int{0, config.MinDatabaseExportTTLSeconds - 1, config.MaxDatabaseExportTTLSeconds + 1} {
+		cfg := config.Default()
+		cfg.DatabaseExport.TTLSeconds = n
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "database_export.ttl_seconds") {
+			t.Errorf("TTL %d: Validate() = %v", n, err)
 		}
 	}
 }

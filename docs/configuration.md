@@ -102,6 +102,8 @@ backup:
 uploads:                         # see "Uploads"
   max_size_mb: 10240
   expiry_hours: 24
+database_export:
+  ttl_seconds: 3600              # see "Database exports"
 ```
 
 ## Settings
@@ -165,6 +167,7 @@ uploads:                         # see "Uploads"
 | `backup.check.read_data_percent` | `PRESSFLEET_BACKUP_CHECK_READ_DATA_PERCENT` | | `10` | Share of a repository's data, from 0 to 100, that each check downloads and verifies, chosen at random each time. `0` checks only the repository's structure. On S3, each check downloads this share of the repository. |
 | `uploads.max_size_mb` | `PRESSFLEET_UPLOADS_MAX_SIZE_MB` | | `10240` | Largest file, in MiB, that can be sent through the upload API for a site import or a code deployment, from 1 to 1048576. Uploads are stored under `<data_dir>/uploads/`, so leave room there. See [Uploads](#uploads). |
 | `uploads.expiry_hours` | `PRESSFLEET_UPLOADS_EXPIRY_HOURS` | | `24` | How long an upload that no import or deployment has taken may go without a new chunk before it is removed as abandoned, from 1 to 720. |
+| `database_export.ttl_seconds` | `PRESSFLEET_DATABASE_EXPORT_TTL_SECONDS` | | `3600` | How long a database export can be downloaded once it is ready, from 10 seconds to a day (86400); then its file is deleted. See [Database exports](#database-exports). |
 | `wordpress_security.block_user_enumeration` | `PRESSFLEET_WORDPRESS_SECURITY_BLOCK_USER_ENUMERATION` | | `true` | Hide which user names exist from visitors. See [WordPress security set](#wordpress-security-set). |
 | `wordpress_security.password_policy.enabled` | `PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_POLICY_ENABLED` | | `true` | Check new WordPress passwords on the server: minimum length and a common-password list. |
 | `wordpress_security.password_policy.min_length` | `PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_POLICY_MIN_LENGTH` | | `12` | Minimum WordPress password length, from 8 to 64 characters. |
@@ -313,6 +316,8 @@ The default role is `admin`. Both commands generate a random password and print 
 
 The control plane records every authenticated request that changes state, every request refused by authorization, and every login (successful or not) and logout. Each event holds the user and API token that made the request, the action (such as `site.delete` or `user.update`), the target, the result (`success`, `failure`, or `denied`), the client address (from `X-Forwarded-For` when the request came through a trusted proxy), and the time. Request bodies, passwords, and tokens are never recorded. Reads that succeed aren't recorded.
 
+Downloads of database exports are the one kind of read that is recorded, whatever its result, since they hand out a site's data (see [Database exports](#database-exports)).
+
 Admins can list and filter the log with `GET /api/v1/audit-events`. A daily job deletes events older than `audit.retention_days`; a changed retention applies from the next run after the control plane restarts. Events outlive the users and tokens they name, so an event can refer to a user who has since been deleted.
 
 ## Master key
@@ -370,6 +375,8 @@ The DNS checks are skipped until `dashboard_domain` and `preview_base_domain` ar
                       the client group's Restic repository (backup.backend local;
                       mode 2770, group 60000; see "Backup repositories")
   uploads/<upload-id> files sent through the upload API (never backed up; see "Uploads")
+  exports/            database exports waiting to be downloaded, deleted when
+                      they expire (see "Database exports")
   tmp/                scratch space, e.g. database dumps during backups
 ```
 
@@ -554,6 +561,14 @@ Each site's database lives on the platform's shared MariaDB server. The control 
 The defaults match the platform Compose project, so installs made with `pressfleet init` need no MariaDB settings. The control plane connects only when it needs to, so `serve` starts even while MariaDB is down, and it re-reads the password file for every new connection.
 
 Sites reach MariaDB as `pf-mariadb` on their own network: the control plane connects the platform's MariaDB container (named after `platform_project`) to each site network. Docker drops those connections when it recreates the container, for example during an upgrade, so `serve` reconnects MariaDB to every site's network when it starts. It does so in the background and only logs failures, so a missing MariaDB or Docker doesn't stop the control plane from starting.
+
+## Database exports
+
+Agencies get a copy of a site's database without its password (design doc §5.8). Operators and Admins export it with `POST /api/v1/sites/{id}/database/export`, which queues a job. The job dumps the database with `mariadb-dump` as the site's own user (a consistent snapshot that doesn't lock the site's tables, so the site keeps serving, stopped sites included), compresses it with gzip into `<data_dir>/exports/<export ID>.sql.gz`, and puts the export's `download_url`, `size_bytes`, and `expires_at` in its result. The dump has no `CREATE DATABASE` or `USE` statement, so it imports into whichever database you choose: `gunzip < dump.sql.gz | mariadb mydb`.
+
+Download it from `download_url` (`GET /api/v1/sites/{id}/database/exports/{export ID}/download`) with a session or a full API token; read-only tokens and Viewers can't. The export is downloadable, as often as needed, for `database_export.ttl_seconds` after it is ready (an hour by default). Then its file is deleted and its link returns `404`: a download that finds it expired deletes it at once, and a job every five minutes deletes the rest. That job also deletes files left behind by exports that failed or were interrupted. Every export and every download, successful or not, is recorded in the [audit log](#audit-log).
+
+To replace a site's database, restore a backup (see [Site restores](#site-restores)).
 
 ## Object cache
 

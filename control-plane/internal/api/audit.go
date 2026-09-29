@@ -22,8 +22,9 @@ import (
 // authenticated unsafe request (success or failure by the response
 // status). Unsafe requests that fail before reaching the handler, such as
 // validation errors, are recorded with the operation's declared action.
-// Reads that are allowed aren't recorded. Login is public, so its handler
-// fills in the record itself.
+// Reads that are allowed aren't recorded, except those whose handler asks
+// for it (auditRead), such as downloads of database exports. Login is
+// public, so its handler fills in the record itself.
 //
 // Events hold only IDs, the action, the result, and the client address;
 // request bodies and secrets never reach them. They are written after the
@@ -43,6 +44,9 @@ type auditRecord struct {
 	// userID is the actor for public operations (login), which have no
 	// principal.
 	userID string
+	// read asks for a read to be recorded even when it is allowed (see
+	// auditRead).
+	read bool
 }
 
 type auditKey struct{}
@@ -67,6 +71,15 @@ func noteLogin(ctx context.Context, userID string) {
 		if userID != "" {
 			rec.target = authz.User(userID)
 		}
+	}
+}
+
+// auditRead asks for a read to be recorded like a change, whatever its
+// result, for reads that hand out sensitive data, such as a database
+// export's download. Call it before authorize.
+func auditRead(ctx context.Context) {
+	if rec := auditFromContext(ctx); rec != nil {
+		rec.read = true
 	}
 }
 
@@ -133,7 +146,7 @@ func auditEvent(r *http.Request, rec *auditRecord, status int) (store.AuditEvent
 	switch {
 	case rec.denied:
 		result = store.AuditDenied
-	case safeMethod(r.Method):
+	case safeMethod(r.Method) && !rec.read:
 		return store.AuditEvent{}, false
 	case !authed && rec.action == "":
 		// Nothing to attribute: a public operation that didn't ask to be

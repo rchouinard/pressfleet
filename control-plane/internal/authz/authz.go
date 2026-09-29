@@ -81,7 +81,9 @@ const (
 
 	// Deploy code; connect over SFTP; export the database; open read-only
 	// database sessions.
-	DeployCode Action = "site.code.deploy"
+	DeployCode             Action = "site.code.deploy"
+	ExportDatabase         Action = "site.database.export"
+	DownloadDatabaseExport Action = "site.database.export.download"
 
 	// Send a large file through the upload API (#111) for a site import or
 	// a code deployment. Each needs the permission of the job it is for.
@@ -161,6 +163,12 @@ var rules = map[Action]rule{
 	// An upload needs the permission of the job it is for.
 	UploadForImport: {store.RoleOperator, true}, // as ImportSite
 	UploadForDeploy: {store.RoleOperator, true}, // as DeployCode
+
+	ExportDatabase: {store.RoleOperator, true},
+	// Reading a download changes nothing, but it hands out the site's
+	// whole database, which a read-only token must not reach: it couldn't
+	// start the export either.
+	DownloadDatabaseExport: {store.RoleOperator, true},
 
 	CreateBackup:      {store.RoleOperator, true},
 	RestoreBackup:     {store.RoleOperator, true},

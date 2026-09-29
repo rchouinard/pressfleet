@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -99,6 +100,9 @@ type RunOptions struct {
 	Command    []string
 	// User defaults to 65534:65534 (nobody).
 	User string
+	// Stdin, if set, is connected to the container's standard input, e.g.
+	// to hand it a file without mounting anything.
+	Stdin io.Reader
 }
 
 // RunContainer runs a short-lived container and returns its standard
@@ -126,8 +130,11 @@ func RunContainer(ctx context.Context, docker ExecFunc, opts RunOptions) ([]byte
 	if opts.Entrypoint != "" {
 		args = append(args, "--entrypoint", opts.Entrypoint)
 	}
+	if opts.Stdin != nil {
+		args = append(args, "--interactive")
+	}
 	args = append(args, "--", opts.Image)
-	out, err := docker(ctx, nil, append(args, opts.Command...)...)
+	out, err := docker(ctx, opts.Stdin, append(args, opts.Command...)...)
 	if err != nil {
 		return out, fmt.Errorf("running %s: %w", opts.Image, err)
 	}

@@ -39,9 +39,11 @@ var designTable = map[authz.Action]struct {
 	// Deploy code; connect over SFTP; export the database; open read-only
 	// database sessions. Uploads for imports and deployments need what the
 	// import or deployment needs.
-	authz.DeployCode:      {true, true, false, true},
-	authz.UploadForImport: {true, true, false, true},
-	authz.UploadForDeploy: {true, true, false, true},
+	authz.DeployCode:             {true, true, false, true},
+	authz.UploadForImport:        {true, true, false, true},
+	authz.UploadForDeploy:        {true, true, false, true},
+	authz.ExportDatabase:         {true, true, false, true},
+	authz.DownloadDatabaseExport: {true, true, false, true},
 	// Take backups, restore, and approve core updates.
 	authz.CreateBackup:      {true, true, false, true},
 	authz.RestoreBackup:     {true, true, false, true},

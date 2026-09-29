@@ -36,6 +36,9 @@ func allEvents(t *testing.T, db *store.DB) []store.AuditEvent {
 	}
 }
 
+// auditedReads are the reads recorded like changes (auditRead).
+var auditedReads = map[string]bool{"downloadSiteDatabaseExport": true}
+
 func isUnsafe(method string) bool {
 	return method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions
 }
@@ -43,7 +46,8 @@ func isUnsafe(method string) bool {
 // TestEveryStateChangingOperationIsAudited sends every operation in the
 // OpenAPI document as an authenticated admin token and expects exactly one
 // audit event for each state-changing one, whether it succeeded or failed,
-// and none for reads.
+// and none for reads, except the reads that hand out sensitive data
+// (auditedReads).
 func TestEveryStateChangingOperationIsAudited(t *testing.T) {
 	ops, err := api.Operations()
 	if err != nil {
@@ -63,7 +67,7 @@ func TestEveryStateChangingOperationIsAudited(t *testing.T) {
 				before := len(allEvents(t, db))
 				w := do(t, h, sampleRequest(op, true))
 				events := allEvents(t, db)
-				if !isUnsafe(op.Method) {
+				if !isUnsafe(op.Method) && !auditedReads[op.ID] {
 					if len(events) != before {
 						t.Errorf("read recorded %d audit events: %+v", len(events)-before, events[0])
 					}

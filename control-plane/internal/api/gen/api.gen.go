@@ -1755,6 +1755,12 @@ type ServerInterface interface {
 	// PurgeSiteCache Purge a site's caches
 	// (POST /api/v1/sites/{site_id}/cache/purge)
 	PurgeSiteCache(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// ExportSiteDatabase Export a site's database
+	// (POST /api/v1/sites/{site_id}/database/export)
+	ExportSiteDatabase(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// DownloadSiteDatabaseExport Download a database export
+	// (GET /api/v1/sites/{site_id}/database/exports/{export_id}/download)
+	DownloadSiteDatabaseExport(w http.ResponseWriter, r *http.Request, siteID SiteID, exportID ID)
 	// GoLiveSite Switch a site to its primary domain
 	// (POST /api/v1/sites/{site_id}/go-live)
 	GoLiveSite(w http.ResponseWriter, r *http.Request, siteID SiteID)
@@ -2723,6 +2729,67 @@ func (siw *ServerInterfaceWrapper) PurgeSiteCache(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// ExportSiteDatabase operation middleware
+func (siw *ServerInterfaceWrapper) ExportSiteDatabase(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExportSiteDatabase(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DownloadSiteDatabaseExport operation middleware
+func (siw *ServerInterfaceWrapper) DownloadSiteDatabaseExport(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "export_id" -------------
+	var exportID ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "export_id", r.PathValue("export_id"), &exportID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "export_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DownloadSiteDatabaseExport(w, r, siteID, exportID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GoLiveSite operation middleware
 func (siw *ServerInterfaceWrapper) GoLiveSite(w http.ResponseWriter, r *http.Request) {
 
@@ -3354,6 +3421,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/uploads/{upload_id}", wrapper.GetUpload)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/v1/uploads/{upload_id}", wrapper.AppendUploadChunk)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/uploads/{upload_id}/complete", wrapper.CompleteUpload)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/database/export", wrapper.ExportSiteDatabase)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/database/exports/{export_id}/download", wrapper.DownloadSiteDatabaseExport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs", wrapper.ListJobs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs/{job_id}", wrapper.GetJob)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit-events", wrapper.ListAuditEvents)
@@ -6234,6 +6303,221 @@ func (response PurgeSiteCachedefaultApplicationProblemPlusJSONResponse) VisitPur
 	return err
 }
 
+type ExportSiteDatabaseRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+}
+
+type ExportSiteDatabaseResponseObject interface {
+	VisitExportSiteDatabaseResponse(w http.ResponseWriter) error
+}
+
+type ExportSiteDatabase202ResponseHeaders struct {
+	Location *string
+}
+
+type ExportSiteDatabase202JSONResponse struct {
+	Body    JobAccepted
+	Headers ExportSiteDatabase202ResponseHeaders
+}
+
+func (response ExportSiteDatabase202JSONResponse) VisitExportSiteDatabaseResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportSiteDatabase401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ExportSiteDatabase401ApplicationProblemPlusJSONResponse) VisitExportSiteDatabaseResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportSiteDatabase403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ExportSiteDatabase403ApplicationProblemPlusJSONResponse) VisitExportSiteDatabaseResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportSiteDatabase404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response ExportSiteDatabase404ApplicationProblemPlusJSONResponse) VisitExportSiteDatabaseResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportSiteDatabase409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response ExportSiteDatabase409ApplicationProblemPlusJSONResponse) VisitExportSiteDatabaseResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportSiteDatabasedefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ExportSiteDatabasedefaultApplicationProblemPlusJSONResponse) VisitExportSiteDatabaseResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadSiteDatabaseExportRequestObject struct {
+	SiteID   SiteID `json:"site_id"`
+	ExportID ID     `json:"export_id"`
+}
+
+type DownloadSiteDatabaseExportResponseObject interface {
+	VisitDownloadSiteDatabaseExportResponse(w http.ResponseWriter) error
+}
+
+type DownloadSiteDatabaseExport200ResponseHeaders struct {
+	ContentDisposition *string
+}
+
+type DownloadSiteDatabaseExport200ApplicationGzipResponse struct {
+	Body          io.Reader
+	Headers       DownloadSiteDatabaseExport200ResponseHeaders
+	ContentLength int64
+}
+
+func (response DownloadSiteDatabaseExport200ApplicationGzipResponse) VisitDownloadSiteDatabaseExportResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/gzip")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type DownloadSiteDatabaseExport401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response DownloadSiteDatabaseExport401ApplicationProblemPlusJSONResponse) VisitDownloadSiteDatabaseExportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadSiteDatabaseExport403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response DownloadSiteDatabaseExport403ApplicationProblemPlusJSONResponse) VisitDownloadSiteDatabaseExportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadSiteDatabaseExport404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response DownloadSiteDatabaseExport404ApplicationProblemPlusJSONResponse) VisitDownloadSiteDatabaseExportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadSiteDatabaseExportdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response DownloadSiteDatabaseExportdefaultApplicationProblemPlusJSONResponse) VisitDownloadSiteDatabaseExportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GoLiveSiteRequestObject struct {
 	SiteID SiteID `json:"site_id"`
 	Body   *GoLiveSiteJSONRequestBody
@@ -8276,6 +8560,12 @@ type StrictServerInterface interface {
 	// PurgeSiteCache Purge a site's caches
 	// (POST /api/v1/sites/{site_id}/cache/purge)
 	PurgeSiteCache(ctx context.Context, request PurgeSiteCacheRequestObject) (PurgeSiteCacheResponseObject, error)
+	// ExportSiteDatabase Export a site's database
+	// (POST /api/v1/sites/{site_id}/database/export)
+	ExportSiteDatabase(ctx context.Context, request ExportSiteDatabaseRequestObject) (ExportSiteDatabaseResponseObject, error)
+	// DownloadSiteDatabaseExport Download a database export
+	// (GET /api/v1/sites/{site_id}/database/exports/{export_id}/download)
+	DownloadSiteDatabaseExport(ctx context.Context, request DownloadSiteDatabaseExportRequestObject) (DownloadSiteDatabaseExportResponseObject, error)
 	// GoLiveSite Switch a site to its primary domain
 	// (POST /api/v1/sites/{site_id}/go-live)
 	GoLiveSite(ctx context.Context, request GoLiveSiteRequestObject) (GoLiveSiteResponseObject, error)
@@ -9116,6 +9406,59 @@ func (sh *strictHandler) PurgeSiteCache(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PurgeSiteCacheResponseObject); ok {
 		if err := validResponse.VisitPurgeSiteCacheResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ExportSiteDatabase operation middleware
+func (sh *strictHandler) ExportSiteDatabase(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request ExportSiteDatabaseRequestObject
+
+	request.SiteID = siteID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ExportSiteDatabase(ctx, request.(ExportSiteDatabaseRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ExportSiteDatabase")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ExportSiteDatabaseResponseObject); ok {
+		if err := validResponse.VisitExportSiteDatabaseResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DownloadSiteDatabaseExport operation middleware
+func (sh *strictHandler) DownloadSiteDatabaseExport(w http.ResponseWriter, r *http.Request, siteID SiteID, exportID ID) {
+	var request DownloadSiteDatabaseExportRequestObject
+
+	request.SiteID = siteID
+	request.ExportID = exportID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DownloadSiteDatabaseExport(ctx, request.(DownloadSiteDatabaseExportRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DownloadSiteDatabaseExport")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DownloadSiteDatabaseExportResponseObject); ok {
+		if err := validResponse.VisitDownloadSiteDatabaseExportResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

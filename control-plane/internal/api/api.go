@@ -50,6 +50,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
 	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
+	"github.com/rchouinard/pressfleet/control-plane/internal/dbexport"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
@@ -94,6 +95,9 @@ type Options struct {
 	// Uploads receives large files for site imports and deployments. If
 	// nil, the upload operations fail with 500.
 	Uploads *uploads.Service
+	// DatabaseExports exports site databases for download. If nil, the
+	// database export operations fail with 500.
+	DatabaseExports *dbexport.Service
 	// SecureCookies forces the Secure flag on the session cookie. Otherwise
 	// it is set when the request arrived over HTTPS, directly or through a
 	// trusted proxy, so plain-HTTP development on localhost still works.
@@ -109,6 +113,7 @@ type Handlers struct {
 	sites         *sites.Service
 	backups       *sitebackup.Service
 	uploads       *uploads.Service
+	dbExports     *dbexport.Service
 	resolver      authz.Resolver
 	secureCookies bool
 }
@@ -143,6 +148,7 @@ func NewHandler(opts Options) (http.Handler, error) {
 
 	h := &Handlers{log: opts.Logger, readiness: opts.Readiness, db: opts.DB, auth: opts.Auth, sites: opts.Sites, backups: opts.Backups,
 		uploads: opts.Uploads, secureCookies: opts.SecureCookies}
+	h.dbExports = opts.DatabaseExports
 	if opts.DB != nil {
 		h.resolver = authz.NewResolver(opts.DB)
 	}

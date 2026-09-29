@@ -2193,6 +2193,42 @@ type ClientInterface interface {
 	// Corresponds with POST /api/v1/sites/{site_id}/cache/purge (the `PurgeSiteCache` operationId).
 	PurgeSiteCache(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ExportSiteDatabase Export a site's database
+	//
+	// Queues a job that dumps the site's database and compresses it with
+	// gzip (design doc §5.8). The dump is plain SQL without `CREATE
+	// DATABASE` or `USE` statements, so it imports into whichever database
+	// the importer selects, e.g. `gunzip < dump.sql.gz | mariadb mydb`.
+	// The site's own database password is never revealed. The site keeps
+	// serving throughout, and stopped sites can be exported too. The job
+	// runs after any other job working on the site.
+	//
+	// When the job has succeeded, its result holds `export_id`,
+	// `download_url` (the `GET` below), `size_bytes`, and `expires_at`.
+	// Download the dump with the same session or API token before it
+	// expires, one hour after it is ready by default
+	// (`database_export.ttl_seconds`); the file is then deleted. Every
+	// export and every download is recorded in the audit log.
+	//
+	// A site that is `provisioning` or `deleting`, or whose provisioning
+	// failed, returns `409`.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/database/export (the `ExportSiteDatabase` operationId).
+	ExportSiteDatabase(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DownloadSiteDatabaseExport Download a database export
+	//
+	// Returns the compressed dump of a finished export
+	// (`POST /api/v1/sites/{site_id}/database/export`) as
+	// `application/gzip`. It needs the same permission as starting an
+	// export (Operators and Admins; not `read-only` tokens), and each
+	// download is recorded in the audit log. An export that doesn't
+	// exist, isn't finished, belongs to another site, or has expired
+	// returns `404`; an expired export's file has been deleted.
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/database/exports/{export_id}/download (the `DownloadSiteDatabaseExport` operationId).
+	DownloadSiteDatabaseExport(ctx context.Context, siteID SiteID, exportID ID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GoLiveSiteWithBody Switch a site to its primary domain
 	//
 	// Sets the site's primary domain and aliases and queues a job that
@@ -3473,6 +3509,62 @@ func (c *Client) CreateSiteBackup(ctx context.Context, siteID SiteID, reqEditors
 // Corresponds with POST /api/v1/sites/{site_id}/cache/purge (the `PurgeSiteCache` operationId).
 func (c *Client) PurgeSiteCache(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPurgeSiteCacheRequest(c.Server, siteID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExportSiteDatabase Export a site's database
+//
+// Queues a job that dumps the site's database and compresses it with
+// gzip (design doc §5.8). The dump is plain SQL without `CREATE
+// DATABASE` or `USE` statements, so it imports into whichever database
+// the importer selects, e.g. `gunzip < dump.sql.gz | mariadb mydb`.
+// The site's own database password is never revealed. The site keeps
+// serving throughout, and stopped sites can be exported too. The job
+// runs after any other job working on the site.
+//
+// When the job has succeeded, its result holds `export_id`,
+// `download_url` (the `GET` below), `size_bytes`, and `expires_at`.
+// Download the dump with the same session or API token before it
+// expires, one hour after it is ready by default
+// (`database_export.ttl_seconds`); the file is then deleted. Every
+// export and every download is recorded in the audit log.
+//
+// A site that is `provisioning` or `deleting`, or whose provisioning
+// failed, returns `409`.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/database/export (the `ExportSiteDatabase` operationId).
+func (c *Client) ExportSiteDatabase(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExportSiteDatabaseRequest(c.Server, siteID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DownloadSiteDatabaseExport Download a database export
+//
+// Returns the compressed dump of a finished export
+// (`POST /api/v1/sites/{site_id}/database/export`) as
+// `application/gzip`. It needs the same permission as starting an
+// export (Operators and Admins; not `read-only` tokens), and each
+// download is recorded in the audit log. An export that doesn't
+// exist, isn't finished, belongs to another site, or has expired
+// returns `404`; an expired export's file has been deleted.
+//
+// Corresponds with GET /api/v1/sites/{site_id}/database/exports/{export_id}/download (the `DownloadSiteDatabaseExport` operationId).
+func (c *Client) DownloadSiteDatabaseExport(ctx context.Context, siteID SiteID, exportID ID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDownloadSiteDatabaseExportRequest(c.Server, siteID, exportID)
 	if err != nil {
 		return nil, err
 	}
@@ -5543,6 +5635,81 @@ func NewPurgeSiteCacheRequest(server string, siteID SiteID) (*http.Request, erro
 	return req, nil
 }
 
+// NewExportSiteDatabaseRequest constructs an http.Request for the ExportSiteDatabase method
+func NewExportSiteDatabaseRequest(server string, siteID SiteID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/database/export", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDownloadSiteDatabaseExportRequest constructs an http.Request for the DownloadSiteDatabaseExport method
+func NewDownloadSiteDatabaseExportRequest(server string, siteID SiteID, exportID ID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "export_id", exportID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/database/exports/%s/download", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGoLiveSiteRequest calls the generic GoLiveSite builder with application/json body
 func NewGoLiveSiteRequest(server string, siteID SiteID, body GoLiveSiteJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -6814,6 +6981,46 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/cache/purge (the `PurgeSiteCache` operationId).
 	PurgeSiteCacheWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*PurgeSiteCacheResponse, error)
+
+	// ExportSiteDatabaseWithResponse Export a site's database
+	//
+	// Queues a job that dumps the site's database and compresses it with
+	// gzip (design doc §5.8). The dump is plain SQL without `CREATE
+	// DATABASE` or `USE` statements, so it imports into whichever database
+	// the importer selects, e.g. `gunzip < dump.sql.gz | mariadb mydb`.
+	// The site's own database password is never revealed. The site keeps
+	// serving throughout, and stopped sites can be exported too. The job
+	// runs after any other job working on the site.
+	//
+	// When the job has succeeded, its result holds `export_id`,
+	// `download_url` (the `GET` below), `size_bytes`, and `expires_at`.
+	// Download the dump with the same session or API token before it
+	// expires, one hour after it is ready by default
+	// (`database_export.ttl_seconds`); the file is then deleted. Every
+	// export and every download is recorded in the audit log.
+	//
+	// A site that is `provisioning` or `deleting`, or whose provisioning
+	// failed, returns `409`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/database/export (the `ExportSiteDatabase` operationId).
+	ExportSiteDatabaseWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*ExportSiteDatabaseResponse, error)
+
+	// DownloadSiteDatabaseExportWithResponse Download a database export
+	//
+	// Returns the compressed dump of a finished export
+	// (`POST /api/v1/sites/{site_id}/database/export`) as
+	// `application/gzip`. It needs the same permission as starting an
+	// export (Operators and Admins; not `read-only` tokens), and each
+	// download is recorded in the audit log. An export that doesn't
+	// exist, isn't finished, belongs to another site, or has expired
+	// returns `404`; an expired export's file has been deleted.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/database/exports/{export_id}/download (the `DownloadSiteDatabaseExport` operationId).
+	DownloadSiteDatabaseExportWithResponse(ctx context.Context, siteID SiteID, exportID ID, reqEditors ...RequestEditorFn) (*DownloadSiteDatabaseExportResponse, error)
 
 	// GoLiveSiteWithBodyWithResponse Switch a site to its primary domain
 	//
@@ -9418,6 +9625,158 @@ func (r PurgeSiteCacheResponse) ContentType() string {
 	return ""
 }
 
+// ExportSiteDatabaseResponse202Headers the declared response headers of an HTTP 202 response for ExportSiteDatabase
+type ExportSiteDatabaseResponse202Headers struct {
+	Location *string
+}
+
+type ExportSiteDatabaseResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *JobAccepted
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *ExportSiteDatabaseResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r ExportSiteDatabaseResponse) GetJSON202() *JobAccepted {
+	return r.JSON202
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ExportSiteDatabaseResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ExportSiteDatabaseResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ExportSiteDatabaseResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ExportSiteDatabaseResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ExportSiteDatabaseResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ExportSiteDatabaseResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExportSiteDatabaseResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExportSiteDatabaseResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExportSiteDatabaseResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DownloadSiteDatabaseExportResponse200Headers the declared response headers of an HTTP 200 response for DownloadSiteDatabaseExport
+type DownloadSiteDatabaseExportResponse200Headers struct {
+	ContentDisposition *string
+}
+
+type DownloadSiteDatabaseExportResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *DownloadSiteDatabaseExportResponse200Headers
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DownloadSiteDatabaseExportResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DownloadSiteDatabaseExportResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DownloadSiteDatabaseExportResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DownloadSiteDatabaseExportResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DownloadSiteDatabaseExportResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DownloadSiteDatabaseExportResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DownloadSiteDatabaseExportResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DownloadSiteDatabaseExportResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GoLiveSiteResponse202Headers the declared response headers of an HTTP 202 response for GoLiveSite
 type GoLiveSiteResponse202Headers struct {
 	Location *string
@@ -11541,6 +11900,58 @@ func (c *ClientWithResponses) PurgeSiteCacheWithResponse(ctx context.Context, si
 		return nil, err
 	}
 	return ParsePurgeSiteCacheResponse(rsp)
+}
+
+// ExportSiteDatabaseWithResponse Export a site's database
+//
+// Queues a job that dumps the site's database and compresses it with
+// gzip (design doc §5.8). The dump is plain SQL without `CREATE
+// DATABASE` or `USE` statements, so it imports into whichever database
+// the importer selects, e.g. `gunzip < dump.sql.gz | mariadb mydb`.
+// The site's own database password is never revealed. The site keeps
+// serving throughout, and stopped sites can be exported too. The job
+// runs after any other job working on the site.
+//
+// When the job has succeeded, its result holds `export_id`,
+// `download_url` (the `GET` below), `size_bytes`, and `expires_at`.
+// Download the dump with the same session or API token before it
+// expires, one hour after it is ready by default
+// (`database_export.ttl_seconds`); the file is then deleted. Every
+// export and every download is recorded in the audit log.
+//
+// A site that is `provisioning` or `deleting`, or whose provisioning
+// failed, returns `409`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/database/export (the `ExportSiteDatabase` operationId).
+func (c *ClientWithResponses) ExportSiteDatabaseWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*ExportSiteDatabaseResponse, error) {
+	rsp, err := c.ExportSiteDatabase(ctx, siteID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExportSiteDatabaseResponse(rsp)
+}
+
+// DownloadSiteDatabaseExportWithResponse Download a database export
+//
+// Returns the compressed dump of a finished export
+// (`POST /api/v1/sites/{site_id}/database/export`) as
+// `application/gzip`. It needs the same permission as starting an
+// export (Operators and Admins; not `read-only` tokens), and each
+// download is recorded in the audit log. An export that doesn't
+// exist, isn't finished, belongs to another site, or has expired
+// returns `404`; an expired export's file has been deleted.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/sites/{site_id}/database/exports/{export_id}/download (the `DownloadSiteDatabaseExport` operationId).
+func (c *ClientWithResponses) DownloadSiteDatabaseExportWithResponse(ctx context.Context, siteID SiteID, exportID ID, reqEditors ...RequestEditorFn) (*DownloadSiteDatabaseExportResponse, error) {
+	rsp, err := c.DownloadSiteDatabaseExport(ctx, siteID, exportID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDownloadSiteDatabaseExportResponse(rsp)
 }
 
 // GoLiveSiteWithBodyWithResponse Switch a site to its primary domain
@@ -13972,6 +14383,140 @@ func ParsePurgeSiteCacheResponse(rsp *http.Response) (*PurgeSiteCacheResponse, e
 			headers.Location = &value
 		}
 		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseExportSiteDatabaseResponse parses an HTTP response from a ExportSiteDatabaseWithResponse call
+func ParseExportSiteDatabaseResponse(rsp *http.Response) (*ExportSiteDatabaseResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExportSiteDatabaseResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest JobAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers ExportSiteDatabaseResponse202Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDownloadSiteDatabaseExportResponse parses an HTTP response from a DownloadSiteDatabaseExportWithResponse call
+func ParseDownloadSiteDatabaseExportResponse(rsp *http.Response) (*DownloadSiteDatabaseExportResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DownloadSiteDatabaseExportResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers DownloadSiteDatabaseExportResponse200Headers
+		if values := rsp.Header.Values("Content-Disposition"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Content-Disposition", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ContentDisposition = &value
+		}
+		response.Headers200 = &headers
 	}
 
 	return response, nil

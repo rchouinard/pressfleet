@@ -22,6 +22,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
+	"github.com/rchouinard/pressfleet/control-plane/internal/dbexport"
 	"github.com/rchouinard/pressfleet/control-plane/internal/domains"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
@@ -198,6 +199,13 @@ func (a *app) serveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			dbExports, err := dbexport.New(dbexport.Options{
+				DB: db, Databases: siteDBs, Dir: layout.DatabaseExportsDir(), TTL: a.cfg.DatabaseExport.TTL(),
+				Logger: a.log.With("component", "database_export"),
+			})
+			if err != nil {
+				return err
+			}
 			siteSvc, err := sites.New(sites.Options{
 				DB:                db,
 				Secrets:           secretStore,
@@ -228,16 +236,17 @@ func (a *app) serveCommand() *cobra.Command {
 				return err
 			}
 			handler, err := api.NewHandler(api.Options{
-				Logger:         a.log,
-				Readiness:      readiness,
-				DB:             db,
-				Auth:           authn,
-				Authenticator:  api.NewAuthenticator(authn),
-				Sites:          siteSvc,
-				Backups:        backups,
-				Uploads:        uploadSvc,
-				TrustedProxies: proxies,
-				SecureCookies:  a.cfg.HTTP.SecureCookies == config.SecureCookiesAlways,
+				Logger:          a.log,
+				Readiness:       readiness,
+				DB:              db,
+				Auth:            authn,
+				Authenticator:   api.NewAuthenticator(authn),
+				Sites:           siteSvc,
+				Backups:         backups,
+				Uploads:         uploadSvc,
+				DatabaseExports: dbExports,
+				TrustedProxies:  proxies,
+				SecureCookies:   a.cfg.HTTP.SecureCookies == config.SecureCookiesAlways,
 			})
 			if err != nil {
 				return err
@@ -254,7 +263,7 @@ func (a *app) serveCommand() *cobra.Command {
 			if err := pool.Register(audit.CleanupHandler(db, a.cfg.Audit.Retention(), nil)); err != nil {
 				return err
 			}
-			for _, h := range slices.Concat(siteSvc.Handlers(), []jobs.Handler{backups.Handler(), uploadSvc.CleanupHandler()}, repoMaint.Handlers()) {
+			for _, h := range slices.Concat(siteSvc.Handlers(), []jobs.Handler{backups.Handler(), uploadSvc.CleanupHandler()}, repoMaint.Handlers(), dbExports.Handlers()) {
 				if err := pool.Register(h); err != nil {
 					return err
 				}
@@ -285,6 +294,9 @@ func (a *app) serveCommand() *cobra.Command {
 				return err
 			}
 			if err := uploads.EnsureCleanupSchedule(cmd.Context(), db); err != nil && cmd.Context().Err() == nil {
+				return err
+			}
+			if err := dbexport.EnsureCleanupSchedule(cmd.Context(), db); err != nil && cmd.Context().Err() == nil {
 				return err
 			}
 			scheduler := jobs.NewScheduler(db, jobs.SchedulerOptions{Logger: a.log.With("component", "scheduler")})

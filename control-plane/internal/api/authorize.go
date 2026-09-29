@@ -56,6 +56,9 @@ var operationActions = map[string]authz.Action{
 	"setSiteBackupSchedule": authz.UpdateSite,
 	"restoreSite":           authz.RestoreBackup,
 
+	"exportSiteDatabase":         authz.ExportDatabase,
+	"downloadSiteDatabaseExport": authz.DownloadDatabaseExport,
+
 	"listJobs": authz.ViewJobs,
 	"getJob":   authz.ViewJobs,
 
