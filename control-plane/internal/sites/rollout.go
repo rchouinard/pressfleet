@@ -270,6 +270,21 @@ var errSkipCandidate = errors.New("the site changed since it was listed")
 func (s *Service) recordRolloutOutcome(ctx context.Context, r *jobs.Run, name, rollout, target, failureMsg string) error {
 	siteID := r.Job().TargetID
 	rollouts := store.NewRollouts(s.db)
+	if failureMsg != "" {
+		// An update cut short by the site's deletion says nothing about
+		// the release, so it doesn't count toward halting the rollout.
+		site, err := store.NewSites(s.db).Get(ctx, siteID)
+		if errors.Is(err, store.ErrNotFound) || err == nil && site.Status == store.SiteDeleting {
+			r.Logf("The site is being deleted, so the failed update doesn't count against the %s rollout.", name)
+			if rollout == "" {
+				return nil
+			}
+			return enqueueRolloutPass(ctx, s.db, rollout)
+		}
+		if err != nil {
+			return err
+		}
+	}
 	if failureMsg == "" {
 		if rollout != "" {
 			if err := rollouts.RecordSuccess(ctx, name, siteID); err != nil {

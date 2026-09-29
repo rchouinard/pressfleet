@@ -83,7 +83,10 @@ func TestImageUpdate(t *testing.T) {
 	}
 	const versionPHP = "/var/www/wordpress/wp-includes/version.php"
 	// build rebuilds the tags as build n; phpRun, if set, also runs in
-	// the php image.
+	// the php image. Every image is built under a staging tag first and
+	// the tags move only once all are built, so a rollout pass that runs
+	// meanwhile sees either the old builds or all the new ones, never
+	// half of a build.
 	build := func(n int, nginx bool, phpRun string) {
 		t.Helper()
 		type image struct{ tag, from, run string }
@@ -91,21 +94,36 @@ func TestImageUpdate(t *testing.T) {
 		if nginx {
 			list = append(list, image{imgs.Nginx, base.Nginx, ""})
 		}
-		for _, img := range list {
+		ids := make([]string, len(list))
+		for i, img := range list {
 			run := "echo " + strconv.Itoa(n) + " > /pf-e2e-build"
 			if img.run != "" {
 				run += " && " + img.run
 			}
 			dockerfile := "FROM " + img.from + "\nUSER root\nRUN " + run + "\nUSER 65534:65534\n"
-			if err := compose.BuildImage(ctx, nil, img.tag, dockerfile); err != nil {
+			staging := img.tag + "-staging"
+			if err := compose.BuildImage(ctx, nil, staging, dockerfile); err != nil {
 				t.Fatal(err)
 			}
-			id, err := compose.ImageID(ctx, nil, img.tag)
+			id, err := compose.ImageID(ctx, nil, staging)
 			if err != nil {
 				t.Fatal(err)
 			}
+			// The pin tag keeps the build once the staging tag is gone.
 			repo := img.tag[:strings.LastIndexByte(img.tag, ':')]
+			if err := compose.TagImage(ctx, nil, id, compose.PinTag(repo, id)); err != nil {
+				t.Fatal(err)
+			}
 			cleanupImages = append(cleanupImages, compose.PinTag(repo, id))
+			if err := compose.RemoveImage(ctx, nil, staging); err != nil {
+				t.Fatal(err)
+			}
+			ids[i] = id
+		}
+		for i, img := range list {
+			if err := compose.TagImage(ctx, nil, ids[i], img.tag); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	build(1, true, "")

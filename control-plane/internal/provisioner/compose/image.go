@@ -39,6 +39,17 @@ func BuildImage(ctx context.Context, docker ExecFunc, tag, dockerfile string) er
 	return nil
 }
 
+// TagImage points tag at image. A nil docker means DockerExec.
+func TagImage(ctx context.Context, docker ExecFunc, image, tag string) error {
+	if docker == nil {
+		docker = DockerExec
+	}
+	if _, err := docker(ctx, nil, "image", "tag", image, tag); err != nil {
+		return fmt.Errorf("tagging image %s as %s: %w", image, tag, err)
+	}
+	return nil
+}
+
 // RemoveImage removes an image tag; a missing image is not an error. A nil
 // docker means DockerExec.
 func RemoveImage(ctx context.Context, docker ExecFunc, image string) error {

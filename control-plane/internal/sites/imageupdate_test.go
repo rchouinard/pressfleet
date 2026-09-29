@@ -258,6 +258,29 @@ func TestImageRolloutHaltsOnRepeatedFailures(t *testing.T) {
 	})
 }
 
+func TestImageRolloutIgnoresDeletedSites(t *testing.T) {
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		e := newImageEnv(t, db, func(o *sites.Options) { o.CoreUpdates.MaxFailures = 1 })
+		site := e.siteOn(t, "A", "7.2.1")
+		// The site's deletion starts while its update checks its health.
+		e.status = func(siteID string) int {
+			if _, err := store.NewSites(db).SetStatus(context.Background(), siteID, store.SiteDeleting, "", store.SiteUpdating); err != nil {
+				t.Error(err)
+			}
+			return 500
+		}
+		e.prov.SetLocalImage(e.tags.PHP, build(e.tags.PHP, 2))
+		e.rollout(t)
+		jobs := e.imageJobs(t, site.ID)
+		if len(jobs) != 1 || jobs[0].State != store.JobFailed {
+			t.Fatalf("image update jobs = %+v, want one failed", jobs)
+		}
+		if ro := e.rolloutState(t); ro.Halted() || ro.ConsecutiveFailures != 0 || len(ro.Failures) != 0 {
+			t.Errorf("rollout = %+v; a deleted site's failure counted", ro)
+		}
+	})
+}
+
 func TestImageRolloutHaltLiftsOnNewBuild(t *testing.T) {
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
 		e := newImageEnv(t, db, func(o *sites.Options) { o.CoreUpdates.MaxFailures = 1 })
