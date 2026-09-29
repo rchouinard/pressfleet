@@ -85,6 +85,20 @@
 // is down and picks up a changed password without a restart. Its pool is
 // small, since admin connections count against max_connections too.
 //
+// # Temporary users
+//
+// Database sessions (§5.8, package dbsession) get a temporary user each,
+// 'pft_<session-id>'@'%', with a new random password (set by hash, like a
+// site user's) and [TemporaryUserConnections]. A read-only user has SELECT
+// and SHOW VIEW on the site's database; a read-write one has ALL
+// PRIVILEGES on it, like the site's own user. Neither has anything else.
+// Temporary users are not recorded in the state database: the session
+// record is, and [Manager.ListTemporaryUsers] reads the users back from
+// mysql.user so the ones left behind can be dropped.
+//
+// Dropping a temporary user also ends its connections (KILL USER): DROP
+// USER alone leaves them open with the privileges they had.
+//
 // # Dump and Import
 //
 // Dump and Import run the mariadb-dump and mariadb client programs as the

@@ -27,6 +27,10 @@ const DefaultMaxUserConnections = 20
 // or user name can be built from it.
 var ErrInvalidSiteID = errors.New("mariadb: invalid site id")
 
+// ErrInvalidSessionID means a database session ID is not a well-formed ID,
+// so no temporary user name can be built from it.
+var ErrInvalidSessionID = errors.New("mariadb: invalid database session id")
+
 // Config locates the MariaDB server and its admin account.
 type Config struct {
 	// Addr is the server's host:port.

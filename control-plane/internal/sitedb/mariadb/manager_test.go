@@ -3,6 +3,7 @@ package mariadb
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -18,6 +19,7 @@ type fakeUser struct {
 	hash     string
 	maxConns int
 	grant    string // database the user has privileges on
+	access   sitedb.Access
 }
 
 // fakeServer is an in-memory MariaDB side.
@@ -73,6 +75,50 @@ func (f *fakeServer) empty(_ context.Context, name siteName) error {
 	}
 	delete(f.dbs, name.String())
 	return nil
+}
+
+func (f *fakeServer) ensureTemporary(_ context.Context, user tempName, db siteName, hash string, access sitedb.Access, maxConns int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.fail != nil {
+		if err := f.fail("ensureTemporary"); err != nil {
+			return err
+		}
+	}
+	f.users[user.String()] = fakeUser{hash: hash, maxConns: maxConns, grant: db.String(), access: access}
+	return nil
+}
+
+func (f *fakeServer) dropTemporary(_ context.Context, user tempName) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.fail != nil {
+		if err := f.fail("dropTemporary"); err != nil {
+			return err
+		}
+	}
+	delete(f.users, user.String())
+	return nil
+}
+
+func (f *fakeServer) listTemporary(context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.fail != nil {
+		if err := f.fail("listTemporary"); err != nil {
+			return nil, err
+		}
+	}
+	var out []string
+	for u := range f.users {
+		if strings.HasPrefix(u, "pft_") {
+			out = append(out, u)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeServer) state(name string) (db bool, u fakeUser, userOK bool) {

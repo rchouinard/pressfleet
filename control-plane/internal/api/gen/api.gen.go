@@ -160,6 +160,48 @@ func (e CurrentUserAuthMethod) Valid() bool {
 	}
 }
 
+// Defines values for DatabaseSessionStatus.
+const (
+	DatabaseSessionStatusActive  DatabaseSessionStatus = "active"
+	DatabaseSessionStatusEnded   DatabaseSessionStatus = "ended"
+	DatabaseSessionStatusExpired DatabaseSessionStatus = "expired"
+	DatabaseSessionStatusFailed  DatabaseSessionStatus = "failed"
+)
+
+// Valid indicates whether the value is a known member of the DatabaseSessionStatus enum.
+func (e DatabaseSessionStatus) Valid() bool {
+	switch e {
+	case DatabaseSessionStatusActive:
+		return true
+	case DatabaseSessionStatusEnded:
+		return true
+	case DatabaseSessionStatusExpired:
+		return true
+	case DatabaseSessionStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DatabaseSessionAccess.
+const (
+	DatabaseSessionAccessReadOnly  DatabaseSessionAccess = "read_only"
+	DatabaseSessionAccessReadWrite DatabaseSessionAccess = "read_write"
+)
+
+// Valid indicates whether the value is a known member of the DatabaseSessionAccess enum.
+func (e DatabaseSessionAccess) Valid() bool {
+	switch e {
+	case DatabaseSessionAccessReadOnly:
+		return true
+	case DatabaseSessionAccessReadWrite:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatus.
 const (
 	HealthStatusOk HealthStatus = "ok"
@@ -441,16 +483,16 @@ func (e SiteStatus) Valid() bool {
 
 // Defines values for TokenScope.
 const (
-	Full     TokenScope = "full"
-	ReadOnly TokenScope = "read-only"
+	TokenScopeFull     TokenScope = "full"
+	TokenScopeReadOnly TokenScope = "read-only"
 )
 
 // Valid indicates whether the value is a known member of the TokenScope enum.
 func (e TokenScope) Valid() bool {
 	switch e {
-	case Full:
+	case TokenScopeFull:
 		return true
-	case ReadOnly:
+	case TokenScopeReadOnly:
 		return true
 	default:
 		return false
@@ -981,6 +1023,96 @@ type CurrentUser struct {
 
 // CurrentUserAuthMethod defines model for CurrentUser.AuthMethod.
 type CurrentUserAuthMethod string
+
+// DatabaseSession defines model for DatabaseSession.
+type DatabaseSession struct {
+	// Access `read_only` may read tables and views (`SELECT`, `SHOW VIEW`);
+	// `read_write` has the site's own privileges on its database and
+	// needs an Admin.
+	Access DatabaseSessionAccess `json:"access"`
+
+	// CreatedAt Examples: 2026-09-26T17:25:00Z
+	CreatedAt Timestamp `json:"created_at"`
+
+	// Database The site's database, the only one the user can reach.
+	//
+	// Examples: pf_01j9z8y7x6w5v4t3s2r1q0p9n8
+	Database string `json:"database"`
+
+	// ExpiresAt Examples: 2026-09-26T17:25:00Z
+	ExpiresAt Timestamp `json:"expires_at"`
+
+	// ID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ID ID `json:"id"`
+
+	// SiteID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	SiteID ID                    `json:"site_id"`
+	Status DatabaseSessionStatus `json:"status"`
+
+	// UserID The user who opened it; only they can tunnel to the database with it.
+	UserID ID `json:"user_id"`
+
+	// Username The temporary MariaDB user.
+	//
+	// Examples: pft_01j9z8y7x6w5v4t3s2r1q0p9s5
+	Username string `json:"username"`
+}
+
+// DatabaseSessionStatus defines model for DatabaseSession.Status.
+type DatabaseSessionStatus string
+
+// DatabaseSessionAccess `read_only` may read tables and views (`SELECT`, `SHOW VIEW`);
+// `read_write` has the site's own privileges on its database and
+// needs an Admin.
+type DatabaseSessionAccess string
+
+// DatabaseSessionCreate defines model for DatabaseSessionCreate.
+type DatabaseSessionCreate struct {
+	// Access `read_only` may read tables and views (`SELECT`, `SHOW VIEW`);
+	// `read_write` has the site's own privileges on its database and
+	// needs an Admin.
+	Access *DatabaseSessionAccess `json:"access,omitempty"`
+
+	// TTLSeconds How long the session lasts, from a minute to eight hours.
+	TTLSeconds *int `json:"ttl_seconds,omitempty"`
+}
+
+// DatabaseSessionList defines model for DatabaseSessionList.
+type DatabaseSessionList struct {
+	Items []DatabaseSession `json:"items"`
+}
+
+// DatabaseSessionOpened defines model for DatabaseSessionOpened.
+type DatabaseSessionOpened struct {
+	// Credentials The temporary user's login. Shown only once.
+	Credentials struct {
+		Database string `json:"database"`
+
+		// Password The plaintext password. Shown only once.
+		Password string `json:"password"`
+		Username string `json:"username"`
+	} `json:"credentials"`
+	Session DatabaseSession `json:"session"`
+	Tunnel  struct {
+		// LocalHost Examples: 127.0.0.1
+		LocalHost string `json:"local_host"`
+
+		// LocalPort Examples: 3307
+		LocalPort int `json:"local_port"`
+
+		// SSHCommand Opens the tunnel through the SFTP gateway; run it with a key
+		// registered on your account, then connect your database tool
+		// to `local_host`:`local_port`.
+		//
+		//
+		// Examples: ssh -N -L 3307:mariadb:3306 -p 2222 acme-marketing@fleet.agency.example
+		SSHCommand string `json:"ssh_command"`
+	} `json:"tunnel"`
+}
 
 // Domain A host name, such as `www.acme.example`: letters, digits, and
 // hyphens, at least two labels, no scheme, port, path, or wildcard.
@@ -2079,6 +2211,9 @@ type SetSiteBackupScheduleJSONRequestBody = BackupScheduleUpdate
 // SetSiteCorePolicyJSONRequestBody defines body for SetSiteCorePolicy for application/json ContentType.
 type SetSiteCorePolicyJSONRequestBody = CorePolicyUpdate
 
+// CreateSiteDatabaseSessionJSONRequestBody defines body for CreateSiteDatabaseSession for application/json ContentType.
+type CreateSiteDatabaseSessionJSONRequestBody = DatabaseSessionCreate
+
 // DeploySiteCodeJSONRequestBody defines body for DeploySiteCode for application/json ContentType.
 type DeploySiteCodeJSONRequestBody = SiteDeployment
 
@@ -2222,6 +2357,15 @@ type ServerInterface interface {
 	// DownloadSiteDatabaseExport Download a database export
 	// (GET /api/v1/sites/{site_id}/database/exports/{export_id}/download)
 	DownloadSiteDatabaseExport(w http.ResponseWriter, r *http.Request, siteID SiteID, exportID ID)
+	// ListSiteDatabaseSessions List a site's active database sessions
+	// (GET /api/v1/sites/{site_id}/database/sessions)
+	ListSiteDatabaseSessions(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// CreateSiteDatabaseSession Open a temporary database session
+	// (POST /api/v1/sites/{site_id}/database/sessions)
+	CreateSiteDatabaseSession(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// EndSiteDatabaseSession End a database session
+	// (DELETE /api/v1/sites/{site_id}/database/sessions/{session_id})
+	EndSiteDatabaseSession(w http.ResponseWriter, r *http.Request, siteID SiteID, sessionID ID)
 	// DeploySiteCode Deploy a theme or plugin package
 	// (POST /api/v1/sites/{site_id}/deploy)
 	DeploySiteCode(w http.ResponseWriter, r *http.Request, siteID SiteID)
@@ -3444,6 +3588,93 @@ func (siw *ServerInterfaceWrapper) DownloadSiteDatabaseExport(w http.ResponseWri
 	handler.ServeHTTP(w, r)
 }
 
+// ListSiteDatabaseSessions operation middleware
+func (siw *ServerInterfaceWrapper) ListSiteDatabaseSessions(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSiteDatabaseSessions(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateSiteDatabaseSession operation middleware
+func (siw *ServerInterfaceWrapper) CreateSiteDatabaseSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateSiteDatabaseSession(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// EndSiteDatabaseSession operation middleware
+func (siw *ServerInterfaceWrapper) EndSiteDatabaseSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "session_id" -------------
+	var sessionID ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "session_id", r.PathValue("session_id"), &sessionID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "session_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.EndSiteDatabaseSession(w, r, siteID, sessionID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeploySiteCode operation middleware
 func (siw *ServerInterfaceWrapper) DeploySiteCode(w http.ResponseWriter, r *http.Request) {
 
@@ -4320,6 +4551,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/client-groups/{client_group_id}/core-policy", wrapper.SetClientGroupCorePolicy)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/core-rollout", wrapper.GetCoreRollout)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/core-rollout/resume", wrapper.ResumeCoreRollout)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/database/sessions", wrapper.ListSiteDatabaseSessions)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/database/sessions", wrapper.CreateSiteDatabaseSession)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/sites/{site_id}/database/sessions/{session_id}", wrapper.EndSiteDatabaseSession)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs", wrapper.ListJobs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs/{job_id}", wrapper.GetJob)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit-events", wrapper.ListAuditEvents)
@@ -8211,6 +8445,295 @@ func (response DownloadSiteDatabaseExportdefaultApplicationProblemPlusJSONRespon
 	return err
 }
 
+type ListSiteDatabaseSessionsRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+}
+
+type ListSiteDatabaseSessionsResponseObject interface {
+	VisitListSiteDatabaseSessionsResponse(w http.ResponseWriter) error
+}
+
+type ListSiteDatabaseSessions200JSONResponse DatabaseSessionList
+
+func (response ListSiteDatabaseSessions200JSONResponse) VisitListSiteDatabaseSessionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteDatabaseSessions401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ListSiteDatabaseSessions401ApplicationProblemPlusJSONResponse) VisitListSiteDatabaseSessionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteDatabaseSessions403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ListSiteDatabaseSessions403ApplicationProblemPlusJSONResponse) VisitListSiteDatabaseSessionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteDatabaseSessions404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response ListSiteDatabaseSessions404ApplicationProblemPlusJSONResponse) VisitListSiteDatabaseSessionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteDatabaseSessionsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ListSiteDatabaseSessionsdefaultApplicationProblemPlusJSONResponse) VisitListSiteDatabaseSessionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteDatabaseSessionRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+	Body   *CreateSiteDatabaseSessionJSONRequestBody
+}
+
+type CreateSiteDatabaseSessionResponseObject interface {
+	VisitCreateSiteDatabaseSessionResponse(w http.ResponseWriter) error
+}
+
+type CreateSiteDatabaseSession201JSONResponse DatabaseSessionOpened
+
+func (response CreateSiteDatabaseSession201JSONResponse) VisitCreateSiteDatabaseSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteDatabaseSession400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response CreateSiteDatabaseSession400ApplicationProblemPlusJSONResponse) VisitCreateSiteDatabaseSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteDatabaseSession401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response CreateSiteDatabaseSession401ApplicationProblemPlusJSONResponse) VisitCreateSiteDatabaseSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteDatabaseSession403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response CreateSiteDatabaseSession403ApplicationProblemPlusJSONResponse) VisitCreateSiteDatabaseSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteDatabaseSession404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response CreateSiteDatabaseSession404ApplicationProblemPlusJSONResponse) VisitCreateSiteDatabaseSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteDatabaseSession409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response CreateSiteDatabaseSession409ApplicationProblemPlusJSONResponse) VisitCreateSiteDatabaseSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteDatabaseSessiondefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response CreateSiteDatabaseSessiondefaultApplicationProblemPlusJSONResponse) VisitCreateSiteDatabaseSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EndSiteDatabaseSessionRequestObject struct {
+	SiteID    SiteID `json:"site_id"`
+	SessionID ID     `json:"session_id"`
+}
+
+type EndSiteDatabaseSessionResponseObject interface {
+	VisitEndSiteDatabaseSessionResponse(w http.ResponseWriter) error
+}
+
+type EndSiteDatabaseSession204Response struct {
+}
+
+func (response EndSiteDatabaseSession204Response) VisitEndSiteDatabaseSessionResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type EndSiteDatabaseSession401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response EndSiteDatabaseSession401ApplicationProblemPlusJSONResponse) VisitEndSiteDatabaseSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EndSiteDatabaseSession403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response EndSiteDatabaseSession403ApplicationProblemPlusJSONResponse) VisitEndSiteDatabaseSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EndSiteDatabaseSession404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response EndSiteDatabaseSession404ApplicationProblemPlusJSONResponse) VisitEndSiteDatabaseSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EndSiteDatabaseSessiondefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response EndSiteDatabaseSessiondefaultApplicationProblemPlusJSONResponse) VisitEndSiteDatabaseSessionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type DeploySiteCodeRequestObject struct {
 	SiteID SiteID `json:"site_id"`
 	Body   *DeploySiteCodeJSONRequestBody
@@ -11058,6 +11581,15 @@ type StrictServerInterface interface {
 	// DownloadSiteDatabaseExport Download a database export
 	// (GET /api/v1/sites/{site_id}/database/exports/{export_id}/download)
 	DownloadSiteDatabaseExport(ctx context.Context, request DownloadSiteDatabaseExportRequestObject) (DownloadSiteDatabaseExportResponseObject, error)
+	// ListSiteDatabaseSessions List a site's active database sessions
+	// (GET /api/v1/sites/{site_id}/database/sessions)
+	ListSiteDatabaseSessions(ctx context.Context, request ListSiteDatabaseSessionsRequestObject) (ListSiteDatabaseSessionsResponseObject, error)
+	// CreateSiteDatabaseSession Open a temporary database session
+	// (POST /api/v1/sites/{site_id}/database/sessions)
+	CreateSiteDatabaseSession(ctx context.Context, request CreateSiteDatabaseSessionRequestObject) (CreateSiteDatabaseSessionResponseObject, error)
+	// EndSiteDatabaseSession End a database session
+	// (DELETE /api/v1/sites/{site_id}/database/sessions/{session_id})
+	EndSiteDatabaseSession(ctx context.Context, request EndSiteDatabaseSessionRequestObject) (EndSiteDatabaseSessionResponseObject, error)
 	// DeploySiteCode Deploy a theme or plugin package
 	// (POST /api/v1/sites/{site_id}/deploy)
 	DeploySiteCode(ctx context.Context, request DeploySiteCodeRequestObject) (DeploySiteCodeResponseObject, error)
@@ -12195,6 +12727,95 @@ func (sh *strictHandler) DownloadSiteDatabaseExport(w http.ResponseWriter, r *ht
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(DownloadSiteDatabaseExportResponseObject); ok {
 		if err := validResponse.VisitDownloadSiteDatabaseExportResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListSiteDatabaseSessions operation middleware
+func (sh *strictHandler) ListSiteDatabaseSessions(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request ListSiteDatabaseSessionsRequestObject
+
+	request.SiteID = siteID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListSiteDatabaseSessions(ctx, request.(ListSiteDatabaseSessionsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListSiteDatabaseSessions")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListSiteDatabaseSessionsResponseObject); ok {
+		if err := validResponse.VisitListSiteDatabaseSessionsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateSiteDatabaseSession operation middleware
+func (sh *strictHandler) CreateSiteDatabaseSession(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request CreateSiteDatabaseSessionRequestObject
+
+	request.SiteID = siteID
+
+	var body CreateSiteDatabaseSessionJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateSiteDatabaseSession(ctx, request.(CreateSiteDatabaseSessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateSiteDatabaseSession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateSiteDatabaseSessionResponseObject); ok {
+		if err := validResponse.VisitCreateSiteDatabaseSessionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// EndSiteDatabaseSession operation middleware
+func (sh *strictHandler) EndSiteDatabaseSession(w http.ResponseWriter, r *http.Request, siteID SiteID, sessionID ID) {
+	var request EndSiteDatabaseSessionRequestObject
+
+	request.SiteID = siteID
+	request.SessionID = sessionID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.EndSiteDatabaseSession(ctx, request.(EndSiteDatabaseSessionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "EndSiteDatabaseSession")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(EndSiteDatabaseSessionResponseObject); ok {
+		if err := validResponse.VisitEndSiteDatabaseSessionResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

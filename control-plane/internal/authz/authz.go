@@ -85,6 +85,17 @@ const (
 	DeployCode             Action = "site.code.deploy"
 	ExportDatabase         Action = "site.database.export"
 	DownloadDatabaseExport Action = "site.database.export.download"
+	OpenDatabaseSession    Action = "site.database.session.create"
+	EndDatabaseSession     Action = "site.database.session.end"
+	// TunnelDatabase is forwarding a connection through the SFTP gateway
+	// to the database of a site on which the user has an open read-only
+	// database session. SSH keys take it; see sshActions.
+	TunnelDatabase Action = "site.database.tunnel"
+
+	// Open read-write database sessions (§5.8), and tunnel to the database
+	// with one.
+	OpenReadWriteDatabaseSession Action = "site.database.session.create_read_write"
+	TunnelDatabaseReadWrite      Action = "site.database.tunnel_read_write"
 
 	// Send a large file through the upload API (#111) for a site import or
 	// a code deployment. Each needs the permission of the job it is for.
@@ -141,6 +152,10 @@ const (
 // it authenticates to the SFTP gateway, never to the API.
 var sshActions = map[Action]bool{
 	ConnectSFTP: true,
+	// The gateway checks these for every tunneled database connection, so
+	// losing the role ends access to open sessions too.
+	TunnelDatabase:          true,
+	TunnelDatabaseReadWrite: true,
 }
 
 // rule says who may take an action.
@@ -184,6 +199,15 @@ var rules = map[Action]rule{
 	DownloadDatabaseExport: {store.RoleOperator, true},
 
 	ConnectSFTP: {store.RoleOperator, true}, // SFTP sessions write files
+
+	// A read-only database session still hands out the site's data, which
+	// a read-only token must not reach, like an export's download.
+	OpenDatabaseSession: {store.RoleOperator, true},
+	EndDatabaseSession:  {store.RoleOperator, true},
+	TunnelDatabase:      {store.RoleOperator, true},
+
+	OpenReadWriteDatabaseSession: {store.RoleAdmin, true},
+	TunnelDatabaseReadWrite:      {store.RoleAdmin, true},
 
 	CreateBackup:      {store.RoleOperator, true},
 	RestoreBackup:     {store.RoleOperator, true},

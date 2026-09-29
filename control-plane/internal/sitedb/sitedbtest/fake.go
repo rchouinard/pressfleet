@@ -3,10 +3,13 @@ package sitedbtest
 
 import (
 	"context"
+	"crypto/rand"
+	"maps"
 	"os"
 	"slices"
 	"sync"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sitedb"
 )
 
@@ -14,7 +17,7 @@ import (
 type Call struct {
 	Op     string // method name, e.g. "Dump"
 	SiteID string
-	Path   string // Dump/Import path
+	Path   string // Dump/Import path; the session ID for temporary users
 }
 
 // Fake is an in-memory Manager. Each site's database contents are an opaque
@@ -27,6 +30,7 @@ type Fake struct {
 
 	mu    sync.Mutex
 	dbs   map[string][]byte
+	temps map[string]TemporaryUser // by session ID
 	calls []Call
 }
 
@@ -34,7 +38,7 @@ var _ sitedb.Manager = (*Fake)(nil)
 
 // New returns an empty Fake.
 func New() *Fake {
-	return &Fake{dbs: make(map[string][]byte)}
+	return &Fake{dbs: make(map[string][]byte), temps: make(map[string]TemporaryUser)}
 }
 
 // SecretRef returns the reference CreateDatabase hands out for siteID.
@@ -108,6 +112,66 @@ func (f *Fake) Dump(_ context.Context, siteID, destPath string) error {
 		return sitedb.ErrDatabaseNotFound
 	}
 	return os.WriteFile(destPath, data, 0o600)
+}
+
+// TemporaryUser is a temporary user on the fake.
+type TemporaryUser struct {
+	SiteID   string
+	Access   sitedb.Access
+	Password redact.Secret
+}
+
+// TemporaryUsers returns the temporary users that exist, by session ID.
+func (f *Fake) TemporaryUsers() map[string]TemporaryUser {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return maps.Clone(f.temps)
+}
+
+// AddTemporaryUser makes a temporary user exist, as one left behind by a
+// crash would.
+func (f *Fake) AddTemporaryUser(sessionID string, u TemporaryUser) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.temps[sessionID] = u
+}
+
+// CreateTemporaryUser implements sitedb.Manager. The user is named
+// "pft_<session ID>".
+func (f *Fake) CreateTemporaryUser(_ context.Context, siteID, sessionID string, access sitedb.Access) (sitedb.Credentials, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.begin("CreateTemporaryUser", siteID, sessionID); err != nil {
+		return sitedb.Credentials{}, err
+	}
+	if _, ok := f.dbs[siteID]; !ok {
+		return sitedb.Credentials{}, sitedb.ErrDatabaseNotFound
+	}
+	pw := redact.Secret(rand.Text())
+	f.temps[sessionID] = TemporaryUser{SiteID: siteID, Access: access, Password: pw}
+	return sitedb.Credentials{Database: "pf_" + siteID, Username: "pft_" + sessionID, Password: pw}, nil
+}
+
+// DropTemporaryUser implements sitedb.Manager. The call's Path is the
+// session ID.
+func (f *Fake) DropTemporaryUser(_ context.Context, sessionID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.begin("DropTemporaryUser", "", sessionID); err != nil {
+		return err
+	}
+	delete(f.temps, sessionID)
+	return nil
+}
+
+// ListTemporaryUsers implements sitedb.Manager.
+func (f *Fake) ListTemporaryUsers(context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.begin("ListTemporaryUsers", "", ""); err != nil {
+		return nil, err
+	}
+	return slices.Sorted(maps.Keys(f.temps)), nil
 }
 
 // Import implements sitedb.Manager.

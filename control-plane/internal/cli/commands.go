@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/audit"
@@ -26,6 +27,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/dbexport"
+	"github.com/rchouinard/pressfleet/control-plane/internal/dbsession"
 	"github.com/rchouinard/pressfleet/control-plane/internal/deploy"
 	"github.com/rchouinard/pressfleet/control-plane/internal/domains"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
@@ -82,10 +84,10 @@ func (a *app) siteRuntime(cat *catalog.Catalog, secretStore secrets.Store, keys 
 	return prov, siteDBs, nil
 }
 
-// sftpGateway returns the SFTP gateway (§5.8), or nil when it is off:
-// sftp.listen is empty, or the host key file doesn't exist, as when the
-// control plane runs outside a platform that pressfleet init rendered.
-func (a *app) sftpGateway(db *store.DB, authn *auth.Service, sessions provisioner.SessionRunner) (*sftpgw.Server, error) {
+// sftpHostKey returns the SFTP gateway's host key, or nil when the gateway
+// is off: sftp.listen is empty, or the host key file doesn't exist, as when
+// the control plane runs outside a platform that pressfleet init rendered.
+func (a *app) sftpHostKey() (ssh.Signer, error) {
 	if !a.cfg.SFTP.Enabled() {
 		a.log.Info("the SFTP gateway is off (sftp.listen is empty)")
 		return nil, nil
@@ -98,6 +100,30 @@ func (a *app) sftpGateway(db *store.DB, authn *auth.Service, sessions provisione
 	} else if err != nil {
 		return nil, err
 	}
+	return hostKey, nil
+}
+
+// databaseSessions returns the temporary database session service
+// (§5.8). Its tunnels go through the SFTP gateway, so sessions are refused
+// when the gateway is off (a nil hostKey).
+func (a *app) databaseSessions(db *store.DB, siteDBs *mariadb.Manager, hostKey ssh.Signer) (*dbsession.Service, error) {
+	tunnel := dbsession.Tunnel{SSHPort: a.cfg.SFTP.Port, DatabaseAddr: a.cfg.MariaDB.Address}
+	if hostKey != nil {
+		tunnel.SSHHost = a.cfg.DashboardDomain
+	}
+	return dbsession.New(dbsession.Options{
+		DB: db, Users: siteDBs, Tunnel: tunnel, Logger: a.log.With("component", "database_session"),
+	})
+}
+
+// sftpGateway returns the SFTP gateway (§5.8), or nil when it is off (a nil
+// hostKey). Port forwarding goes to the database of a site on which the
+// user has an open database session, and nowhere else.
+func (a *app) sftpGateway(db *store.DB, authn *auth.Service, sessions provisioner.SessionRunner, hostKey ssh.Signer,
+	forwarding sftpgw.ForwardingPolicy) (*sftpgw.Server, error) {
+	if hostKey == nil {
+		return nil, nil
+	}
 	return sftpgw.New(sftpgw.Options{
 		DB:               db,
 		Auth:             authn,
@@ -105,6 +131,7 @@ func (a *app) sftpGateway(db *store.DB, authn *auth.Service, sessions provisione
 		HostKey:          hostKey,
 		IdleTimeout:      a.cfg.SFTP.IdleTimeout(),
 		MaxSessionLength: a.cfg.SFTP.MaxSessionLength(),
+		Forwarding:       forwarding,
 		Logger:           a.log.With("component", "sftp"),
 	})
 }
@@ -279,25 +306,34 @@ func (a *app) serveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			hostKey, err := a.sftpHostKey()
+			if err != nil {
+				return err
+			}
+			dbSessions, err := a.databaseSessions(db, siteDBs, hostKey)
+			if err != nil {
+				return err
+			}
 			handler, err := api.NewHandler(api.Options{
-				Logger:          a.log,
-				Readiness:       readiness,
-				DB:              db,
-				Auth:            authn,
-				Authenticator:   api.NewAuthenticator(authn),
-				Sites:           siteSvc,
-				Backups:         backups,
-				Uploads:         uploadSvc,
-				DatabaseExports: dbExports,
-				Deployments:     deploys,
-				TrustedProxies:  proxies,
-				SecureCookies:   a.cfg.HTTP.SecureCookies == config.SecureCookiesAlways,
+				Logger:           a.log,
+				Readiness:        readiness,
+				DB:               db,
+				Auth:             authn,
+				Authenticator:    api.NewAuthenticator(authn),
+				Sites:            siteSvc,
+				Backups:          backups,
+				Uploads:          uploadSvc,
+				DatabaseExports:  dbExports,
+				DatabaseSessions: dbSessions,
+				Deployments:      deploys,
+				TrustedProxies:   proxies,
+				SecureCookies:    a.cfg.HTTP.SecureCookies == config.SecureCookiesAlways,
 			})
 			if err != nil {
 				return err
 			}
 
-			gateway, err := a.sftpGateway(db, authn, prov)
+			gateway, err := a.sftpGateway(db, authn, prov, hostKey, dbSessions.Forwarding(authn))
 			if err != nil {
 				return err
 			}
@@ -319,7 +355,7 @@ func (a *app) serveCommand() *cobra.Command {
 			if err := pool.Register(audit.CleanupHandler(db, a.cfg.Audit.Retention(), nil)); err != nil {
 				return err
 			}
-			for _, h := range slices.Concat(siteSvc.Handlers(), []jobs.Handler{backups.Handler(), uploadSvc.CleanupHandler()}, repoMaint.Handlers(), dbExports.Handlers(), []jobs.Handler{deploys.Handler()}) {
+			for _, h := range slices.Concat(siteSvc.Handlers(), []jobs.Handler{backups.Handler(), uploadSvc.CleanupHandler()}, repoMaint.Handlers(), dbExports.Handlers(), []jobs.Handler{deploys.Handler()}, dbSessions.Handlers()) {
 				if err := pool.Register(h); err != nil {
 					return err
 				}
@@ -363,6 +399,9 @@ func (a *app) serveCommand() *cobra.Command {
 			if err := dbexport.EnsureCleanupSchedule(cmd.Context(), db); err != nil && cmd.Context().Err() == nil {
 				return err
 			}
+			if err := dbsession.EnsureSweepSchedule(cmd.Context(), db); err != nil && cmd.Context().Err() == nil {
+				return err
+			}
 			scheduler := jobs.NewScheduler(db, jobs.SchedulerOptions{Logger: a.log.With("component", "scheduler")})
 			workersCtx, stopWorkers := context.WithCancel(cmd.Context())
 			defer stopWorkers()
@@ -381,6 +420,15 @@ func (a *app) serveCommand() *cobra.Command {
 			// now and whenever it restarts. (Sites created before it existed
 			// get theirs from their site.reconcile job.)
 			workers.Go(func() { caches.Watch(workersCtx) })
+			// Startup reconciliation of database sessions: expire what
+			// expired while the control plane was down and drop temporary
+			// users left behind. Best effort: MariaDB may still be starting,
+			// and the sweep job retries every minute.
+			workers.Go(func() {
+				if _, err := dbSessions.Sweep(workersCtx); err != nil && workersCtx.Err() == nil {
+					a.log.Warn("reconciling database sessions failed; the sweep job retries", "error", err)
+				}
+			})
 			// The SFTP gateway stops with the workers, ending its sessions,
 			// before the database closes.
 			if gateway != nil {

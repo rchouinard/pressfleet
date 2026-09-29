@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"net/http"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
@@ -47,6 +48,8 @@ type auditRecord struct {
 	// read asks for a read to be recorded even when it is allowed (see
 	// auditRead).
 	read bool
+	// details are the event's extra facts (see setAuditDetails).
+	details map[string]string
 }
 
 type auditKey struct{}
@@ -88,6 +91,17 @@ func auditRead(ctx context.Context) {
 func setAuditTarget(ctx context.Context, t authz.Target) {
 	if rec := auditFromContext(ctx); rec != nil {
 		rec.target = t
+	}
+}
+
+// setAuditDetails adds extra facts to the event, such as the ID of the
+// database session a request opened. They must never hold secrets.
+func setAuditDetails(ctx context.Context, details map[string]string) {
+	if rec := auditFromContext(ctx); rec != nil {
+		if rec.details == nil {
+			rec.details = map[string]string{}
+		}
+		maps.Copy(rec.details, details)
 	}
 }
 
@@ -177,6 +191,7 @@ func auditEvent(r *http.Request, rec *auditRecord, status int) (store.AuditEvent
 		TargetID:     rec.target.ID,
 		Result:       result,
 		SourceIP:     clientFromContext(r.Context()).IP,
+		Details:      rec.details,
 	}
 	if !authed {
 		e.ActorUserID = rec.userID

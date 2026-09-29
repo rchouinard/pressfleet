@@ -73,7 +73,7 @@ func TestSiteDeploy(t *testing.T) {
 	site := getSite(t, p, created.Site.ID)
 
 	// CI deploys with an API token.
-	tok, err := p.Client.CreateAPITokenWithResponse(ctx, client.CreateAPITokenJSONRequestBody{Name: "ci", Scope: client.Full})
+	tok, err := p.Client.CreateAPITokenWithResponse(ctx, client.CreateAPITokenJSONRequestBody{Name: "ci", Scope: client.TokenScopeFull})
 	if err != nil {
 		t.Fatal(err)
 	}

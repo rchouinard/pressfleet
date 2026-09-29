@@ -45,6 +45,12 @@ var designTable = map[authz.Action]struct {
 	authz.UploadForDeploy:        {true, true, false, true},
 	authz.ExportDatabase:         {true, true, false, true},
 	authz.DownloadDatabaseExport: {true, true, false, true},
+	authz.OpenDatabaseSession:    {true, true, false, true},
+	authz.EndDatabaseSession:     {true, true, false, true},
+	authz.TunnelDatabase:         {true, true, false, true},
+	// Open read-write database sessions.
+	authz.OpenReadWriteDatabaseSession: {true, false, false, true},
+	authz.TunnelDatabaseReadWrite:      {true, false, false, true},
 	// Take backups, restore, and approve core updates.
 	authz.CreateBackup:      {true, true, false, true},
 	authz.RestoreBackup:     {true, true, false, true},
@@ -83,7 +89,9 @@ var designTable = map[authz.Action]struct {
 
 // sshKeyActions are the actions an SSH key authenticates for; it can't
 // take any other.
-var sshKeyActions = map[authz.Action]bool{authz.ConnectSFTP: true}
+var sshKeyActions = map[authz.Action]bool{
+	authz.ConnectSFTP: true, authz.TunnelDatabase: true, authz.TunnelDatabaseReadWrite: true,
+}
 
 func TestDesignTableCoversEveryAction(t *testing.T) {
 	actions := authz.Actions()

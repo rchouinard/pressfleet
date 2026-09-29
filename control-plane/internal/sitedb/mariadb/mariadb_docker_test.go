@@ -158,6 +158,9 @@ func TestMariaDB(t *testing.T) {
 			t.Fatalf("Ping: %v", err)
 		}
 		runMariaDBScenario(ctx, t, addr, admin, m, state, st)
+		t.Run("TemporaryUsers", func(t *testing.T) {
+			runTemporaryUserScenario(ctx, t, addr, admin, m, st)
+		})
 		t.Run("DumpImport", func(t *testing.T) {
 			for _, p := range []string{dumpProg, clientProg} {
 				if _, err := exec.LookPath(p); err != nil {

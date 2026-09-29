@@ -56,6 +56,45 @@ func (n siteName) account() string {
 	return "'" + strings.ReplaceAll(n.s, "'", "''") + "'@'%'"
 }
 
+// tempPrefix starts every temporary user's name. Site users are "pf_"
+// and 26 base32 characters, which never include "_", so no site user
+// starts with "pft_".
+const tempPrefix = "pft_"
+
+// tempName is a validated temporary user name: "pft_" followed by a
+// database session ID, 30 characters of [a-z0-9_]. Like siteName, it can
+// only be built by newTempName, which is what makes quoting it safe.
+type tempName struct{ s string }
+
+// newTempName validates sessionID and returns its temporary user's name.
+func newTempName(sessionID string) (tempName, error) {
+	if !id.Valid(sessionID) {
+		return tempName{}, fmt.Errorf("%w: %q", ErrInvalidSessionID, sessionID)
+	}
+	return tempName{s: tempPrefix + sessionID}, nil
+}
+
+// tempSessionID returns the session ID of a temporary user's name, and
+// whether user is one.
+func tempSessionID(user string) (string, bool) {
+	sessionID, ok := strings.CutPrefix(user, tempPrefix)
+	return sessionID, ok && id.Valid(sessionID)
+}
+
+func (n tempName) String() string { return n.s }
+
+// account returns the temporary user's account, 'pft_<id>'@'%'. It
+// connects from the control plane, which relays the SFTP gateway's
+// tunnel; the platform network isn't published.
+func (n tempName) account() string {
+	return "'" + strings.ReplaceAll(n.s, "'", "''") + "'@'%'"
+}
+
+// quoted returns the name as a string literal, for KILL USER.
+func (n tempName) quoted() string {
+	return "'" + strings.ReplaceAll(n.s, "'", "''") + "'"
+}
+
 // newPassword returns a random password for a site user: 26 base32
 // characters, 130 bits from crypto/rand.
 func newPassword() redact.Secret {

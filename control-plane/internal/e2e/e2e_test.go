@@ -43,7 +43,7 @@ func TestAPI(t *testing.T) {
 		// Creating a token is an unsafe request, so it also proves the
 		// session client sends its CSRF token.
 		created, err := p.Client.CreateAPITokenWithResponse(t.Context(), client.CreateAPITokenJSONRequestBody{
-			Name: "e2e", Scope: client.ReadOnly,
+			Name: "e2e", Scope: client.TokenScopeReadOnly,
 		})
 		if err != nil {
 			t.Fatal(err)

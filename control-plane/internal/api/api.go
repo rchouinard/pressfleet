@@ -51,6 +51,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/dbexport"
+	"github.com/rchouinard/pressfleet/control-plane/internal/dbsession"
 	"github.com/rchouinard/pressfleet/control-plane/internal/deploy"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
@@ -102,6 +103,9 @@ type Options struct {
 	// Deployments deploys theme and plugin packages. If nil, the deploy
 	// operation fails with 500.
 	Deployments *deploy.Service
+	// DatabaseSessions opens and ends temporary database sessions. If nil,
+	// the database session operations fail with 500.
+	DatabaseSessions *dbsession.Service
 	// SecureCookies forces the Secure flag on the session cookie. Otherwise
 	// it is set when the request arrived over HTTPS, directly or through a
 	// trusted proxy, so plain-HTTP development on localhost still works.
@@ -119,6 +123,7 @@ type Handlers struct {
 	uploads       *uploads.Service
 	dbExports     *dbexport.Service
 	deploys       *deploy.Service
+	dbSessions    *dbsession.Service
 	resolver      authz.Resolver
 	secureCookies bool
 }
@@ -155,6 +160,7 @@ func NewHandler(opts Options) (http.Handler, error) {
 		uploads: opts.Uploads, secureCookies: opts.SecureCookies}
 	h.dbExports = opts.DatabaseExports
 	h.deploys = opts.Deployments
+	h.dbSessions = opts.DatabaseSessions
 	if opts.DB != nil {
 		h.resolver = authz.NewResolver(opts.DB)
 	}

@@ -115,7 +115,7 @@ func decodeProblem(t *testing.T, w *httptest.ResponseRecorder) problem {
 
 // samplePath fills in path parameters with a valid ID.
 func samplePath(path string) string {
-	for _, p := range []string{"{token_id}", "{user_id}", "{client_group_id}", "{site_id}", "{job_id}", "{upload_id}", "{export_id}", "{ssh_key_id}"} {
+	for _, p := range []string{"{token_id}", "{user_id}", "{client_group_id}", "{site_id}", "{job_id}", "{upload_id}", "{export_id}", "{ssh_key_id}", "{session_id}"} {
 		path = strings.ReplaceAll(path, p, "abc123")
 	}
 	return path
@@ -214,7 +214,8 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 	env := newSiteEnv(t, db, testPreviewBase)
 	up := newUploadService(t, db)
 	h := newHandler(t, api.Options{Authenticator: fa, Auth: svc, DB: db, Sites: env.svc, Backups: env.backups, Uploads: up,
-		DatabaseExports: newDatabaseExports(t, db, env), Deployments: newDeployments(t, db, env, up)})
+		DatabaseExports: newDatabaseExports(t, db, env), Deployments: newDeployments(t, db, env, up),
+		DatabaseSessions: newDatabaseSessions(t, db, env, nil)})
 	for _, op := range ops {
 		t.Run(op.ID, func(t *testing.T) {
 			req := sampleRequest(op, false)

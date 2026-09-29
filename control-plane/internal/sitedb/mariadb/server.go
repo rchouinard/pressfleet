@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	"github.com/rchouinard/pressfleet/control-plane/internal/sitedb"
 )
 
 // server is the MariaDB side of the manager. Both methods must be
@@ -19,6 +21,86 @@ type server interface {
 	// empty drops the database if it exists, keeping the user and its
 	// grants, so ensure can recreate it empty.
 	empty(ctx context.Context, name siteName) error
+
+	// ensureTemporary makes a temporary user exist with the given password
+	// hash and connection limit, and with exactly the grants of access on
+	// the site's database.
+	ensureTemporary(ctx context.Context, user tempName, db siteName, passwordHash string, access sitedb.Access, maxUserConnections int) error
+	// dropTemporary drops a temporary user if it exists and ends its
+	// connections.
+	dropTemporary(ctx context.Context, user tempName) error
+	// listTemporary returns the names of every user whose name starts with
+	// the temporary prefix.
+	listTemporary(ctx context.Context) ([]string, error)
+}
+
+// Privileges of temporary users on the site's database, by access. A
+// read-only user may read tables and views; EXECUTE is left out because a
+// stored routine can write with its definer's privileges. A read-write
+// user has what the site's own user has.
+var tempPrivileges = map[sitedb.Access]string{
+	sitedb.AccessReadOnly:  "SELECT, SHOW VIEW",
+	sitedb.AccessReadWrite: "ALL PRIVILEGES",
+}
+
+// ensureTemporary converges like ensure. REVOKE first, so a retry with a
+// different access leaves only the grants asked for.
+func (s sqlServer) ensureTemporary(ctx context.Context, user tempName, db siteName, passwordHash string, access sitedb.Access, maxUserConnections int) error {
+	if !validNativeHash(passwordHash) {
+		return fmt.Errorf("ensure %s: invalid password hash", user)
+	}
+	privs, ok := tempPrivileges[access]
+	if !ok {
+		return fmt.Errorf("ensure %s: unknown access %q", user, access)
+	}
+	userOpts := fmt.Sprintf("IDENTIFIED BY PASSWORD '%s' WITH MAX_USER_CONNECTIONS %d", passwordHash, maxUserConnections)
+	stmts := []struct{ what, sql string }{
+		{"creating user", "CREATE USER IF NOT EXISTS " + user.account() + " " + userOpts},
+		{"updating user", "ALTER USER " + user.account() + " " + userOpts},
+		{"revoking privileges", "REVOKE ALL PRIVILEGES, GRANT OPTION FROM " + user.account()},
+		{"granting privileges", "GRANT " + privs + " ON " + db.grantIdent() + ".* TO " + user.account()},
+	}
+	for _, st := range stmts {
+		if _, err := s.db.ExecContext(ctx, st.sql); err != nil {
+			return fmt.Errorf("%s %s: %w", st.what, user, err)
+		}
+	}
+	return nil
+}
+
+// dropTemporary drops the user before ending its connections, so none can
+// open in between. DROP USER alone leaves open connections running with
+// the privileges they had.
+func (s sqlServer) dropTemporary(ctx context.Context, user tempName) error {
+	if _, err := s.db.ExecContext(ctx, "DROP USER IF EXISTS "+user.account()); err != nil {
+		return fmt.Errorf("dropping user %s: %w", user, err)
+	}
+	if _, err := s.db.ExecContext(ctx, "KILL HARD USER "+user.quoted()); err != nil {
+		return fmt.Errorf("ending connections of %s: %w", user, err)
+	}
+	return nil
+}
+
+// listTemporary reads mysql.user, which the admin user can read. In LIKE,
+// "\_" is a literal underscore.
+func (s sqlServer) listTemporary(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT User FROM mysql.user WHERE User LIKE 'pft\_%'`)
+	if err != nil {
+		return nil, fmt.Errorf("listing temporary users: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			return nil, fmt.Errorf("listing temporary users: %w", err)
+		}
+		out = append(out, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("listing temporary users: %w", err)
+	}
+	return out, nil
 }
 
 // sqlServer runs the statements against a MariaDB server as the admin user.

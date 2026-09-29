@@ -106,7 +106,7 @@ tags:
   - name: deployments
     description: Theme and plugin deployments for CI pipelines.
   - name: database
-    description: Access to a site's database without its password (exports).
+    description: Access to a site's database without its password (exports and temporary database sessions through the SFTP gateway).
   - name: jobs
     description: Long-running operations.
   - name: audit
@@ -2249,6 +2249,108 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/sites/{site_id}/database/sessions:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    get:
+      operationId: listSiteDatabaseSessions
+      tags: [database]
+      summary: List a site's active database sessions
+      description: |
+        Lists the site's temporary database sessions that are active and
+        unexpired, oldest first. Passwords are never shown again.
+      responses:
+        "200":
+          description: The active sessions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatabaseSessionList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createSiteDatabaseSession
+      tags: [database]
+      summary: Open a temporary database session
+      description: |
+        Creates a temporary MariaDB user with access to the site's database
+        only (design doc §5.8) and returns its credentials, which are shown
+        only once, with the `ssh -L` command that opens a tunnel to the
+        database through the SFTP gateway. Connect the tunnel with an SSH
+        key registered on your own account: the gateway forwards only to
+        the site's database, and only for the user who opened the session.
+
+        Sessions are read-only by default (`SELECT` and `SHOW VIEW`).
+        Read-write sessions, with the site's own privileges on its
+        database, need an Admin. A session lasts `ttl_seconds` (one hour by
+        default, at most eight); then, or when it is ended with `DELETE`,
+        its MariaDB user is dropped and its connections are ended. The
+        site's own database password is never revealed. Opening, ending,
+        and expiry are recorded in the audit log.
+
+        Returns `409` if the site is `provisioning` or `deleting`, its
+        provisioning failed, or the SFTP gateway is off.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DatabaseSessionCreate"
+      responses:
+        "201":
+          description: Session opened.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatabaseSessionOpened"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/sites/{site_id}/database/sessions/{session_id}:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    delete:
+      operationId: endSiteDatabaseSession
+      tags: [database]
+      summary: End a database session
+      description: |
+        Ends an active session at once: its MariaDB user is dropped, its
+        open connections are ended, and the gateway refuses new tunnels for
+        it. A session that doesn't exist, belongs to another site, or has
+        already ended returns `404`.
+      responses:
+        "204":
+          description: Session ended.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/jobs:
     get:
       operationId: listJobs
@@ -4090,3 +4192,100 @@ components:
           oneOf:
             - $ref: "#/components/schemas/Timestamp"
             - type: "null"
+
+    DatabaseSessionAccess:
+      type: string
+      enum: [read_only, read_write]
+      description: |
+        `read_only` may read tables and views (`SELECT`, `SHOW VIEW`);
+        `read_write` has the site's own privileges on its database and
+        needs an Admin.
+
+    DatabaseSessionCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        access:
+          $ref: "#/components/schemas/DatabaseSessionAccess"
+        ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 28800
+          default: 3600
+          description: How long the session lasts, from a minute to eight hours.
+
+    DatabaseSession:
+      type: object
+      required: [id, site_id, user_id, username, database, access, status, created_at, expires_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        site_id:
+          $ref: "#/components/schemas/ID"
+        user_id:
+          description: The user who opened it; only they can tunnel to the database with it.
+          allOf:
+            - $ref: "#/components/schemas/ID"
+        username:
+          type: string
+          description: The temporary MariaDB user.
+          examples: ["pft_01j9z8y7x6w5v4t3s2r1q0p9s5"]
+        database:
+          type: string
+          description: The site's database, the only one the user can reach.
+          examples: ["pf_01j9z8y7x6w5v4t3s2r1q0p9n8"]
+        access:
+          $ref: "#/components/schemas/DatabaseSessionAccess"
+        status:
+          type: string
+          enum: [active, ended, expired, failed]
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        expires_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    DatabaseSessionOpened:
+      type: object
+      required: [session, credentials, tunnel]
+      properties:
+        session:
+          $ref: "#/components/schemas/DatabaseSession"
+        credentials:
+          type: object
+          description: The temporary user's login. Shown only once.
+          required: [username, password, database]
+          properties:
+            username:
+              type: string
+            password:
+              type: string
+              format: password
+              description: The plaintext password. Shown only once.
+            database:
+              type: string
+        tunnel:
+          type: object
+          required: [ssh_command, local_host, local_port]
+          properties:
+            ssh_command:
+              type: string
+              description: |
+                Opens the tunnel through the SFTP gateway; run it with a key
+                registered on your account, then connect your database tool
+                to `local_host`:`local_port`.
+              examples: ["ssh -N -L 3307:mariadb:3306 -p 2222 acme-marketing@fleet.agency.example"]
+            local_host:
+              type: string
+              examples: ["127.0.0.1"]
+            local_port:
+              type: integer
+              examples: [3307]
+
+    DatabaseSessionList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DatabaseSession"

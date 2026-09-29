@@ -269,6 +269,10 @@ type DatabaseManager interface {
     DropDatabase(ctx context.Context, siteID string) error
     Dump(ctx context.Context, siteID string, destPath string) error
     Import(ctx context.Context, siteID string, srcPath string) error
+    // Temporary users of database sessions (§5.8), limited to the site's database.
+    CreateTemporaryUser(ctx context.Context, siteID, sessionID string, access Access) (Credentials, error)
+    DropTemporaryUser(ctx context.Context, sessionID string) error // also ends its connections
+    ListTemporaryUsers(ctx context.Context) (sessionIDs []string, err error)
 }
 
 type SnapshotID string

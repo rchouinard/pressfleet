@@ -343,7 +343,7 @@ sftp -P 2222 <site-slug>@fleet.agency.example
 
 The SSH username names the site; the key names the platform user. There are no passwords: each user registers their public keys with `POST /api/v1/users/me/ssh-keys` (`{"public_key": "ssh-ed25519 AAAA... me@laptop"}`), and Admins manage anyone's under `/api/v1/users/{user_id}/ssh-keys`. Ed25519, ECDSA, security key (`sk-`), and RSA keys of at least 2048 bits are accepted. A key belongs to one user only. Any role may register keys, but only Operators and Admins may connect.
 
-Each session runs in a short-lived worker container for the site: the control plane image's `pressfleet sftp-server`, running as the site's user with only the site's `wp-content` volume mounted, no network, and a read-only root filesystem. The client sees `wp-content` as `/`. Files it uploads are owned by the site's user, and nothing else of the host, the platform, or other sites is reachable. The gateway offers no shell, commands, or port forwarding (temporary database tunnels come later, #115). Symbolic and hard links can't be created.
+Each session runs in a short-lived worker container for the site: the control plane image's `pressfleet sftp-server`, running as the site's user with only the site's `wp-content` volume mounted, no network, and a read-only root filesystem. The client sees `wp-content` as `/`. Files it uploads are owned by the site's user, and nothing else of the host, the platform, or other sites is reachable. The gateway offers no shell, commands, or port forwarding other than the tunnels of [database sessions](#database-sessions). Symbolic and hard links can't be created.
 
 Connections end when the client leaves, after `sftp.idle_timeout_minutes` without traffic, after `sftp.max_session_hours`, and within seconds when the user loses access: their key is removed, they are disabled, deleted, or demoted to Viewer. Each session is audited under `site.sftp.connect` when it starts (or is refused) and `site.sftp.disconnect` when it ends, with the user, site, client address, and `details`: the session ID, key ID and fingerprint, and on the end event the bytes received from and sent to the client, the duration, and the reason it ended (`client_closed`, `idle_timeout`, `max_session_length`, `access_revoked`, or `shutdown`).
 
@@ -625,6 +625,29 @@ Agencies get a copy of a site's database without its password (design doc §5.8)
 Download it from `download_url` (`GET /api/v1/sites/{id}/database/exports/{export ID}/download`) with a session or a full API token; read-only tokens and Viewers can't. The export is downloadable, as often as needed, for `database_export.ttl_seconds` after it is ready (an hour by default). Then its file is deleted and its link returns `404`: a download that finds it expired deletes it at once, and a job every five minutes deletes the rest. That job also deletes files left behind by exports that failed or were interrupted. Every export and every download, successful or not, is recorded in the [audit log](#audit-log).
 
 To replace a site's database, restore a backup (see [Site restores](#site-restores)).
+
+## Database sessions
+
+Developers reach a site's database with their own tools (TablePlus, DBeaver, the `mariadb` client) through a temporary database session tunneled through the [SFTP gateway](#sftp-gateway) (design doc §5.8). Open one with `POST /api/v1/sites/{id}/database/sessions`:
+
+```json
+{"access": "read_only", "ttl_seconds": 3600}
+```
+
+Both fields are optional. The control plane creates a temporary MariaDB user, `pft_<session ID>`, with privileges on the site's database only, and returns its username and password (shown only once) with the command that opens the tunnel:
+
+```sh
+ssh -N -L 3307:mariadb:3306 -p 2222 <site-slug>@fleet.agency.example
+```
+
+Run it with an SSH key registered on your own account, then connect to `127.0.0.1:3307` with the session's credentials. The gateway forwards only to the database (`mariadb.address`), only for the user who opened the session, only on its site, and only while the session is active and the user's role still allows it.
+
+- **Access:** read-only by default (`SELECT` and `SHOW VIEW`). Read-write sessions have the site's own privileges on its database and need an Admin. Operators and Admins may open read-only sessions; Viewers and read-only API tokens can't open any.
+- **Length:** `ttl_seconds`, from 60 to 28800 (eight hours); an hour by default. Tunneled connections stop at expiry. A job every minute expires sessions, drops their MariaDB users, and ends their connections; it also drops temporary users that no active session owns, such as ones a crash left behind, and runs once when the control plane starts.
+- **Ending early:** `DELETE /api/v1/sites/{id}/database/sessions/{session ID}` drops the user and ends its connections at once. `GET /api/v1/sites/{id}/database/sessions` lists the active sessions, without passwords.
+- **Role changes:** a user demoted below what a session needs (an Admin with a read-write session demoted to Operator, anyone demoted to Viewer) can no longer tunnel with it; the gateway ends the session the next time they try.
+
+The site's own database password is never revealed, and session passwords are never stored, logged, or audited. The audit log records opening a session (`site.database.session.create`, or `site.database.session.create_read_write`), ending it (`site.database.session.end`), expiry (`site.database.session.expire`), and sessions ended because the user's role no longer allows them (`site.database.session.revoke`), with the session ID, access, and expiry in `details`. The SFTP connection that carries the tunnel is audited like any other. Opening a session returns `409` when the SFTP gateway is off.
 
 ## Object cache
 

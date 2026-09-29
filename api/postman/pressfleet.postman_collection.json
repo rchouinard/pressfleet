@@ -2635,7 +2635,7 @@
     {
       "id": "b06fbf9d-636e-5e71-bd49-40233a702ce3",
       "name": "Database",
-      "description": "Access to a site's database without its password: exports to download (design doc \u00a75.8).",
+      "description": "Access to a site's database without its password: exports to download, and temporary database sessions tunneled through the SFTP gateway (design doc \u00a75.8).",
       "item": [
         {
           "id": "c930db50-c0cd-50df-894f-cb9aa9be3b51",
@@ -2703,6 +2703,128 @@
                 "exec": [
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "pm.test(\"is gzip\", () => pm.expect(pm.response.headers.get(\"Content-Type\")).to.eql(\"application/gzip\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "c5cc369e-b8d5-579c-991f-3edb3853e018",
+          "name": "Open database session",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/database/sessions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "database",
+                "sessions"
+              ]
+            },
+            "description": "Creates a temporary MariaDB user limited to the site's database and returns its credentials, shown only once, with the `ssh -L` command for the tunnel through the SFTP gateway. Saves `db_session_id`, `db_session_username`, and `db_session_password`. `access` is `read_only` (the default) or `read_write` (Admins only); `ttl_seconds` runs from 60 to 28800, an hour by default. Run the `ssh_command` with a key registered on your account, then connect to `127.0.0.1:3307`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"access\": \"read_only\",\n  \"ttl_seconds\": 3600\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.environment.set(\"db_session_id\", body.session.id);",
+                  "pm.environment.set(\"db_session_username\", body.credentials.username);",
+                  "pm.environment.set(\"db_session_password\", body.credentials.password);",
+                  "console.log(body.tunnel.ssh_command);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "a7984fc9-e224-574a-b159-8018eef21d98",
+          "name": "List database sessions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/database/sessions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "database",
+                "sessions"
+              ]
+            },
+            "description": "The site's active database sessions, without passwords."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "bd4df098-170d-59b1-8cec-f748d41ec4ad",
+          "name": "End database session",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/database/sessions/{{db_session_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "database",
+                "sessions",
+                "{{db_session_id}}"
+              ]
+            },
+            "description": "Ends `db_session_id` at once: its MariaDB user is dropped, its connections are ended, and the gateway refuses new tunnels for it. A session that has already ended returns `404`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
                 ]
               }
             }

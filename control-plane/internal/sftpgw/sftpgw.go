@@ -23,7 +23,7 @@
 //
 // Local forwarding ("direct-tcpip" channels, `ssh -L`) is decided by a
 // ForwardingPolicy. The default refuses everything. Temporary database
-// sessions (#115) plug in a policy that dials the site's database for a
+// sessions (package dbsession) plug in a policy that dials the site's database for a
 // user with an active session on it; the gateway relays the connection,
 // counts its bytes, and ends it with the SSH connection.
 //
@@ -126,7 +126,7 @@ type Identity struct {
 
 // ForwardingPolicy decides local port forwarding requests ("direct-tcpip"
 // channels, ssh -L) and dials the ones it allows. It is the extension
-// point for temporary database sessions (#115), which allow forwarding to
+// point for temporary database sessions (package dbsession), which allow forwarding to
 // the site's database only, for a user with an active session on it.
 type ForwardingPolicy interface {
 	// DialForward returns a connection to host:port for the connection
@@ -136,7 +136,7 @@ type ForwardingPolicy interface {
 }
 
 // DenyForwarding refuses every forwarding request: the gateway's policy
-// until temporary database sessions (#115) exist.
+// when none is given.
 type DenyForwarding struct{}
 
 // DialForward refuses.

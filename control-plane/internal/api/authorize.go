@@ -68,13 +68,17 @@ var operationActions = map[string]authz.Action{
 
 	"exportSiteDatabase":         authz.ExportDatabase,
 	"downloadSiteDatabaseExport": authz.DownloadDatabaseExport,
-	"getSiteCore":                authz.ViewSites,
-	"setSiteCorePolicy":          authz.ApproveCoreUpdate,
-	"updateSiteCore":             authz.ApproveCoreUpdate,
-	"getClientGroupCorePolicy":   authz.ViewClientGroups,
-	"setClientGroupCorePolicy":   authz.ApproveCoreUpdate,
-	"getCoreRollout":             authz.ViewSites,
-	"resumeCoreRollout":          authz.ApproveCoreUpdate,
+	// Listing sessions shows no credentials.
+	"listSiteDatabaseSessions":  authz.ViewSites,
+	"createSiteDatabaseSession": authz.OpenDatabaseSession,
+	"endSiteDatabaseSession":    authz.EndDatabaseSession,
+	"getSiteCore":               authz.ViewSites,
+	"setSiteCorePolicy":         authz.ApproveCoreUpdate,
+	"updateSiteCore":            authz.ApproveCoreUpdate,
+	"getClientGroupCorePolicy":  authz.ViewClientGroups,
+	"setClientGroupCorePolicy":  authz.ApproveCoreUpdate,
+	"getCoreRollout":            authz.ViewSites,
+	"resumeCoreRollout":         authz.ApproveCoreUpdate,
 
 	"listJobs": authz.ViewJobs,
 	"getJob":   authz.ViewJobs,
@@ -97,11 +101,13 @@ var operationActions = map[string]authz.Action{
 // before reaching the handler, such as invalid ones, are recorded with the
 // operationActions one.
 var operationAltActions = map[string][]authz.Action{
-	"createUpload":      {authz.UploadForDeploy},
-	"getUpload":         {authz.UploadForDeploy},
-	"appendUploadChunk": {authz.UploadForDeploy},
-	"completeUpload":    {authz.UploadForDeploy},
-	"deleteUpload":      {authz.UploadForDeploy},
+	// Read-write sessions need an Admin.
+	"createSiteDatabaseSession": {authz.OpenReadWriteDatabaseSession},
+	"createUpload":              {authz.UploadForDeploy},
+	"getUpload":                 {authz.UploadForDeploy},
+	"appendUploadChunk":         {authz.UploadForDeploy},
+	"completeUpload":            {authz.UploadForDeploy},
+	"deleteUpload":              {authz.UploadForDeploy},
 }
 
 // errActionMismatch is a programming error: a handler checked a different

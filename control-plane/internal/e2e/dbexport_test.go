@@ -125,7 +125,7 @@ func TestDatabaseExport(t *testing.T) {
 		}
 		return p.BearerClient(t, redact.Secret(resp.JSON201.Token))
 	}
-	full, readOnly := token(client.Full), token(client.ReadOnly)
+	full, readOnly := token(client.TokenScopeFull), token(client.TokenScopeReadOnly)
 
 	exported, err := full.ExportSiteDatabaseWithResponse(ctx, site.ID)
 	if err != nil {

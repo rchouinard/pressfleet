@@ -61,6 +61,9 @@ var implementedSiteOps = map[string]bool{
 	"exportSiteDatabase":            true,
 	"downloadSiteDatabaseExport":    true,
 	"deploySiteCode":                true,
+	"listSiteDatabaseSessions":      true,
+	"createSiteDatabaseSession":     true,
+	"endSiteDatabaseSession":        true,
 }
 
 func orEmpty(s *string) string {

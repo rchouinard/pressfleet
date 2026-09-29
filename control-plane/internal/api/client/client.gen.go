@@ -159,6 +159,48 @@ func (e CurrentUserAuthMethod) Valid() bool {
 	}
 }
 
+// Defines values for DatabaseSessionStatus.
+const (
+	DatabaseSessionStatusActive  DatabaseSessionStatus = "active"
+	DatabaseSessionStatusEnded   DatabaseSessionStatus = "ended"
+	DatabaseSessionStatusExpired DatabaseSessionStatus = "expired"
+	DatabaseSessionStatusFailed  DatabaseSessionStatus = "failed"
+)
+
+// Valid indicates whether the value is a known member of the DatabaseSessionStatus enum.
+func (e DatabaseSessionStatus) Valid() bool {
+	switch e {
+	case DatabaseSessionStatusActive:
+		return true
+	case DatabaseSessionStatusEnded:
+		return true
+	case DatabaseSessionStatusExpired:
+		return true
+	case DatabaseSessionStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DatabaseSessionAccess.
+const (
+	DatabaseSessionAccessReadOnly  DatabaseSessionAccess = "read_only"
+	DatabaseSessionAccessReadWrite DatabaseSessionAccess = "read_write"
+)
+
+// Valid indicates whether the value is a known member of the DatabaseSessionAccess enum.
+func (e DatabaseSessionAccess) Valid() bool {
+	switch e {
+	case DatabaseSessionAccessReadOnly:
+		return true
+	case DatabaseSessionAccessReadWrite:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatus.
 const (
 	HealthStatusOk HealthStatus = "ok"
@@ -440,16 +482,16 @@ func (e SiteStatus) Valid() bool {
 
 // Defines values for TokenScope.
 const (
-	Full     TokenScope = "full"
-	ReadOnly TokenScope = "read-only"
+	TokenScopeFull     TokenScope = "full"
+	TokenScopeReadOnly TokenScope = "read-only"
 )
 
 // Valid indicates whether the value is a known member of the TokenScope enum.
 func (e TokenScope) Valid() bool {
 	switch e {
-	case Full:
+	case TokenScopeFull:
 		return true
-	case ReadOnly:
+	case TokenScopeReadOnly:
 		return true
 	default:
 		return false
@@ -980,6 +1022,96 @@ type CurrentUser struct {
 
 // CurrentUserAuthMethod defines model for CurrentUser.AuthMethod.
 type CurrentUserAuthMethod string
+
+// DatabaseSession defines model for DatabaseSession.
+type DatabaseSession struct {
+	// Access `read_only` may read tables and views (`SELECT`, `SHOW VIEW`);
+	// `read_write` has the site's own privileges on its database and
+	// needs an Admin.
+	Access DatabaseSessionAccess `json:"access"`
+
+	// CreatedAt Examples: 2026-09-26T17:25:00Z
+	CreatedAt Timestamp `json:"created_at"`
+
+	// Database The site's database, the only one the user can reach.
+	//
+	// Examples: pf_01j9z8y7x6w5v4t3s2r1q0p9n8
+	Database string `json:"database"`
+
+	// ExpiresAt Examples: 2026-09-26T17:25:00Z
+	ExpiresAt Timestamp `json:"expires_at"`
+
+	// ID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ID ID `json:"id"`
+
+	// SiteID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	SiteID ID                    `json:"site_id"`
+	Status DatabaseSessionStatus `json:"status"`
+
+	// UserID The user who opened it; only they can tunnel to the database with it.
+	UserID ID `json:"user_id"`
+
+	// Username The temporary MariaDB user.
+	//
+	// Examples: pft_01j9z8y7x6w5v4t3s2r1q0p9s5
+	Username string `json:"username"`
+}
+
+// DatabaseSessionStatus defines model for DatabaseSession.Status.
+type DatabaseSessionStatus string
+
+// DatabaseSessionAccess `read_only` may read tables and views (`SELECT`, `SHOW VIEW`);
+// `read_write` has the site's own privileges on its database and
+// needs an Admin.
+type DatabaseSessionAccess string
+
+// DatabaseSessionCreate defines model for DatabaseSessionCreate.
+type DatabaseSessionCreate struct {
+	// Access `read_only` may read tables and views (`SELECT`, `SHOW VIEW`);
+	// `read_write` has the site's own privileges on its database and
+	// needs an Admin.
+	Access *DatabaseSessionAccess `json:"access,omitempty"`
+
+	// TTLSeconds How long the session lasts, from a minute to eight hours.
+	TTLSeconds *int `json:"ttl_seconds,omitempty"`
+}
+
+// DatabaseSessionList defines model for DatabaseSessionList.
+type DatabaseSessionList struct {
+	Items []DatabaseSession `json:"items"`
+}
+
+// DatabaseSessionOpened defines model for DatabaseSessionOpened.
+type DatabaseSessionOpened struct {
+	// Credentials The temporary user's login. Shown only once.
+	Credentials struct {
+		Database string `json:"database"`
+
+		// Password The plaintext password. Shown only once.
+		Password string `json:"password"`
+		Username string `json:"username"`
+	} `json:"credentials"`
+	Session DatabaseSession `json:"session"`
+	Tunnel  struct {
+		// LocalHost Examples: 127.0.0.1
+		LocalHost string `json:"local_host"`
+
+		// LocalPort Examples: 3307
+		LocalPort int `json:"local_port"`
+
+		// SSHCommand Opens the tunnel through the SFTP gateway; run it with a key
+		// registered on your account, then connect your database tool
+		// to `local_host`:`local_port`.
+		//
+		//
+		// Examples: ssh -N -L 3307:mariadb:3306 -p 2222 acme-marketing@fleet.agency.example
+		SSHCommand string `json:"ssh_command"`
+	} `json:"tunnel"`
+}
 
 // Domain A host name, such as `www.acme.example`: letters, digits, and
 // hyphens, at least two labels, no scheme, port, path, or wildcard.
@@ -2078,6 +2210,9 @@ type SetSiteBackupScheduleJSONRequestBody = BackupScheduleUpdate
 // SetSiteCorePolicyJSONRequestBody defines body for SetSiteCorePolicy for application/json ContentType.
 type SetSiteCorePolicyJSONRequestBody = CorePolicyUpdate
 
+// CreateSiteDatabaseSessionJSONRequestBody defines body for CreateSiteDatabaseSession for application/json ContentType.
+type CreateSiteDatabaseSessionJSONRequestBody = DatabaseSessionCreate
+
 // DeploySiteCodeJSONRequestBody defines body for DeploySiteCode for application/json ContentType.
 type DeploySiteCodeJSONRequestBody = SiteDeployment
 
@@ -2879,6 +3014,74 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v1/sites/{site_id}/database/exports/{export_id}/download (the `DownloadSiteDatabaseExport` operationId).
 	DownloadSiteDatabaseExport(ctx context.Context, siteID SiteID, exportID ID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSiteDatabaseSessions List a site's active database sessions
+	//
+	// Lists the site's temporary database sessions that are active and
+	// unexpired, oldest first. Passwords are never shown again.
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/database/sessions (the `ListSiteDatabaseSessions` operationId).
+	ListSiteDatabaseSessions(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateSiteDatabaseSessionWithBody Open a temporary database session
+	//
+	// Creates a temporary MariaDB user with access to the site's database
+	// only (design doc §5.8) and returns its credentials, which are shown
+	// only once, with the `ssh -L` command that opens a tunnel to the
+	// database through the SFTP gateway. Connect the tunnel with an SSH
+	// key registered on your own account: the gateway forwards only to
+	// the site's database, and only for the user who opened the session.
+	//
+	// Sessions are read-only by default (`SELECT` and `SHOW VIEW`).
+	// Read-write sessions, with the site's own privileges on its
+	// database, need an Admin. A session lasts `ttl_seconds` (one hour by
+	// default, at most eight); then, or when it is ended with `DELETE`,
+	// its MariaDB user is dropped and its connections are ended. The
+	// site's own database password is never revealed. Opening, ending,
+	// and expiry are recorded in the audit log.
+	//
+	// Returns `409` if the site is `provisioning` or `deleting`, its
+	// provisioning failed, or the SFTP gateway is off.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/database/sessions (the `CreateSiteDatabaseSession` operationId).
+	CreateSiteDatabaseSessionWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateSiteDatabaseSession Open a temporary database session
+	//
+	// Creates a temporary MariaDB user with access to the site's database
+	// only (design doc §5.8) and returns its credentials, which are shown
+	// only once, with the `ssh -L` command that opens a tunnel to the
+	// database through the SFTP gateway. Connect the tunnel with an SSH
+	// key registered on your own account: the gateway forwards only to
+	// the site's database, and only for the user who opened the session.
+	//
+	// Sessions are read-only by default (`SELECT` and `SHOW VIEW`).
+	// Read-write sessions, with the site's own privileges on its
+	// database, need an Admin. A session lasts `ttl_seconds` (one hour by
+	// default, at most eight); then, or when it is ended with `DELETE`,
+	// its MariaDB user is dropped and its connections are ended. The
+	// site's own database password is never revealed. Opening, ending,
+	// and expiry are recorded in the audit log.
+	//
+	// Returns `409` if the site is `provisioning` or `deleting`, its
+	// provisioning failed, or the SFTP gateway is off.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/database/sessions (the `CreateSiteDatabaseSession` operationId).
+	CreateSiteDatabaseSession(ctx context.Context, siteID SiteID, body CreateSiteDatabaseSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// EndSiteDatabaseSession End a database session
+	//
+	// Ends an active session at once: its MariaDB user is dropped, its
+	// open connections are ended, and the gateway refuses new tunnels for
+	// it. A session that doesn't exist, belongs to another site, or has
+	// already ended returns `404`.
+	//
+	// Corresponds with DELETE /api/v1/sites/{site_id}/database/sessions/{session_id} (the `EndSiteDatabaseSession` operationId).
+	EndSiteDatabaseSession(ctx context.Context, siteID SiteID, sessionID ID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeploySiteCodeWithBody Deploy a theme or plugin package
 	//
@@ -4711,6 +4914,114 @@ func (c *Client) ExportSiteDatabase(ctx context.Context, siteID SiteID, reqEdito
 // Corresponds with GET /api/v1/sites/{site_id}/database/exports/{export_id}/download (the `DownloadSiteDatabaseExport` operationId).
 func (c *Client) DownloadSiteDatabaseExport(ctx context.Context, siteID SiteID, exportID ID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDownloadSiteDatabaseExportRequest(c.Server, siteID, exportID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListSiteDatabaseSessions List a site's active database sessions
+//
+// Lists the site's temporary database sessions that are active and
+// unexpired, oldest first. Passwords are never shown again.
+//
+// Corresponds with GET /api/v1/sites/{site_id}/database/sessions (the `ListSiteDatabaseSessions` operationId).
+func (c *Client) ListSiteDatabaseSessions(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSiteDatabaseSessionsRequest(c.Server, siteID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateSiteDatabaseSessionWithBody Open a temporary database session
+//
+// Creates a temporary MariaDB user with access to the site's database
+// only (design doc §5.8) and returns its credentials, which are shown
+// only once, with the `ssh -L` command that opens a tunnel to the
+// database through the SFTP gateway. Connect the tunnel with an SSH
+// key registered on your own account: the gateway forwards only to
+// the site's database, and only for the user who opened the session.
+//
+// Sessions are read-only by default (`SELECT` and `SHOW VIEW`).
+// Read-write sessions, with the site's own privileges on its
+// database, need an Admin. A session lasts `ttl_seconds` (one hour by
+// default, at most eight); then, or when it is ended with `DELETE`,
+// its MariaDB user is dropped and its connections are ended. The
+// site's own database password is never revealed. Opening, ending,
+// and expiry are recorded in the audit log.
+//
+// Returns `409` if the site is `provisioning` or `deleting`, its
+// provisioning failed, or the SFTP gateway is off.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/database/sessions (the `CreateSiteDatabaseSession` operationId).
+func (c *Client) CreateSiteDatabaseSessionWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateSiteDatabaseSessionRequestWithBody(c.Server, siteID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateSiteDatabaseSession Open a temporary database session
+//
+// Creates a temporary MariaDB user with access to the site's database
+// only (design doc §5.8) and returns its credentials, which are shown
+// only once, with the `ssh -L` command that opens a tunnel to the
+// database through the SFTP gateway. Connect the tunnel with an SSH
+// key registered on your own account: the gateway forwards only to
+// the site's database, and only for the user who opened the session.
+//
+// Sessions are read-only by default (`SELECT` and `SHOW VIEW`).
+// Read-write sessions, with the site's own privileges on its
+// database, need an Admin. A session lasts `ttl_seconds` (one hour by
+// default, at most eight); then, or when it is ended with `DELETE`,
+// its MariaDB user is dropped and its connections are ended. The
+// site's own database password is never revealed. Opening, ending,
+// and expiry are recorded in the audit log.
+//
+// Returns `409` if the site is `provisioning` or `deleting`, its
+// provisioning failed, or the SFTP gateway is off.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/database/sessions (the `CreateSiteDatabaseSession` operationId).
+func (c *Client) CreateSiteDatabaseSession(ctx context.Context, siteID SiteID, body CreateSiteDatabaseSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateSiteDatabaseSessionRequest(c.Server, siteID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// EndSiteDatabaseSession End a database session
+//
+// Ends an active session at once: its MariaDB user is dropped, its
+// open connections are ended, and the gateway refuses new tunnels for
+// it. A session that doesn't exist, belongs to another site, or has
+// already ended returns `404`.
+//
+// Corresponds with DELETE /api/v1/sites/{site_id}/database/sessions/{session_id} (the `EndSiteDatabaseSession` operationId).
+func (c *Client) EndSiteDatabaseSession(ctx context.Context, siteID SiteID, sessionID ID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewEndSiteDatabaseSessionRequest(c.Server, siteID, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -7417,6 +7728,128 @@ func NewDownloadSiteDatabaseExportRequest(server string, siteID SiteID, exportID
 	return req, nil
 }
 
+// NewListSiteDatabaseSessionsRequest constructs an http.Request for the ListSiteDatabaseSessions method
+func NewListSiteDatabaseSessionsRequest(server string, siteID SiteID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/database/sessions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateSiteDatabaseSessionRequest calls the generic CreateSiteDatabaseSession builder with application/json body
+func NewCreateSiteDatabaseSessionRequest(server string, siteID SiteID, body CreateSiteDatabaseSessionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateSiteDatabaseSessionRequestWithBody(server, siteID, "application/json", bodyReader)
+}
+
+// NewCreateSiteDatabaseSessionRequestWithBody constructs an http.Request for the CreateSiteDatabaseSession method, with any body, and a specified content type
+func NewCreateSiteDatabaseSessionRequestWithBody(server string, siteID SiteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/database/sessions", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewEndSiteDatabaseSessionRequest constructs an http.Request for the EndSiteDatabaseSession method
+func NewEndSiteDatabaseSessionRequest(server string, siteID SiteID, sessionID ID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/database/sessions/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewDeploySiteCodeRequest calls the generic DeploySiteCode builder with application/json body
 func NewDeploySiteCodeRequest(server string, siteID SiteID, body DeploySiteCodeJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -9300,6 +9733,78 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/v1/sites/{site_id}/database/exports/{export_id}/download (the `DownloadSiteDatabaseExport` operationId).
 	DownloadSiteDatabaseExportWithResponse(ctx context.Context, siteID SiteID, exportID ID, reqEditors ...RequestEditorFn) (*DownloadSiteDatabaseExportResponse, error)
+
+	// ListSiteDatabaseSessionsWithResponse List a site's active database sessions
+	//
+	// Lists the site's temporary database sessions that are active and
+	// unexpired, oldest first. Passwords are never shown again.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/database/sessions (the `ListSiteDatabaseSessions` operationId).
+	ListSiteDatabaseSessionsWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*ListSiteDatabaseSessionsResponse, error)
+
+	// CreateSiteDatabaseSessionWithBodyWithResponse Open a temporary database session
+	//
+	// Creates a temporary MariaDB user with access to the site's database
+	// only (design doc §5.8) and returns its credentials, which are shown
+	// only once, with the `ssh -L` command that opens a tunnel to the
+	// database through the SFTP gateway. Connect the tunnel with an SSH
+	// key registered on your own account: the gateway forwards only to
+	// the site's database, and only for the user who opened the session.
+	//
+	// Sessions are read-only by default (`SELECT` and `SHOW VIEW`).
+	// Read-write sessions, with the site's own privileges on its
+	// database, need an Admin. A session lasts `ttl_seconds` (one hour by
+	// default, at most eight); then, or when it is ended with `DELETE`,
+	// its MariaDB user is dropped and its connections are ended. The
+	// site's own database password is never revealed. Opening, ending,
+	// and expiry are recorded in the audit log.
+	//
+	// Returns `409` if the site is `provisioning` or `deleting`, its
+	// provisioning failed, or the SFTP gateway is off.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/database/sessions (the `CreateSiteDatabaseSession` operationId).
+	CreateSiteDatabaseSessionWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSiteDatabaseSessionResponse, error)
+
+	// CreateSiteDatabaseSessionWithResponse Open a temporary database session
+	//
+	// Creates a temporary MariaDB user with access to the site's database
+	// only (design doc §5.8) and returns its credentials, which are shown
+	// only once, with the `ssh -L` command that opens a tunnel to the
+	// database through the SFTP gateway. Connect the tunnel with an SSH
+	// key registered on your own account: the gateway forwards only to
+	// the site's database, and only for the user who opened the session.
+	//
+	// Sessions are read-only by default (`SELECT` and `SHOW VIEW`).
+	// Read-write sessions, with the site's own privileges on its
+	// database, need an Admin. A session lasts `ttl_seconds` (one hour by
+	// default, at most eight); then, or when it is ended with `DELETE`,
+	// its MariaDB user is dropped and its connections are ended. The
+	// site's own database password is never revealed. Opening, ending,
+	// and expiry are recorded in the audit log.
+	//
+	// Returns `409` if the site is `provisioning` or `deleting`, its
+	// provisioning failed, or the SFTP gateway is off.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/database/sessions (the `CreateSiteDatabaseSession` operationId).
+	CreateSiteDatabaseSessionWithResponse(ctx context.Context, siteID SiteID, body CreateSiteDatabaseSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSiteDatabaseSessionResponse, error)
+
+	// EndSiteDatabaseSessionWithResponse End a database session
+	//
+	// Ends an active session at once: its MariaDB user is dropped, its
+	// open connections are ended, and the gateway refuses new tunnels for
+	// it. A session that doesn't exist, belongs to another site, or has
+	// already ended returns `404`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v1/sites/{site_id}/database/sessions/{session_id} (the `EndSiteDatabaseSession` operationId).
+	EndSiteDatabaseSessionWithResponse(ctx context.Context, siteID SiteID, sessionID ID, reqEditors ...RequestEditorFn) (*EndSiteDatabaseSessionResponse, error)
 
 	// DeploySiteCodeWithBodyWithResponse Deploy a theme or plugin package
 	//
@@ -12836,6 +13341,220 @@ func (r DownloadSiteDatabaseExportResponse) ContentType() string {
 	return ""
 }
 
+type ListSiteDatabaseSessionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DatabaseSessionList
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListSiteDatabaseSessionsResponse) GetJSON200() *DatabaseSessionList {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListSiteDatabaseSessionsResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListSiteDatabaseSessionsResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ListSiteDatabaseSessionsResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListSiteDatabaseSessionsResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListSiteDatabaseSessionsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSiteDatabaseSessionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSiteDatabaseSessionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListSiteDatabaseSessionsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateSiteDatabaseSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *DatabaseSessionOpened
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateSiteDatabaseSessionResponse) GetJSON201() *DatabaseSessionOpened {
+	return r.JSON201
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CreateSiteDatabaseSessionResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CreateSiteDatabaseSessionResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CreateSiteDatabaseSessionResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r CreateSiteDatabaseSessionResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CreateSiteDatabaseSessionResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateSiteDatabaseSessionResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateSiteDatabaseSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateSiteDatabaseSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateSiteDatabaseSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateSiteDatabaseSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type EndSiteDatabaseSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r EndSiteDatabaseSessionResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r EndSiteDatabaseSessionResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r EndSiteDatabaseSessionResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r EndSiteDatabaseSessionResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r EndSiteDatabaseSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r EndSiteDatabaseSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r EndSiteDatabaseSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r EndSiteDatabaseSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // DeploySiteCodeResponse202Headers the declared response headers of an HTTP 202 response for DeploySiteCode
 type DeploySiteCodeResponse202Headers struct {
 	Location *string
@@ -15854,6 +16573,102 @@ func (c *ClientWithResponses) DownloadSiteDatabaseExportWithResponse(ctx context
 		return nil, err
 	}
 	return ParseDownloadSiteDatabaseExportResponse(rsp)
+}
+
+// ListSiteDatabaseSessionsWithResponse List a site's active database sessions
+//
+// Lists the site's temporary database sessions that are active and
+// unexpired, oldest first. Passwords are never shown again.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/sites/{site_id}/database/sessions (the `ListSiteDatabaseSessions` operationId).
+func (c *ClientWithResponses) ListSiteDatabaseSessionsWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*ListSiteDatabaseSessionsResponse, error) {
+	rsp, err := c.ListSiteDatabaseSessions(ctx, siteID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSiteDatabaseSessionsResponse(rsp)
+}
+
+// CreateSiteDatabaseSessionWithBodyWithResponse Open a temporary database session
+//
+// Creates a temporary MariaDB user with access to the site's database
+// only (design doc §5.8) and returns its credentials, which are shown
+// only once, with the `ssh -L` command that opens a tunnel to the
+// database through the SFTP gateway. Connect the tunnel with an SSH
+// key registered on your own account: the gateway forwards only to
+// the site's database, and only for the user who opened the session.
+//
+// Sessions are read-only by default (`SELECT` and `SHOW VIEW`).
+// Read-write sessions, with the site's own privileges on its
+// database, need an Admin. A session lasts `ttl_seconds` (one hour by
+// default, at most eight); then, or when it is ended with `DELETE`,
+// its MariaDB user is dropped and its connections are ended. The
+// site's own database password is never revealed. Opening, ending,
+// and expiry are recorded in the audit log.
+//
+// Returns `409` if the site is `provisioning` or `deleting`, its
+// provisioning failed, or the SFTP gateway is off.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/database/sessions (the `CreateSiteDatabaseSession` operationId).
+func (c *ClientWithResponses) CreateSiteDatabaseSessionWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSiteDatabaseSessionResponse, error) {
+	rsp, err := c.CreateSiteDatabaseSessionWithBody(ctx, siteID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateSiteDatabaseSessionResponse(rsp)
+}
+
+// CreateSiteDatabaseSessionWithResponse Open a temporary database session
+//
+// Creates a temporary MariaDB user with access to the site's database
+// only (design doc §5.8) and returns its credentials, which are shown
+// only once, with the `ssh -L` command that opens a tunnel to the
+// database through the SFTP gateway. Connect the tunnel with an SSH
+// key registered on your own account: the gateway forwards only to
+// the site's database, and only for the user who opened the session.
+//
+// Sessions are read-only by default (`SELECT` and `SHOW VIEW`).
+// Read-write sessions, with the site's own privileges on its
+// database, need an Admin. A session lasts `ttl_seconds` (one hour by
+// default, at most eight); then, or when it is ended with `DELETE`,
+// its MariaDB user is dropped and its connections are ended. The
+// site's own database password is never revealed. Opening, ending,
+// and expiry are recorded in the audit log.
+//
+// Returns `409` if the site is `provisioning` or `deleting`, its
+// provisioning failed, or the SFTP gateway is off.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/database/sessions (the `CreateSiteDatabaseSession` operationId).
+func (c *ClientWithResponses) CreateSiteDatabaseSessionWithResponse(ctx context.Context, siteID SiteID, body CreateSiteDatabaseSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSiteDatabaseSessionResponse, error) {
+	rsp, err := c.CreateSiteDatabaseSession(ctx, siteID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateSiteDatabaseSessionResponse(rsp)
+}
+
+// EndSiteDatabaseSessionWithResponse End a database session
+//
+// Ends an active session at once: its MariaDB user is dropped, its
+// open connections are ended, and the gateway refuses new tunnels for
+// it. A session that doesn't exist, belongs to another site, or has
+// already ended returns `404`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v1/sites/{site_id}/database/sessions/{session_id} (the `EndSiteDatabaseSession` operationId).
+func (c *ClientWithResponses) EndSiteDatabaseSessionWithResponse(ctx context.Context, siteID SiteID, sessionID ID, reqEditors ...RequestEditorFn) (*EndSiteDatabaseSessionResponse, error) {
+	rsp, err := c.EndSiteDatabaseSession(ctx, siteID, sessionID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseEndSiteDatabaseSessionResponse(rsp)
 }
 
 // DeploySiteCodeWithBodyWithResponse Deploy a theme or plugin package
@@ -19151,6 +19966,178 @@ func ParseDownloadSiteDatabaseExportResponse(rsp *http.Response) (*DownloadSiteD
 			headers.ContentDisposition = &value
 		}
 		response.Headers200 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListSiteDatabaseSessionsResponse parses an HTTP response from a ListSiteDatabaseSessionsWithResponse call
+func ParseListSiteDatabaseSessionsResponse(rsp *http.Response) (*ListSiteDatabaseSessionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSiteDatabaseSessionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DatabaseSessionList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateSiteDatabaseSessionResponse parses an HTTP response from a CreateSiteDatabaseSessionWithResponse call
+func ParseCreateSiteDatabaseSessionResponse(rsp *http.Response) (*CreateSiteDatabaseSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateSiteDatabaseSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest DatabaseSessionOpened
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseEndSiteDatabaseSessionResponse parses an HTTP response from a EndSiteDatabaseSessionWithResponse call
+func ParseEndSiteDatabaseSessionResponse(rsp *http.Response) (*EndSiteDatabaseSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &EndSiteDatabaseSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
 	}
 
 	return response, nil

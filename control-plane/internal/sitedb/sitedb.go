@@ -36,7 +36,34 @@ type Manager interface {
 	// Import replaces the site's database contents with the dump at srcPath.
 	// Returns ErrDatabaseNotFound if the site has no database.
 	Import(ctx context.Context, siteID string, srcPath string) error
+
+	// CreateTemporaryUser creates the temporary user of a database session
+	// (design doc §5.8), named after the session, with a new random
+	// password and access to the site's database only, and returns its
+	// credentials. Calling it again for the same session sets a new
+	// password.
+	CreateTemporaryUser(ctx context.Context, siteID, sessionID string, access Access) (Credentials, error)
+	// DropTemporaryUser drops the session's temporary user and ends its
+	// open connections. Dropping a user that doesn't exist succeeds.
+	DropTemporaryUser(ctx context.Context, sessionID string) error
+	// ListTemporaryUsers returns the sessions whose temporary users exist
+	// on the server, for dropping those left behind.
+	ListTemporaryUsers(ctx context.Context) (sessionIDs []string, err error)
 }
+
+// Access is what a temporary user may do with the site's database.
+type Access string
+
+// Accesses of temporary users.
+const (
+	// AccessReadOnly may read tables and views, nothing else.
+	AccessReadOnly Access = "read_only"
+	// AccessReadWrite has the site's own privileges on its database.
+	AccessReadWrite Access = "read_write"
+)
+
+// Valid reports whether a is a known access.
+func (a Access) Valid() bool { return a == AccessReadOnly || a == AccessReadWrite }
 
 // Credentials are a site's database connection details. The secret that
 // CreateDatabase's secretRef points to holds them, encoded with
