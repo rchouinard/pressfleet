@@ -94,6 +94,46 @@ func (h *Handlers) CreateSite(ctx context.Context, req gen.CreateSiteRequestObje
 	}, nil
 }
 
+// ImportSite starts the import workflow (#112) and returns 202 with the
+// new site's ID and the job. The uploads are checked by the job, before
+// the site is created.
+func (h *Handlers) ImportSite(ctx context.Context, req gen.ImportSiteRequestObject) (gen.ImportSiteResponseObject, error) {
+	// Like creation, the new site's target is the group it will join.
+	p, err := h.authorize(ctx, authz.ImportSite, authz.ClientGroup(deref(req.Body).ClientGroupID))
+	if err != nil {
+		return nil, err
+	}
+	if h.sites == nil {
+		return nil, errNoSites
+	}
+	b := req.Body
+	in := sites.Import{
+		ClientGroupID:   b.ClientGroupID,
+		ArchiveUploadID: b.ArchiveUploadID,
+		DumpUploadID:    b.DumpUploadID,
+		Name:            deref(b.Name),
+		PHPVersion:      deref(b.PhpVersion),
+		CreatedByUserID: p.UserID,
+	}
+	if r := b.Resources; r != nil {
+		in.CPU, in.MemoryReservationMB, in.MemoryLimitMB = r.CPU, r.MemoryReservationMb, r.MemoryLimitMb
+	}
+	siteID, job, err := h.sites.Import(ctx, in)
+	if err != nil {
+		return nil, siteError(err)
+	}
+	setAuditTarget(ctx, authz.Site(siteID))
+	j, err := jobResponse(job, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	location := jobLocation(job)
+	return gen.ImportSite202JSONResponse{
+		Body:    gen.SiteImportAccepted{SiteID: siteID, Job: j},
+		Headers: gen.ImportSite202ResponseHeaders{Location: &location},
+	}, nil
+}
+
 // GetSite returns a site with its recorded status and its live runtime
 // state. The live state is best effort: if the container runtime can't be
 // reached in time, the phase is unknown and the request still succeeds.
@@ -442,6 +482,7 @@ func siteError(err error) error {
 		{sites.ErrNotProvisioned, ErrConflict},
 		{sites.ErrNotRunning, ErrConflict},
 		{sites.ErrNotLive, ErrConflict},
+		{sites.ErrUploadNotReady, ErrConflict},
 	} {
 		if errors.Is(err, m.from) {
 			return fmt.Errorf("%w: %w", m.to, m.from)

@@ -8,6 +8,7 @@
 #   images/matrix.sh wp           WordPress versions to build: latest, then pinned
 #   images/matrix.sh latest-wp    the latest WordPress version
 #   images/matrix.sh sha1 <wp>    SHA-1 of wordpress-<wp>.tar.gz
+#   images/matrix.sh dbversion <wp>  database schema version ($wp_db_version) of <wp>
 #   images/matrix.sh registry     image repository prefix (ghcr.io/rchouinard/pressfleet)
 #   images/matrix.sh github       JSON for GitHub Actions matrices (see below)
 #
@@ -53,6 +54,14 @@ sha1)
 	}
 	q --arg wp "$2" "$defs"' first(wp_versions[] | select(.version == $wp) | .sha1)
 		// error("WordPress \($wp) is not in the manifest")'
+	;;
+dbversion)
+	[ -n "${2:-}" ] || {
+		echo "usage: $0 dbversion <wordpress-version>" >&2
+		exit 2
+	}
+	q --arg wp "$2" "$defs"' first(wp_versions[] | select(.version == $wp) | .dbVersion)
+		// error("WordPress \($wp) has no dbVersion in the manifest")'
 	;;
 registry)
 	q '.registry'

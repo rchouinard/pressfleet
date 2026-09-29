@@ -437,16 +437,16 @@ func (e TokenScope) Valid() bool {
 
 // Defines values for UploadPurpose.
 const (
-	SiteDeploy UploadPurpose = "site_deploy"
-	SiteImport UploadPurpose = "site_import"
+	UploadPurposeSiteDeploy UploadPurpose = "site_deploy"
+	UploadPurposeSiteImport UploadPurpose = "site_import"
 )
 
 // Valid indicates whether the value is a known member of the UploadPurpose enum.
 func (e UploadPurpose) Valid() bool {
 	switch e {
-	case SiteDeploy:
+	case UploadPurposeSiteDeploy:
 		return true
-	case SiteImport:
+	case UploadPurposeSiteImport:
 		return true
 	default:
 		return false
@@ -1449,6 +1449,45 @@ type SiteGoLive struct {
 	SkipDNSCheck *bool `json:"skip_dns_check,omitempty"`
 }
 
+// SiteImport defines model for SiteImport.
+type SiteImport struct {
+	// ArchiveUploadID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ArchiveUploadID ID `json:"archive_upload_id"`
+
+	// ClientGroupID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ClientGroupID ID `json:"client_group_id"`
+
+	// DumpUploadID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	DumpUploadID ID `json:"dump_upload_id"`
+
+	// Name Display name. Defaults to the imported site's title.
+	Name *string `json:"name,omitempty"`
+
+	// PhpVersion A PHP version the platform publishes site images for.
+	//
+	// Examples: 8.4
+	PhpVersion *PHPVersion `json:"php_version,omitempty"`
+
+	// Resources Partial resource limits. Omitted fields keep their current value, or the platform default when creating a site.
+	Resources *ResourceLimitsUpdate `json:"resources,omitempty"`
+}
+
+// SiteImportAccepted defines model for SiteImportAccepted.
+type SiteImportAccepted struct {
+	Job Job `json:"job"`
+
+	// SiteID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	SiteID ID `json:"site_id"`
+}
+
 // SiteList defines model for SiteList.
 type SiteList struct {
 	Items []Site `json:"items"`
@@ -1975,6 +2014,9 @@ type SetClientGroupCorePolicyJSONRequestBody = CorePolicyUpdate
 // CreateSiteJSONRequestBody defines body for CreateSite for application/json ContentType.
 type CreateSiteJSONRequestBody = SiteCreate
 
+// ImportSiteJSONRequestBody defines body for ImportSite for application/json ContentType.
+type ImportSiteJSONRequestBody = SiteImport
+
 // UpdateSiteJSONRequestBody defines body for UpdateSite for application/json ContentType.
 type UpdateSiteJSONRequestBody = SiteUpdate
 
@@ -2343,6 +2385,108 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites (the `CreateSite` operationId).
 	CreateSite(ctx context.Context, body CreateSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ImportSiteWithBody Import a site
+	//
+	// Imports an existing WordPress site from a `wp-content` archive and a
+	// SQL dump (design doc §5.7) into a new site in a client group. Send
+	// both files through the upload API first (`POST /api/v1/uploads` with
+	// purpose `site_import` and the same `client_group_id`), then name the
+	// complete uploads here. The job takes the uploads, which no other job
+	// can then use; they are removed when the job ends.
+	//
+	// * The archive is a `.tar.gz`, `.tar.bz2`, `.tar`, or `.zip` file of
+	//   the site's `wp-content` directory: its contents at the top, a
+	//   `wp-content` directory, or a whole WordPress install with one.
+	//   Symbolic links and other special entries are skipped; absolute
+	//   paths and `..` are refused.
+	// * The dump is a `.sql` or `.sql.gz` file of the site's database, as
+	//   `wp db export`, mysqldump, mariadb-dump, or phpMyAdmin write
+	//   them. `DEFINER` clauses, `CREATE DATABASE` and `USE` statements,
+	//   and MySQL GTID statements are removed before it is imported.
+	//
+	// The archive and dump are large, so they are checked by the job's
+	// first step (`validate`), **before the site is created**: an archive
+	// without a `wp-content` directory, a dump that isn't a readable dump
+	// of one WordPress site's database, a multisite network, or a
+	// database from a WordPress core newer than the newest site image
+	// fails the job, and no site is created. The site's table prefix,
+	// source URL, and core version are read from the dump.
+	//
+	// The site is then created like `POST /api/v1/sites` (status
+	// `provisioning`, on the newest core, named after the imported site's
+	// title unless `name` is given) with the dump's table prefix; its
+	// `wp-content` is replaced with the archive's, the dump is imported,
+	// `wp core update-db` runs, the source's `siteurl` and `home` URLs are
+	// rewritten to the preview URL (`http` and `https` alike), and the
+	// default plugin stack is applied. The previous host's drop-ins
+	// (`object-cache.php`, `advanced-cache.php`, `db.php`) are replaced by
+	// the platform's; its must-use plugins are kept and reported as
+	// warnings in the job's log. The site keeps its own WordPress users,
+	// so no admin credentials are generated. The source's `wp-config.php`
+	// is never imported.
+	//
+	// The response holds the new site's ID, which `GET
+	// /api/v1/sites/{site_id}` finds once the job has created it, and the
+	// job, whose result holds `site_id`, `source_url`, and
+	// `table_prefix`. A job that fails after the site was created deletes
+	// the site again, with its containers, database, and data.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/sites/import (the `ImportSite` operationId).
+	ImportSiteWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ImportSite Import a site
+	//
+	// Imports an existing WordPress site from a `wp-content` archive and a
+	// SQL dump (design doc §5.7) into a new site in a client group. Send
+	// both files through the upload API first (`POST /api/v1/uploads` with
+	// purpose `site_import` and the same `client_group_id`), then name the
+	// complete uploads here. The job takes the uploads, which no other job
+	// can then use; they are removed when the job ends.
+	//
+	// * The archive is a `.tar.gz`, `.tar.bz2`, `.tar`, or `.zip` file of
+	//   the site's `wp-content` directory: its contents at the top, a
+	//   `wp-content` directory, or a whole WordPress install with one.
+	//   Symbolic links and other special entries are skipped; absolute
+	//   paths and `..` are refused.
+	// * The dump is a `.sql` or `.sql.gz` file of the site's database, as
+	//   `wp db export`, mysqldump, mariadb-dump, or phpMyAdmin write
+	//   them. `DEFINER` clauses, `CREATE DATABASE` and `USE` statements,
+	//   and MySQL GTID statements are removed before it is imported.
+	//
+	// The archive and dump are large, so they are checked by the job's
+	// first step (`validate`), **before the site is created**: an archive
+	// without a `wp-content` directory, a dump that isn't a readable dump
+	// of one WordPress site's database, a multisite network, or a
+	// database from a WordPress core newer than the newest site image
+	// fails the job, and no site is created. The site's table prefix,
+	// source URL, and core version are read from the dump.
+	//
+	// The site is then created like `POST /api/v1/sites` (status
+	// `provisioning`, on the newest core, named after the imported site's
+	// title unless `name` is given) with the dump's table prefix; its
+	// `wp-content` is replaced with the archive's, the dump is imported,
+	// `wp core update-db` runs, the source's `siteurl` and `home` URLs are
+	// rewritten to the preview URL (`http` and `https` alike), and the
+	// default plugin stack is applied. The previous host's drop-ins
+	// (`object-cache.php`, `advanced-cache.php`, `db.php`) are replaced by
+	// the platform's; its must-use plugins are kept and reported as
+	// warnings in the job's log. The site keeps its own WordPress users,
+	// so no admin credentials are generated. The source's `wp-config.php`
+	// is never imported.
+	//
+	// The response holds the new site's ID, which `GET
+	// /api/v1/sites/{site_id}` finds once the job has created it, and the
+	// job, whose result holds `site_id`, `source_url`, and
+	// `table_prefix`. A job that fails after the site was created deletes
+	// the site again, with its containers, database, and data.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/sites/import (the `ImportSite` operationId).
+	ImportSite(ctx context.Context, body ImportSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteSite Delete a site
 	//
@@ -3765,6 +3909,128 @@ func (c *Client) CreateSiteWithBody(ctx context.Context, contentType string, bod
 // Corresponds with POST /api/v1/sites (the `CreateSite` operationId).
 func (c *Client) CreateSite(ctx context.Context, body CreateSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateSiteRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ImportSiteWithBody Import a site
+//
+// Imports an existing WordPress site from a `wp-content` archive and a
+// SQL dump (design doc §5.7) into a new site in a client group. Send
+// both files through the upload API first (`POST /api/v1/uploads` with
+// purpose `site_import` and the same `client_group_id`), then name the
+// complete uploads here. The job takes the uploads, which no other job
+// can then use; they are removed when the job ends.
+//
+//   - The archive is a `.tar.gz`, `.tar.bz2`, `.tar`, or `.zip` file of
+//     the site's `wp-content` directory: its contents at the top, a
+//     `wp-content` directory, or a whole WordPress install with one.
+//     Symbolic links and other special entries are skipped; absolute
+//     paths and `..` are refused.
+//   - The dump is a `.sql` or `.sql.gz` file of the site's database, as
+//     `wp db export`, mysqldump, mariadb-dump, or phpMyAdmin write
+//     them. `DEFINER` clauses, `CREATE DATABASE` and `USE` statements,
+//     and MySQL GTID statements are removed before it is imported.
+//
+// The archive and dump are large, so they are checked by the job's
+// first step (`validate`), **before the site is created**: an archive
+// without a `wp-content` directory, a dump that isn't a readable dump
+// of one WordPress site's database, a multisite network, or a
+// database from a WordPress core newer than the newest site image
+// fails the job, and no site is created. The site's table prefix,
+// source URL, and core version are read from the dump.
+//
+// The site is then created like `POST /api/v1/sites` (status
+// `provisioning`, on the newest core, named after the imported site's
+// title unless `name` is given) with the dump's table prefix; its
+// `wp-content` is replaced with the archive's, the dump is imported,
+// `wp core update-db` runs, the source's `siteurl` and `home` URLs are
+// rewritten to the preview URL (`http` and `https` alike), and the
+// default plugin stack is applied. The previous host's drop-ins
+// (`object-cache.php`, `advanced-cache.php`, `db.php`) are replaced by
+// the platform's; its must-use plugins are kept and reported as
+// warnings in the job's log. The site keeps its own WordPress users,
+// so no admin credentials are generated. The source's `wp-config.php`
+// is never imported.
+//
+// The response holds the new site's ID, which `GET
+// /api/v1/sites/{site_id}` finds once the job has created it, and the
+// job, whose result holds `site_id`, `source_url`, and
+// `table_prefix`. A job that fails after the site was created deletes
+// the site again, with its containers, database, and data.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/sites/import (the `ImportSite` operationId).
+func (c *Client) ImportSiteWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewImportSiteRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ImportSite Import a site
+//
+// Imports an existing WordPress site from a `wp-content` archive and a
+// SQL dump (design doc §5.7) into a new site in a client group. Send
+// both files through the upload API first (`POST /api/v1/uploads` with
+// purpose `site_import` and the same `client_group_id`), then name the
+// complete uploads here. The job takes the uploads, which no other job
+// can then use; they are removed when the job ends.
+//
+//   - The archive is a `.tar.gz`, `.tar.bz2`, `.tar`, or `.zip` file of
+//     the site's `wp-content` directory: its contents at the top, a
+//     `wp-content` directory, or a whole WordPress install with one.
+//     Symbolic links and other special entries are skipped; absolute
+//     paths and `..` are refused.
+//   - The dump is a `.sql` or `.sql.gz` file of the site's database, as
+//     `wp db export`, mysqldump, mariadb-dump, or phpMyAdmin write
+//     them. `DEFINER` clauses, `CREATE DATABASE` and `USE` statements,
+//     and MySQL GTID statements are removed before it is imported.
+//
+// The archive and dump are large, so they are checked by the job's
+// first step (`validate`), **before the site is created**: an archive
+// without a `wp-content` directory, a dump that isn't a readable dump
+// of one WordPress site's database, a multisite network, or a
+// database from a WordPress core newer than the newest site image
+// fails the job, and no site is created. The site's table prefix,
+// source URL, and core version are read from the dump.
+//
+// The site is then created like `POST /api/v1/sites` (status
+// `provisioning`, on the newest core, named after the imported site's
+// title unless `name` is given) with the dump's table prefix; its
+// `wp-content` is replaced with the archive's, the dump is imported,
+// `wp core update-db` runs, the source's `siteurl` and `home` URLs are
+// rewritten to the preview URL (`http` and `https` alike), and the
+// default plugin stack is applied. The previous host's drop-ins
+// (`object-cache.php`, `advanced-cache.php`, `db.php`) are replaced by
+// the platform's; its must-use plugins are kept and reported as
+// warnings in the job's log. The site keeps its own WordPress users,
+// so no admin credentials are generated. The source's `wp-config.php`
+// is never imported.
+//
+// The response holds the new site's ID, which `GET
+// /api/v1/sites/{site_id}` finds once the job has created it, and the
+// job, whose result holds `site_id`, `source_url`, and
+// `table_prefix`. A job that fails after the site was created deletes
+// the site again, with its containers, database, and data.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/sites/import (the `ImportSite` operationId).
+func (c *Client) ImportSite(ctx context.Context, body ImportSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewImportSiteRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6223,6 +6489,46 @@ func NewCreateSiteRequestWithBody(server string, contentType string, body io.Rea
 	return req, nil
 }
 
+// NewImportSiteRequest calls the generic ImportSite builder with application/json body
+func NewImportSiteRequest(server string, body ImportSiteJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewImportSiteRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewImportSiteRequestWithBody constructs an http.Request for the ImportSite method, with any body, and a specified content type
+func NewImportSiteRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/import")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewDeleteSiteRequest constructs an http.Request for the DeleteSite method
 func NewDeleteSiteRequest(server string, siteID SiteID) (*http.Request, error) {
 	var err error
@@ -8215,6 +8521,108 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites (the `CreateSite` operationId).
 	CreateSiteWithResponse(ctx context.Context, body CreateSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSiteResponse, error)
+
+	// ImportSiteWithBodyWithResponse Import a site
+	//
+	// Imports an existing WordPress site from a `wp-content` archive and a
+	// SQL dump (design doc §5.7) into a new site in a client group. Send
+	// both files through the upload API first (`POST /api/v1/uploads` with
+	// purpose `site_import` and the same `client_group_id`), then name the
+	// complete uploads here. The job takes the uploads, which no other job
+	// can then use; they are removed when the job ends.
+	//
+	// * The archive is a `.tar.gz`, `.tar.bz2`, `.tar`, or `.zip` file of
+	//   the site's `wp-content` directory: its contents at the top, a
+	//   `wp-content` directory, or a whole WordPress install with one.
+	//   Symbolic links and other special entries are skipped; absolute
+	//   paths and `..` are refused.
+	// * The dump is a `.sql` or `.sql.gz` file of the site's database, as
+	//   `wp db export`, mysqldump, mariadb-dump, or phpMyAdmin write
+	//   them. `DEFINER` clauses, `CREATE DATABASE` and `USE` statements,
+	//   and MySQL GTID statements are removed before it is imported.
+	//
+	// The archive and dump are large, so they are checked by the job's
+	// first step (`validate`), **before the site is created**: an archive
+	// without a `wp-content` directory, a dump that isn't a readable dump
+	// of one WordPress site's database, a multisite network, or a
+	// database from a WordPress core newer than the newest site image
+	// fails the job, and no site is created. The site's table prefix,
+	// source URL, and core version are read from the dump.
+	//
+	// The site is then created like `POST /api/v1/sites` (status
+	// `provisioning`, on the newest core, named after the imported site's
+	// title unless `name` is given) with the dump's table prefix; its
+	// `wp-content` is replaced with the archive's, the dump is imported,
+	// `wp core update-db` runs, the source's `siteurl` and `home` URLs are
+	// rewritten to the preview URL (`http` and `https` alike), and the
+	// default plugin stack is applied. The previous host's drop-ins
+	// (`object-cache.php`, `advanced-cache.php`, `db.php`) are replaced by
+	// the platform's; its must-use plugins are kept and reported as
+	// warnings in the job's log. The site keeps its own WordPress users,
+	// so no admin credentials are generated. The source's `wp-config.php`
+	// is never imported.
+	//
+	// The response holds the new site's ID, which `GET
+	// /api/v1/sites/{site_id}` finds once the job has created it, and the
+	// job, whose result holds `site_id`, `source_url`, and
+	// `table_prefix`. A job that fails after the site was created deletes
+	// the site again, with its containers, database, and data.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/import (the `ImportSite` operationId).
+	ImportSiteWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportSiteResponse, error)
+
+	// ImportSiteWithResponse Import a site
+	//
+	// Imports an existing WordPress site from a `wp-content` archive and a
+	// SQL dump (design doc §5.7) into a new site in a client group. Send
+	// both files through the upload API first (`POST /api/v1/uploads` with
+	// purpose `site_import` and the same `client_group_id`), then name the
+	// complete uploads here. The job takes the uploads, which no other job
+	// can then use; they are removed when the job ends.
+	//
+	// * The archive is a `.tar.gz`, `.tar.bz2`, `.tar`, or `.zip` file of
+	//   the site's `wp-content` directory: its contents at the top, a
+	//   `wp-content` directory, or a whole WordPress install with one.
+	//   Symbolic links and other special entries are skipped; absolute
+	//   paths and `..` are refused.
+	// * The dump is a `.sql` or `.sql.gz` file of the site's database, as
+	//   `wp db export`, mysqldump, mariadb-dump, or phpMyAdmin write
+	//   them. `DEFINER` clauses, `CREATE DATABASE` and `USE` statements,
+	//   and MySQL GTID statements are removed before it is imported.
+	//
+	// The archive and dump are large, so they are checked by the job's
+	// first step (`validate`), **before the site is created**: an archive
+	// without a `wp-content` directory, a dump that isn't a readable dump
+	// of one WordPress site's database, a multisite network, or a
+	// database from a WordPress core newer than the newest site image
+	// fails the job, and no site is created. The site's table prefix,
+	// source URL, and core version are read from the dump.
+	//
+	// The site is then created like `POST /api/v1/sites` (status
+	// `provisioning`, on the newest core, named after the imported site's
+	// title unless `name` is given) with the dump's table prefix; its
+	// `wp-content` is replaced with the archive's, the dump is imported,
+	// `wp core update-db` runs, the source's `siteurl` and `home` URLs are
+	// rewritten to the preview URL (`http` and `https` alike), and the
+	// default plugin stack is applied. The previous host's drop-ins
+	// (`object-cache.php`, `advanced-cache.php`, `db.php`) are replaced by
+	// the platform's; its must-use plugins are kept and reported as
+	// warnings in the job's log. The site keeps its own WordPress users,
+	// so no admin credentials are generated. The source's `wp-config.php`
+	// is never imported.
+	//
+	// The response holds the new site's ID, which `GET
+	// /api/v1/sites/{site_id}` finds once the job has created it, and the
+	// job, whose result holds `site_id`, `source_url`, and
+	// `table_prefix`. A job that fails after the site was created deletes
+	// the site again, with its containers, database, and data.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/import (the `ImportSite` operationId).
+	ImportSiteWithResponse(ctx context.Context, body ImportSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*ImportSiteResponse, error)
 
 	// DeleteSiteWithResponse Delete a site
 	//
@@ -10702,6 +11110,96 @@ func (r CreateSiteResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CreateSiteResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ImportSiteResponse202Headers the declared response headers of an HTTP 202 response for ImportSite
+type ImportSiteResponse202Headers struct {
+	Location *string
+}
+
+type ImportSiteResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *SiteImportAccepted
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *ImportSiteResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r ImportSiteResponse) GetJSON202() *SiteImportAccepted {
+	return r.JSON202
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ImportSiteResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ImportSiteResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ImportSiteResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ImportSiteResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ImportSiteResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ImportSiteResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ImportSiteResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ImportSiteResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ImportSiteResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ImportSiteResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -14258,6 +14756,120 @@ func (c *ClientWithResponses) CreateSiteWithResponse(ctx context.Context, body C
 	return ParseCreateSiteResponse(rsp)
 }
 
+// ImportSiteWithBodyWithResponse Import a site
+//
+// Imports an existing WordPress site from a `wp-content` archive and a
+// SQL dump (design doc §5.7) into a new site in a client group. Send
+// both files through the upload API first (`POST /api/v1/uploads` with
+// purpose `site_import` and the same `client_group_id`), then name the
+// complete uploads here. The job takes the uploads, which no other job
+// can then use; they are removed when the job ends.
+//
+//   - The archive is a `.tar.gz`, `.tar.bz2`, `.tar`, or `.zip` file of
+//     the site's `wp-content` directory: its contents at the top, a
+//     `wp-content` directory, or a whole WordPress install with one.
+//     Symbolic links and other special entries are skipped; absolute
+//     paths and `..` are refused.
+//   - The dump is a `.sql` or `.sql.gz` file of the site's database, as
+//     `wp db export`, mysqldump, mariadb-dump, or phpMyAdmin write
+//     them. `DEFINER` clauses, `CREATE DATABASE` and `USE` statements,
+//     and MySQL GTID statements are removed before it is imported.
+//
+// The archive and dump are large, so they are checked by the job's
+// first step (`validate`), **before the site is created**: an archive
+// without a `wp-content` directory, a dump that isn't a readable dump
+// of one WordPress site's database, a multisite network, or a
+// database from a WordPress core newer than the newest site image
+// fails the job, and no site is created. The site's table prefix,
+// source URL, and core version are read from the dump.
+//
+// The site is then created like `POST /api/v1/sites` (status
+// `provisioning`, on the newest core, named after the imported site's
+// title unless `name` is given) with the dump's table prefix; its
+// `wp-content` is replaced with the archive's, the dump is imported,
+// `wp core update-db` runs, the source's `siteurl` and `home` URLs are
+// rewritten to the preview URL (`http` and `https` alike), and the
+// default plugin stack is applied. The previous host's drop-ins
+// (`object-cache.php`, `advanced-cache.php`, `db.php`) are replaced by
+// the platform's; its must-use plugins are kept and reported as
+// warnings in the job's log. The site keeps its own WordPress users,
+// so no admin credentials are generated. The source's `wp-config.php`
+// is never imported.
+//
+// The response holds the new site's ID, which `GET
+// /api/v1/sites/{site_id}` finds once the job has created it, and the
+// job, whose result holds `site_id`, `source_url`, and
+// `table_prefix`. A job that fails after the site was created deletes
+// the site again, with its containers, database, and data.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/import (the `ImportSite` operationId).
+func (c *ClientWithResponses) ImportSiteWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportSiteResponse, error) {
+	rsp, err := c.ImportSiteWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseImportSiteResponse(rsp)
+}
+
+// ImportSiteWithResponse Import a site
+//
+// Imports an existing WordPress site from a `wp-content` archive and a
+// SQL dump (design doc §5.7) into a new site in a client group. Send
+// both files through the upload API first (`POST /api/v1/uploads` with
+// purpose `site_import` and the same `client_group_id`), then name the
+// complete uploads here. The job takes the uploads, which no other job
+// can then use; they are removed when the job ends.
+//
+//   - The archive is a `.tar.gz`, `.tar.bz2`, `.tar`, or `.zip` file of
+//     the site's `wp-content` directory: its contents at the top, a
+//     `wp-content` directory, or a whole WordPress install with one.
+//     Symbolic links and other special entries are skipped; absolute
+//     paths and `..` are refused.
+//   - The dump is a `.sql` or `.sql.gz` file of the site's database, as
+//     `wp db export`, mysqldump, mariadb-dump, or phpMyAdmin write
+//     them. `DEFINER` clauses, `CREATE DATABASE` and `USE` statements,
+//     and MySQL GTID statements are removed before it is imported.
+//
+// The archive and dump are large, so they are checked by the job's
+// first step (`validate`), **before the site is created**: an archive
+// without a `wp-content` directory, a dump that isn't a readable dump
+// of one WordPress site's database, a multisite network, or a
+// database from a WordPress core newer than the newest site image
+// fails the job, and no site is created. The site's table prefix,
+// source URL, and core version are read from the dump.
+//
+// The site is then created like `POST /api/v1/sites` (status
+// `provisioning`, on the newest core, named after the imported site's
+// title unless `name` is given) with the dump's table prefix; its
+// `wp-content` is replaced with the archive's, the dump is imported,
+// `wp core update-db` runs, the source's `siteurl` and `home` URLs are
+// rewritten to the preview URL (`http` and `https` alike), and the
+// default plugin stack is applied. The previous host's drop-ins
+// (`object-cache.php`, `advanced-cache.php`, `db.php`) are replaced by
+// the platform's; its must-use plugins are kept and reported as
+// warnings in the job's log. The site keeps its own WordPress users,
+// so no admin credentials are generated. The source's `wp-config.php`
+// is never imported.
+//
+// The response holds the new site's ID, which `GET
+// /api/v1/sites/{site_id}` finds once the job has created it, and the
+// job, whose result holds `site_id`, `source_url`, and
+// `table_prefix`. A job that fails after the site was created deletes
+// the site again, with its containers, database, and data.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/import (the `ImportSite` operationId).
+func (c *ClientWithResponses) ImportSiteWithResponse(ctx context.Context, body ImportSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*ImportSiteResponse, error) {
+	rsp, err := c.ImportSite(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseImportSiteResponse(rsp)
+}
+
 // DeleteSiteWithResponse Delete a site
 //
 // Queues a job that removes the site's containers, network, volumes,
@@ -16784,6 +17396,87 @@ func ParseCreateSiteResponse(rsp *http.Response) (*CreateSiteResponse, error) {
 	switch {
 	case rsp.StatusCode == 202:
 		var headers CreateSiteResponse202Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseImportSiteResponse parses an HTTP response from a ImportSiteWithResponse call
+func ParseImportSiteResponse(rsp *http.Response) (*ImportSiteResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ImportSiteResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest SiteImportAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers ImportSiteResponse202Headers
 		if values := rsp.Header.Values("Location"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {

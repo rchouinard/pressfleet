@@ -79,8 +79,12 @@ type Site struct {
 	// rewrite to the primary domain's in the site's WordPress database
 	// (§5.2), until a go-live job has.
 	URLRewriteFrom []string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// TablePrefix is the WordPress table prefix of the site's database;
+	// Create fills in DefaultTablePrefix when it is empty. An imported site
+	// keeps its dump's prefix (§5.7).
+	TablePrefix string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // Sites reads and writes sites.
@@ -98,7 +102,7 @@ const siteColumns = "id, client_group_id, name, slug, status, status_message, pr
 	"php_version, wp_core_version, enable_cache, cpu_limit, memory_reservation_mb, memory_limit_mb, " +
 	"uid, wp_salts_secret_ref, admin_username, admin_email, admin_password_secret_ref, " +
 	"preview_protection, preview_username, preview_password_hash, preview_password_secret_ref, maintenance, url_rewrite_from, " +
-	"created_at, updated_at"
+	"table_prefix, created_at, updated_at"
 
 func scanSite(s scanner) (Site, error) {
 	var (
@@ -111,7 +115,7 @@ func scanSite(s scanner) (Site, error) {
 		&site.CPULimit, &site.MemoryReservationMB, &site.MemoryLimitMB, &site.UID, &site.WPSaltsSecretRef,
 		&site.AdminUsername, &site.AdminEmail, &site.AdminPasswordSecretRef,
 		&site.PreviewProtection, &site.PreviewUsername, &site.PreviewPasswordHash, &site.PreviewPasswordSecretRef,
-		&site.Maintenance, &rewrite, &site.CreatedAt, &site.UpdatedAt)
+		&site.Maintenance, &rewrite, &site.TablePrefix, &site.CreatedAt, &site.UpdatedAt)
 	site.PrimaryDomain = primary.String
 	if rewrite != "" {
 		site.URLRewriteFrom = strings.Fields(rewrite)
@@ -119,25 +123,38 @@ func scanSite(s scanner) (Site, error) {
 	return site, err
 }
 
-// Create inserts s, filling in its ID and timestamps. It returns ErrConflict
-// if the slug, preview domain, or UID is taken and ErrReference if the
-// client group doesn't exist.
+// DefaultTablePrefix is WordPress's default table prefix, which
+// provisioned sites use.
+const DefaultTablePrefix = "wp_"
+
+// Create inserts s, filling in its ID (unless it has one: a site import
+// picks its ID before the site exists), timestamps, and default table
+// prefix. It returns ErrConflict if the ID, slug, preview domain, or UID is
+// taken and ErrReference if the client group doesn't exist.
 func (r Sites) Create(ctx context.Context, s *Site) error {
 	if !s.Status.Valid() {
 		return fmt.Errorf("create site: invalid status %q", s.Status)
 	}
 	created := *s
-	created.ID = id.New()
+	switch {
+	case created.ID == "":
+		created.ID = id.New()
+	case !id.Valid(created.ID):
+		return fmt.Errorf("create site: invalid ID %q", created.ID)
+	}
+	if created.TablePrefix == "" {
+		created.TablePrefix = DefaultTablePrefix
+	}
 	created.CreatedAt = now()
 	created.UpdatedAt = created.CreatedAt
 	_, err := r.q.ExecContext(ctx, "INSERT INTO sites ("+siteColumns+") VALUES "+
-		"("+placeholders(27)+")",
+		"("+placeholders(28)+")",
 		created.ID, created.ClientGroupID, created.Name, created.Slug, string(created.Status), created.StatusMessage,
 		created.PreviewDomain, nullString(created.PrimaryDomain), created.PHPVersion, created.WPCoreVersion,
 		created.EnableCache, created.CPULimit, created.MemoryReservationMB, created.MemoryLimitMB,
 		created.UID, created.WPSaltsSecretRef, created.AdminUsername, created.AdminEmail, created.AdminPasswordSecretRef,
 		created.PreviewProtection, created.PreviewUsername, created.PreviewPasswordHash, created.PreviewPasswordSecretRef,
-		created.Maintenance, strings.Join(created.URLRewriteFrom, " "), created.CreatedAt, created.UpdatedAt)
+		created.Maintenance, strings.Join(created.URLRewriteFrom, " "), created.TablePrefix, created.CreatedAt, created.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create site: %w", err)
 	}

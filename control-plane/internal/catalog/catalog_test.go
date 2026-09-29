@@ -17,7 +17,7 @@ const testManifest = `{
     {"version": "8.2", "activeSupportEnds": "2024-12-31", "securitySupportEnds": "2026-12-31"}
   ],
   "wordpress": {
-    "latest": {"version": "7.1.2", "sha1": "761b8101538f0631a0bfc4fba7bc4abeea92f81c"},
+    "latest": {"version": "7.1.2", "sha1": "761b8101538f0631a0bfc4fba7bc4abeea92f81c", "dbVersion": 61833},
     "pinned": [{"version": "6.9", "sha1": "0000000000000000000000000000000000000000"}]
   }
 }`
@@ -62,6 +62,12 @@ func TestLoadEmbedded(t *testing.T) {
 	}
 	if !strings.HasPrefix(imgs.PHP, "ghcr.io/rchouinard/pressfleet/site-php:php") {
 		t.Errorf("Images().PHP = %q, want the GHCR site-php repository", imgs.PHP)
+	}
+	// Site import compares a dump's database version with these (§5.7).
+	for _, w := range c.WordPressVersions() {
+		if w.DBVersion <= 0 {
+			t.Errorf("WordPress %s has no dbVersion in the embedded manifest", w.Version)
+		}
 	}
 }
 
@@ -177,7 +183,7 @@ func TestDefaultPHPVersion(t *testing.T) {
 
 func TestWordPress(t *testing.T) {
 	c := mustParse(t)
-	if got := c.LatestWordPress(); got.Version != "7.1.2" || got.SHA1 != "761b8101538f0631a0bfc4fba7bc4abeea92f81c" {
+	if got := c.LatestWordPress(); got.Version != "7.1.2" || got.SHA1 != "761b8101538f0631a0bfc4fba7bc4abeea92f81c" || got.DBVersion != 61833 {
 		t.Errorf("LatestWordPress() = %+v", got)
 	}
 	var got []string
@@ -233,6 +239,7 @@ func TestParseErrors(t *testing.T) {
 		{"no latest wp", `{"registry": "r", ` + php + `, "wordpress": {"pinned": []}}`},
 		{"bad wp version", `{"registry": "r", ` + php + `, "wordpress": {"latest": {"version": "7.x", "sha1": "761b8101538f0631a0bfc4fba7bc4abeea92f81c"}}}`},
 		{"bad sha1", `{"registry": "r", ` + php + `, "wordpress": {"latest": {"version": "7.1.2", "sha1": "abc"}}}`},
+		{"negative dbVersion", `{"registry": "r", ` + php + `, "wordpress": {"latest": {"version": "7.1.2", "sha1": "761b8101538f0631a0bfc4fba7bc4abeea92f81c", "dbVersion": -1}}}`},
 		{"pinned duplicates latest", `{"registry": "r", ` + php + `, "wordpress": {` +
 			`"latest": {"version": "7.1.2", "sha1": "761b8101538f0631a0bfc4fba7bc4abeea92f81c"},` +
 			`"pinned": [{"version": "7.1.2", "sha1": "761b8101538f0631a0bfc4fba7bc4abeea92f81c"}]}}`},

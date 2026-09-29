@@ -238,6 +238,13 @@ func (a *app) serveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			uploadSvc, err := uploads.New(uploads.Options{
+				DB: db, Dir: layout.UploadsDir(), MaxSize: a.cfg.Uploads.MaxSizeBytes(), Expiry: a.cfg.Uploads.Expiry(),
+				Logger: a.log.With("component", "uploads"),
+			})
+			if err != nil {
+				return err
+			}
 			siteSvc, err := sites.New(sites.Options{
 				DB:                db,
 				Secrets:           secretStore,
@@ -253,6 +260,9 @@ func (a *app) serveCommand() *cobra.Command {
 				DNSChecker:        a.dnsChecker(),
 				BackupWindow:      backupWindow,
 				CoreUpdates:       a.coreUpdates(),
+				Uploads:           uploadSvc,
+				Tasks:             prov,
+				TmpDir:            layout.TmpDir(),
 				Logger:            a.log.With("component", "sites"),
 			})
 			if err != nil {
@@ -260,13 +270,6 @@ func (a *app) serveCommand() *cobra.Command {
 			}
 			if a.cfg.PreviewBaseDomain == "" {
 				a.log.Warn("preview_base_domain is not set; site creation is refused until it is")
-			}
-			uploadSvc, err := uploads.New(uploads.Options{
-				DB: db, Dir: layout.UploadsDir(), MaxSize: a.cfg.Uploads.MaxSizeBytes(), Expiry: a.cfg.Uploads.Expiry(),
-				Logger: a.log.With("component", "uploads"),
-			})
-			if err != nil {
-				return err
 			}
 			handler, err := api.NewHandler(api.Options{
 				Logger:          a.log,

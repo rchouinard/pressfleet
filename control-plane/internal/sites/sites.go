@@ -131,6 +131,13 @@
 // ErrNotProvisioned for a site whose provisioning failed, which has nothing
 // left to change.
 //
+// # Import
+//
+// [Service.Import] claims an uploaded wp-content archive and SQL dump and
+// queues an [ImportJobType] job that checks them before anything is
+// created, then creates the site like provisioning and fills it with the
+// imported content; see import.go.
+//
 // # Startup reconciliation
 //
 // Install-wide settings such as the WordPress security set (§6.1) reach a
@@ -195,6 +202,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/sitecron"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sitedb"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
+	"github.com/rchouinard/pressfleet/control-plane/internal/uploads"
 	"github.com/rchouinard/pressfleet/control-plane/internal/wpconfig"
 )
 
@@ -267,6 +275,14 @@ type Options struct {
 	// registered.
 	Backups      *sitebackup.Service
 	BackupEngine backup.Engine
+	// Uploads, Tasks, and TmpDir import sites (import.go): Uploads holds
+	// the import's archive and dump, Tasks extracts the archive into the
+	// site's wp-content, and TmpDir (config.Layout.TmpDir) holds the files
+	// in between. Without all three, Import fails with ErrNoImports and the
+	// import job isn't registered.
+	Uploads *uploads.Service
+	Tasks   provisioner.TaskRunner
+	TmpDir  string
 	// DashboardDomain is config.Config.DashboardDomain, which no site may
 	// use.
 	DashboardDomain string
@@ -310,6 +326,9 @@ type Service struct {
 	caches       objectcache.Manager
 	backups      *sitebackup.Service
 	engine       backup.Engine
+	uploads      *uploads.Service
+	tasks        provisioner.TaskRunner
+	tmpDir       string
 	twoFactor    bool
 	dashboard    string
 	dns          DNSChecker
@@ -353,6 +372,9 @@ func New(opts Options) (*Service, error) {
 		caches:       opts.ObjectCaches,
 		backups:      opts.Backups,
 		engine:       opts.BackupEngine,
+		uploads:      opts.Uploads,
+		tasks:        opts.Tasks,
+		tmpDir:       opts.TmpDir,
 		twoFactor:    opts.TwoFactor != "" && opts.TwoFactor != config.TwoFactorOff,
 		dashboard:    strings.TrimSuffix(strings.ToLower(opts.DashboardDomain), "."),
 		dns:          opts.DNSChecker,
@@ -695,6 +717,9 @@ func (s *Service) Handlers() []jobs.Handler {
 	if s.restores() {
 		handlers = append(handlers, s.restoreHandler())
 		handlers = append(handlers, s.coreUpdateHandler(), s.rolloutHandler())
+	}
+	if s.imports() {
+		handlers = append(handlers, s.importHandler())
 	}
 	return handlers
 }

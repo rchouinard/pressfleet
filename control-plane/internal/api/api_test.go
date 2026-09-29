@@ -139,6 +139,7 @@ var sampleBodies = map[string]string{
 	"restoreSite":              `{"snapshot_id":"3be90c95"}`,
 	"setSiteCorePolicy":        `{"hold":true}`,
 	"setClientGroupCorePolicy": `{"hold":true}`,
+	"importSite":               `{"client_group_id":"abc123","archive_upload_id":"abc124","dump_upload_id":"abc125"}`,
 	"createUpload":             `{"purpose":"site_import","client_group_id":"abc123","size_bytes":10}`,
 	"appendUploadChunk":        `0123456789`,
 	"completeUpload":           `{}`,

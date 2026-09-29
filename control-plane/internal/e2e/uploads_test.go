@@ -61,7 +61,7 @@ func TestUploads(t *testing.T) {
 	create := func(size int, sha256 *string) client.Upload {
 		t.Helper()
 		resp, err := p.Client.CreateUploadWithResponse(ctx, client.CreateUploadJSONRequestBody{
-			Purpose: client.SiteImport, ClientGroupID: &groupID, SizeBytes: int64(size), Sha256: sha256,
+			Purpose: client.UploadPurposeSiteImport, ClientGroupID: &groupID, SizeBytes: int64(size), Sha256: sha256,
 		})
 		if err != nil {
 			t.Fatal(err)

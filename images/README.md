@@ -20,8 +20,8 @@ Container images for site stacks (design doc §4.1, §5.5):
     { "version": "8.4", "activeSupportEnds": "2026-12-31", "securitySupportEnds": "2028-12-31" }
   ],
   "wordpress": {
-    "latest": { "version": "7.1.2", "sha1": "<SHA-1 of wordpress-7.1.2.tar.gz>", "published": "2026-09-26" },
-    "pinned": [ { "version": "7.0.6", "sha1": "...", "published": "2026-09-20" } ]
+    "latest": { "version": "7.1.2", "sha1": "<SHA-1 of wordpress-7.1.2.tar.gz>", "published": "2026-09-26", "dbVersion": 61833 },
+    "pinned": [ { "version": "7.0.6", "sha1": "...", "published": "2026-09-20", "dbVersion": 60717 } ]
   }
 }
 ```
@@ -30,7 +30,7 @@ Container images for site stacks (design doc §4.1, §5.5):
 | --- | --- |
 | `registry` | Repository prefix of the site images |
 | `php[]` | PHP branches with php.net's support dates (the last day of active and of security support). A branch is built through its `securitySupportEnds` date. Branches past it stay listed, so the control plane can report sites on them as end of life, but are no longer built; remove them by hand once no site uses them. |
-| `wordpress.latest` | The newest WordPress release, the SHA-1 of its tarball (`wordpress.org/wordpress-<WP>.tar.gz.sha1`), and `published`: the day it entered the manifest, when its images were first published (`updates.core.major_auto_approve_days` counts from it) |
+| `wordpress.latest` | The newest WordPress release, the SHA-1 of its tarball (`wordpress.org/wordpress-<WP>.tar.gz.sha1`), and `published`: the day it entered the manifest, when its images were first published (`updates.core.major_auto_approve_days` counts from it). `dbVersion` is its database schema version (`$wp_db_version` in `wp-includes/version.php`): site imports read a dump's `db_version` option and refuse one newer than the latest release's (design doc §5.7), and `test.sh` checks the built image against it. |
 | `wordpress.pinned[]` | The newest release of each older major branch (x.y) that sites may be held on or awaiting approval to leave (§5.5): one entry per branch, each older than `latest`. When a new major release becomes the latest, `update-manifest.sh` adds the previous latest here; it moves each entry to its branch's newest release (security backports), and sets `insecure: true` once wordpress.org reports that release as insecure, so the control plane warns that the branch no longer gets security fixes. Remove a branch by hand once no site is held on it. Images of versions not listed stay published but stop receiving rebuilds. |
 
 The build matrix is every WordPress version (latest and pinned) times every PHP branch that is not past end of life, plus one `site-nginx` per WordPress version. Image digests are not in the manifest: the weekly rebuild moves tags to new digests, and the control plane resolves digests from the registry when it checks for image updates (#58).

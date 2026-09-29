@@ -63,6 +63,15 @@ func TestSiteConfigValidate(t *testing.T) {
 			wantErr: []string{"MemoryLimitMB must be at least MemoryReservationMB"},
 		},
 		{
+			name:   "imported table prefix",
+			mutate: func(c *provisioner.SiteConfig) { c.TablePrefix = "wpx7_" },
+		},
+		{
+			name:    "table prefix WordPress refuses",
+			mutate:  func(c *provisioner.SiteConfig) { c.TablePrefix = "wp-'x" },
+			wantErr: []string{"TablePrefix may only contain"},
+		},
+		{
 			name:    "zero resources",
 			mutate:  func(c *provisioner.SiteConfig) { c.Resources = provisioner.ResourceLimits{} },
 			wantErr: []string{"CPU is required", "MemoryReservationMB must be positive"},

@@ -36,7 +36,7 @@ const testManifest = `{
     {"version": "8.3", "activeSupportEnds": "2025-12-31", "securitySupportEnds": "2027-12-31"},
     {"version": "8.1", "activeSupportEnds": "2023-11-25", "securitySupportEnds": "2025-12-31"}
   ],
-  "wordpress": {"latest": {"version": "7.1.2", "sha1": "761b8101538f0631a0bfc4fba7bc4abeea92f81c"}, "pinned": []}
+  "wordpress": {"latest": {"version": "7.1.2", "sha1": "761b8101538f0631a0bfc4fba7bc4abeea92f81c", "dbVersion": 61833}, "pinned": []}
 }`
 
 // wordpress simulates WordPress in the fake provisioner's php containers:
@@ -255,6 +255,7 @@ func newEnvWith(t *testing.T, db *store.DB, previewBase string, opts ...func(*si
 		Provisioner:       e.prov,
 		Databases:         e.dbs,
 		ObjectCaches:      e.cache,
+		Tasks:             e.prov,
 		Logger:            storetest.Logger(),
 		Now:               func() time.Time { return testNow },
 	}

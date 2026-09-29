@@ -8,7 +8,10 @@
 #     are removed by hand.
 #   - The latest WordPress release and its tarball SHA-1 from wordpress.org,
 #     with the day it entered the manifest (published), from which the
-#     control plane may approve a major release automatically (§5.5).
+#     control plane may approve a major release automatically (§5.5), and
+#     its database schema version (dbVersion: $wp_db_version, which site
+#     imports compare dumps against) from its wp-includes/version.php.
+#     Older branches (below) get their dbVersion the same way.
 #   - Older WordPress branches (wordpress.pinned), kept while sites may be
 #     held on them or awaiting approval of a newer major release: when a
 #     new major release becomes the latest, the previous latest is added;
@@ -29,8 +32,8 @@
 #   PLUGINS         plugin list path (default: shared/plugins.json next to this script)
 #   MATRIX_DATE     "today" as YYYY-MM-DD, UTC (default: the current date)
 #   PHP_BRANCHES_URL, WP_VERSION_CHECK_URL, WP_STABLE_CHECK_URL,
-#   WP_DOWNLOAD_URL, WP_PLUGIN_INFO_URL,
-#   WP_PLUGIN_DOWNLOAD_URL   upstream endpoints (for testing)
+#   WP_DOWNLOAD_URL, WP_PLUGIN_INFO_URL, WP_PLUGIN_DOWNLOAD_URL,
+#   WP_CORE_TAGS_URL   upstream endpoints (for testing)
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -43,6 +46,7 @@ wp_stable_url="${WP_STABLE_CHECK_URL:-https://api.wordpress.org/core/stable-chec
 wp_download_url="${WP_DOWNLOAD_URL:-https://wordpress.org}"
 plugin_url="${WP_PLUGIN_INFO_URL:-https://api.wordpress.org/plugins/info/1.2/}"
 plugin_download_url="${WP_PLUGIN_DOWNLOAD_URL:-https://downloads.wordpress.org/plugin}"
+core_tags_url="${WP_CORE_TAGS_URL:-https://core.svn.wordpress.org/tags}"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -80,6 +84,18 @@ if [ "$latest_wp" != "$current_wp" ]; then
 	fi
 fi
 
+# db_version prints a WordPress release's database schema version, which
+# site imports compare dumps against (#112).
+db_version() {
+	local v
+	v="$(fetch "$core_tags_url/$1/wp-includes/version.php" | sed -n 's/^\$wp_db_version = \([0-9][0-9]*\);.*/\1/p')"
+	[[ "$v" =~ ^[0-9]+$ ]] || {
+		echo "update-manifest: no \$wp_db_version in WordPress $1's wp-includes/version.php" >&2
+		exit 1
+	}
+	printf '%s\n' "$v"
+}
+
 # wp_branch prints a WordPress version's major branch (7.1.2 -> 7.1).
 wp_branch() {
 	printf '%s\n' "$1" | cut -d . -f 1,2
@@ -90,6 +106,10 @@ if [ "$latest_wp" = "$current_wp" ]; then
 	jq -c '.wordpress.latest' "$manifest" >"$tmp/latest.json"
 else
 	jq -nc --arg v "$latest_wp" --arg s "$wp_sha1" --arg d "$today" '{version: $v, sha1: $s, published: $d}' >"$tmp/latest.json"
+fi
+if [ "$(jq -r '.dbVersion // empty' "$tmp/latest.json")" = "" ]; then
+	jq -c --argjson db "$(db_version "$latest_wp")" '.dbVersion = $db' "$tmp/latest.json" >"$tmp/latest.json.new"
+	mv "$tmp/latest.json.new" "$tmp/latest.json"
 fi
 
 # Older branches stay in the matrix while sites may be on them: every branch
@@ -125,6 +145,9 @@ while IFS= read -r entry; do
 		}
 		entry="$(jq -nc --arg v "$newest" --arg s "$sha1" --arg d "$today" '{version: $v, sha1: $s, published: $d}')"
 		version="$newest"
+	fi
+	if [ "$(jq -r '.dbVersion // empty' <<<"$entry")" = "" ]; then
+		entry="$(jq -c --argjson db "$(db_version "$version")" '.dbVersion = $db' <<<"$entry")"
 	fi
 	status="$(jq -r --arg v "$version" '.[$v] // ""' "$tmp/stable.json")"
 	if [ "$status" = insecure ]; then

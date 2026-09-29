@@ -438,16 +438,16 @@ func (e TokenScope) Valid() bool {
 
 // Defines values for UploadPurpose.
 const (
-	SiteDeploy UploadPurpose = "site_deploy"
-	SiteImport UploadPurpose = "site_import"
+	UploadPurposeSiteDeploy UploadPurpose = "site_deploy"
+	UploadPurposeSiteImport UploadPurpose = "site_import"
 )
 
 // Valid indicates whether the value is a known member of the UploadPurpose enum.
 func (e UploadPurpose) Valid() bool {
 	switch e {
-	case SiteDeploy:
+	case UploadPurposeSiteDeploy:
 		return true
-	case SiteImport:
+	case UploadPurposeSiteImport:
 		return true
 	default:
 		return false
@@ -1450,6 +1450,45 @@ type SiteGoLive struct {
 	SkipDNSCheck *bool `json:"skip_dns_check,omitempty"`
 }
 
+// SiteImport defines model for SiteImport.
+type SiteImport struct {
+	// ArchiveUploadID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ArchiveUploadID ID `json:"archive_upload_id"`
+
+	// ClientGroupID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ClientGroupID ID `json:"client_group_id"`
+
+	// DumpUploadID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	DumpUploadID ID `json:"dump_upload_id"`
+
+	// Name Display name. Defaults to the imported site's title.
+	Name *string `json:"name,omitempty"`
+
+	// PhpVersion A PHP version the platform publishes site images for.
+	//
+	// Examples: 8.4
+	PhpVersion *PHPVersion `json:"php_version,omitempty"`
+
+	// Resources Partial resource limits. Omitted fields keep their current value, or the platform default when creating a site.
+	Resources *ResourceLimitsUpdate `json:"resources,omitempty"`
+}
+
+// SiteImportAccepted defines model for SiteImportAccepted.
+type SiteImportAccepted struct {
+	Job Job `json:"job"`
+
+	// SiteID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	SiteID ID `json:"site_id"`
+}
+
 // SiteList defines model for SiteList.
 type SiteList struct {
 	Items []Site `json:"items"`
@@ -1976,6 +2015,9 @@ type SetClientGroupCorePolicyJSONRequestBody = CorePolicyUpdate
 // CreateSiteJSONRequestBody defines body for CreateSite for application/json ContentType.
 type CreateSiteJSONRequestBody = SiteCreate
 
+// ImportSiteJSONRequestBody defines body for ImportSite for application/json ContentType.
+type ImportSiteJSONRequestBody = SiteImport
+
 // UpdateSiteJSONRequestBody defines body for UpdateSite for application/json ContentType.
 type UpdateSiteJSONRequestBody = SiteUpdate
 
@@ -2080,6 +2122,9 @@ type ServerInterface interface {
 	// CreateSite Create a site
 	// (POST /api/v1/sites)
 	CreateSite(w http.ResponseWriter, r *http.Request)
+	// ImportSite Import a site
+	// (POST /api/v1/sites/import)
+	ImportSite(w http.ResponseWriter, r *http.Request)
 	// DeleteSite Delete a site
 	// (DELETE /api/v1/sites/{site_id})
 	DeleteSite(w http.ResponseWriter, r *http.Request, siteID SiteID)
@@ -2880,6 +2925,20 @@ func (siw *ServerInterfaceWrapper) CreateSite(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateSite(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ImportSite operation middleware
+func (siw *ServerInterfaceWrapper) ImportSite(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ImportSite(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4148,6 +4207,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/v1/client-groups/{client_group_id}", wrapper.UpdateClientGroup)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites", wrapper.ListSites)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites", wrapper.CreateSite)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/import", wrapper.ImportSite)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/sites/{site_id}", wrapper.DeleteSite)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}", wrapper.GetSite)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/v1/sites/{site_id}", wrapper.UpdateSite)
@@ -6236,6 +6296,135 @@ type CreateSitedefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response CreateSitedefaultApplicationProblemPlusJSONResponse) VisitCreateSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportSiteRequestObject struct {
+	Body *ImportSiteJSONRequestBody
+}
+
+type ImportSiteResponseObject interface {
+	VisitImportSiteResponse(w http.ResponseWriter) error
+}
+
+type ImportSite202ResponseHeaders struct {
+	Location *string
+}
+
+type ImportSite202JSONResponse struct {
+	Body    SiteImportAccepted
+	Headers ImportSite202ResponseHeaders
+}
+
+func (response ImportSite202JSONResponse) VisitImportSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportSite400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response ImportSite400ApplicationProblemPlusJSONResponse) VisitImportSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportSite401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ImportSite401ApplicationProblemPlusJSONResponse) VisitImportSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportSite403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ImportSite403ApplicationProblemPlusJSONResponse) VisitImportSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportSite409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response ImportSite409ApplicationProblemPlusJSONResponse) VisitImportSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportSite422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response ImportSite422ApplicationProblemPlusJSONResponse) VisitImportSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ImportSitedefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ImportSitedefaultApplicationProblemPlusJSONResponse) VisitImportSiteResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -10593,6 +10782,9 @@ type StrictServerInterface interface {
 	// CreateSite Create a site
 	// (POST /api/v1/sites)
 	CreateSite(ctx context.Context, request CreateSiteRequestObject) (CreateSiteResponseObject, error)
+	// ImportSite Import a site
+	// (POST /api/v1/sites/import)
+	ImportSite(ctx context.Context, request ImportSiteRequestObject) (ImportSiteResponseObject, error)
 	// DeleteSite Delete a site
 	// (DELETE /api/v1/sites/{site_id})
 	DeleteSite(ctx context.Context, request DeleteSiteRequestObject) (DeleteSiteResponseObject, error)
@@ -11321,6 +11513,37 @@ func (sh *strictHandler) CreateSite(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreateSiteResponseObject); ok {
 		if err := validResponse.VisitCreateSiteResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ImportSite operation middleware
+func (sh *strictHandler) ImportSite(w http.ResponseWriter, r *http.Request) {
+	var request ImportSiteRequestObject
+
+	var body ImportSiteJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ImportSite(ctx, request.(ImportSiteRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ImportSite")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ImportSiteResponseObject); ok {
+		if err := validResponse.VisitImportSiteResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

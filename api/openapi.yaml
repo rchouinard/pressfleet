@@ -857,6 +857,84 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/sites/import:
+    post:
+      operationId: importSite
+      tags: [sites]
+      summary: Import a site
+      description: |
+        Imports an existing WordPress site from a `wp-content` archive and a
+        SQL dump (design doc §5.7) into a new site in a client group. Send
+        both files through the upload API first (`POST /api/v1/uploads` with
+        purpose `site_import` and the same `client_group_id`), then name the
+        complete uploads here. The job takes the uploads, which no other job
+        can then use; they are removed when the job ends.
+
+        * The archive is a `.tar.gz`, `.tar.bz2`, `.tar`, or `.zip` file of
+          the site's `wp-content` directory: its contents at the top, a
+          `wp-content` directory, or a whole WordPress install with one.
+          Symbolic links and other special entries are skipped; absolute
+          paths and `..` are refused.
+        * The dump is a `.sql` or `.sql.gz` file of the site's database, as
+          `wp db export`, mysqldump, mariadb-dump, or phpMyAdmin write
+          them. `DEFINER` clauses, `CREATE DATABASE` and `USE` statements,
+          and MySQL GTID statements are removed before it is imported.
+
+        The archive and dump are large, so they are checked by the job's
+        first step (`validate`), **before the site is created**: an archive
+        without a `wp-content` directory, a dump that isn't a readable dump
+        of one WordPress site's database, a multisite network, or a
+        database from a WordPress core newer than the newest site image
+        fails the job, and no site is created. The site's table prefix,
+        source URL, and core version are read from the dump.
+
+        The site is then created like `POST /api/v1/sites` (status
+        `provisioning`, on the newest core, named after the imported site's
+        title unless `name` is given) with the dump's table prefix; its
+        `wp-content` is replaced with the archive's, the dump is imported,
+        `wp core update-db` runs, the source's `siteurl` and `home` URLs are
+        rewritten to the preview URL (`http` and `https` alike), and the
+        default plugin stack is applied. The previous host's drop-ins
+        (`object-cache.php`, `advanced-cache.php`, `db.php`) are replaced by
+        the platform's; its must-use plugins are kept and reported as
+        warnings in the job's log. The site keeps its own WordPress users,
+        so no admin credentials are generated. The source's `wp-config.php`
+        is never imported.
+
+        The response holds the new site's ID, which `GET
+        /api/v1/sites/{site_id}` finds once the job has created it, and the
+        job, whose result holds `site_id`, `source_url`, and
+        `table_prefix`. A job that fails after the site was created deletes
+        the site again, with its containers, database, and data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SiteImport"
+      responses:
+        "202":
+          description: Import job queued.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteImportAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/sites/{site_id}:
     parameters:
       - $ref: "#/components/parameters/SiteID"
@@ -3362,6 +3440,36 @@ components:
           $ref: "#/components/schemas/PHPVersion"
         resources:
           $ref: "#/components/schemas/ResourceLimitsUpdate"
+
+    SiteImport:
+      type: object
+      required: [client_group_id, archive_upload_id, dump_upload_id]
+      additionalProperties: false
+      properties:
+        client_group_id:
+          $ref: "#/components/schemas/ID"
+        archive_upload_id:
+          $ref: "#/components/schemas/ID"
+        dump_upload_id:
+          $ref: "#/components/schemas/ID"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Display name. Defaults to the imported site's title.
+        php_version:
+          $ref: "#/components/schemas/PHPVersion"
+        resources:
+          $ref: "#/components/schemas/ResourceLimitsUpdate"
+
+    SiteImportAccepted:
+      type: object
+      required: [site_id, job]
+      properties:
+        site_id:
+          $ref: "#/components/schemas/ID"
+        job:
+          $ref: "#/components/schemas/Job"
 
     SiteUpdate:
       type: object

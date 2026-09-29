@@ -1242,6 +1242,55 @@
           ]
         },
         {
+          "id": "810953d5-f830-54fb-8af2-a11888181c52",
+          "name": "Import site",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/import",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "import"
+              ]
+            },
+            "description": "Imports a site into `client_group_id` from a `wp-content` archive (`.tar.gz`, `.tar`, or `.zip`) and a SQL dump (`.sql` or `.sql.gz`), both sent first with **Uploads** (purpose `site_import`, same client group) and named here by `archive_upload_id` and `dump_upload_id`. The job checks both before it creates the site, so the site only exists once the job's `validate` step has passed. Saves the new site's ID to `site_id`. Optional fields: `name` (defaults to the imported site's title), `php_version`, `resources`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"client_group_id\": \"{{client_group_id}}\",\n  \"archive_upload_id\": \"{{archive_upload_id}}\",\n  \"dump_upload_id\": \"{{dump_upload_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "if (pm.response.code === 202) {",
+                  "    pm.environment.set(\"site_id\", pm.response.json().site_id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "id": "79c0c264-ea29-59d9-8c8a-4f038cd76dee",
           "name": "Get site",
           "request": {

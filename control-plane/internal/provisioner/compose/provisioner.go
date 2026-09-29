@@ -389,7 +389,7 @@ func (p *Provisioner) siteRender(ctx context.Context, cfg *provisioner.SiteConfi
 	return SiteRender{
 		Site:            cfg,
 		Images:          SiteImages{PHP: images.PHP, Nginx: images.Nginx},
-		WPConfig:        wpconfig.Params{DB: creds, Salts: salts, Redis: redis, SMTP: p.smtp},
+		WPConfig:        wpconfig.Params{DB: creds, Salts: salts, Redis: redis, SMTP: p.smtp, TablePrefix: cfg.TablePrefix},
 		Security:        p.security,
 		PlatformProject: p.platform,
 	}, nil

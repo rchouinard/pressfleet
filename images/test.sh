@@ -249,6 +249,9 @@ test_stack() {
 	check "phpredis built with igbinary" "${cexec[@]}" php -r 'exit(defined("Redis::SERIALIZER_IGBINARY") ? 0 : 1);'
 	check "wp core install" "${cexec[@]}" wp core install --url="$base" --title="PressFleet smoke test" \
 		--admin_user=admin --admin_password="$admin_password" --admin_email=admin@example.com --skip-email
+	# Site imports compare dumps against the manifest's dbVersion (#112).
+	check_eq "core database version matches the manifest" "$("$matrix" dbversion "$WP_VERSION")" \
+		"$("${cexec[@]}" wp option get db_version 2>&1)"
 
 	# --- Default plugins (#39) ------------------------------------------------
 	# The image bundles the versions shared/plugins.json pins, and they install

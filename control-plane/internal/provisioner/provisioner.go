@@ -86,6 +86,10 @@ type SiteConfig struct {
 	// WPSaltsSecretRef references the site's WordPress keys and salts, stored
 	// in the format of wpconfig.MarshalSalts.
 	WPSaltsSecretRef string
+	// TablePrefix is the WordPress table prefix of the site's database,
+	// which wp-config.php names; empty means WordPress's default, wp_. An
+	// imported site keeps its source's prefix (§5.7).
+	TablePrefix string
 	// RedisSecretRef references the site's object cache credentials, stored
 	// in the format of objectcache.MarshalCredentials. The driver renders
 	// them into the Redis Object Cache plugin's settings; empty leaves the
@@ -149,6 +153,10 @@ const MaxBasicAuthUsername = 64
 // cost, and 53 characters of salt and hash.
 var bcryptHash = regexp.MustCompile(`^\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}$`)
 
+// tablePrefix is what WordPress accepts as a table prefix
+// (wpdb::set_prefix).
+var tablePrefix = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+
 // Validate reports every problem with the config, or nil if it is usable.
 func (c *SiteConfig) Validate() error {
 	var errs []error
@@ -171,6 +179,9 @@ func (c *SiteConfig) Validate() error {
 	}
 	if err := c.Resources.Validate(); err != nil {
 		errs = append(errs, err)
+	}
+	if c.TablePrefix != "" && !tablePrefix.MatchString(c.TablePrefix) {
+		errs = append(errs, errors.New("TablePrefix may only contain letters, digits, and underscores"))
 	}
 	if c.PreviewAuth != nil {
 		if err := c.PreviewAuth.Validate(); err != nil {

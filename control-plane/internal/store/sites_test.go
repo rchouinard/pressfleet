@@ -82,6 +82,33 @@ func TestSites(t *testing.T) {
 		if _, err := sites.Get(ctx, id.New()); !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("Get missing: err = %v, want ErrNotFound", err)
 		}
+		if s.TablePrefix != store.DefaultTablePrefix {
+			t.Errorf("TablePrefix = %q, want the default", s.TablePrefix)
+		}
+
+		// An import picks the ID and keeps its dump's table prefix.
+		imported := newTestSite(group, "imported", 20004)
+		imported.ID, imported.TablePrefix = id.New(), "wpx7_"
+		want := imported.ID
+		if err := sites.Create(ctx, imported); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := sites.Get(ctx, want); err != nil || got.ID != want || got.TablePrefix != "wpx7_" {
+			t.Errorf("imported site = %+v, %v", got, err)
+		}
+		again := newTestSite(group, "imported-2", 20005)
+		again.ID = want
+		if err := sites.Create(ctx, again); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("duplicate ID: err = %v, want ErrConflict", err)
+		}
+		bad := newTestSite(group, "bad-id", 20006)
+		bad.ID = "not-an-id"
+		if err := sites.Create(ctx, bad); err == nil {
+			t.Error("Create with an invalid ID succeeded")
+		}
+		if ok, err := sites.Delete(ctx, want); err != nil || !ok {
+			t.Fatalf("Delete imported = %v, %v", ok, err)
+		}
 
 		for _, tt := range []struct {
 			slug, domain string

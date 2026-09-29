@@ -27,6 +27,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
+	"github.com/rchouinard/pressfleet/control-plane/internal/uploads"
 )
 
 const testPreviewBase = "preview.example.test"
@@ -56,6 +57,7 @@ var implementedSiteOps = map[string]bool{
 	"getSiteBackupSchedule":         true,
 	"setSiteBackupSchedule":         true,
 	"restoreSite":                   true,
+	"importSite":                    true,
 	"exportSiteDatabase":            true,
 	"downloadSiteDatabaseExport":    true,
 }
@@ -76,6 +78,7 @@ type siteEnv struct {
 	dbs     *sitedbtest.Fake
 	engine  *backuptest.Fake
 	backups *sitebackup.Service
+	uploads *uploads.Service
 	pool    *jobs.Pool
 }
 
@@ -102,10 +105,12 @@ func newSiteEnv(t *testing.T, db *store.DB, previewBase string) *siteEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.uploads = newUploadService(t, db)
 	e.svc, err = sites.New(sites.Options{
 		DB: db, Secrets: sec, Catalog: cat, PreviewBaseDomain: previewBase,
 		Provisioner: e.prov, Databases: e.dbs, ObjectCaches: objectcachetest.New(), Logger: storetest.Logger(),
 		DNSChecker: e.dns, Backups: e.backups, BackupEngine: e.engine,
+		Uploads: e.uploads, Tasks: e.prov, TmpDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)

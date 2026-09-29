@@ -311,6 +311,9 @@ func TestCreateSite(t *testing.T) {
 	if !strings.Contains(string(wpConfig), "'site_user'") || !strings.Contains(string(wpConfig), `db-$ecret\'pw`) {
 		t.Errorf("wp-config.php lacks the database credentials:\n%s", wpConfig)
 	}
+	if !strings.Contains(string(wpConfig), "$table_prefix = 'wp_';") {
+		t.Errorf("wp-config.php lacks the default table prefix:\n%s", wpConfig)
+	}
 	composeFile, err := os.ReadFile(filepath.Join(dir, compose.SiteComposeFile))
 	if err != nil {
 		t.Fatal(err)
@@ -324,6 +327,23 @@ func TestCreateSite(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantCommands(t, f.docker, upWait)
+}
+
+// TestImportedTablePrefix checks that an imported site's table prefix
+// (§5.7) reaches wp-config.php.
+func TestImportedTablePrefix(t *testing.T) {
+	f := newFixture(t)
+	f.cfg.TablePrefix = "wpx7_"
+	if _, err := f.prov.CreateSite(context.Background(), f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	wpConfig, err := os.ReadFile(filepath.Join(f.siteDir(t), compose.SiteWPConfigFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(wpConfig), "$table_prefix = 'wpx7_';") {
+		t.Errorf("wp-config.php lacks the imported table prefix:\n%s", wpConfig)
+	}
 }
 
 // TestObjectCacheSettings checks that a site's object cache credentials

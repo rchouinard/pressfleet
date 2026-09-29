@@ -222,6 +222,7 @@ func SiteConfig(site store.Site, aliases []string, dbSecretRef, cacheSecretRef s
 		RedisSecretRef:   cacheSecretRef,
 		UID:              site.UID,
 		WPSaltsSecretRef: site.WPSaltsSecretRef,
+		TablePrefix:      site.TablePrefix,
 		PreviewAuth:      previewAuth(site),
 		Maintenance:      site.Maintenance,
 	}

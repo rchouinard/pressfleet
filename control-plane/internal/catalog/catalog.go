@@ -111,6 +111,12 @@ type WordPressVersion struct {
 	// branch, as having known security issues: the branch no longer gets
 	// security releases.
 	Insecure bool
+	// DBVersion is the release's database schema version ($wp_db_version
+	// in wp-includes/version.php), which a database records in its
+	// db_version option. A site import reads it from a dump to tell
+	// whether a site image can run the database (§5.7). Zero means the
+	// manifest doesn't say.
+	DBVersion int
 }
 
 // Branch returns the release's major branch (see [Branch]).
@@ -159,6 +165,7 @@ type manifestWP struct {
 	SHA1      string `json:"sha1"`
 	Published string `json:"published"`
 	Insecure  bool   `json:"insecure"`
+	DBVersion int    `json:"dbVersion,omitempty"`
 }
 
 // Load parses the manifest embedded in the binary.
@@ -228,10 +235,13 @@ func Parse(data []byte) (*Catalog, error) {
 		if !sha1RE.MatchString(w.SHA1) {
 			return nil, fmt.Errorf("%w: WordPress %s: sha1 must be 40 lowercase hex digits", ErrInvalidManifest, w.Version)
 		}
+		if w.DBVersion < 0 {
+			return nil, fmt.Errorf("%w: WordPress %s: dbVersion must be positive", ErrInvalidManifest, w.Version)
+		}
 		if slices.ContainsFunc(c.wordpress, func(v WordPressVersion) bool { return v.Version == w.Version }) {
 			return nil, fmt.Errorf("%w: duplicate WordPress version %s", ErrInvalidManifest, w.Version)
 		}
-		v := WordPressVersion{Version: w.Version, SHA1: w.SHA1, Insecure: w.Insecure}
+		v := WordPressVersion{Version: w.Version, SHA1: w.SHA1, Insecure: w.Insecure, DBVersion: w.DBVersion}
 		// Each branch has one release in the matrix, its newest, which
 		// every site on the branch moves to (§5.5).
 		if slices.ContainsFunc(c.wordpress, func(o WordPressVersion) bool { return o.Branch() == v.Branch() }) {
