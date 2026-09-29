@@ -60,6 +60,7 @@ var implementedSiteOps = map[string]bool{
 	"importSite":                    true,
 	"exportSiteDatabase":            true,
 	"downloadSiteDatabaseExport":    true,
+	"deploySiteCode":                true,
 }
 
 func orEmpty(s *string) string {

@@ -303,4 +303,12 @@ type Provisioner interface {
 	// wherever the design calls for a cache purge (§5.2, §5.4, the cache
 	// purge API).
 	PurgeCache(ctx context.Context, siteID string) error
+	// ReloadCode makes the site's running PHP workers pick up the code now
+	// in wp-content, gracefully: requests in flight finish, and the site's
+	// containers aren't restarted. Without it, PHP's opcode cache keeps
+	// running cached copies of changed files for up to a minute
+	// (images/site-php), so a deployment would run old and new files side
+	// by side. A site that isn't running has nothing cached and succeeds.
+	// Returns ErrSiteNotFound if the site does not exist.
+	ReloadCode(ctx context.Context, siteID string) error
 }

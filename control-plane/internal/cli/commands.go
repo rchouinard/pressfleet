@@ -26,6 +26,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/dbexport"
+	"github.com/rchouinard/pressfleet/control-plane/internal/deploy"
 	"github.com/rchouinard/pressfleet/control-plane/internal/domains"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
@@ -271,6 +272,13 @@ func (a *app) serveCommand() *cobra.Command {
 			if a.cfg.PreviewBaseDomain == "" {
 				a.log.Warn("preview_base_domain is not set; site creation is refused until it is")
 			}
+			deploys, err := deploy.New(deploy.Options{
+				DB: db, Uploads: uploadSvc, Provisioner: prov, Tasks: prov, ObjectCaches: caches, Health: siteSvc, Layout: layout,
+				Logger: a.log.With("component", "deploy"),
+			})
+			if err != nil {
+				return err
+			}
 			handler, err := api.NewHandler(api.Options{
 				Logger:          a.log,
 				Readiness:       readiness,
@@ -281,6 +289,7 @@ func (a *app) serveCommand() *cobra.Command {
 				Backups:         backups,
 				Uploads:         uploadSvc,
 				DatabaseExports: dbExports,
+				Deployments:     deploys,
 				TrustedProxies:  proxies,
 				SecureCookies:   a.cfg.HTTP.SecureCookies == config.SecureCookiesAlways,
 			})
@@ -310,7 +319,7 @@ func (a *app) serveCommand() *cobra.Command {
 			if err := pool.Register(audit.CleanupHandler(db, a.cfg.Audit.Retention(), nil)); err != nil {
 				return err
 			}
-			for _, h := range slices.Concat(siteSvc.Handlers(), []jobs.Handler{backups.Handler(), uploadSvc.CleanupHandler()}, repoMaint.Handlers(), dbExports.Handlers()) {
+			for _, h := range slices.Concat(siteSvc.Handlers(), []jobs.Handler{backups.Handler(), uploadSvc.CleanupHandler()}, repoMaint.Handlers(), dbExports.Handlers(), []jobs.Handler{deploys.Handler()}) {
 				if err := pool.Register(h); err != nil {
 					return err
 				}

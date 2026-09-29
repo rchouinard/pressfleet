@@ -357,6 +357,27 @@ func (e SiteCoreDecidedBy) Valid() bool {
 	}
 }
 
+// Defines values for SiteDeploymentKind.
+const (
+	MuPlugin SiteDeploymentKind = "mu-plugin"
+	Plugin   SiteDeploymentKind = "plugin"
+	Theme    SiteDeploymentKind = "theme"
+)
+
+// Valid indicates whether the value is a known member of the SiteDeploymentKind enum.
+func (e SiteDeploymentKind) Valid() bool {
+	switch e {
+	case MuPlugin:
+		return true
+	case Plugin:
+		return true
+	case Theme:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SiteRuntimePhase.
 const (
 	SiteRuntimePhaseAbsent  SiteRuntimePhase = "absent"
@@ -1424,6 +1445,34 @@ type SiteCreate struct {
 	Resources *ResourceLimitsUpdate `json:"resources,omitempty"`
 }
 
+// SiteDeployment defines model for SiteDeployment.
+type SiteDeployment struct {
+	// Activate Activate the theme or plugin once it is in place (not for
+	// `mu-plugin`, which is always active). A rolled-back deployment
+	// switches back to what was active before.
+	Activate *bool `json:"activate,omitempty"`
+
+	// Kind Where the package goes: `theme` (`wp-content/themes`), `plugin`
+	// (`wp-content/plugins`), or `mu-plugin` (`wp-content/mu-plugins`).
+	Kind SiteDeploymentKind `json:"kind"`
+
+	// Name The target's directory name, which is also the theme's or
+	// plugin's slug for WP-CLI. An existing directory of that name is
+	// replaced.
+	//
+	//
+	// Examples: acme-theme
+	Name string `json:"name"`
+
+	// UploadID A complete upload of the package, a zip or tar.gz, started by
+	// the caller for this site (`purpose: site_deploy`).
+	UploadID ID `json:"upload_id"`
+}
+
+// SiteDeploymentKind Where the package goes: `theme` (`wp-content/themes`), `plugin`
+// (`wp-content/plugins`), or `mu-plugin` (`wp-content/mu-plugins`).
+type SiteDeploymentKind string
+
 // SiteGoLive defines model for SiteGoLive.
 type SiteGoLive struct {
 	// Aliases Domains that redirect to the primary domain, each with a
@@ -2028,6 +2077,9 @@ type SetSiteBackupScheduleJSONRequestBody = BackupScheduleUpdate
 
 // SetSiteCorePolicyJSONRequestBody defines body for SetSiteCorePolicy for application/json ContentType.
 type SetSiteCorePolicyJSONRequestBody = CorePolicyUpdate
+
+// DeploySiteCodeJSONRequestBody defines body for DeploySiteCode for application/json ContentType.
+type DeploySiteCodeJSONRequestBody = SiteDeployment
 
 // GoLiveSiteJSONRequestBody defines body for GoLiveSite for application/json ContentType.
 type GoLiveSiteJSONRequestBody = SiteGoLive
@@ -2827,6 +2879,104 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v1/sites/{site_id}/database/exports/{export_id}/download (the `DownloadSiteDatabaseExport` operationId).
 	DownloadSiteDatabaseExport(ctx context.Context, siteID SiteID, exportID ID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeploySiteCodeWithBody Deploy a theme or plugin package
+	//
+	// Queues a job that deploys a theme or plugin package into the site's
+	// `wp-content` (design doc §5.8), for CI pipelines and scripts using
+	// API tokens. Upload the package first, a zip or tar.gz, with
+	// `POST /api/v1/uploads` (`purpose: site_deploy`, this `site_id`), and
+	// pass its `upload_id`. The package goes to
+	// `wp-content/themes/<name>`, `wp-content/plugins/<name>`, or
+	// `wp-content/mu-plugins/<name>`; if all its files are in one
+	// top-level directory, as in theme and plugin zips, that directory is
+	// left out. WordPress only loads the top-level files of
+	// `mu-plugins`, so a must-use plugin deployed as a directory needs a
+	// loader file there.
+	//
+	// The job:
+	//
+	// 1. checks the package before anything touches the site: plain
+	//    files and directories only (no links or device files), no paths
+	//    outside the package, at most 100,000 entries and 2 GiB unpacked;
+	// 2. unpacks it as the site's user into a hidden directory next to
+	//    the target;
+	// 3. swaps it in with one atomic rename, keeping the previous version,
+	//    and reloads PHP so no cached copy of the previous files keeps
+	//    running: requests see either the old version or the new one,
+	//    never a half-written copy;
+	// 4. with `activate`, activates the theme or plugin with WP-CLI;
+	// 5. purges the object cache and the page cache;
+	// 6. checks the site's health: WordPress must load (WP-CLI), and the
+	//    home page must answer without a server error (`5xx`);
+	// 7. removes the previous version.
+	//
+	// If the health check or another step fails for good, the job rolls
+	// back: the previous version is swapped back (a first deployment is
+	// removed), a theme or plugin it activated is switched back, and the
+	// caches are purged again. The job then ends `failed` with the reason
+	// in its `error`. Its `result` holds `kind`, `name`, `path`, `files`,
+	// `bytes`, `replaced` (whether a previous version was replaced), and
+	// `activated`. The upload is removed when the job ends.
+	//
+	// The site must be `running` (`409` otherwise, as when another job
+	// works on it). An upload that doesn't exist, isn't the caller's, or
+	// was made for another site returns `422`; one that isn't complete,
+	// or that another job uses, `409`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/deploy (the `DeploySiteCode` operationId).
+	DeploySiteCodeWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeploySiteCode Deploy a theme or plugin package
+	//
+	// Queues a job that deploys a theme or plugin package into the site's
+	// `wp-content` (design doc §5.8), for CI pipelines and scripts using
+	// API tokens. Upload the package first, a zip or tar.gz, with
+	// `POST /api/v1/uploads` (`purpose: site_deploy`, this `site_id`), and
+	// pass its `upload_id`. The package goes to
+	// `wp-content/themes/<name>`, `wp-content/plugins/<name>`, or
+	// `wp-content/mu-plugins/<name>`; if all its files are in one
+	// top-level directory, as in theme and plugin zips, that directory is
+	// left out. WordPress only loads the top-level files of
+	// `mu-plugins`, so a must-use plugin deployed as a directory needs a
+	// loader file there.
+	//
+	// The job:
+	//
+	// 1. checks the package before anything touches the site: plain
+	//    files and directories only (no links or device files), no paths
+	//    outside the package, at most 100,000 entries and 2 GiB unpacked;
+	// 2. unpacks it as the site's user into a hidden directory next to
+	//    the target;
+	// 3. swaps it in with one atomic rename, keeping the previous version,
+	//    and reloads PHP so no cached copy of the previous files keeps
+	//    running: requests see either the old version or the new one,
+	//    never a half-written copy;
+	// 4. with `activate`, activates the theme or plugin with WP-CLI;
+	// 5. purges the object cache and the page cache;
+	// 6. checks the site's health: WordPress must load (WP-CLI), and the
+	//    home page must answer without a server error (`5xx`);
+	// 7. removes the previous version.
+	//
+	// If the health check or another step fails for good, the job rolls
+	// back: the previous version is swapped back (a first deployment is
+	// removed), a theme or plugin it activated is switched back, and the
+	// caches are purged again. The job then ends `failed` with the reason
+	// in its `error`. Its `result` holds `kind`, `name`, `path`, `files`,
+	// `bytes`, `replaced` (whether a previous version was replaced), and
+	// `activated`. The upload is removed when the job ends.
+	//
+	// The site must be `running` (`409` otherwise, as when another job
+	// works on it). An upload that doesn't exist, isn't the caller's, or
+	// was made for another site returns `422`; one that isn't complete,
+	// or that another job uses, `409`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/deploy (the `DeploySiteCode` operationId).
+	DeploySiteCode(ctx context.Context, siteID SiteID, body DeploySiteCodeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GoLiveSiteWithBody Switch a site to its primary domain
 	//
@@ -4561,6 +4711,124 @@ func (c *Client) ExportSiteDatabase(ctx context.Context, siteID SiteID, reqEdito
 // Corresponds with GET /api/v1/sites/{site_id}/database/exports/{export_id}/download (the `DownloadSiteDatabaseExport` operationId).
 func (c *Client) DownloadSiteDatabaseExport(ctx context.Context, siteID SiteID, exportID ID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDownloadSiteDatabaseExportRequest(c.Server, siteID, exportID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeploySiteCodeWithBody Deploy a theme or plugin package
+//
+// Queues a job that deploys a theme or plugin package into the site's
+// `wp-content` (design doc §5.8), for CI pipelines and scripts using
+// API tokens. Upload the package first, a zip or tar.gz, with
+// `POST /api/v1/uploads` (`purpose: site_deploy`, this `site_id`), and
+// pass its `upload_id`. The package goes to
+// `wp-content/themes/<name>`, `wp-content/plugins/<name>`, or
+// `wp-content/mu-plugins/<name>`; if all its files are in one
+// top-level directory, as in theme and plugin zips, that directory is
+// left out. WordPress only loads the top-level files of
+// `mu-plugins`, so a must-use plugin deployed as a directory needs a
+// loader file there.
+//
+// The job:
+//
+//  1. checks the package before anything touches the site: plain
+//     files and directories only (no links or device files), no paths
+//     outside the package, at most 100,000 entries and 2 GiB unpacked;
+//  2. unpacks it as the site's user into a hidden directory next to
+//     the target;
+//  3. swaps it in with one atomic rename, keeping the previous version,
+//     and reloads PHP so no cached copy of the previous files keeps
+//     running: requests see either the old version or the new one,
+//     never a half-written copy;
+//  4. with `activate`, activates the theme or plugin with WP-CLI;
+//  5. purges the object cache and the page cache;
+//  6. checks the site's health: WordPress must load (WP-CLI), and the
+//     home page must answer without a server error (`5xx`);
+//  7. removes the previous version.
+//
+// If the health check or another step fails for good, the job rolls
+// back: the previous version is swapped back (a first deployment is
+// removed), a theme or plugin it activated is switched back, and the
+// caches are purged again. The job then ends `failed` with the reason
+// in its `error`. Its `result` holds `kind`, `name`, `path`, `files`,
+// `bytes`, `replaced` (whether a previous version was replaced), and
+// `activated`. The upload is removed when the job ends.
+//
+// The site must be `running` (`409` otherwise, as when another job
+// works on it). An upload that doesn't exist, isn't the caller's, or
+// was made for another site returns `422`; one that isn't complete,
+// or that another job uses, `409`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/deploy (the `DeploySiteCode` operationId).
+func (c *Client) DeploySiteCodeWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeploySiteCodeRequestWithBody(c.Server, siteID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeploySiteCode Deploy a theme or plugin package
+//
+// Queues a job that deploys a theme or plugin package into the site's
+// `wp-content` (design doc §5.8), for CI pipelines and scripts using
+// API tokens. Upload the package first, a zip or tar.gz, with
+// `POST /api/v1/uploads` (`purpose: site_deploy`, this `site_id`), and
+// pass its `upload_id`. The package goes to
+// `wp-content/themes/<name>`, `wp-content/plugins/<name>`, or
+// `wp-content/mu-plugins/<name>`; if all its files are in one
+// top-level directory, as in theme and plugin zips, that directory is
+// left out. WordPress only loads the top-level files of
+// `mu-plugins`, so a must-use plugin deployed as a directory needs a
+// loader file there.
+//
+// The job:
+//
+//  1. checks the package before anything touches the site: plain
+//     files and directories only (no links or device files), no paths
+//     outside the package, at most 100,000 entries and 2 GiB unpacked;
+//  2. unpacks it as the site's user into a hidden directory next to
+//     the target;
+//  3. swaps it in with one atomic rename, keeping the previous version,
+//     and reloads PHP so no cached copy of the previous files keeps
+//     running: requests see either the old version or the new one,
+//     never a half-written copy;
+//  4. with `activate`, activates the theme or plugin with WP-CLI;
+//  5. purges the object cache and the page cache;
+//  6. checks the site's health: WordPress must load (WP-CLI), and the
+//     home page must answer without a server error (`5xx`);
+//  7. removes the previous version.
+//
+// If the health check or another step fails for good, the job rolls
+// back: the previous version is swapped back (a first deployment is
+// removed), a theme or plugin it activated is switched back, and the
+// caches are purged again. The job then ends `failed` with the reason
+// in its `error`. Its `result` holds `kind`, `name`, `path`, `files`,
+// `bytes`, `replaced` (whether a previous version was replaced), and
+// `activated`. The upload is removed when the job ends.
+//
+// The site must be `running` (`409` otherwise, as when another job
+// works on it). An upload that doesn't exist, isn't the caller's, or
+// was made for another site returns `422`; one that isn't complete,
+// or that another job uses, `409`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/deploy (the `DeploySiteCode` operationId).
+func (c *Client) DeploySiteCode(ctx context.Context, siteID SiteID, body DeploySiteCodeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeploySiteCodeRequest(c.Server, siteID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -7149,6 +7417,53 @@ func NewDownloadSiteDatabaseExportRequest(server string, siteID SiteID, exportID
 	return req, nil
 }
 
+// NewDeploySiteCodeRequest calls the generic DeploySiteCode builder with application/json body
+func NewDeploySiteCodeRequest(server string, siteID SiteID, body DeploySiteCodeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDeploySiteCodeRequestWithBody(server, siteID, "application/json", bodyReader)
+}
+
+// NewDeploySiteCodeRequestWithBody constructs an http.Request for the DeploySiteCode method, with any body, and a specified content type
+func NewDeploySiteCodeRequestWithBody(server string, siteID SiteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/deploy", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGoLiveSiteRequest calls the generic GoLiveSite builder with application/json body
 func NewGoLiveSiteRequest(server string, siteID SiteID, body GoLiveSiteJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -8985,6 +9300,104 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/v1/sites/{site_id}/database/exports/{export_id}/download (the `DownloadSiteDatabaseExport` operationId).
 	DownloadSiteDatabaseExportWithResponse(ctx context.Context, siteID SiteID, exportID ID, reqEditors ...RequestEditorFn) (*DownloadSiteDatabaseExportResponse, error)
+
+	// DeploySiteCodeWithBodyWithResponse Deploy a theme or plugin package
+	//
+	// Queues a job that deploys a theme or plugin package into the site's
+	// `wp-content` (design doc §5.8), for CI pipelines and scripts using
+	// API tokens. Upload the package first, a zip or tar.gz, with
+	// `POST /api/v1/uploads` (`purpose: site_deploy`, this `site_id`), and
+	// pass its `upload_id`. The package goes to
+	// `wp-content/themes/<name>`, `wp-content/plugins/<name>`, or
+	// `wp-content/mu-plugins/<name>`; if all its files are in one
+	// top-level directory, as in theme and plugin zips, that directory is
+	// left out. WordPress only loads the top-level files of
+	// `mu-plugins`, so a must-use plugin deployed as a directory needs a
+	// loader file there.
+	//
+	// The job:
+	//
+	// 1. checks the package before anything touches the site: plain
+	//    files and directories only (no links or device files), no paths
+	//    outside the package, at most 100,000 entries and 2 GiB unpacked;
+	// 2. unpacks it as the site's user into a hidden directory next to
+	//    the target;
+	// 3. swaps it in with one atomic rename, keeping the previous version,
+	//    and reloads PHP so no cached copy of the previous files keeps
+	//    running: requests see either the old version or the new one,
+	//    never a half-written copy;
+	// 4. with `activate`, activates the theme or plugin with WP-CLI;
+	// 5. purges the object cache and the page cache;
+	// 6. checks the site's health: WordPress must load (WP-CLI), and the
+	//    home page must answer without a server error (`5xx`);
+	// 7. removes the previous version.
+	//
+	// If the health check or another step fails for good, the job rolls
+	// back: the previous version is swapped back (a first deployment is
+	// removed), a theme or plugin it activated is switched back, and the
+	// caches are purged again. The job then ends `failed` with the reason
+	// in its `error`. Its `result` holds `kind`, `name`, `path`, `files`,
+	// `bytes`, `replaced` (whether a previous version was replaced), and
+	// `activated`. The upload is removed when the job ends.
+	//
+	// The site must be `running` (`409` otherwise, as when another job
+	// works on it). An upload that doesn't exist, isn't the caller's, or
+	// was made for another site returns `422`; one that isn't complete,
+	// or that another job uses, `409`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/deploy (the `DeploySiteCode` operationId).
+	DeploySiteCodeWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeploySiteCodeResponse, error)
+
+	// DeploySiteCodeWithResponse Deploy a theme or plugin package
+	//
+	// Queues a job that deploys a theme or plugin package into the site's
+	// `wp-content` (design doc §5.8), for CI pipelines and scripts using
+	// API tokens. Upload the package first, a zip or tar.gz, with
+	// `POST /api/v1/uploads` (`purpose: site_deploy`, this `site_id`), and
+	// pass its `upload_id`. The package goes to
+	// `wp-content/themes/<name>`, `wp-content/plugins/<name>`, or
+	// `wp-content/mu-plugins/<name>`; if all its files are in one
+	// top-level directory, as in theme and plugin zips, that directory is
+	// left out. WordPress only loads the top-level files of
+	// `mu-plugins`, so a must-use plugin deployed as a directory needs a
+	// loader file there.
+	//
+	// The job:
+	//
+	// 1. checks the package before anything touches the site: plain
+	//    files and directories only (no links or device files), no paths
+	//    outside the package, at most 100,000 entries and 2 GiB unpacked;
+	// 2. unpacks it as the site's user into a hidden directory next to
+	//    the target;
+	// 3. swaps it in with one atomic rename, keeping the previous version,
+	//    and reloads PHP so no cached copy of the previous files keeps
+	//    running: requests see either the old version or the new one,
+	//    never a half-written copy;
+	// 4. with `activate`, activates the theme or plugin with WP-CLI;
+	// 5. purges the object cache and the page cache;
+	// 6. checks the site's health: WordPress must load (WP-CLI), and the
+	//    home page must answer without a server error (`5xx`);
+	// 7. removes the previous version.
+	//
+	// If the health check or another step fails for good, the job rolls
+	// back: the previous version is swapped back (a first deployment is
+	// removed), a theme or plugin it activated is switched back, and the
+	// caches are purged again. The job then ends `failed` with the reason
+	// in its `error`. Its `result` holds `kind`, `name`, `path`, `files`,
+	// `bytes`, `replaced` (whether a previous version was replaced), and
+	// `activated`. The upload is removed when the job ends.
+	//
+	// The site must be `running` (`409` otherwise, as when another job
+	// works on it). An upload that doesn't exist, isn't the caller's, or
+	// was made for another site returns `422`; one that isn't complete,
+	// or that another job uses, `409`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/deploy (the `DeploySiteCode` operationId).
+	DeploySiteCodeWithResponse(ctx context.Context, siteID SiteID, body DeploySiteCodeJSONRequestBody, reqEditors ...RequestEditorFn) (*DeploySiteCodeResponse, error)
 
 	// GoLiveSiteWithBodyWithResponse Switch a site to its primary domain
 	//
@@ -12423,6 +12836,103 @@ func (r DownloadSiteDatabaseExportResponse) ContentType() string {
 	return ""
 }
 
+// DeploySiteCodeResponse202Headers the declared response headers of an HTTP 202 response for DeploySiteCode
+type DeploySiteCodeResponse202Headers struct {
+	Location *string
+}
+
+type DeploySiteCodeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *JobAccepted
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *DeploySiteCodeResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r DeploySiteCodeResponse) GetJSON202() *JobAccepted {
+	return r.JSON202
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r DeploySiteCodeResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DeploySiteCodeResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DeploySiteCodeResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DeploySiteCodeResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r DeploySiteCodeResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r DeploySiteCodeResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeploySiteCodeResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DeploySiteCodeResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeploySiteCodeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeploySiteCodeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeploySiteCodeResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GoLiveSiteResponse202Headers the declared response headers of an HTTP 202 response for GoLiveSite
 type GoLiveSiteResponse202Headers struct {
 	Location *string
@@ -15344,6 +15854,116 @@ func (c *ClientWithResponses) DownloadSiteDatabaseExportWithResponse(ctx context
 		return nil, err
 	}
 	return ParseDownloadSiteDatabaseExportResponse(rsp)
+}
+
+// DeploySiteCodeWithBodyWithResponse Deploy a theme or plugin package
+//
+// Queues a job that deploys a theme or plugin package into the site's
+// `wp-content` (design doc §5.8), for CI pipelines and scripts using
+// API tokens. Upload the package first, a zip or tar.gz, with
+// `POST /api/v1/uploads` (`purpose: site_deploy`, this `site_id`), and
+// pass its `upload_id`. The package goes to
+// `wp-content/themes/<name>`, `wp-content/plugins/<name>`, or
+// `wp-content/mu-plugins/<name>`; if all its files are in one
+// top-level directory, as in theme and plugin zips, that directory is
+// left out. WordPress only loads the top-level files of
+// `mu-plugins`, so a must-use plugin deployed as a directory needs a
+// loader file there.
+//
+// The job:
+//
+//  1. checks the package before anything touches the site: plain
+//     files and directories only (no links or device files), no paths
+//     outside the package, at most 100,000 entries and 2 GiB unpacked;
+//  2. unpacks it as the site's user into a hidden directory next to
+//     the target;
+//  3. swaps it in with one atomic rename, keeping the previous version,
+//     and reloads PHP so no cached copy of the previous files keeps
+//     running: requests see either the old version or the new one,
+//     never a half-written copy;
+//  4. with `activate`, activates the theme or plugin with WP-CLI;
+//  5. purges the object cache and the page cache;
+//  6. checks the site's health: WordPress must load (WP-CLI), and the
+//     home page must answer without a server error (`5xx`);
+//  7. removes the previous version.
+//
+// If the health check or another step fails for good, the job rolls
+// back: the previous version is swapped back (a first deployment is
+// removed), a theme or plugin it activated is switched back, and the
+// caches are purged again. The job then ends `failed` with the reason
+// in its `error`. Its `result` holds `kind`, `name`, `path`, `files`,
+// `bytes`, `replaced` (whether a previous version was replaced), and
+// `activated`. The upload is removed when the job ends.
+//
+// The site must be `running` (`409` otherwise, as when another job
+// works on it). An upload that doesn't exist, isn't the caller's, or
+// was made for another site returns `422`; one that isn't complete,
+// or that another job uses, `409`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/deploy (the `DeploySiteCode` operationId).
+func (c *ClientWithResponses) DeploySiteCodeWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeploySiteCodeResponse, error) {
+	rsp, err := c.DeploySiteCodeWithBody(ctx, siteID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeploySiteCodeResponse(rsp)
+}
+
+// DeploySiteCodeWithResponse Deploy a theme or plugin package
+//
+// Queues a job that deploys a theme or plugin package into the site's
+// `wp-content` (design doc §5.8), for CI pipelines and scripts using
+// API tokens. Upload the package first, a zip or tar.gz, with
+// `POST /api/v1/uploads` (`purpose: site_deploy`, this `site_id`), and
+// pass its `upload_id`. The package goes to
+// `wp-content/themes/<name>`, `wp-content/plugins/<name>`, or
+// `wp-content/mu-plugins/<name>`; if all its files are in one
+// top-level directory, as in theme and plugin zips, that directory is
+// left out. WordPress only loads the top-level files of
+// `mu-plugins`, so a must-use plugin deployed as a directory needs a
+// loader file there.
+//
+// The job:
+//
+//  1. checks the package before anything touches the site: plain
+//     files and directories only (no links or device files), no paths
+//     outside the package, at most 100,000 entries and 2 GiB unpacked;
+//  2. unpacks it as the site's user into a hidden directory next to
+//     the target;
+//  3. swaps it in with one atomic rename, keeping the previous version,
+//     and reloads PHP so no cached copy of the previous files keeps
+//     running: requests see either the old version or the new one,
+//     never a half-written copy;
+//  4. with `activate`, activates the theme or plugin with WP-CLI;
+//  5. purges the object cache and the page cache;
+//  6. checks the site's health: WordPress must load (WP-CLI), and the
+//     home page must answer without a server error (`5xx`);
+//  7. removes the previous version.
+//
+// If the health check or another step fails for good, the job rolls
+// back: the previous version is swapped back (a first deployment is
+// removed), a theme or plugin it activated is switched back, and the
+// caches are purged again. The job then ends `failed` with the reason
+// in its `error`. Its `result` holds `kind`, `name`, `path`, `files`,
+// `bytes`, `replaced` (whether a previous version was replaced), and
+// `activated`. The upload is removed when the job ends.
+//
+// The site must be `running` (`409` otherwise, as when another job
+// works on it). An upload that doesn't exist, isn't the caller's, or
+// was made for another site returns `422`; one that isn't complete,
+// or that another job uses, `409`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/deploy (the `DeploySiteCode` operationId).
+func (c *ClientWithResponses) DeploySiteCodeWithResponse(ctx context.Context, siteID SiteID, body DeploySiteCodeJSONRequestBody, reqEditors ...RequestEditorFn) (*DeploySiteCodeResponse, error) {
+	rsp, err := c.DeploySiteCode(ctx, siteID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeploySiteCodeResponse(rsp)
 }
 
 // GoLiveSiteWithBodyWithResponse Switch a site to its primary domain
@@ -18531,6 +19151,94 @@ func ParseDownloadSiteDatabaseExportResponse(rsp *http.Response) (*DownloadSiteD
 			headers.ContentDisposition = &value
 		}
 		response.Headers200 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeploySiteCodeResponse parses an HTTP response from a DeploySiteCodeWithResponse call
+func ParseDeploySiteCodeResponse(rsp *http.Response) (*DeploySiteCodeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeploySiteCodeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest JobAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers DeploySiteCodeResponse202Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
 	}
 
 	return response, nil

@@ -103,6 +103,8 @@ tags:
     description: Site backups, kept in the site's client group backup repository.
   - name: uploads
     description: Resumable uploads of large files for site imports and code deployments.
+  - name: deployments
+    description: Theme and plugin deployments for CI pipelines.
   - name: database
     description: Access to a site's database without its password (exports).
   - name: jobs
@@ -1858,6 +1860,86 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/sites/{site_id}/deploy:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    post:
+      operationId: deploySiteCode
+      tags: [deployments]
+      summary: Deploy a theme or plugin package
+      description: |
+        Queues a job that deploys a theme or plugin package into the site's
+        `wp-content` (design doc §5.8), for CI pipelines and scripts using
+        API tokens. Upload the package first, a zip or tar.gz, with
+        `POST /api/v1/uploads` (`purpose: site_deploy`, this `site_id`), and
+        pass its `upload_id`. The package goes to
+        `wp-content/themes/<name>`, `wp-content/plugins/<name>`, or
+        `wp-content/mu-plugins/<name>`; if all its files are in one
+        top-level directory, as in theme and plugin zips, that directory is
+        left out. WordPress only loads the top-level files of
+        `mu-plugins`, so a must-use plugin deployed as a directory needs a
+        loader file there.
+
+        The job:
+
+        1. checks the package before anything touches the site: plain
+           files and directories only (no links or device files), no paths
+           outside the package, at most 100,000 entries and 2 GiB unpacked;
+        2. unpacks it as the site's user into a hidden directory next to
+           the target;
+        3. swaps it in with one atomic rename, keeping the previous version,
+           and reloads PHP so no cached copy of the previous files keeps
+           running: requests see either the old version or the new one,
+           never a half-written copy;
+        4. with `activate`, activates the theme or plugin with WP-CLI;
+        5. purges the object cache and the page cache;
+        6. checks the site's health: WordPress must load (WP-CLI), and the
+           home page must answer without a server error (`5xx`);
+        7. removes the previous version.
+
+        If the health check or another step fails for good, the job rolls
+        back: the previous version is swapped back (a first deployment is
+        removed), a theme or plugin it activated is switched back, and the
+        caches are purged again. The job then ends `failed` with the reason
+        in its `error`. Its `result` holds `kind`, `name`, `path`, `files`,
+        `bytes`, `replaced` (whether a previous version was replaced), and
+        `activated`. The upload is removed when the job ends.
+
+        The site must be `running` (`409` otherwise, as when another job
+        works on it). An upload that doesn't exist, isn't the caller's, or
+        was made for another site returns `422`; one that isn't complete,
+        or that another job uses, `409`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SiteDeployment"
+      responses:
+        "202":
+          description: Deployment job queued.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/sites/{site_id}/database/export:
     parameters:
       - $ref: "#/components/parameters/SiteID"
@@ -3016,6 +3098,41 @@ components:
           $ref: "#/components/schemas/BackupIntervalHours"
         hour:
           $ref: "#/components/schemas/BackupHour"
+
+    SiteDeployment:
+      type: object
+      required: [upload_id, kind, name]
+      additionalProperties: false
+      properties:
+        upload_id:
+          description: |
+            A complete upload of the package, a zip or tar.gz, started by
+            the caller for this site (`purpose: site_deploy`).
+          allOf:
+            - $ref: "#/components/schemas/ID"
+        kind:
+          type: string
+          description: |
+            Where the package goes: `theme` (`wp-content/themes`), `plugin`
+            (`wp-content/plugins`), or `mu-plugin` (`wp-content/mu-plugins`).
+          enum: [theme, plugin, mu-plugin]
+        name:
+          type: string
+          description: |
+            The target's directory name, which is also the theme's or
+            plugin's slug for WP-CLI. An existing directory of that name is
+            replaced.
+          minLength: 1
+          maxLength: 100
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+          examples: ["acme-theme"]
+        activate:
+          type: boolean
+          default: false
+          description: |
+            Activate the theme or plugin once it is in place (not for
+            `mu-plugin`, which is always active). A rolled-back deployment
+            switches back to what was active before.
 
     SiteRestore:
       type: object

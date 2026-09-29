@@ -140,6 +140,7 @@ var sampleBodies = map[string]string{
 	"setSiteCorePolicy":        `{"hold":true}`,
 	"setClientGroupCorePolicy": `{"hold":true}`,
 	"importSite":               `{"client_group_id":"abc123","archive_upload_id":"abc124","dump_upload_id":"abc125"}`,
+	"deploySiteCode":           `{"upload_id":"01j9zq3v6t8k4m2n5p7r9s1x3y","kind":"theme","name":"acme"}`,
 	"createUpload":             `{"purpose":"site_import","client_group_id":"abc123","size_bytes":10}`,
 	"appendUploadChunk":        `0123456789`,
 	"completeUpload":           `{}`,
@@ -211,8 +212,9 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 	fa := &fakeAuth{principal: &auth.Principal{UserID: u.ID, Email: u.Email, Role: u.Role, Method: auth.MethodSession, SessionID: "none"}}
 	db := storetest.Open(t, store.SQLite)
 	env := newSiteEnv(t, db, testPreviewBase)
-	h := newHandler(t, api.Options{Authenticator: fa, Auth: svc, DB: db, Sites: env.svc, Backups: env.backups, Uploads: newUploadService(t, db),
-		DatabaseExports: newDatabaseExports(t, db, env)})
+	up := newUploadService(t, db)
+	h := newHandler(t, api.Options{Authenticator: fa, Auth: svc, DB: db, Sites: env.svc, Backups: env.backups, Uploads: up,
+		DatabaseExports: newDatabaseExports(t, db, env), Deployments: newDeployments(t, db, env, up)})
 	for _, op := range ops {
 		t.Run(op.ID, func(t *testing.T) {
 			req := sampleRequest(op, false)

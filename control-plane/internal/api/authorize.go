@@ -64,6 +64,8 @@ var operationActions = map[string]authz.Action{
 	"setSiteBackupSchedule": authz.UpdateSite,
 	"restoreSite":           authz.RestoreBackup,
 
+	"deploySiteCode": authz.DeployCode,
+
 	"exportSiteDatabase":         authz.ExportDatabase,
 	"downloadSiteDatabaseExport": authz.DownloadDatabaseExport,
 	"getSiteCore":                authz.ViewSites,

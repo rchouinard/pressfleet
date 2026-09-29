@@ -52,7 +52,7 @@ Notes:
 
 - **No `user`/`group` in the pool.** The container is started as the site UID, and the upstream `www.conf`/`docker.conf` pools are removed.
 - **`open_basedir`** (FPM only) is `/var/www/wordpress:/opt/pressfleet/mu-plugins:/var/cache/pressfleet/fastcgi:/tmp`. `upload_tmp_dir` and `sys_temp_dir` are `/tmp`. It is not applied to WP-CLI: the platform runs WP-CLI itself, and restricting it would break the phar.
-- **OPcache** is tuned for code that does not change under it: `validate_timestamps=1` with a 60 s `revalidate_freq`, 64 MiB, 10,000 files, JIT disabled. Core and mu-plugins never change during a container's life; WordPress invalidates the files it writes during plugin and theme updates. Restores that replace `wp-content` should restart the php container.
+- **OPcache** is tuned for code that does not change under it: `validate_timestamps=1` with a 60 s `revalidate_freq`, 64 MiB, 10,000 files, JIT disabled. Core and mu-plugins never change during a container's life; WordPress invalidates the files it writes during plugin and theme updates. Restores that replace `wp-content` should restart the php container; code deployments reload PHP-FPM instead (`SIGUSR2` to the container's main process), which empties the cache while `process_control_timeout` (10 s, in `php-fpm.conf`) lets requests in flight finish.
 - **Logs:** FPM errors, PHP errors (`log_errors`, `display_errors=Off`), and the slow log go to stderr.
 
 ## Platform must-use plugin

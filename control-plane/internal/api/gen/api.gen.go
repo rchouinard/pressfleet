@@ -358,6 +358,27 @@ func (e SiteCoreDecidedBy) Valid() bool {
 	}
 }
 
+// Defines values for SiteDeploymentKind.
+const (
+	MuPlugin SiteDeploymentKind = "mu-plugin"
+	Plugin   SiteDeploymentKind = "plugin"
+	Theme    SiteDeploymentKind = "theme"
+)
+
+// Valid indicates whether the value is a known member of the SiteDeploymentKind enum.
+func (e SiteDeploymentKind) Valid() bool {
+	switch e {
+	case MuPlugin:
+		return true
+	case Plugin:
+		return true
+	case Theme:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SiteRuntimePhase.
 const (
 	SiteRuntimePhaseAbsent  SiteRuntimePhase = "absent"
@@ -1425,6 +1446,34 @@ type SiteCreate struct {
 	Resources *ResourceLimitsUpdate `json:"resources,omitempty"`
 }
 
+// SiteDeployment defines model for SiteDeployment.
+type SiteDeployment struct {
+	// Activate Activate the theme or plugin once it is in place (not for
+	// `mu-plugin`, which is always active). A rolled-back deployment
+	// switches back to what was active before.
+	Activate *bool `json:"activate,omitempty"`
+
+	// Kind Where the package goes: `theme` (`wp-content/themes`), `plugin`
+	// (`wp-content/plugins`), or `mu-plugin` (`wp-content/mu-plugins`).
+	Kind SiteDeploymentKind `json:"kind"`
+
+	// Name The target's directory name, which is also the theme's or
+	// plugin's slug for WP-CLI. An existing directory of that name is
+	// replaced.
+	//
+	//
+	// Examples: acme-theme
+	Name string `json:"name"`
+
+	// UploadID A complete upload of the package, a zip or tar.gz, started by
+	// the caller for this site (`purpose: site_deploy`).
+	UploadID ID `json:"upload_id"`
+}
+
+// SiteDeploymentKind Where the package goes: `theme` (`wp-content/themes`), `plugin`
+// (`wp-content/plugins`), or `mu-plugin` (`wp-content/mu-plugins`).
+type SiteDeploymentKind string
+
 // SiteGoLive defines model for SiteGoLive.
 type SiteGoLive struct {
 	// Aliases Domains that redirect to the primary domain, each with a
@@ -2030,6 +2079,9 @@ type SetSiteBackupScheduleJSONRequestBody = BackupScheduleUpdate
 // SetSiteCorePolicyJSONRequestBody defines body for SetSiteCorePolicy for application/json ContentType.
 type SetSiteCorePolicyJSONRequestBody = CorePolicyUpdate
 
+// DeploySiteCodeJSONRequestBody defines body for DeploySiteCode for application/json ContentType.
+type DeploySiteCodeJSONRequestBody = SiteDeployment
+
 // GoLiveSiteJSONRequestBody defines body for GoLiveSite for application/json ContentType.
 type GoLiveSiteJSONRequestBody = SiteGoLive
 
@@ -2170,6 +2222,9 @@ type ServerInterface interface {
 	// DownloadSiteDatabaseExport Download a database export
 	// (GET /api/v1/sites/{site_id}/database/exports/{export_id}/download)
 	DownloadSiteDatabaseExport(w http.ResponseWriter, r *http.Request, siteID SiteID, exportID ID)
+	// DeploySiteCode Deploy a theme or plugin package
+	// (POST /api/v1/sites/{site_id}/deploy)
+	DeploySiteCode(w http.ResponseWriter, r *http.Request, siteID SiteID)
 	// GoLiveSite Switch a site to its primary domain
 	// (POST /api/v1/sites/{site_id}/go-live)
 	GoLiveSite(w http.ResponseWriter, r *http.Request, siteID SiteID)
@@ -3389,6 +3444,32 @@ func (siw *ServerInterfaceWrapper) DownloadSiteDatabaseExport(w http.ResponseWri
 	handler.ServeHTTP(w, r)
 }
 
+// DeploySiteCode operation middleware
+func (siw *ServerInterfaceWrapper) DeploySiteCode(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeploySiteCode(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GoLiveSite operation middleware
 func (siw *ServerInterfaceWrapper) GoLiveSite(w http.ResponseWriter, r *http.Request) {
 
@@ -4229,6 +4310,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/uploads/{upload_id}", wrapper.GetUpload)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/v1/uploads/{upload_id}", wrapper.AppendUploadChunk)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/uploads/{upload_id}/complete", wrapper.CompleteUpload)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/deploy", wrapper.DeploySiteCode)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/database/export", wrapper.ExportSiteDatabase)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/database/exports/{export_id}/download", wrapper.DownloadSiteDatabaseExport)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/core", wrapper.GetSiteCore)
@@ -8129,6 +8211,152 @@ func (response DownloadSiteDatabaseExportdefaultApplicationProblemPlusJSONRespon
 	return err
 }
 
+type DeploySiteCodeRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+	Body   *DeploySiteCodeJSONRequestBody
+}
+
+type DeploySiteCodeResponseObject interface {
+	VisitDeploySiteCodeResponse(w http.ResponseWriter) error
+}
+
+type DeploySiteCode202ResponseHeaders struct {
+	Location *string
+}
+
+type DeploySiteCode202JSONResponse struct {
+	Body    JobAccepted
+	Headers DeploySiteCode202ResponseHeaders
+}
+
+func (response DeploySiteCode202JSONResponse) VisitDeploySiteCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeploySiteCode400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response DeploySiteCode400ApplicationProblemPlusJSONResponse) VisitDeploySiteCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeploySiteCode401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response DeploySiteCode401ApplicationProblemPlusJSONResponse) VisitDeploySiteCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeploySiteCode403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response DeploySiteCode403ApplicationProblemPlusJSONResponse) VisitDeploySiteCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeploySiteCode404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response DeploySiteCode404ApplicationProblemPlusJSONResponse) VisitDeploySiteCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeploySiteCode409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response DeploySiteCode409ApplicationProblemPlusJSONResponse) VisitDeploySiteCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeploySiteCode422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response DeploySiteCode422ApplicationProblemPlusJSONResponse) VisitDeploySiteCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeploySiteCodedefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response DeploySiteCodedefaultApplicationProblemPlusJSONResponse) VisitDeploySiteCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GoLiveSiteRequestObject struct {
 	SiteID SiteID `json:"site_id"`
 	Body   *GoLiveSiteJSONRequestBody
@@ -10830,6 +11058,9 @@ type StrictServerInterface interface {
 	// DownloadSiteDatabaseExport Download a database export
 	// (GET /api/v1/sites/{site_id}/database/exports/{export_id}/download)
 	DownloadSiteDatabaseExport(ctx context.Context, request DownloadSiteDatabaseExportRequestObject) (DownloadSiteDatabaseExportResponseObject, error)
+	// DeploySiteCode Deploy a theme or plugin package
+	// (POST /api/v1/sites/{site_id}/deploy)
+	DeploySiteCode(ctx context.Context, request DeploySiteCodeRequestObject) (DeploySiteCodeResponseObject, error)
 	// GoLiveSite Switch a site to its primary domain
 	// (POST /api/v1/sites/{site_id}/go-live)
 	GoLiveSite(ctx context.Context, request GoLiveSiteRequestObject) (GoLiveSiteResponseObject, error)
@@ -11964,6 +12195,39 @@ func (sh *strictHandler) DownloadSiteDatabaseExport(w http.ResponseWriter, r *ht
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(DownloadSiteDatabaseExportResponseObject); ok {
 		if err := validResponse.VisitDownloadSiteDatabaseExportResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeploySiteCode operation middleware
+func (sh *strictHandler) DeploySiteCode(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request DeploySiteCodeRequestObject
+
+	request.SiteID = siteID
+
+	var body DeploySiteCodeJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeploySiteCode(ctx, request.(DeploySiteCodeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeploySiteCode")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeploySiteCodeResponseObject); ok {
+		if err := validResponse.VisitDeploySiteCodeResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

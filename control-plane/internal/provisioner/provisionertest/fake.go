@@ -27,6 +27,7 @@ type Site struct {
 	Phase       provisioner.SitePhase
 	Maintenance bool
 	CachePurges int
+	CodeReloads int
 }
 
 // Fake is an in-memory Driver that follows the interfaces' idempotency and
@@ -293,6 +294,24 @@ func (f *Fake) PurgeCache(_ context.Context, siteID string) error {
 		return err
 	}
 	s.CachePurges++
+	return nil
+}
+
+// ReloadCode implements provisioner.Provisioner. It counts reloads of
+// running sites.
+func (f *Fake) ReloadCode(_ context.Context, siteID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.begin("ReloadCode", siteID, nil); err != nil {
+		return err
+	}
+	s, err := f.lookup(siteID)
+	if err != nil {
+		return err
+	}
+	if s.Phase == provisioner.SiteRunning {
+		s.CodeReloads++
+	}
 	return nil
 }
 

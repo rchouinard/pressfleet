@@ -585,6 +585,32 @@ func (p *Provisioner) PurgeCache(ctx context.Context, siteID string) error {
 	return nil
 }
 
+// ReloadCode reloads PHP-FPM in the site's php container, which empties
+// its opcode cache (provisioner.Provisioner). SIGUSR2 makes the FPM master
+// (the container's main process) re-execute itself with its listening
+// socket kept open: workers finish their requests (up to the image's
+// process_control_timeout), and new connections wait in the socket's
+// backlog meanwhile, so nginx sees no refused connections. A stopped site
+// has no cache and nothing to reload.
+func (p *Provisioner) ReloadCode(ctx context.Context, siteID string) error {
+	proj, err := p.existing(ctx, siteID)
+	if err != nil {
+		return fmt.Errorf("reload code: %w", err)
+	}
+	containers, err := proj.Ps(ctx)
+	if err != nil {
+		return fmt.Errorf("reload code of site %s: %w", siteID, err)
+	}
+	if php, ok := findService(containers, provisioner.ComponentPHP); !ok || php.State != "running" {
+		return nil
+	}
+	if _, err := proj.run(ctx, nil, "kill", "--signal", "SIGUSR2", "--", string(provisioner.ComponentPHP)); err != nil {
+		return fmt.Errorf("reload code of site %s: %w", siteID, err)
+	}
+	p.log.InfoContext(ctx, "site php reloaded", "site_id", siteID)
+	return nil
+}
+
 // project returns the site's Compose project. Its directory may not exist;
 // ps, stop, and down work from labels alone.
 func (p *Provisioner) project(siteID string) Project {

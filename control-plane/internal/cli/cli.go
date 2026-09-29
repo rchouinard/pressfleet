@@ -113,7 +113,7 @@ func (a *app) rootCommand() *cobra.Command {
 	pf.String("log-format", "", "log format: text, json (overrides config)")
 
 	root.AddCommand(a.serveCommand(), a.initCommand(), a.doctorCommand(), a.versionCommand())
-	root.AddCommand(a.healthcheckCommand(), a.maintenancePageCommand(), a.sftpServerCommand())
+	root.AddCommand(a.healthcheckCommand(), a.maintenancePageCommand(), a.sftpServerCommand(), a.siteTaskCommand())
 	root.AddCommand(a.stateCommand())
 	root.AddCommand(a.keyCommand())
 	root.AddCommand(a.userCommand())

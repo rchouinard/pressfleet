@@ -162,7 +162,7 @@ func (f *fakeDocker) compose(args []string) ([]byte, error) {
 	case "exec":
 		f.execArgs = args
 		return f.execOut, f.execErr
-	case "run":
+	case "run", "kill":
 		return nil, nil
 	case "down":
 		clear(f.containers)
@@ -750,5 +750,42 @@ func TestPurgeCache(t *testing.T) {
 	f.docker.fail = map[string]error{"compose exec": &compose.CommandError{Stderr: "find: permission denied", Err: errors.New("exit status 1")}}
 	if err := f.prov.PurgeCache(ctx, testSiteID); err == nil || !strings.Contains(err.Error(), "purge page cache") {
 		t.Errorf("failed purge = %v", err)
+	}
+}
+
+// TestReloadCode checks that reloading a site's code signals PHP-FPM in a
+// running php container, and does nothing for a stopped site.
+func TestReloadCode(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if err := f.prov.ReloadCode(ctx, testSiteID); !errors.Is(err, provisioner.ErrSiteNotFound) {
+		t.Errorf("ReloadCode of a missing site = %v", err)
+	}
+	if _, err := f.prov.CreateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	f.docker.calls = nil
+
+	if err := f.prov.ReloadCode(ctx, testSiteID); err != nil {
+		t.Fatal(err)
+	}
+	wantCommands(t, f.docker, "compose kill --signal SIGUSR2 -- php")
+
+	if err := f.prov.StopSite(ctx, testSiteID); err != nil {
+		t.Fatal(err)
+	}
+	f.docker.calls = nil
+	if err := f.prov.ReloadCode(ctx, testSiteID); err != nil {
+		t.Fatal(err)
+	}
+	wantCommands(t, f.docker)
+
+	if err := f.prov.StartSite(ctx, testSiteID); err != nil {
+		t.Fatal(err)
+	}
+	f.docker.calls = nil
+	f.docker.fail = map[string]error{"compose kill": &compose.CommandError{Stderr: "no such container", Err: errors.New("exit status 1")}}
+	if err := f.prov.ReloadCode(ctx, testSiteID); err == nil || !strings.Contains(err.Error(), "reload code") {
+		t.Errorf("failed reload = %v", err)
 	}
 }

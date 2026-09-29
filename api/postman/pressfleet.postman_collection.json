@@ -2711,6 +2711,60 @@
       ]
     },
     {
+      "id": "70d1c4ec-1805-54cf-8670-ba562817b14c",
+      "name": "Deployments",
+      "description": "Theme and plugin deployments for CI pipelines (design doc \u00a75.8). Upload the package first with **Uploads \u2192 Start upload** (`\"purpose\": \"site_deploy\"` and `\"site_id\"`), sending the zip or tar.gz as the chunk.",
+      "item": [
+        {
+          "id": "8a071110-bd08-5894-bacb-270ff48aadb6",
+          "name": "Deploy theme or plugin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/deploy",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "deploy"
+              ]
+            },
+            "description": "Queues a job that deploys the package in `upload_id` to `wp-content/themes/<name>` (or `plugins`, `mu-plugins`): it is checked, unpacked as the site's user, swapped in atomically, health-checked, and rolled back to the previous version if the check fails. Follow it with **Jobs \u2192 Get job**.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"upload_id\": \"{{upload_id}}\",\n  \"kind\": \"theme\",\n  \"name\": \"acme-theme\",\n  \"activate\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "e6e4ae4e-bd53-5c62-929c-0923010ae276",
       "name": "Jobs",
       "description": "Long-running operations.",
