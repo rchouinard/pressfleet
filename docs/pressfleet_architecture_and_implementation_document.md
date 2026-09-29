@@ -484,6 +484,7 @@ A go-live that fails before the URL update rolls back to the previous domains. O
 
 #### Image Updates
 * When the platform ships image updates (PHP patch releases, WordPress core releases, security fixes, base OS updates), the control plane rolls them out by recreating site containers, optionally within a maintenance window.
+* Rebuilt images keep their tags, so each site runs pinned builds (image digests), recorded per site and tag; a site moves to a new build only through the rollout, one site at a time with the same health check as a core update, and a failed update moves it back to the previous build. No pre-update backup is taken: the core, and so the database schema, doesn't change (#58).
 * The image matrix is kept small: for each supported PHP version, the latest WordPress core release, plus the latest release of every older branch a site is held on or awaiting approval for.
 
 ### 5.6. WordPress Runtime Defaults

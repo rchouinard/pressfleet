@@ -33,3 +33,8 @@ func (a *app) coreUpdates() sites.CoreUpdateOptions {
 	}
 	return o
 }
+
+// imageUpdates are the image rollout's settings (config updates.images).
+func (a *app) imageUpdates() sites.ImageUpdateOptions {
+	return sites.ImageUpdateOptions{PullInterval: time.Duration(a.cfg.Updates.Images.CheckHours) * time.Hour}
+}

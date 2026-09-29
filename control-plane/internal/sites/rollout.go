@@ -41,10 +41,13 @@ import (
 // starts ([Service.EnqueueRollout]), which is how new images in the
 // version manifest are detected.
 //
-// The core rollout ("core") is the only one so far: its candidates are the
-// running sites whose core update plan has a target (coreupdate.Decide).
-// Platform image updates (#58) add a rolloutSource with their own
-// candidates and site update job, and reuse the rest.
+// There are two rollouts. The core rollout ("core") moves sites to newer
+// WordPress releases: its candidates are the running sites whose core
+// update plan has a target (coreupdate.Decide). The image rollout
+// ("images", imageupdate.go) moves sites to new builds of the images they
+// already run: PHP patch releases, security fixes, and base OS updates.
+// Each runs one site at a time on its own; a site is only ever in one
+// update, since both need it running and set it updating.
 
 // RolloutJobType runs one pass of a rollout. Its target is the platform,
 // with the ID rollout_<name>.
@@ -78,6 +81,8 @@ var ErrUnknownRollout = errors.New("unknown rollout")
 type rolloutCandidate struct {
 	site   store.Site
 	target string
+	// images are the image rollout's changes to the site's pins.
+	images []imageChange
 }
 
 // rolloutSource is what one rollout rolls out.
@@ -86,7 +91,7 @@ type rolloutSource struct {
 	// jobType is the job type of its site updates.
 	jobType string
 	// fingerprint identifies the releases it rolls out.
-	fingerprint func() string
+	fingerprint func(ctx context.Context) (string, error)
 	// candidates lists the site updates to make, in order.
 	candidates func(ctx context.Context) ([]rolloutCandidate, error)
 	// enqueue queues a candidate's site update in q's transaction, with
@@ -94,18 +99,35 @@ type rolloutSource struct {
 	enqueue func(ctx context.Context, q store.Querier, c rolloutCandidate) (store.Job, error)
 }
 
+// rolloutSources returns the rollouts the service runs: the core rollout
+// if it can take backups, and the image rollout if the driver pins images.
 func (s *Service) rolloutSources() map[string]rolloutSource {
-	return map[string]rolloutSource{
-		coreRollout: {
-			name:        coreRollout,
-			jobType:     CoreUpdateJobType,
-			fingerprint: s.coreFingerprint,
-			candidates:  s.coreCandidates,
+	out := map[string]rolloutSource{}
+	if s.coreUpdates() {
+		out[coreRollout] = rolloutSource{
+			name:    coreRollout,
+			jobType: CoreUpdateJobType,
+			fingerprint: func(context.Context) (string, error) {
+				return s.coreFingerprint(), nil
+			},
+			candidates: s.coreCandidates,
 			enqueue: func(ctx context.Context, q store.Querier, c rolloutCandidate) (store.Job, error) {
 				return s.enqueueCoreUpdate(ctx, q, c.site, c.target, coreRollout, "")
 			},
-		},
+		}
 	}
+	if s.pinner != nil {
+		out[imageRollout] = rolloutSource{
+			name:        imageRollout,
+			jobType:     ImageUpdateJobType,
+			fingerprint: s.imageFingerprint,
+			candidates:  s.imageCandidates,
+			enqueue: func(ctx context.Context, q store.Querier, c rolloutCandidate) (store.Job, error) {
+				return s.enqueueImageUpdate(ctx, q, c.site, c.images, imageRollout)
+			},
+		}
+	}
+	return out
 }
 
 func (s *Service) rolloutHandler() jobs.Handler {
@@ -116,9 +138,6 @@ func (s *Service) rolloutHandler() jobs.Handler {
 // waiting. The control plane calls it at startup, so new images in the
 // version manifest start rolling out.
 func (s *Service) EnqueueRollout(ctx context.Context) error {
-	if !s.coreUpdates() {
-		return nil
-	}
 	for name := range s.rolloutSources() {
 		if err := enqueueRolloutPass(ctx, s.db, name); err != nil {
 			return err
@@ -151,9 +170,6 @@ func enqueueRolloutPass(ctx context.Context, q store.Querier, name string) error
 // EnsureRolloutSchedule creates or updates every rollout's schedule. It is
 // idempotent.
 func (s *Service) EnsureRolloutSchedule(ctx context.Context) error {
-	if !s.coreUpdates() {
-		return nil
-	}
 	for name := range s.rolloutSources() {
 		if _, err := jobs.UpsertSchedule(ctx, s.db, jobs.ScheduleSpec{
 			Name: RolloutScheduleName(name), JobType: RolloutJobType, TargetType: rolloutTargetType, TargetID: rolloutTargetID(name),
@@ -171,7 +187,11 @@ func (s *Service) rolloutPass(ctx context.Context, r *jobs.Run) error {
 	if !ok {
 		return jobs.Permanent(fmt.Errorf("%w %q", ErrUnknownRollout, r.Job().TargetID))
 	}
-	ro, err := store.NewRollouts(s.db).Sync(ctx, src.name, src.fingerprint())
+	fingerprint, err := src.fingerprint(ctx)
+	if err != nil {
+		return err
+	}
+	ro, err := store.NewRollouts(s.db).Sync(ctx, src.name, fingerprint)
 	if err != nil {
 		return err
 	}
@@ -213,10 +233,12 @@ func (s *Service) rolloutPass(ctx context.Context, r *jobs.Run) error {
 			if err != nil {
 				return err
 			}
-			if current.Status != store.SiteRunning || current.WPCoreVersion != c.site.WPCoreVersion {
+			if current.Status != store.SiteRunning || current.WPCoreVersion != c.site.WPCoreVersion ||
+				current.PHPVersion != c.site.PHPVersion {
 				return errSkipCandidate
 			}
-			job, err = src.enqueue(ctx, q, rolloutCandidate{site: current, target: c.target})
+			c.site = current
+			job, err = src.enqueue(ctx, q, c)
 			return err
 		})
 		if errors.Is(err, errSkipCandidate) || errors.Is(err, store.ErrNotFound) {
@@ -288,20 +310,10 @@ func (s *Service) coreFingerprint() string {
 // coreCandidates lists the running sites whose plan has a target, oldest
 // site first.
 func (s *Service) coreCandidates(ctx context.Context) ([]rolloutCandidate, error) {
-	var running []store.Site
-	sites := store.NewSites(s.db)
-	for before := ""; ; {
-		page, err := sites.List(ctx, store.SiteFilter{Status: store.SiteRunning, Before: before, Limit: 200})
-		if err != nil {
-			return nil, err
-		}
-		running = append(running, page.Sites...)
-		if page.NextCursor == "" {
-			break
-		}
-		before = page.NextCursor
+	running, err := s.runningSites(ctx)
+	if err != nil {
+		return nil, err
 	}
-	slices.Reverse(running)
 	policies := store.NewCorePolicies(s.db)
 	sitePolicies, err := policies.Sites(ctx)
 	if err != nil {

@@ -596,6 +596,18 @@ func EnsureImages(t *testing.T, images ...string) {
 	}
 }
 
+// RunsImage reports whether a site container runs the build that the image
+// tag names now. Site containers run pinned builds (repository@sha256:...,
+// §5.5), not the tag, so the image IDs are compared.
+func RunsImage(t *testing.T, c compose.ContainerDetails, image string) bool {
+	t.Helper()
+	id, err := compose.ImageID(t.Context(), nil, image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c.ImageID == id
+}
+
 // HostKey returns a new SFTP gateway host key for a rendered platform
 // (platform.Config.SSHHostKey).
 func HostKey(t *testing.T) redact.Secret {

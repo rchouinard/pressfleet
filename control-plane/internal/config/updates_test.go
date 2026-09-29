@@ -10,7 +10,7 @@ import (
 
 func TestUpdatesSettings(t *testing.T) {
 	def := config.Default()
-	if u := def.Updates; u.HasWindow() || u.MaxFailures != 3 || u.Core.MajorAutoApproveDays != 0 || u.Core.HoldWarningDays != 90 {
+	if u := def.Updates; u.HasWindow() || u.MaxFailures != 3 || u.Core.MajorAutoApproveDays != 0 || u.Core.HoldWarningDays != 90 || u.Images.CheckHours != 6 {
 		t.Errorf("default updates = %+v", u)
 	}
 	if def.ImageManifestFile != "" {
@@ -21,13 +21,14 @@ func TestUpdatesSettings(t *testing.T) {
 	cfg, err := config.Load(path, env(map[string]string{
 		"PRESSFLEET_UPDATES_MAX_FAILURES":           "5",
 		"PRESSFLEET_UPDATES_CORE_HOLD_WARNING_DAYS": "30",
+		"PRESSFLEET_UPDATES_IMAGES_CHECK_HOURS":     "0",
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	u := cfg.Updates
 	want := config.UpdatesConfig{WindowStart: "01:30", WindowHours: 3, MaxFailures: 5,
-		Core: config.CoreUpdatesConfig{MajorAutoApproveDays: 14, HoldWarningDays: 30}}
+		Core: config.CoreUpdatesConfig{MajorAutoApproveDays: 14, HoldWarningDays: 30}, Images: config.ImageUpdatesConfig{CheckHours: 0}}
 	if u != want || !u.HasWindow() || u.Start() != 90*time.Minute || u.Window() != 3*time.Hour {
 		t.Errorf("Updates = %+v, want %+v", u, want)
 	}
@@ -63,6 +64,9 @@ func TestUpdatesSettings(t *testing.T) {
 		{"no failures allowed", func(c *config.Config) { c.Updates.MaxFailures = 0 }, "updates.max_failures"},
 		{"negative delay", func(c *config.Config) { c.Updates.Core.MajorAutoApproveDays = -1 }, "updates.core.major_auto_approve_days"},
 		{"no hold warning", func(c *config.Config) { c.Updates.Core.HoldWarningDays = 0 }, "updates.core.hold_warning_days"},
+		{"weekly image checks", func(c *config.Config) { c.Updates.Images.CheckHours = 168 }, ""},
+		{"image checks too rare", func(c *config.Config) { c.Updates.Images.CheckHours = 169 }, "updates.images.check_hours"},
+		{"negative image checks", func(c *config.Config) { c.Updates.Images.CheckHours = -1 }, "updates.images.check_hours"},
 		{"relative manifest", func(c *config.Config) { c.ImageManifestFile = "manifest.json" }, "image_manifest_file"},
 	} {
 		cfg := config.Default()

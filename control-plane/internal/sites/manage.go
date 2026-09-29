@@ -392,6 +392,9 @@ func (s *Service) convergeWith(ctx context.Context, r *jobs.Run, site store.Site
 	if err := cfg.Validate(); err != nil {
 		return nil, jobs.Permanent(err)
 	}
+	if cfg.PinnedImages, err = s.pinnedImages(ctx, site); err != nil {
+		return nil, err
+	}
 	st, err := s.prov.UpdateSite(ctx, cfg)
 	if errors.Is(err, provisioner.ErrSiteNotFound) {
 		return nil, jobs.Permanent(err)

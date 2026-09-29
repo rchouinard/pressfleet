@@ -39,6 +39,8 @@ var implementedSiteOps = map[string]bool{
 	"updateSiteCore":                true,
 	"getCoreRollout":                true,
 	"resumeCoreRollout":             true,
+	"getImageRollout":               true,
+	"resumeImageRollout":            true,
 	"listSites":                     true,
 	"createSite":                    true,
 	"getSite":                       true,

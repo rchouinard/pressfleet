@@ -245,6 +245,9 @@ func (s *Service) startStack(ctx context.Context, r *jobs.Run) error {
 		// Retrying can't fix the site's own settings.
 		return jobs.Permanent(err)
 	}
+	if cfg.PinnedImages, err = s.pinnedImages(ctx, site); err != nil {
+		return err
+	}
 	st, err := s.prov.CreateSite(ctx, cfg)
 	if err != nil {
 		return err

@@ -2102,7 +2102,7 @@
     {
       "id": "1bc43e4b-754e-51fe-a671-c0201b0fc862",
       "name": "Core updates",
-      "description": "WordPress core updates (design doc \u00a75.5): minor and security releases roll out automatically, one site at a time; major releases wait for approval per site or client group; holds keep a site on its major branch.",
+      "description": "WordPress core updates (design doc \u00a75.5): minor and security releases roll out automatically, one site at a time; major releases wait for approval per site or client group; holds keep a site on its major branch. The image rollout moves sites to new builds of the images they run (PHP patch releases, security fixes, base OS updates) the same way, one site at a time.",
       "item": [
         {
           "id": "c2af8d50-da1c-50ad-89df-5ec0af953eb1",
@@ -2393,6 +2393,69 @@
                 "api",
                 "v1",
                 "core-rollout",
+                "resume"
+              ]
+            },
+            "description": "Lifts a halt after repeated failures and queues a rollout pass."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "6d3a5f68-d143-5708-a524-5fb97d4ee7ab",
+          "name": "Get image rollout",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/image-rollout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "image-rollout"
+              ]
+            },
+            "description": "The newest builds of the site images in use, the maintenance window, failed site updates, and whether the rollout is halted."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "025d3a9d-fe44-53af-b53c-d142d7ff2a27",
+          "name": "Resume image rollout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/image-rollout/resume",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "image-rollout",
                 "resume"
               ]
             },

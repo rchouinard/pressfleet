@@ -1148,6 +1148,52 @@ type HealthStatus string
 // Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
 type ID = string
 
+// ImageBuild The newest build of a site image tag that the image rollout has seen.
+type ImageBuild struct {
+	// Build The build, as `repository@sha256:<digest>`, or a local image ID for a locally built image.
+	Build string `json:"build"`
+
+	// CheckedAt Examples: 2026-09-26T17:25:00Z
+	CheckedAt Timestamp `json:"checked_at"`
+
+	// Image The image tag, e.g. `ghcr.io/rchouinard/pressfleet/site-php:php8.4-wp6.9.1`.
+	Image string `json:"image"`
+
+	// PulledAt Examples: 2026-09-26T17:25:00Z
+	PulledAt *Timestamp `json:"pulled_at,omitempty"`
+}
+
+// ImageRollout defines model for ImageRollout.
+type ImageRollout struct {
+	ConsecutiveFailures int                  `json:"consecutive_failures"`
+	Failures            []ImageUpdateFailure `json:"failures"`
+	HaltReason          *string              `json:"halt_reason,omitempty"`
+	Halted              bool                 `json:"halted"`
+
+	// HaltedAt Examples: 2026-09-26T17:25:00Z
+	HaltedAt    *Timestamp   `json:"halted_at,omitempty"`
+	Images      []ImageBuild `json:"images"`
+	MaxFailures int          `json:"max_failures"`
+
+	// Window The daily maintenance window, in UTC; absent if there is none.
+	Window *UpdateWindow `json:"window,omitempty"`
+}
+
+// ImageUpdateFailure A site's failed update to `target`, which the rollout doesn't retry.
+type ImageUpdateFailure struct {
+	// FailedAt Examples: 2026-09-26T17:25:00Z
+	FailedAt Timestamp `json:"failed_at"`
+	Message  string    `json:"message"`
+
+	// SiteID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	SiteID ID `json:"site_id"`
+
+	// Target The builds the update moved the site to, as `php=<build> nginx=<build>`.
+	Target string `json:"target"`
+}
+
 // Job defines model for Job.
 type Job struct {
 	// Attempts Attempts in the current phase. A job gets `max_attempts` attempts, then its rollback gets as many again.
@@ -2522,6 +2568,28 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/core-rollout/resume (the `ResumeCoreRollout` operationId).
 	ResumeCoreRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetImageRollout Get the platform image rollout
+	//
+	// The rollout of new builds of the site images that sites already
+	// run (PHP patch releases, security fixes, base OS updates; the
+	// WordPress core stays the same). It updates one site at a time,
+	// inside the maintenance window if one is set, and halts after
+	// `max_failures` failed site updates in a row
+	// (`updates.max_failures`), until it is resumed or new builds
+	// arrive. Sites whose update failed aren't tried again with the same
+	// builds. `images` are the newest builds the rollout has seen of each
+	// image in use; empty until its first pass.
+	//
+	// Corresponds with GET /api/v1/image-rollout (the `GetImageRollout` operationId).
+	GetImageRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeImageRollout Resume a halted image rollout
+	//
+	// Lifts a halt, resets the failure count, and queues a rollout pass.
+	//
+	// Corresponds with POST /api/v1/image-rollout/resume (the `ResumeImageRollout` operationId).
+	ResumeImageRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListJobs List jobs
 	//
@@ -4162,6 +4230,48 @@ func (c *Client) GetCoreRollout(ctx context.Context, reqEditors ...RequestEditor
 // Corresponds with POST /api/v1/core-rollout/resume (the `ResumeCoreRollout` operationId).
 func (c *Client) ResumeCoreRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewResumeCoreRolloutRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetImageRollout Get the platform image rollout
+//
+// The rollout of new builds of the site images that sites already
+// run (PHP patch releases, security fixes, base OS updates; the
+// WordPress core stays the same). It updates one site at a time,
+// inside the maintenance window if one is set, and halts after
+// `max_failures` failed site updates in a row
+// (`updates.max_failures`), until it is resumed or new builds
+// arrive. Sites whose update failed aren't tried again with the same
+// builds. `images` are the newest builds the rollout has seen of each
+// image in use; empty until its first pass.
+//
+// Corresponds with GET /api/v1/image-rollout (the `GetImageRollout` operationId).
+func (c *Client) GetImageRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetImageRolloutRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResumeImageRollout Resume a halted image rollout
+//
+// Lifts a halt, resets the failure count, and queues a rollout pass.
+//
+// Corresponds with POST /api/v1/image-rollout/resume (the `ResumeImageRollout` operationId).
+func (c *Client) ResumeImageRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeImageRolloutRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -6802,6 +6912,60 @@ func NewResumeCoreRolloutRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewGetImageRolloutRequest constructs an http.Request for the GetImageRollout method
+func NewGetImageRolloutRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/image-rollout")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewResumeImageRolloutRequest constructs an http.Request for the ResumeImageRollout method
+func NewResumeImageRolloutRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/image-rollout/resume")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListJobsRequest constructs an http.Request for the ListJobs method
 func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, error) {
 	var err error
@@ -9213,6 +9377,32 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/core-rollout/resume (the `ResumeCoreRollout` operationId).
 	ResumeCoreRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ResumeCoreRolloutResponse, error)
+
+	// GetImageRolloutWithResponse Get the platform image rollout
+	//
+	// The rollout of new builds of the site images that sites already
+	// run (PHP patch releases, security fixes, base OS updates; the
+	// WordPress core stays the same). It updates one site at a time,
+	// inside the maintenance window if one is set, and halts after
+	// `max_failures` failed site updates in a row
+	// (`updates.max_failures`), until it is resumed or new builds
+	// arrive. Sites whose update failed aren't tried again with the same
+	// builds. `images` are the newest builds the rollout has seen of each
+	// image in use; empty until its first pass.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/image-rollout (the `GetImageRollout` operationId).
+	GetImageRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetImageRolloutResponse, error)
+
+	// ResumeImageRolloutWithResponse Resume a halted image rollout
+	//
+	// Lifts a halt, resets the failure count, and queues a rollout pass.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/image-rollout/resume (the `ResumeImageRollout` operationId).
+	ResumeImageRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ResumeImageRolloutResponse, error)
 
 	// ListJobsWithResponse List jobs
 	//
@@ -11731,6 +11921,130 @@ func (r ResumeCoreRolloutResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ResumeCoreRolloutResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetImageRolloutResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ImageRollout
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetImageRolloutResponse) GetJSON200() *ImageRollout {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetImageRolloutResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetImageRolloutResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetImageRolloutResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetImageRolloutResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetImageRolloutResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetImageRolloutResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetImageRolloutResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ResumeImageRolloutResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ImageRollout
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ResumeImageRolloutResponse) GetJSON200() *ImageRollout {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ResumeImageRolloutResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ResumeImageRolloutResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ResumeImageRolloutResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ResumeImageRolloutResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResumeImageRolloutResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResumeImageRolloutResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResumeImageRolloutResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -15899,6 +16213,44 @@ func (c *ClientWithResponses) ResumeCoreRolloutWithResponse(ctx context.Context,
 	return ParseResumeCoreRolloutResponse(rsp)
 }
 
+// GetImageRolloutWithResponse Get the platform image rollout
+//
+// The rollout of new builds of the site images that sites already
+// run (PHP patch releases, security fixes, base OS updates; the
+// WordPress core stays the same). It updates one site at a time,
+// inside the maintenance window if one is set, and halts after
+// `max_failures` failed site updates in a row
+// (`updates.max_failures`), until it is resumed or new builds
+// arrive. Sites whose update failed aren't tried again with the same
+// builds. `images` are the newest builds the rollout has seen of each
+// image in use; empty until its first pass.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/image-rollout (the `GetImageRollout` operationId).
+func (c *ClientWithResponses) GetImageRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetImageRolloutResponse, error) {
+	rsp, err := c.GetImageRollout(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetImageRolloutResponse(rsp)
+}
+
+// ResumeImageRolloutWithResponse Resume a halted image rollout
+//
+// Lifts a halt, resets the failure count, and queues a rollout pass.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/image-rollout/resume (the `ResumeImageRollout` operationId).
+func (c *ClientWithResponses) ResumeImageRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ResumeImageRolloutResponse, error) {
+	rsp, err := c.ResumeImageRollout(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeImageRolloutResponse(rsp)
+}
+
 // ListJobsWithResponse List jobs
 //
 // Newest first.
@@ -18570,6 +18922,100 @@ func ParseResumeCoreRolloutResponse(rsp *http.Response) (*ResumeCoreRolloutRespo
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest CoreRollout
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetImageRolloutResponse parses an HTTP response from a GetImageRolloutWithResponse call
+func ParseGetImageRolloutResponse(rsp *http.Response) (*GetImageRolloutResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetImageRolloutResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ImageRollout
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseResumeImageRolloutResponse parses an HTTP response from a ResumeImageRolloutWithResponse call
+func ParseResumeImageRolloutResponse(rsp *http.Response) (*ResumeImageRolloutResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResumeImageRolloutResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ImageRollout
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

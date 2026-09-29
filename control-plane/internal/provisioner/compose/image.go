@@ -50,3 +50,15 @@ func RemoveImage(ctx context.Context, docker ExecFunc, image string) error {
 	}
 	return nil
 }
+
+// ImageID returns the ID of a local image. A nil docker means DockerExec.
+func ImageID(ctx context.Context, docker ExecFunc, image string) (string, error) {
+	if docker == nil {
+		docker = DockerExec
+	}
+	out, err := docker(ctx, nil, "image", "inspect", "--format", "{{.Id}}", "--", image)
+	if err != nil {
+		return "", fmt.Errorf("inspecting image %s: %w", image, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}

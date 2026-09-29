@@ -29,7 +29,7 @@ func (s *scripted) exec(_ context.Context, _ io.Reader, args ...string) ([]byte,
 	return []byte(out), nil
 }
 
-const inspectPHP = `[{"Id":"abc123","Name":"/pf-site1-php-1","Config":{"Image":"registry.example/site-php:php8.4-wp7.1.2"},
+const inspectPHP = `[{"Id":"abc123","Name":"/pf-site1-php-1","Image":"sha256:def456","Config":{"Image":"registry.example/site-php:php8.4-wp7.1.2"},
 "State":{"Running":true},"NetworkSettings":{"Networks":{"pf-site1":{"IPAddress":"172.30.0.3"}}},
 "Mounts":[{"Type":"volume","Name":"pf-site1_wp-content","Source":"/var/lib/docker/volumes/pf-site1_wp-content/_data",
 "Destination":"/var/www/html/wp-content","RW":true}]}]`
@@ -47,7 +47,7 @@ func TestServiceContainerAndExecService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.ID != "abc123" || c.Name != "pf-site1-php-1" || c.Image != "registry.example/site-php:php8.4-wp7.1.2" || !c.Running ||
+	if c.ID != "abc123" || c.Name != "pf-site1-php-1" || c.Image != "registry.example/site-php:php8.4-wp7.1.2" || c.ImageID != "sha256:def456" || !c.Running ||
 		c.Networks["pf-site1"] != "172.30.0.3" ||
 		len(c.Mounts) != 1 || c.Mounts[0].Destination != "/var/www/html/wp-content" || !c.Mounts[0].RW {
 		t.Errorf("container = %+v", c)

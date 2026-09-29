@@ -19,6 +19,25 @@ type Driver interface {
 	TaskRunner
 	SessionRunner
 	Prober
+	ImagePinner
+}
+
+// ImagePinner pins site images to exact builds (§5.5). Site image tags
+// move: the platform rebuilds them for PHP patch releases, security fixes,
+// and base OS updates without changing the tag. A site's containers are
+// therefore rendered with a pinned reference of the build (SiteConfig
+// PinnedImages), so a site only moves to a new build when the image rollout
+// moves it, with a health check, and a failed update can move it back.
+type ImagePinner interface {
+	// PinImage returns a reference to the build that the image reference
+	// image (a tag) names now, making the image available first if it
+	// isn't: in Compose, repository@sha256:<digest>, or the local image
+	// ID for an image built locally that no registry knows. It doesn't
+	// look for a newer build (PullImage does).
+	PinImage(ctx context.Context, image string) (string, error)
+	// PullImage fetches the newest build of the tag from its registry, so
+	// that PinImage returns it.
+	PullImage(ctx context.Context, image string) error
 }
 
 // ProbeRequest is an HTTP GET a driver sends to a site's web server.

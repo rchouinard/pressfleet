@@ -22,6 +22,19 @@ type UpdatesConfig struct {
 	MaxFailures int `yaml:"max_failures"`
 	// Core configures WordPress core rollouts.
 	Core CoreUpdatesConfig `yaml:"core"`
+	// Images configures the rollout of new builds of the site images.
+	Images ImageUpdatesConfig `yaml:"images"`
+}
+
+// ImageUpdatesConfig configures the platform image rollout (#58): new
+// builds of the site images a site already runs, for PHP patch releases,
+// security fixes, and base OS updates.
+type ImageUpdatesConfig struct {
+	// CheckHours is how often, in hours, the rollout pulls the site image
+	// tags in use from their registry to find new builds, 0 to 168; 0
+	// never pulls, so only builds that reach the host otherwise (a local
+	// build, a pull by hand) roll out.
+	CheckHours int `yaml:"check_hours"`
 }
 
 // CoreUpdatesConfig is the install-wide part of the WordPress core rollout
@@ -39,10 +52,10 @@ type CoreUpdatesConfig struct {
 
 // DefaultUpdates has no maintenance window (a 4-hour one once
 // window_start is set), halts a rollout after 3 failures in a row, never
-// approves major releases automatically, and warns about holds after 90
-// days.
+// approves major releases automatically, warns about holds after 90 days,
+// and looks for new image builds every 6 hours.
 func DefaultUpdates() UpdatesConfig {
-	return UpdatesConfig{WindowHours: 4, MaxFailures: 3, Core: CoreUpdatesConfig{HoldWarningDays: 90}}
+	return UpdatesConfig{WindowHours: 4, MaxFailures: 3, Core: CoreUpdatesConfig{HoldWarningDays: 90}, Images: ImageUpdatesConfig{CheckHours: 6}}
 }
 
 // HasWindow reports whether a maintenance window is set.
@@ -78,6 +91,9 @@ func (u UpdatesConfig) Validate() error {
 	}
 	if u.Core.HoldWarningDays < 1 || u.Core.HoldWarningDays > 3650 {
 		errs = append(errs, fmt.Errorf("updates.core.hold_warning_days must be from 1 to 3650, got %d", u.Core.HoldWarningDays))
+	}
+	if u.Images.CheckHours < 0 || u.Images.CheckHours > 168 {
+		errs = append(errs, fmt.Errorf("updates.images.check_hours must be from 0 (never) to 168, got %d", u.Images.CheckHours))
 	}
 	return errors.Join(errs...)
 }

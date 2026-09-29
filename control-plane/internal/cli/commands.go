@@ -291,6 +291,7 @@ func (a *app) serveCommand() *cobra.Command {
 				Uploads:           uploadSvc,
 				Tasks:             prov,
 				TmpDir:            layout.TmpDir(),
+				ImageUpdates:      a.imageUpdates(),
 				Logger:            a.log.With("component", "sites"),
 			})
 			if err != nil {
@@ -383,10 +384,10 @@ func (a *app) serveCommand() *cobra.Command {
 			// The core rollout runs on a schedule, and once now, so releases
 			// new to the version manifest start rolling out. Best effort.
 			if err := siteSvc.EnsureRolloutSchedule(cmd.Context()); err != nil && cmd.Context().Err() == nil {
-				a.log.Warn("scheduling the core rollout failed", "error", err)
+				a.log.Warn("scheduling the rollouts failed", "error", err)
 			}
 			if err := siteSvc.EnqueueRollout(cmd.Context()); err != nil && cmd.Context().Err() == nil {
-				a.log.Warn("queuing the core rollout failed", "error", err)
+				a.log.Warn("queuing the rollouts failed", "error", err)
 			}
 			// A canceled context means serve is already stopping; the
 			// server below returns at once.

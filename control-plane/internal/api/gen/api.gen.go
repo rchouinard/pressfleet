@@ -1149,6 +1149,52 @@ type HealthStatus string
 // Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
 type ID = string
 
+// ImageBuild The newest build of a site image tag that the image rollout has seen.
+type ImageBuild struct {
+	// Build The build, as `repository@sha256:<digest>`, or a local image ID for a locally built image.
+	Build string `json:"build"`
+
+	// CheckedAt Examples: 2026-09-26T17:25:00Z
+	CheckedAt Timestamp `json:"checked_at"`
+
+	// Image The image tag, e.g. `ghcr.io/rchouinard/pressfleet/site-php:php8.4-wp6.9.1`.
+	Image string `json:"image"`
+
+	// PulledAt Examples: 2026-09-26T17:25:00Z
+	PulledAt *Timestamp `json:"pulled_at,omitempty"`
+}
+
+// ImageRollout defines model for ImageRollout.
+type ImageRollout struct {
+	ConsecutiveFailures int                  `json:"consecutive_failures"`
+	Failures            []ImageUpdateFailure `json:"failures"`
+	HaltReason          *string              `json:"halt_reason,omitempty"`
+	Halted              bool                 `json:"halted"`
+
+	// HaltedAt Examples: 2026-09-26T17:25:00Z
+	HaltedAt    *Timestamp   `json:"halted_at,omitempty"`
+	Images      []ImageBuild `json:"images"`
+	MaxFailures int          `json:"max_failures"`
+
+	// Window The daily maintenance window, in UTC; absent if there is none.
+	Window *UpdateWindow `json:"window,omitempty"`
+}
+
+// ImageUpdateFailure A site's failed update to `target`, which the rollout doesn't retry.
+type ImageUpdateFailure struct {
+	// FailedAt Examples: 2026-09-26T17:25:00Z
+	FailedAt Timestamp `json:"failed_at"`
+	Message  string    `json:"message"`
+
+	// SiteID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	SiteID ID `json:"site_id"`
+
+	// Target The builds the update moved the site to, as `php=<build> nginx=<build>`.
+	Target string `json:"target"`
+}
+
 // Job defines model for Job.
 type Job struct {
 	// Attempts Attempts in the current phase. A job gets `max_attempts` attempts, then its rollback gets as many again.
@@ -2297,6 +2343,12 @@ type ServerInterface interface {
 	// ResumeCoreRollout Resume a halted core rollout
 	// (POST /api/v1/core-rollout/resume)
 	ResumeCoreRollout(w http.ResponseWriter, r *http.Request)
+	// GetImageRollout Get the platform image rollout
+	// (GET /api/v1/image-rollout)
+	GetImageRollout(w http.ResponseWriter, r *http.Request)
+	// ResumeImageRollout Resume a halted image rollout
+	// (POST /api/v1/image-rollout/resume)
+	ResumeImageRollout(w http.ResponseWriter, r *http.Request)
 	// ListJobs List jobs
 	// (GET /api/v1/jobs)
 	ListJobs(w http.ResponseWriter, r *http.Request, params ListJobsParams)
@@ -2927,6 +2979,34 @@ func (siw *ServerInterfaceWrapper) ResumeCoreRollout(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ResumeCoreRollout(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetImageRollout operation middleware
+func (siw *ServerInterfaceWrapper) GetImageRollout(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetImageRollout(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResumeImageRollout operation middleware
+func (siw *ServerInterfaceWrapper) ResumeImageRollout(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResumeImageRollout(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4554,6 +4634,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/database/sessions", wrapper.ListSiteDatabaseSessions)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/database/sessions", wrapper.CreateSiteDatabaseSession)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/sites/{site_id}/database/sessions/{session_id}", wrapper.EndSiteDatabaseSession)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/image-rollout", wrapper.GetImageRollout)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/image-rollout/resume", wrapper.ResumeImageRollout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs", wrapper.ListJobs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs/{job_id}", wrapper.GetJob)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit-events", wrapper.ListAuditEvents)
@@ -6222,6 +6304,146 @@ type ResumeCoreRolloutdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response ResumeCoreRolloutdefaultApplicationProblemPlusJSONResponse) VisitResumeCoreRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetImageRolloutRequestObject struct {
+}
+
+type GetImageRolloutResponseObject interface {
+	VisitGetImageRolloutResponse(w http.ResponseWriter) error
+}
+
+type GetImageRollout200JSONResponse ImageRollout
+
+func (response GetImageRollout200JSONResponse) VisitGetImageRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetImageRollout401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetImageRollout401ApplicationProblemPlusJSONResponse) VisitGetImageRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetImageRollout403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetImageRollout403ApplicationProblemPlusJSONResponse) VisitGetImageRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetImageRolloutdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetImageRolloutdefaultApplicationProblemPlusJSONResponse) VisitGetImageRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResumeImageRolloutRequestObject struct {
+}
+
+type ResumeImageRolloutResponseObject interface {
+	VisitResumeImageRolloutResponse(w http.ResponseWriter) error
+}
+
+type ResumeImageRollout200JSONResponse ImageRollout
+
+func (response ResumeImageRollout200JSONResponse) VisitResumeImageRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResumeImageRollout401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ResumeImageRollout401ApplicationProblemPlusJSONResponse) VisitResumeImageRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResumeImageRollout403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ResumeImageRollout403ApplicationProblemPlusJSONResponse) VisitResumeImageRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResumeImageRolloutdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ResumeImageRolloutdefaultApplicationProblemPlusJSONResponse) VisitResumeImageRolloutResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -11521,6 +11743,12 @@ type StrictServerInterface interface {
 	// ResumeCoreRollout Resume a halted core rollout
 	// (POST /api/v1/core-rollout/resume)
 	ResumeCoreRollout(ctx context.Context, request ResumeCoreRolloutRequestObject) (ResumeCoreRolloutResponseObject, error)
+	// GetImageRollout Get the platform image rollout
+	// (GET /api/v1/image-rollout)
+	GetImageRollout(ctx context.Context, request GetImageRolloutRequestObject) (GetImageRolloutResponseObject, error)
+	// ResumeImageRollout Resume a halted image rollout
+	// (POST /api/v1/image-rollout/resume)
+	ResumeImageRollout(ctx context.Context, request ResumeImageRolloutRequestObject) (ResumeImageRolloutResponseObject, error)
 	// ListJobs List jobs
 	// (GET /api/v1/jobs)
 	ListJobs(ctx context.Context, request ListJobsRequestObject) (ListJobsResponseObject, error)
@@ -12167,6 +12395,54 @@ func (sh *strictHandler) ResumeCoreRollout(w http.ResponseWriter, r *http.Reques
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ResumeCoreRolloutResponseObject); ok {
 		if err := validResponse.VisitResumeCoreRolloutResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetImageRollout operation middleware
+func (sh *strictHandler) GetImageRollout(w http.ResponseWriter, r *http.Request) {
+	var request GetImageRolloutRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetImageRollout(ctx, request.(GetImageRolloutRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetImageRollout")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetImageRolloutResponseObject); ok {
+		if err := validResponse.VisitGetImageRolloutResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ResumeImageRollout operation middleware
+func (sh *strictHandler) ResumeImageRollout(w http.ResponseWriter, r *http.Request) {
+	var request ResumeImageRolloutRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ResumeImageRollout(ctx, request.(ResumeImageRolloutRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ResumeImageRollout")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ResumeImageRolloutResponseObject); ok {
+		if err := validResponse.VisitResumeImageRolloutResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

@@ -140,7 +140,7 @@ func (h *Handlers) ResumeCoreRollout(ctx context.Context, _ gen.ResumeCoreRollou
 // coreError maps core update errors to API errors.
 func coreError(err error) error {
 	switch {
-	case errors.Is(err, sites.ErrClientGroupNotFound):
+	case errors.Is(err, sites.ErrClientGroupNotFound), errors.Is(err, sites.ErrUnknownRollout):
 		return fmt.Errorf("%w: %w", ErrNotFound, err)
 	case errors.Is(err, sites.ErrNoCoreUpdate), errors.Is(err, sites.ErrNoBackups):
 		return fmt.Errorf("%w: %w", ErrConflict, err)
@@ -225,12 +225,7 @@ func (h *Handlers) coreRolloutResponse(ro sites.RolloutStatus) gen.CoreRollout {
 	if ro.Halted() {
 		out.HaltedAt, out.HaltReason = timePtr(ro.HaltedAt), &ro.HaltReason
 	}
-	if w := ro.Window; w.Length > 0 && w.Length < 24*time.Hour {
-		out.Window = &gen.UpdateWindow{
-			Start: fmt.Sprintf("%02d:%02d", int(w.Start.Hours()), int(w.Start.Minutes())%60),
-			Hours: int(w.Length.Hours()),
-		}
-	}
+	out.Window = updateWindowResponse(ro.Window)
 	for _, w := range h.sites.CoreReleases() {
 		r := gen.CoreRelease{Version: w.Version, Branch: w.Branch(), Insecure: w.Insecure}
 		if !w.Published.IsZero() {
@@ -242,4 +237,16 @@ func (h *Handlers) coreRolloutResponse(ro sites.RolloutStatus) gen.CoreRollout {
 		out.Failures = append(out.Failures, coreFailureResponse(f))
 	}
 	return out
+}
+
+// updateWindowResponse returns the maintenance window, or nil if there is
+// none.
+func updateWindowResponse(w sites.UpdateWindow) *gen.UpdateWindow {
+	if w.Length <= 0 || w.Length >= 24*time.Hour {
+		return nil
+	}
+	return &gen.UpdateWindow{
+		Start: fmt.Sprintf("%02d:%02d", int(w.Start.Hours()), int(w.Start.Minutes())%60),
+		Hours: int(w.Length.Hours()),
+	}
 }

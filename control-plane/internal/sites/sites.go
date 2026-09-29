@@ -313,6 +313,9 @@ type Options struct {
 	// Prober sends the HTTP request of health checks; nil means the
 	// Provisioner, if it implements provisioner.Prober, or no HTTP check.
 	Prober provisioner.Prober
+	// ImageUpdates configures the image rollout (imageupdate.go), which
+	// runs when the Provisioner implements provisioner.ImagePinner.
+	ImageUpdates ImageUpdateOptions
 }
 
 // Service runs the site workflows.
@@ -339,6 +342,8 @@ type Service struct {
 	statusTimeout time.Duration
 	core          CoreUpdateOptions
 	prober        provisioner.Prober
+	pinner        provisioner.ImagePinner
+	images        *imageChecker
 }
 
 // New returns a Service.
@@ -389,6 +394,8 @@ func New(opts Options) (*Service, error) {
 	if s.prober == nil {
 		s.prober, _ = opts.Provisioner.(provisioner.Prober)
 	}
+	s.pinner, _ = opts.Provisioner.(provisioner.ImagePinner)
+	s.images = &imageChecker{opts: opts.ImageUpdates, pulled: map[string]time.Time{}, latest: map[string]ImageBuild{}}
 	if s.core.MaxFailures <= 0 {
 		s.core.MaxFailures = 3
 	}
@@ -716,7 +723,13 @@ func (s *Service) Handlers() []jobs.Handler {
 	}
 	if s.restores() {
 		handlers = append(handlers, s.restoreHandler())
-		handlers = append(handlers, s.coreUpdateHandler(), s.rolloutHandler())
+		handlers = append(handlers, s.coreUpdateHandler())
+	}
+	if s.pinner != nil {
+		handlers = append(handlers, s.imageUpdateHandler())
+	}
+	if len(s.rolloutSources()) > 0 {
+		handlers = append(handlers, s.rolloutHandler())
 	}
 	if s.imports() {
 		handlers = append(handlers, s.importHandler())

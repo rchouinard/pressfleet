@@ -19,8 +19,10 @@ type ContainerDetails struct {
 	ID   string
 	Name string
 	// Image is the image reference the container was created from, e.g.
-	// ghcr.io/rchouinard/pressfleet/site-php:php8.4-wp7.1.2.
+	// ghcr.io/rchouinard/pressfleet/site-php:php8.4-wp7.1.2, or a pinned
+	// build of it (Provisioner.PinImage), and ImageID the ID of the image.
 	Image   string
+	ImageID string
 	Running bool
 	// Networks maps each network the container is attached to to its IPv4
 	// address there.
@@ -154,6 +156,7 @@ func InspectContainer(ctx context.Context, docker ExecFunc, container string) (C
 	var infos []struct {
 		ID     string `json:"Id"`
 		Name   string `json:"Name"`
+		Image  string `json:"Image"`
 		Config struct {
 			Image  string            `json:"Image"`
 			Labels map[string]string `json:"Labels"`
@@ -179,6 +182,7 @@ func InspectContainer(ctx context.Context, docker ExecFunc, container string) (C
 		ID:       info.ID,
 		Name:     strings.TrimPrefix(info.Name, "/"),
 		Image:    info.Config.Image,
+		ImageID:  info.Image,
 		Running:  info.State.Running,
 		Networks: map[string]string{},
 		Mounts:   info.Mounts,

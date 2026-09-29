@@ -108,7 +108,16 @@ type SiteConfig struct {
 	// the startup re-render) keep it. Callers of SetMaintenance must pass
 	// the same value here afterwards, or the next update undoes it.
 	Maintenance bool
+	// PinnedImages pins components to exact builds of the images that
+	// PHPVersion and WPCoreVersion select, by references
+	// ImagePinner.PinImage returned for them (§5.5). A component without
+	// one runs its image's tag as it is.
+	PinnedImages map[Component]string
 }
+
+// pinnedImage matches the references ImagePinner.PinImage returns: a
+// repository with a digest, or an image ID.
+var pinnedImage = regexp.MustCompile(`^([a-z0-9][a-z0-9._:/-]*@)?sha256:[0-9a-f]{64}$`)
 
 // BasicAuth is one HTTP basic auth credential.
 type BasicAuth struct {
@@ -186,6 +195,13 @@ func (c *SiteConfig) Validate() error {
 	if c.PreviewAuth != nil {
 		if err := c.PreviewAuth.Validate(); err != nil {
 			errs = append(errs, err)
+		}
+	}
+	for comp, ref := range c.PinnedImages {
+		if comp != ComponentPHP && comp != ComponentNginx {
+			errs = append(errs, fmt.Errorf("pinned image of unknown component %q", comp))
+		} else if !pinnedImage.MatchString(ref) {
+			errs = append(errs, fmt.Errorf("pinned %s image %q is not a digest or image ID reference", comp, ref))
 		}
 	}
 	if err := errors.Join(errs...); err != nil {

@@ -156,7 +156,7 @@ func TestCoreUpdate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if c.Image != image || !c.Running {
+			if !e2e.RunsImage(t, c, image) || !c.Running {
 				t.Errorf("%s runs %s (running %t), want %s", service, c.Image, c.Running, image)
 			}
 		}

@@ -21,8 +21,8 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/wpconfig"
 )
 
-// The Compose provisioner implements the Provisioner, TaskRunner, Prober, and
-// SessionRunner parts of the driver. LogReader and StatsReader come with the
+// The Compose provisioner implements the Provisioner, TaskRunner, Prober,
+// ImagePinner, and SessionRunner parts of the driver. LogReader and StatsReader come with the
 // issues that need them (#78, #68), and the full provisioner.Driver
 // assertion with them; stubbing them now would only hide which parts are
 // missing.
@@ -31,6 +31,7 @@ var (
 	_ provisioner.TaskRunner    = (*Provisioner)(nil)
 	_ provisioner.SessionRunner = (*Provisioner)(nil)
 	_ provisioner.Prober        = (*Provisioner)(nil)
+	_ provisioner.ImagePinner   = (*Provisioner)(nil)
 )
 
 // ErrSharedServiceUnavailable means a platform container that sites depend
@@ -386,9 +387,16 @@ func (p *Provisioner) siteRender(ctx context.Context, cfg *provisioner.SiteConfi
 	if err != nil {
 		return SiteRender{}, err
 	}
+	siteImages := SiteImages{PHP: images.PHP, Nginx: images.Nginx}
+	if ref := cfg.PinnedImages[provisioner.ComponentPHP]; ref != "" {
+		siteImages.PHP = ref
+	}
+	if ref := cfg.PinnedImages[provisioner.ComponentNginx]; ref != "" {
+		siteImages.Nginx = ref
+	}
 	return SiteRender{
 		Site:            cfg,
-		Images:          SiteImages{PHP: images.PHP, Nginx: images.Nginx},
+		Images:          siteImages,
 		WPConfig:        wpconfig.Params{DB: creds, Salts: salts, Redis: redis, SMTP: p.smtp, TablePrefix: cfg.TablePrefix},
 		Security:        p.security,
 		PlatformProject: p.platform,

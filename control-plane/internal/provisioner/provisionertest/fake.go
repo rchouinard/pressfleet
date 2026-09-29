@@ -4,6 +4,8 @@ package provisionertest
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"io"
 	"iter"
 	"maps"
@@ -55,6 +57,9 @@ type Fake struct {
 	logs  map[string][]provisioner.LogEntry
 	stats map[string][]provisioner.ComponentStats
 	calls []Call
+	// local and registry map image tags to builds (ImagePinner).
+	local    map[string]string
+	registry map[string]string
 }
 
 var _ provisioner.Driver = (*Fake)(nil)
@@ -65,6 +70,9 @@ func New() *Fake {
 		sites: make(map[string]*Site),
 		logs:  make(map[string][]provisioner.LogEntry),
 		stats: make(map[string][]provisioner.ComponentStats),
+
+		local:    make(map[string]string),
+		registry: make(map[string]string),
 	}
 }
 
@@ -420,4 +428,54 @@ func (f *Fake) RunSession(ctx context.Context, siteID string, s provisioner.Sess
 	}
 	_, err := io.Copy(io.Discard, s.Stdin)
 	return err
+}
+
+// SetLocalImage makes pinned the build the image tag names locally, as a
+// local rebuild would; PinImage returns it from now on.
+func (f *Fake) SetLocalImage(image, pinned string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.local[image] = pinned
+}
+
+// PublishImage makes pinned the newest build of the image tag in its
+// registry; PullImage fetches it.
+func (f *Fake) PublishImage(image, pinned string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.registry[image] = pinned
+}
+
+// PinImage implements provisioner.ImagePinner. An image that isn't local
+// is fetched from the fake registry; without a build there, its build is
+// sha256:<the SHA-256 of the tag>.
+func (f *Fake) PinImage(_ context.Context, image string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.begin("PinImage", "", []string{image}); err != nil {
+		return "", err
+	}
+	if pinned, ok := f.local[image]; ok {
+		return pinned, nil
+	}
+	pinned, ok := f.registry[image]
+	if !ok {
+		pinned = fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(image)))
+	}
+	f.local[image] = pinned
+	return pinned, nil
+}
+
+// PullImage implements provisioner.ImagePinner: the local build becomes
+// the registry's, if it has one.
+func (f *Fake) PullImage(_ context.Context, image string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.begin("PullImage", "", []string{image}); err != nil {
+		return err
+	}
+	if pinned, ok := f.registry[image]; ok {
+		f.local[image] = pinned
+	}
+	return nil
 }

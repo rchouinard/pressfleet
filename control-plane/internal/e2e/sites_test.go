@@ -464,7 +464,7 @@ func TestSiteCreateDelete(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if phpBefore.Image != images.PHP {
+		if !e2e.RunsImage(t, phpBefore, images.PHP) {
 			t.Fatalf("php runs %s, want %s", phpBefore.Image, images.PHP)
 		}
 		resp, err := p.Client.UpdateSiteWithResponse(ctx, site.ID, client.UpdateSiteJSONRequestBody{PhpVersion: &otherPHP})
@@ -483,7 +483,7 @@ func TestSiteCreateDelete(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if phpAfter.ID == phpBefore.ID || phpAfter.Image != otherImages.PHP || !phpAfter.Running {
+		if phpAfter.ID == phpBefore.ID || !e2e.RunsImage(t, phpAfter, otherImages.PHP) || !phpAfter.Running {
 			t.Errorf("php after the update = %+v; want a new, running container of %s", phpAfter, otherImages.PHP)
 		}
 		if nginxAfter, err := siteProject.ServiceContainer(ctx, "nginx"); err != nil || nginxAfter.ID != nginxBefore.ID {

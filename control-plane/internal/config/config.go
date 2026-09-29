@@ -602,6 +602,7 @@ var intEnvVars = []struct {
 	{"PRESSFLEET_UPDATES_MAX_FAILURES", func(c *Config) *int { return &c.Updates.MaxFailures }},
 	{"PRESSFLEET_UPDATES_CORE_MAJOR_AUTO_APPROVE_DAYS", func(c *Config) *int { return &c.Updates.Core.MajorAutoApproveDays }},
 	{"PRESSFLEET_UPDATES_CORE_HOLD_WARNING_DAYS", func(c *Config) *int { return &c.Updates.Core.HoldWarningDays }},
+	{"PRESSFLEET_UPDATES_IMAGES_CHECK_HOURS", func(c *Config) *int { return &c.Updates.Images.CheckHours }},
 }
 
 // envVars maps environment variables to the fields they set.

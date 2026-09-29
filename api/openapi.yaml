@@ -2351,6 +2351,55 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/image-rollout:
+    get:
+      operationId: getImageRollout
+      tags: [sites]
+      summary: Get the platform image rollout
+      description: |
+        The rollout of new builds of the site images that sites already
+        run (PHP patch releases, security fixes, base OS updates; the
+        WordPress core stays the same). It updates one site at a time,
+        inside the maintenance window if one is set, and halts after
+        `max_failures` failed site updates in a row
+        (`updates.max_failures`), until it is resumed or new builds
+        arrive. Sites whose update failed aren't tried again with the same
+        builds. `images` are the newest builds the rollout has seen of each
+        image in use; empty until its first pass.
+      responses:
+        "200":
+          description: The image rollout.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImageRollout"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/image-rollout/resume:
+    post:
+      operationId: resumeImageRollout
+      tags: [sites]
+      summary: Resume a halted image rollout
+      description: Lifts a halt, resets the failure count, and queues a rollout pass.
+      responses:
+        "200":
+          description: The image rollout.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImageRollout"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/jobs:
     get:
       operationId: listJobs
@@ -3634,6 +3683,62 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CoreUpdateFailure"
+
+    ImageBuild:
+      type: object
+      description: The newest build of a site image tag that the image rollout has seen.
+      required: [image, build, checked_at]
+      properties:
+        image:
+          type: string
+          description: The image tag, e.g. `ghcr.io/rchouinard/pressfleet/site-php:php8.4-wp6.9.1`.
+        build:
+          type: string
+          description: The build, as `repository@sha256:<digest>`, or a local image ID for a locally built image.
+        checked_at:
+          $ref: "#/components/schemas/Timestamp"
+        pulled_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    ImageUpdateFailure:
+      type: object
+      description: A site's failed update to `target`, which the rollout doesn't retry.
+      required: [site_id, target, message, failed_at]
+      properties:
+        site_id:
+          $ref: "#/components/schemas/ID"
+        target:
+          type: string
+          description: The builds the update moved the site to, as `php=<build> nginx=<build>`.
+        message:
+          type: string
+        failed_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    ImageRollout:
+      type: object
+      required: [halted, consecutive_failures, max_failures, images, failures]
+      properties:
+        halted:
+          type: boolean
+        halted_at:
+          $ref: "#/components/schemas/Timestamp"
+        halt_reason:
+          type: string
+        consecutive_failures:
+          type: integer
+        max_failures:
+          type: integer
+        window:
+          $ref: "#/components/schemas/UpdateWindow"
+        images:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImageBuild"
+        failures:
+          type: array
+          items:
+            $ref: "#/components/schemas/ImageUpdateFailure"
 
     SiteCreate:
       type: object
