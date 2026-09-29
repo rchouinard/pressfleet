@@ -1547,6 +1547,236 @@
       ]
     },
     {
+      "id": "17be32e1-cb76-581b-9a3d-e9992c1d21ea",
+      "name": "Backups",
+      "description": "Site backups, restores, and backup schedules. A client group's sites share one Restic repository.",
+      "item": [
+        {
+          "id": "df5e5ba5-7618-57ce-ad76-b36bca7d2549",
+          "name": "List site backups",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/backups",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "backups"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Maximum number of items to return (1-200).",
+                  "disabled": true
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "description": "The next_cursor from the previous page.",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "succeeded",
+                  "description": "running, succeeded, or failed",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "The site's backups, newest first, including running and failed ones. Saves the newest succeeded backup's `snapshot_id` to `snapshot_id`, for **Restore site**."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "    const backup = pm.response.json().items.find((b) => b.status === \"succeeded\" && !b.expired_at);",
+                  "    if (backup) {",
+                  "        pm.environment.set(\"snapshot_id\", backup.snapshot_id);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "2ef2e1cf-9071-5f02-a4c1-8d1ca339bf86",
+          "name": "Back up site",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/backups",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "backups"
+              ]
+            },
+            "description": "Queues a job that dumps the site's database and snapshots it with `wp-content` into the client group's backup repository (design doc \u00a75.3). The job's result holds `backup_id` and `snapshot_id`. Follow it with **Jobs \u2192 Get job**, then **List site backups** saves the snapshot for **Restore site**. Needs `backup` configured and `task_image` set."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "457ed405-20ab-5110-af8f-e227ef83065d",
+          "name": "Restore site",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/restore",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "restore"
+              ]
+            },
+            "description": "Queues a job that restores `snapshot_id` into the site (design doc \u00a75.4), after taking a pre-restore backup (the job's result holds `pre_restore_backup_id`). The site must be `running`. To restore another site's snapshot from the same client group, add `source_site_id`. If the job fails after touching the site's data, it rolls back and leaves the site in maintenance mode.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"snapshot_id\": \"{{snapshot_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 422) {",
+                  "    // The snapshot isn't the source site's, or no site image is new enough.",
+                  "    console.log(pm.response.json());",
+                  "}",
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "f9b42ea2-791c-5ef2-a789-2610a53e331d",
+          "name": "Get backup schedule",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/backup-schedule",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "backup-schedule"
+              ]
+            },
+            "description": "When the site is backed up automatically and when its next backup is due. Every site is backed up daily by default, at a time within the platform's backup window."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "56543201-4c33-5193-87c0-302d002589dd",
+          "name": "Set backup schedule",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/backup-schedule",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "backup-schedule"
+              ]
+            },
+            "description": "Replaces the site's backup schedule; omitted fields take their defaults, so `{\"enabled\": true}` restores the daily backup in the platform's window. `interval_hours` is a divisor of 24 or a whole number of days up to 168; `hour` is the UTC hour backups start in, or `null` for the platform's window. Applies at once, without a job.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"interval_hours\": 24,\n  \"hour\": 3\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "e6e4ae4e-bd53-5c62-929c-0923010ae276",
       "name": "Jobs",
       "description": "Long-running operations.",
