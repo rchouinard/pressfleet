@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rchouinard/pressfleet/control-plane/internal/api/client"
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/e2e"
@@ -74,6 +73,8 @@ networks:
 // network, reached by its container name: the control plane creates,
 // prunes, and checks the repository, and the backup and restore tasks,
 // which run on the site's network, reach it through the backup network.
+// The restores are restoreChecks, the same as TestSiteRestore's with the
+// local backend.
 func TestSiteBackupS3(t *testing.T) {
 	projectDir := t.TempDir()
 	var siteProject compose.Project
@@ -141,55 +142,13 @@ func TestSiteBackupS3(t *testing.T) {
 		time.Sleep(3 * time.Second)
 	}
 
-	const content = "/var/www/wordpress/wp-content"
-	sh := func(t *testing.T, script string) string {
-		t.Helper()
-		out, err := siteProject.ExecService(ctx, "php", "sh", "-c", script)
-		if err != nil {
-			t.Fatalf("sh -c %q: %v: %s", script, err, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-	backup := func(t *testing.T) string {
-		t.Helper()
-		resp, err := p.Client.CreateSiteBackupWithResponse(ctx, site.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if resp.JSON202 == nil {
-			t.Fatalf("back up: status %d: %s", resp.StatusCode(), resp.Body)
-		}
-		waitJob(t, p, resp.JSON202.Job.ID)
-		list, err := p.Client.ListSiteBackupsWithResponse(ctx, site.ID, &client.ListSiteBackupsParams{})
-		if err != nil || list.JSON200 == nil || len(list.JSON200.Items) == 0 {
-			t.Fatalf("list backups: %v %s", err, list.Body)
-		}
-		b := list.JSON200.Items[0]
-		if b.Status != client.BackupStatusSucceeded || b.SnapshotID == nil {
-			t.Fatalf("backup = %+v", b)
-		}
-		return *b.SnapshotID
-	}
-
-	const marker = "pf-e2e-s3-marker-5d2e"
-	sh(t, "mkdir -p "+content+"/uploads/pf && echo "+marker+" > "+content+"/uploads/pf/marker.txt")
-	snapshot := backup(t)
-	t.Logf("snapshot %s in %s", snapshot[:8], s3Bucket)
-
-	t.Run("restore", func(t *testing.T) {
-		sh(t, "echo changed > "+content+"/uploads/pf/marker.txt")
-		resp, err := p.Client.RestoreSiteWithResponse(ctx, site.ID, client.RestoreSiteJSONRequestBody{SnapshotID: snapshot})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if resp.JSON202 == nil {
-			t.Fatalf("restore: status %d: %s", resp.StatusCode(), resp.Body)
-		}
-		waitJob(t, p, resp.JSON202.Job.ID)
-		if got := sh(t, "cat "+content+"/uploads/pf/marker.txt"); got != marker {
-			t.Errorf("marker.txt after the restore = %q, want %q", got, marker)
-		}
-	})
+	// The restores of the M3 acceptance criteria, as TestSiteRestore runs
+	// them with the local backend: here the backups, the pre-restore
+	// backups, and the rollback's restore all go through the bucket.
+	rc := restoreChecks{p: p, site: site, proj: siteProject}
+	snapshot := rc.setUp(t)
+	t.Run("restore", func(t *testing.T) { rc.sameSite(t, snapshot) })
+	t.Run("rollback", rc.rollback)
 
 	t.Run("prune and check", func(t *testing.T) {
 		for _, command := range []string{"prune", "check"} {

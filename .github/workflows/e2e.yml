@@ -46,7 +46,10 @@ jobs:
     name: E2E
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The tests run one after another, about 25 minutes on a workstation
+    # (go test's own limit is 60m, in the Makefile); a cold runner that
+    # also builds the site images needs more.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
         with:

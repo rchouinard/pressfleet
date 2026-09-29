@@ -36,7 +36,7 @@ test-platform: ## Bring up the platform project with a local image against real 
 test-e2e: ## Run the end-to-end tests against a freshly built image and real Docker (see docs/testing.md)
 	$(MAKE) image IMAGE=pressfleet-control-plane:e2e
 	PRESSFLEET_DOCKER_TESTS=1 PRESSFLEET_TEST_CONTROL_PLANE_IMAGE=pressfleet-control-plane:e2e \
-		go test -count=1 -v -timeout 20m ./control-plane/internal/e2e/...; \
+		go test -count=1 -v -timeout 60m ./control-plane/internal/e2e/...; \
 		status=$$?; docker image rm pressfleet-control-plane:e2e >/dev/null; exit $$status
 
 .PHONY: lint

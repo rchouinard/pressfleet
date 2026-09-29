@@ -288,7 +288,7 @@ func TestServeSkipPreflight(t *testing.T) {
 	docker.InfoErr = errors.New("docker must not be called")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // serve returns immediately after starting
-	r := runWith(t, ctx, []string{"serve", "--skip-preflight", "--data-dir", t.TempDir()}, nil, doctortest.Healthy(), docker)
+	r := runWith(t, ctx, []string{"serve", "--skip-preflight", "--data-dir", t.TempDir(), "--listen", "127.0.0.1:0"}, nil, doctortest.Healthy(), docker)
 	if r.code != 0 {
 		t.Fatalf("exit %d, stderr: %s", r.code, r.stderr)
 	}
@@ -319,7 +319,7 @@ func TestServeSkipPreflightEnv(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel() // serve returns immediately if it starts
-			args := append([]string{"serve", "--data-dir", t.TempDir()}, tt.flags...)
+			args := append([]string{"serve", "--data-dir", t.TempDir(), "--listen", "127.0.0.1:0"}, tt.flags...)
 			r := runWith(t, ctx, args, map[string]string{"PRESSFLEET_SKIP_PREFLIGHT": tt.env}, doctortest.Healthy(), failing())
 			if r.code != tt.wantCode || !strings.Contains(r.stderr, tt.wantErr) {
 				t.Errorf("exit %d (want %d), stderr:\n%s", r.code, tt.wantCode, r.stderr)

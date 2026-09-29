@@ -550,11 +550,15 @@ func TestWatchReconcilesOnRestart(t *testing.T) {
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		// Each reconcile lists the server's users; count those calls.
+		// Each reconcile ensures the one site's user; count those calls.
+		// Not the users listing that starts a reconcile: the user is back
+		// only once ensureUser ran, after the state database was read, so
+		// checkServer below would race it. ensureUser holds the fake's lock
+		// while it creates the user, and checkServer takes the lock.
 		thens := make(chan struct{}, 10)
 		f.srv.mu.Lock()
 		f.srv.fail = func(op string) error {
-			if op == "users" {
+			if op == "ensureUser" {
 				thens <- struct{}{}
 			}
 			return nil
