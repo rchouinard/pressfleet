@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -22,7 +23,8 @@ func TestAuditEvents(t *testing.T) {
 				TargetType: "site", TargetID: site, Result: store.AuditFailure, SourceIP: "192.0.2.1"},
 			{OccurredAt: base.Add(2 * time.Hour), ActorUserID: bob, Action: "site.delete",
 				TargetType: "site", TargetID: site, Result: store.AuditDenied, SourceIP: "2001:db8::1"},
-			{OccurredAt: base.Add(3 * time.Hour), Action: "self.login", Result: store.AuditFailure, SourceIP: "198.51.100.7"},
+			{OccurredAt: base.Add(3 * time.Hour), Action: "self.login", Result: store.AuditFailure, SourceIP: "198.51.100.7",
+				Details: map[string]string{"key_fingerprint": "SHA256:abc", "bytes": "12"}},
 		}
 		for i := range events {
 			if err := audit.Insert(ctx, &events[i]); err != nil {
@@ -48,7 +50,7 @@ func TestAuditEvents(t *testing.T) {
 			t.Fatalf("List = %+v", page)
 		}
 		for i, e := range page.Events {
-			if want := events[len(events)-1-i]; e != want {
+			if want := events[len(events)-1-i]; !reflect.DeepEqual(e, want) {
 				t.Errorf("event %d = %+v, want %+v", i, e, want)
 			}
 		}

@@ -74,6 +74,7 @@ func TestLoadPrecedence(t *testing.T) {
 		Audit:    config.AuditConfig{RetentionDays: 365},           // default
 		SMTP:     config.Default().SMTP,                            // default
 		Backup:   config.Default().Backup,                          // default
+		SFTP:     config.DefaultSFTP(),                             // default
 		// default
 		PlatformProject:   "pressfleet",
 		WordPressSecurity: config.DefaultWordPressSecurity(),             // default

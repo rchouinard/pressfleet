@@ -77,6 +77,15 @@ const LetsEncryptCAServer = config.LetsEncryptDirectory
 // DefaultListen is the control plane's listen address inside its container.
 const DefaultListen = ":8080"
 
+// The SFTP gateway (design doc §5.8) runs in the control plane, which
+// listens on SFTPContainerPort (config.Config's sftp.listen default); the
+// platform publishes it on the host's sftp.port, DefaultSFTPPort unless
+// configured.
+const (
+	DefaultSFTPPort   = 2222
+	SFTPContainerPort = 2222
+)
+
 // ErrInvalidConfig is returned by Render for a Config that can't be rendered.
 var ErrInvalidConfig = errors.New("platform: invalid config")
 
@@ -147,6 +156,14 @@ type Config struct {
 	// secrets/redis_admin_password for the control plane. The object cache
 	// server only gets its SHA-256 hash.
 	RedisAdminPassword redact.Secret
+	// SSHHostKey is the SFTP gateway's private host key (PEM), written to
+	// secrets/ssh_host_key for the control plane. The host CLI generates
+	// it once and reuses it (SSHHostKeySecret), so clients' known_hosts
+	// entries stay valid across reinstalls and upgrades.
+	SSHHostKey redact.Secret
+	// SFTPPort is the host port the SFTP gateway is published on; zero
+	// means DefaultSFTPPort.
+	SFTPPort int
 	// MasterKeyFile is the host path of the platform master key file. It is
 	// given to the control plane as a Compose secret and must be outside
 	// DataDir, which is backed up (§4.1). The key itself never passes
@@ -234,6 +251,9 @@ func (c Config) withDefaults() (Config, error) {
 	if c.ACME.CAServer == "" {
 		c.ACME.CAServer = LetsEncryptCAServer
 	}
+	if c.SFTPPort == 0 {
+		c.SFTPPort = DefaultSFTPPort
+	}
 
 	var errs []error
 	if !filepath.IsAbs(c.DataDir) || filepath.Clean(c.DataDir) != c.DataDir {
@@ -316,6 +336,12 @@ func (c Config) withDefaults() (Config, error) {
 		// The control plane reads the secret file as a single line.
 		errs = append(errs, errors.New("the object cache admin password must not contain line breaks"))
 	}
+	if !strings.Contains(c.SSHHostKey.Reveal(), "PRIVATE KEY-----") {
+		errs = append(errs, errors.New("the SFTP gateway host key is required, as a PEM private key"))
+	}
+	if c.SFTPPort < 1 || c.SFTPPort > 65535 || c.SFTPPort == 80 || c.SFTPPort == 443 {
+		errs = append(errs, fmt.Errorf("the SFTP port must be a free TCP port other than 80 and 443, got %d", c.SFTPPort))
+	}
 	if err := errors.Join(errs...); err != nil {
 		return c, fmt.Errorf("%w: %w", ErrInvalidConfig, err)
 	}
@@ -340,6 +366,8 @@ type templateData struct {
 	RedisDatabases         int
 	RedisAdminUser         string
 	RedisAdminPasswordHash string
+	SFTPPort               int
+	SFTPContainerPort      int
 	MasterKeyFile          string
 	MasterKeySecretPath    string
 	SkipPreflight          bool
@@ -398,6 +426,7 @@ const (
 	MariaDBRootPasswordSecret = "secrets/mariadb_root_password"
 	RedisConfigFile           = "redis/valkey.conf"
 	RedisAdminPasswordSecret  = "secrets/redis_admin_password"
+	SSHHostKeySecret          = "secrets/ssh_host_key"
 	TraefikConfigFile         = "traefik/traefik.yaml"
 	// TraefikDynamicDir is the directory of Traefik's file provider. Render
 	// writes TraefikDynamicConfigFile into it; the control plane adds and
@@ -443,6 +472,8 @@ func Render(dir string, cfg Config) error {
 		RedisAdminUser:       RedisAdminUser,
 		// ACL passwords are hashed over the exact bytes a client sends.
 		RedisAdminPasswordHash: sha256Hex(cfg.RedisAdminPassword),
+		SFTPPort:               cfg.SFTPPort,
+		SFTPContainerPort:      SFTPContainerPort,
 		MasterKeyFile:          cfg.MasterKeyFile,
 		MasterKeySecretPath:    MasterKeySecretPath,
 		SkipPreflight:          cfg.SkipPreflight,
@@ -496,6 +527,7 @@ func Render(dir string, cfg Config) error {
 		{path: MariaDBRootPasswordSecret, secret: cfg.MariaDBRootPassword},
 		{path: RedisConfigFile, template: "valkey.conf.tmpl"},
 		{path: RedisAdminPasswordSecret, secret: cfg.RedisAdminPassword},
+		{path: SSHHostKeySecret, secret: cfg.SSHHostKey},
 	}
 	dnsFiles := []output{
 		{path: TraefikEntrypointFile, template: "traefik-entrypoint.sh.tmpl"},

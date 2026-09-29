@@ -504,6 +504,11 @@ func TestInitForceReusesKey(t *testing.T) {
 	if err != nil || len(redisPW) == 0 {
 		t.Fatalf("Redis admin password: %q, %v", redisPW, err)
 	}
+	hostKeyFile := filepath.Join(e.dataDir, "platform", platform.SSHHostKeySecret)
+	hostKey, err := os.ReadFile(hostKeyFile)
+	if err != nil || !strings.Contains(string(hostKey), "OPENSSH PRIVATE KEY") {
+		t.Fatalf("SFTP host key: %q, %v", hostKey, err)
+	}
 
 	// Reinstalling with --force keeps the key and the MariaDB password, and
 	// leaves the existing admin alone.
@@ -528,6 +533,9 @@ func TestInitForceReusesKey(t *testing.T) {
 	}
 	if pw2, _ := os.ReadFile(redisPWFile); string(pw2) != string(redisPW) {
 		t.Error("Redis admin password changed")
+	}
+	if k2, _ := os.ReadFile(hostKeyFile); string(k2) != string(hostKey) {
+		t.Error("SFTP gateway host key changed")
 	}
 	if !strings.Contains(r.stdout, "already exists; left unchanged") || strings.Contains(r.stdout, "Admin password:") {
 		t.Errorf("stdout:\n%s", r.stdout)

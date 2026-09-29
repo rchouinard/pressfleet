@@ -39,6 +39,15 @@
 // an optional expiry, and can be revoked. LastUsedAt is written at most once
 // a minute.
 //
+// # SSH keys
+//
+// Users register SSH public keys for the SFTP gateway (design doc §5.8).
+// The SSH username names the site, so the key alone identifies the user: a
+// key is registered to one user at most and looked up by its SHA-256
+// fingerprint. Only public keys are stored, never passwords. Removing a key,
+// or disabling or deleting its user, ends its access; the gateway rechecks
+// live connections (RecheckSSHKey) so that holds for open sessions too.
+//
 // # Brute force
 //
 // Failed logins return the same error whether or not the email exists, and

@@ -52,6 +52,7 @@ func startCache(t *testing.T) cacheServer {
 		Images:              images,
 		MariaDBRootPassword: "unused",
 		RedisAdminPassword:  password,
+		SSHHostKey:          "-----BEGIN OPENSSH PRIVATE KEY-----\nunused\n-----END OPENSSH PRIVATE KEY-----\n",
 		MasterKeyFile:       filepath.Join(t.TempDir(), "master.key"),
 	}); err != nil {
 		t.Fatal(err)

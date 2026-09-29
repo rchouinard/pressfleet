@@ -111,6 +111,12 @@ services:
       - mariadb_root_password
       - master_key
       - redis_admin_password
+      - ssh_host_key
+    # The SFTP gateway (§5.8) runs in the control plane. SSH can't be
+    # routed by host name, so it gets its own host port; published
+    # directly, it sees developers' real addresses for the audit log.
+    ports:
+      - "{{ .SFTPPort }}:{{ .SFTPContainerPort }}/tcp"
     networks:
       - platform
       # Where a self-hosted S3 service for backups lives; see below.
@@ -400,6 +406,10 @@ secrets:
   # itself only knows its hash (redis/valkey.conf).
   redis_admin_password:
     file: ./secrets/redis_admin_password
+  # The SFTP gateway's host key, generated once by pressfleet init and kept
+  # across reinstalls, so developers' known_hosts entries stay valid.
+  ssh_host_key:
+    file: ./secrets/ssh_host_key
   # The platform master key stays where the operator keeps it, outside the
   # data directory and its backups (§4.1); it is only mounted, never copied.
   master_key:

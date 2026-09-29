@@ -57,6 +57,7 @@ func TestPlatformUp(t *testing.T) {
 		Images:              images,
 		MariaDBRootPassword: password,
 		RedisAdminPassword:  redisPassword,
+		SSHHostKey:          e2e.HostKey(t),
 		MasterKeyFile:       keyFile,
 		// Development machines and CI runners often lack Docker address pools.
 		SkipPreflight: true,

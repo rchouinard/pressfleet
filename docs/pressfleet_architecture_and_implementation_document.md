@@ -329,6 +329,7 @@ Site components are named by role (`nginx`, `php`), not by orchestrator object. 
 | `LogReader` | Container logs | Pod logs API, per container |
 | `StatsReader` | Docker stats (cumulative CPU) and container restart count | Kubelet summary API (cumulative CPU) and Pod status restart counts |
 | `TaskRunner` | One-off container mounting the site volume and a bind-mounted transfer directory | Job whose Pod mounts the site PVC and a shared transfer volume |
+| `SessionRunner` | One-off container, attached to the gateway's streams, mounting only the site volume, with no network | Pod with `stdin`/`stdinOnce`, the site PVC, and a deny-all NetworkPolicy, attached through the API |
 
 ### 4.5. API Design
 

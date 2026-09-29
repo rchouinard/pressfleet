@@ -100,6 +100,9 @@ type Options struct {
 	// PublicIP, if valid, is the address DNS records must point at. It lets
 	// hosts behind NAT verify DNS.
 	PublicIP netip.Addr
+	// SFTPPort is the host port the SFTP gateway will be published on
+	// (sftp.port); zero skips its check.
+	SFTPPort int
 	// RandomLabel returns a DNS label for probing the wildcard preview
 	// record; nil uses a random one.
 	RandomLabel func() string

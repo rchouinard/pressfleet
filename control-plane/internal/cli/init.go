@@ -25,6 +25,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
+	"github.com/rchouinard/pressfleet/control-plane/internal/sftpgw"
 )
 
 // masterKeyWarning is the master key warning of design doc §4.1, which
@@ -415,6 +416,7 @@ func (i *installer) run(ctx context.Context, given map[string]string) error {
 		i.printf("  SMTP relay:       %s:%d (%s)\n", smtp.Host, smtp.EffectivePort(), smtp.Encryption)
 	}
 	i.printBackupSummary(answers)
+	i.printf("  SFTP gateway:     sftp -P %d <site-slug>@%s\n", i.a.cfg.SFTP.Port, answers.DashboardDomain)
 	i.printf("  Admin user:       %s\n", auth.NormalizeEmail(answers.AdminEmail))
 	if created && generated {
 		i.printf("  Admin password:   %s\n\nStore the admin password now; it can't be shown again.\n", adminPassword.Reveal())
@@ -699,6 +701,8 @@ type fileConfig struct {
 	ACME *fileACMEConfig `yaml:"acme,omitempty"`
 	// Backup is only written for the S3 backend; local is the default.
 	Backup *fileBackup `yaml:"backup,omitempty"`
+	// SFTP is only written for a port other than the default.
+	SFTP *fileSFTP `yaml:"sftp,omitempty"`
 }
 
 const configHeader = `# PressFleet configuration, written by pressfleet init.
@@ -718,6 +722,7 @@ func (i *installer) writeConfig(a initAnswers) error {
 		SMTP:              a.smtpFileConfig(),
 		ACME:              a.acmeFileConfig(),
 		Backup:            a.backupFileConfig(),
+		SFTP:              sftpFileConfig(i.a.cfg.SFTP),
 	})
 	if err != nil {
 		return err
@@ -786,6 +791,10 @@ func (i *installer) startPlatform(ctx context.Context, a initAnswers) error {
 	if err != nil {
 		return err
 	}
+	hostKey, err := sshHostKey(dir)
+	if err != nil {
+		return err
+	}
 	name := i.projectName()
 	acme := a.acmeConfig()
 	if err := platform.Render(dir, platform.Config{
@@ -794,6 +803,8 @@ func (i *installer) startPlatform(ctx context.Context, a initAnswers) error {
 		Images:              images,
 		MariaDBRootPassword: password,
 		RedisAdminPassword:  redisPassword,
+		SSHHostKey:          hostKey,
+		SFTPPort:            i.a.cfg.SFTP.Port,
 		MasterKeyFile:       a.MasterKeyFile,
 		SkipPreflight:       i.f.skipPreflight,
 		PreviewBaseDomain:   a.PreviewBaseDomain,
@@ -866,6 +877,39 @@ func redisAdminPassword(dir string) (redact.Secret, error) {
 	default:
 		return "", fmt.Errorf("reading the Redis admin password: %w", err)
 	}
+}
+
+// sshHostKey returns the SFTP gateway's host key already rendered into dir,
+// or a new one. Reinstalling must reuse it: developers' SSH clients
+// remember it (known_hosts) and refuse a gateway whose key changed.
+func sshHostKey(dir string) (redact.Secret, error) {
+	data, err := os.ReadFile(filepath.Join(dir, platform.SSHHostKeySecret)) //nolint:gosec // G304: a file in the data directory
+	switch {
+	case err == nil && strings.Contains(string(data), "PRIVATE KEY-----"):
+		return redact.Secret(data), nil
+	case err == nil || errors.Is(err, fs.ErrNotExist):
+		key, err := sftpgw.GenerateHostKey()
+		if err != nil {
+			return "", fmt.Errorf("generating the SFTP gateway host key: %w", err)
+		}
+		return redact.Secret(key), nil
+	default:
+		return "", fmt.Errorf("reading the SFTP gateway host key: %w", err)
+	}
+}
+
+// fileSFTP is the sftp section init writes.
+type fileSFTP struct {
+	Port int `yaml:"port"`
+}
+
+// sftpFileConfig returns the sftp section to write, nil for the default
+// port.
+func sftpFileConfig(s config.SFTPConfig) *fileSFTP {
+	if s.Port == 0 || s.Port == platform.DefaultSFTPPort {
+		return nil
+	}
+	return &fileSFTP{Port: s.Port}
 }
 
 // createAdmin creates the first admin by running `pressfleet user create`

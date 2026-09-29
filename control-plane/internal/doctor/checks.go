@@ -63,6 +63,7 @@ func Checks() []Check {
 		{ID: "cgroup", Name: "cgroup v2", Severity: Required, Scopes: both, run: checkCgroup},
 		{ID: "address-pools", Name: "Docker address pools", Severity: Required, Scopes: both, run: checkAddressPools},
 		{ID: "ports", Name: "Ports 80 and 443 free", Severity: Required, Scopes: installOnly, run: checkPorts},
+		{ID: "sftp-port", Name: "SFTP gateway port free", Severity: Required, Scopes: installOnly, run: checkSFTPPort},
 		{ID: "dns-dashboard", Name: "Dashboard DNS", Severity: Required, Scopes: installOnly, run: checkDashboardDNS},
 		{ID: "dns-preview", Name: "Wildcard preview DNS", Severity: Required, Scopes: installOnly, run: checkPreviewDNS},
 		{ID: "log-rotation", Name: "Container log rotation", Severity: Recommended, Scopes: installOnly, run: checkLogRotation},
@@ -210,6 +211,26 @@ func checkPorts(_ context.Context, e *env) outcome {
 			"could not check port %s", strings.Join(unknown, ", "))
 	}
 	return pass("ports 80 and 443 are free")
+}
+
+// checkSFTPPort checks the SFTP gateway's host port (§5.8). Like ports 80
+// and 443, only before installing: the platform holds it afterwards.
+func checkSFTPPort(_ context.Context, e *env) outcome {
+	if e.SFTPPort == 0 {
+		return skip("sftp.port is not set")
+	}
+	inUse, err := e.Host.PortInUse(e.SFTPPort)
+	switch {
+	case err != nil:
+		return warn(fmt.Sprintf("Check by hand with `sudo ss -ltn 'sport = :%d'`.", e.SFTPPort),
+			"could not check port %d (%v)", e.SFTPPort, err)
+	case inUse:
+		return fail(fmt.Sprintf("Stop the service using the port (find it with `sudo ss -ltnp 'sport = :%d'`), "+
+			"or choose another port with sftp.port (PRESSFLEET_SFTP_PORT). "+
+			"If PressFleet is already installed, its SFTP gateway holds this port and this is expected.", e.SFTPPort),
+			"port %d in use; the SFTP gateway needs it", e.SFTPPort)
+	}
+	return pass("port %d is free", e.SFTPPort)
 }
 
 func checkDashboardDNS(ctx context.Context, e *env) outcome {

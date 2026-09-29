@@ -2,7 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"net"
 	"net/netip"
 	"path/filepath"
 	"runtime"
@@ -28,8 +31,10 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
 	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache/redis"
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
+	"github.com/rchouinard/pressfleet/control-plane/internal/sftpgw"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sitecron"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sitedb/mariadb"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
@@ -74,6 +79,33 @@ func (a *app) siteRuntime(cat *catalog.Catalog, secretStore secrets.Store, keys 
 		return nil, nil, err
 	}
 	return prov, siteDBs, nil
+}
+
+// sftpGateway returns the SFTP gateway (§5.8), or nil when it is off:
+// sftp.listen is empty, or the host key file doesn't exist, as when the
+// control plane runs outside a platform that pressfleet init rendered.
+func (a *app) sftpGateway(db *store.DB, authn *auth.Service, sessions provisioner.SessionRunner) (*sftpgw.Server, error) {
+	if !a.cfg.SFTP.Enabled() {
+		a.log.Info("the SFTP gateway is off (sftp.listen is empty)")
+		return nil, nil
+	}
+	hostKey, err := sftpgw.LoadHostKey(a.cfg.SFTP.HostKeyFile)
+	if errors.Is(err, fs.ErrNotExist) {
+		a.log.Warn("the SFTP gateway is off: its host key file doesn't exist; re-run pressfleet init to create it",
+			"host_key_file", a.cfg.SFTP.HostKeyFile)
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	return sftpgw.New(sftpgw.Options{
+		DB:               db,
+		Auth:             authn,
+		Sessions:         sessions,
+		HostKey:          hostKey,
+		IdleTimeout:      a.cfg.SFTP.IdleTimeout(),
+		MaxSessionLength: a.cfg.SFTP.MaxSessionLength(),
+		Logger:           a.log.With("component", "sftp"),
+	})
 }
 
 // dnsChecker returns the check that a site's new domains resolve to this
@@ -252,6 +284,17 @@ func (a *app) serveCommand() *cobra.Command {
 				return err
 			}
 
+			gateway, err := a.sftpGateway(db, authn, prov)
+			if err != nil {
+				return err
+			}
+			var gatewayListener net.Listener
+			if gateway != nil {
+				if gatewayListener, err = net.Listen("tcp", a.cfg.SFTP.Listen); err != nil {
+					return fmt.Errorf("SFTP gateway: %w", err)
+				}
+			}
+
 			// Job workers and the scheduler run alongside the server and
 			// stop with it; the pool gives running steps a grace period.
 			// Job handlers are registered on the pool as workflows land.
@@ -317,6 +360,15 @@ func (a *app) serveCommand() *cobra.Command {
 			// now and whenever it restarts. (Sites created before it existed
 			// get theirs from their site.reconcile job.)
 			workers.Go(func() { caches.Watch(workersCtx) })
+			// The SFTP gateway stops with the workers, ending its sessions,
+			// before the database closes.
+			if gateway != nil {
+				workers.Go(func() {
+					if err := gateway.Serve(workersCtx, gatewayListener); err != nil {
+						a.log.Error("SFTP gateway failed", "error", err)
+					}
+				})
+			}
 
 			srv := httpserver.New(httpserver.Options{Addr: a.cfg.Listen, Handler: handler, Logger: a.log})
 			srvErr := srv.Run(cmd.Context())

@@ -28,6 +28,13 @@ var operationActions = map[string]authz.Action{
 	"updateUser": authz.UpdateUser,
 	"deleteUser": authz.DeleteUser,
 
+	"listOwnSshKeys":   authz.ViewOwnSSHKeys,
+	"addOwnSshKey":     authz.AddOwnSSHKey,
+	"deleteOwnSshKey":  authz.DeleteOwnSSHKey,
+	"listUserSshKeys":  authz.ViewOthersSSHKeys,
+	"addUserSshKey":    authz.ManageOthersSSHKeys,
+	"deleteUserSshKey": authz.ManageOthersSSHKeys,
+
 	"listClientGroups":  authz.ViewClientGroups,
 	"createClientGroup": authz.CreateClientGroup,
 	"getClientGroup":    authz.ViewClientGroups,

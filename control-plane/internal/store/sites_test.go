@@ -56,6 +56,12 @@ func TestSites(t *testing.T) {
 		if !reflect.DeepEqual(got, *s) {
 			t.Errorf("Get = %+v\nwant %+v", got, *s)
 		}
+		if got, err := sites.GetBySlug(ctx, "acme"); err != nil || !reflect.DeepEqual(got, *s) {
+			t.Errorf("GetBySlug = %+v, %v\nwant %+v", got, err, *s)
+		}
+		if _, err := sites.GetBySlug(ctx, "nope"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("GetBySlug of a missing slug: %v, want ErrNotFound", err)
+		}
 
 		// Uniqueness and references.
 		for name, dup := range map[string]*store.Site{

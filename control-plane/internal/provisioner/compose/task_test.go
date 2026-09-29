@@ -115,7 +115,7 @@ func (f *taskDocker) inspect(name string) ([]byte, error) {
 				map[string]any{"Type": "volume", "Name": testSiteVolume, "Destination": "/var/www/wordpress/wp-content"},
 			},
 		}
-	case strings.Contains(name, "-task-"):
+	case strings.Contains(name, "-task-"), strings.Contains(name, "-session-"):
 		status := f.status
 		if status == "" {
 			status = "exited"

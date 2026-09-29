@@ -80,7 +80,8 @@ const (
 	PurgeSiteCache          Action = "site.cache.purge"
 
 	// Deploy code; connect over SFTP; export the database; open read-only
-	// database sessions.
+	// database sessions (§5.8).
+	ConnectSFTP            Action = "site.sftp.connect"
 	DeployCode             Action = "site.code.deploy"
 	ExportDatabase         Action = "site.database.export"
 	DownloadDatabaseExport Action = "site.database.export.download"
@@ -109,26 +110,38 @@ const (
 	OffboardClientGroup Action = "client_group.offboard"
 
 	// Manage users, roles, and other users' API tokens; view the audit log.
-	ViewUsers          Action = "user.view"
-	CreateUser         Action = "user.create"
-	UpdateUser         Action = "user.update" // including the role
-	DeleteUser         Action = "user.delete"
-	ManageOthersTokens Action = "user.tokens.manage"
-	ViewAuditLog       Action = "audit.view"
+	// Other users' SSH keys belong here too.
+	ViewUsers           Action = "user.view"
+	CreateUser          Action = "user.create"
+	UpdateUser          Action = "user.update" // including the role
+	DeleteUser          Action = "user.delete"
+	ManageOthersTokens  Action = "user.tokens.manage"
+	ViewOthersSSHKeys   Action = "user.ssh_keys.view"
+	ManageOthersSSHKeys Action = "user.ssh_keys.manage"
+	ViewAuditLog        Action = "audit.view"
 
 	// Change platform settings (DNS and S3 credentials, SMTP, alert
 	// channels, backup location, retention).
 	ManagePlatformSettings Action = "platform.settings.manage"
 
-	// Manage their own password and API tokens. Viewing oneself and logging
-	// out belong here too.
+	// Manage their own password, API tokens, and SSH keys. Viewing oneself
+	// and logging out belong here too.
 	ViewSelf          Action = "self.view"
 	Logout            Action = "self.logout"
 	ChangeOwnPassword Action = "self.password.change"
 	ViewOwnTokens     Action = "self.tokens.view"
 	CreateOwnToken    Action = "self.tokens.create" //nolint:gosec // G101: an action name, not a credential
 	RevokeOwnToken    Action = "self.tokens.revoke" //nolint:gosec // G101: an action name, not a credential
+	ViewOwnSSHKeys    Action = "self.ssh_keys.view"
+	AddOwnSSHKey      Action = "self.ssh_keys.create"
+	DeleteOwnSSHKey   Action = "self.ssh_keys.delete"
 )
+
+// sshActions are the only actions an SSH key (auth.MethodSSHKey) may take:
+// it authenticates to the SFTP gateway, never to the API.
+var sshActions = map[Action]bool{
+	ConnectSFTP: true,
+}
 
 // rule says who may take an action.
 type rule struct {
@@ -170,6 +183,8 @@ var rules = map[Action]rule{
 	// start the export either.
 	DownloadDatabaseExport: {store.RoleOperator, true},
 
+	ConnectSFTP: {store.RoleOperator, true}, // SFTP sessions write files
+
 	CreateBackup:      {store.RoleOperator, true},
 	RestoreBackup:     {store.RoleOperator, true},
 	ApproveCoreUpdate: {store.RoleOperator, true},
@@ -183,12 +198,14 @@ var rules = map[Action]rule{
 	DeleteClientGroup:   {store.RoleAdmin, true},
 	OffboardClientGroup: {store.RoleAdmin, true},
 
-	ViewUsers:          {store.RoleAdmin, false},
-	CreateUser:         {store.RoleAdmin, true},
-	UpdateUser:         {store.RoleAdmin, true},
-	DeleteUser:         {store.RoleAdmin, true},
-	ManageOthersTokens: {store.RoleAdmin, true},
-	ViewAuditLog:       {store.RoleAdmin, false},
+	ViewUsers:           {store.RoleAdmin, false},
+	CreateUser:          {store.RoleAdmin, true},
+	UpdateUser:          {store.RoleAdmin, true},
+	DeleteUser:          {store.RoleAdmin, true},
+	ManageOthersTokens:  {store.RoleAdmin, true},
+	ViewOthersSSHKeys:   {store.RoleAdmin, false},
+	ManageOthersSSHKeys: {store.RoleAdmin, true},
+	ViewAuditLog:        {store.RoleAdmin, false},
 
 	ManagePlatformSettings: {store.RoleAdmin, true},
 
@@ -201,6 +218,10 @@ var rules = map[Action]rule{
 	ViewOwnTokens:     {store.RoleViewer, false},
 	CreateOwnToken:    {store.RoleViewer, true},
 	RevokeOwnToken:    {store.RoleViewer, true},
+	// Any role may register keys; connecting still takes ConnectSFTP.
+	ViewOwnSSHKeys:  {store.RoleViewer, false},
+	AddOwnSSHKey:    {store.RoleViewer, true},
+	DeleteOwnSSHKey: {store.RoleViewer, true},
 }
 
 // Actions returns every action, for tests and documentation.
@@ -251,6 +272,7 @@ const (
 	TargetUser        TargetType = "user"
 	TargetAPIToken    TargetType = "api_token"
 	TargetUpload      TargetType = "upload"
+	TargetSSHKey      TargetType = "ssh_key"
 )
 
 // Target is what an action applies to.
@@ -291,6 +313,9 @@ func APIToken(id string) Target { return Target{Type: TargetAPIToken, ID: id} }
 // client group of the import or deployment it is for.
 func Upload(id string) Target { return Target{Type: TargetUpload, ID: id} }
 
+// SSHKey returns the target for an SSH key.
+func SSHKey(id string) Target { return Target{Type: TargetSSHKey, ID: id} }
+
 // Check is the single authorization decision: it returns nil if p may take
 // action on t, and an error wrapping ErrDenied otherwise. t should have been
 // resolved (Resolver.Resolve) so that client-group scoping can be added
@@ -321,6 +346,10 @@ func Check(p auth.Principal, action Action, t Target) error {
 			}
 		default:
 			return denied("unknown token scope %q", p.Scope)
+		}
+	case auth.MethodSSHKey:
+		if !sshActions[action] {
+			return denied("an SSH key doesn't allow %s", action)
 		}
 	default:
 		return denied("unknown authentication method %q", p.Method)

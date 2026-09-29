@@ -155,6 +155,16 @@ func (r Sites) Get(ctx context.Context, siteID string) (Site, error) {
 	return s, nil
 }
 
+// GetBySlug returns the site with the given slug, or ErrNotFound. The SFTP
+// gateway names sites by slug (design doc §5.8).
+func (r Sites) GetBySlug(ctx context.Context, slug string) (Site, error) {
+	s, err := scanSite(r.q.QueryRowContext(ctx, "SELECT "+siteColumns+" FROM sites WHERE slug = ?", slug))
+	if err != nil {
+		return Site{}, fmt.Errorf("get site by slug: %w", err)
+	}
+	return s, nil
+}
+
 // Aliases returns the site's alias domains, sorted.
 func (r Sites) Aliases(ctx context.Context, siteID string) ([]string, error) {
 	rows, err := r.q.QueryContext(ctx, "SELECT domain FROM site_aliases WHERE site_id = ? ORDER BY domain", siteID)

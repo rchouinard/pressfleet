@@ -226,6 +226,9 @@ func (h *Handlers) ListAuditEvents(ctx context.Context, req gen.ListAuditEventsR
 			Result:       gen.AuditResult(e.Result),
 			SourceIP:     e.SourceIP,
 		}
+		if len(e.Details) > 0 {
+			out.Items[i].Details = &e.Details
+		}
 	}
 	if page.NextCursor != "" {
 		out.NextCursor = &page.NextCursor

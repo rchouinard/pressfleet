@@ -4,6 +4,7 @@ package provisionertest
 
 import (
 	"context"
+	"io"
 	"iter"
 	"maps"
 	"slices"
@@ -38,6 +39,9 @@ type Fake struct {
 	// RunTaskFunc, if set, handles RunTask calls for existing sites. By
 	// default tasks succeed with empty output.
 	RunTaskFunc func(siteID string, task provisioner.Task) (*provisioner.TaskResult, error)
+	// RunSessionFunc, if set, handles RunSession calls for existing sites,
+	// e.g. by serving SFTP from a temporary directory in the test process.
+	RunSessionFunc func(ctx context.Context, siteID string, s provisioner.Session) error
 	// Err, if set, is consulted at the start of every call; a non-nil result
 	// is returned without changing state. Use it to inject failures.
 	Err func(op, siteID string) error
@@ -346,4 +350,27 @@ func (f *Fake) RunTask(_ context.Context, siteID string, task provisioner.Task) 
 		return &provisioner.TaskResult{}, nil
 	}
 	return handler(siteID, task)
+}
+
+// RunSession records the call and hands the session to RunSessionFunc for
+// existing sites. By default a session consumes its input and ends with it,
+// like a server whose client says nothing and leaves.
+func (f *Fake) RunSession(ctx context.Context, siteID string, s provisioner.Session) error {
+	f.mu.Lock()
+	if err := f.begin("RunSession", siteID, s.Command); err != nil {
+		f.mu.Unlock()
+		return err
+	}
+	if _, err := f.lookup(siteID); err != nil {
+		f.mu.Unlock()
+		return err
+	}
+	handler := f.RunSessionFunc
+	f.mu.Unlock()
+
+	if handler != nil {
+		return handler(ctx, siteID, s)
+	}
+	_, err := io.Copy(io.Discard, s.Stdin)
+	return err
 }

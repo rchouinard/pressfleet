@@ -2,6 +2,7 @@ package provisioner
 
 import (
 	"context"
+	"io"
 	"iter"
 	"time"
 
@@ -10,12 +11,13 @@ import (
 
 // Driver is everything an orchestrator driver implements. Consumers should
 // depend on the narrowest interface they need (Provisioner, LogReader,
-// StatsReader, or TaskRunner) rather than on Driver.
+// StatsReader, TaskRunner, or SessionRunner) rather than on Driver.
 type Driver interface {
 	Provisioner
 	LogReader
 	StatsReader
 	TaskRunner
+	SessionRunner
 }
 
 // Component identifies one of a site's runtime components. Names describe
@@ -163,4 +165,49 @@ type TaskRunner interface {
 	// finish. A non-zero exit yields an *ExecError. Returns ErrSiteNotFound if
 	// the site does not exist. The task's container is always removed.
 	RunTask(ctx context.Context, siteID string, task Task) (*TaskResult, error)
+}
+
+// Session is one developer session on a site's files (§5.8): a command,
+// normally the control plane's SFTP server, that speaks a protocol over
+// its standard input and output, which the caller connects to a client.
+type Session struct {
+	// Image is the container image to run; empty means the driver's task
+	// image, the control plane's own, which ships the SFTP server.
+	Image string
+	// Command is the argv to run; it is not passed through a shell.
+	Command []string
+	// Stdin is the command's standard input. When it ends, the command's
+	// standard input is closed, which is how the command learns that the
+	// client has gone.
+	Stdin io.Reader
+	// Stdout receives the command's standard output.
+	Stdout io.Writer
+	// Stderr, if set, receives its standard error; otherwise it is
+	// discarded.
+	Stderr io.Writer
+}
+
+// SessionRunner runs developer sessions on a site's files: the SFTP
+// gateway's per-session workers (§5.8).
+//
+// A worker sees as little as possible: it runs as the site's UID and GID,
+// has the site's wp-content volume mounted read-write at TaskWPContentPath
+// and no other volume, no network (the gateway relays everything over the
+// session's streams), a read-only root filesystem apart from a small
+// tmpfs at /tmp, no capabilities, and small memory and process limits.
+// Files it writes are therefore owned by the site, and it can't reach
+// another site's files, the platform services, or the host.
+//
+// In Compose a worker is a one-off container attached to the caller's
+// streams; on Kubernetes it maps to a short-lived Pod (stdin: true,
+// stdinOnce: true, runAsUser/runAsGroup the site's UID, the site's PVC,
+// a deny-all NetworkPolicy) that the driver attaches to through the API.
+type SessionRunner interface {
+	// RunSession starts a worker for the site that runs s.Command with its
+	// standard streams connected to s's, and waits until it exits: when the
+	// client ends the session (s.Stdin reaches its end), or when ctx ends,
+	// which kills it. The worker is removed whatever happens. A non-zero
+	// exit yields an *ExecError. Returns ErrSiteNotFound if the site does
+	// not exist. The site may be running or stopped.
+	RunSession(ctx context.Context, siteID string, s Session) error
 }

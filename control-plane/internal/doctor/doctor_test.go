@@ -175,6 +175,20 @@ func TestPorts(t *testing.T) {
 	})
 }
 
+func TestSFTPPort(t *testing.T) {
+	port := func(f *fixture) { f.opts.SFTPPort = 2222 }
+	runCases(t, "sftp-port", []checkCase{
+		{name: "not configured", wantStatus: doctor.StatusSkip},
+		{name: "free", setup: port, wantStatus: doctor.StatusPass, wantMessage: "2222"},
+		{name: "busy", setup: func(f *fixture) { port(f); f.host.Ports = map[int]bool{2222: true} },
+			wantStatus: doctor.StatusFail, wantMessage: "port 2222 in use", wantFix: "sftp.port"},
+		{name: "only 80 busy", setup: func(f *fixture) { port(f); f.host.Ports = map[int]bool{80: true} },
+			wantStatus: doctor.StatusPass},
+		{name: "cannot check", setup: func(f *fixture) { port(f); f.host.PortErr = errors.New("no /proc") },
+			wantStatus: doctor.StatusWarn, wantMessage: "could not check"},
+	})
+}
+
 func TestDashboardDNS(t *testing.T) {
 	withDomain := func(addrs ...netip.Addr) func(*fixture) {
 		return func(f *fixture) {

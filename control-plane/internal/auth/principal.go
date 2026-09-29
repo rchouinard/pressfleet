@@ -16,6 +16,9 @@ const (
 	MethodSession Method = "session"
 	// MethodToken is a bearer API token.
 	MethodToken Method = "token"
+	// MethodSSHKey is an SSH public key presented to the SFTP gateway
+	// (design doc §5.8). It never authenticates API requests.
+	MethodSSHKey Method = "ssh_key"
 )
 
 // Principal is an authenticated caller. It is what authorization (package
@@ -36,6 +39,9 @@ type Principal struct {
 	// TokenExpiresAt is the token's expiry, if it has one. Authorization
 	// uses it so a token can't mint a token that outlives it.
 	TokenExpiresAt *time.Time
+	// SSHKeyID is set for MethodSSHKey: the registered key the client
+	// proved it holds.
+	SSHKeyID string
 }
 
 type principalKey struct{}

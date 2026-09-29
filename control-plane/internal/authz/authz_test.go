@@ -39,6 +39,7 @@ var designTable = map[authz.Action]struct {
 	// Deploy code; connect over SFTP; export the database; open read-only
 	// database sessions. Uploads for imports and deployments need what the
 	// import or deployment needs.
+	authz.ConnectSFTP:            {true, true, false, true},
 	authz.DeployCode:             {true, true, false, true},
 	authz.UploadForImport:        {true, true, false, true},
 	authz.UploadForDeploy:        {true, true, false, true},
@@ -58,22 +59,31 @@ var designTable = map[authz.Action]struct {
 	authz.DeleteClientGroup:   {true, false, false, true},
 	authz.OffboardClientGroup: {true, false, false, true},
 	// Manage users, roles, and other users' API tokens; view the audit log.
-	authz.ViewUsers:          {true, false, false, false},
-	authz.CreateUser:         {true, false, false, true},
-	authz.UpdateUser:         {true, false, false, true},
-	authz.DeleteUser:         {true, false, false, true},
-	authz.ManageOthersTokens: {true, false, false, true},
-	authz.ViewAuditLog:       {true, false, false, false},
+	authz.ViewUsers:           {true, false, false, false},
+	authz.CreateUser:          {true, false, false, true},
+	authz.UpdateUser:          {true, false, false, true},
+	authz.DeleteUser:          {true, false, false, true},
+	authz.ManageOthersTokens:  {true, false, false, true},
+	authz.ViewOthersSSHKeys:   {true, false, false, false},
+	authz.ManageOthersSSHKeys: {true, false, false, true},
+	authz.ViewAuditLog:        {true, false, false, false},
 	// Change platform settings.
 	authz.ManagePlatformSettings: {true, false, false, true},
-	// Manage their own password and API tokens.
+	// Manage their own password, API tokens, and SSH keys.
 	authz.ViewSelf:          {true, true, true, false},
 	authz.Logout:            {true, true, true, false},
 	authz.ChangeOwnPassword: {true, true, true, true},
 	authz.ViewOwnTokens:     {true, true, true, false},
 	authz.CreateOwnToken:    {true, true, true, true},
 	authz.RevokeOwnToken:    {true, true, true, true},
+	authz.ViewOwnSSHKeys:    {true, true, true, false},
+	authz.AddOwnSSHKey:      {true, true, true, true},
+	authz.DeleteOwnSSHKey:   {true, true, true, true},
 }
+
+// sshKeyActions are the actions an SSH key authenticates for; it can't
+// take any other.
+var sshKeyActions = map[authz.Action]bool{authz.ConnectSFTP: true}
 
 func TestDesignTableCoversEveryAction(t *testing.T) {
 	actions := authz.Actions()
@@ -96,6 +106,7 @@ func TestCheckEveryActionRoleAndCredential(t *testing.T) {
 		{"session", auth.MethodSession, ""},
 		{"full token", auth.MethodToken, store.ScopeFull},
 		{"read-only token", auth.MethodToken, store.ScopeReadOnly},
+		{"ssh key", auth.MethodSSHKey, ""},
 	}
 	for action, row := range designTable {
 		for _, role := range store.Roles {
@@ -103,7 +114,8 @@ func TestCheckEveryActionRoleAndCredential(t *testing.T) {
 				t.Run(string(action)+"/"+string(role)+"/"+c.name, func(t *testing.T) {
 					allowed := map[store.Role]bool{store.RoleAdmin: row.admin, store.RoleOperator: row.operator, store.RoleViewer: row.viewer}[role]
 					readOnlyWrite := c.scope == store.ScopeReadOnly && row.write
-					want := allowed && !readOnlyWrite
+					sshElsewhere := c.method == auth.MethodSSHKey && !sshKeyActions[action]
+					want := allowed && !readOnlyWrite && !sshElsewhere
 					p := auth.Principal{UserID: id.New(), Role: role, Method: c.method, Scope: c.scope}
 					if c.method == auth.MethodToken {
 						p.TokenID = id.New()

@@ -115,7 +115,7 @@ func decodeProblem(t *testing.T, w *httptest.ResponseRecorder) problem {
 
 // samplePath fills in path parameters with a valid ID.
 func samplePath(path string) string {
-	for _, p := range []string{"{token_id}", "{user_id}", "{client_group_id}", "{site_id}", "{job_id}", "{upload_id}", "{export_id}"} {
+	for _, p := range []string{"{token_id}", "{user_id}", "{client_group_id}", "{site_id}", "{job_id}", "{upload_id}", "{export_id}", "{ssh_key_id}"} {
 		path = strings.ReplaceAll(path, p, "abc123")
 	}
 	return path
@@ -140,6 +140,8 @@ var sampleBodies = map[string]string{
 	"createUpload":          `{"purpose":"site_import","client_group_id":"abc123","size_bytes":10}`,
 	"appendUploadChunk":     `0123456789`,
 	"completeUpload":        `{}`,
+	"addOwnSshKey":          `{"public_key":"ssh-ed25519 AAAA"}`,
+	"addUserSshKey":         `{"public_key":"ssh-ed25519 AAAA"}`,
 }
 
 // sampleQueries are the required query parameters of operations that have

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -50,6 +51,10 @@ type AuditEvent struct {
 	TargetID   string
 	Result     AuditResult
 	SourceIP   string
+	// Details are extra facts about the event, such as an SFTP session's
+	// key fingerprint and bytes transferred. Nil for most events. Like the
+	// rest of the event, they never hold secrets.
+	Details map[string]string
 }
 
 // AuditEvents reads and writes audit events.
@@ -62,16 +67,34 @@ func NewAuditEvents(q Querier) AuditEvents {
 	return AuditEvents{q: q}
 }
 
-const auditColumns = "id, occurred_at, actor_user_id, actor_token_id, action, target_type, target_id, result, source_ip"
+const auditColumns = "id, occurred_at, actor_user_id, actor_token_id, action, target_type, target_id, result, source_ip, details"
 
 func scanAuditEvent(s scanner) (AuditEvent, error) {
 	var (
-		e             AuditEvent
-		user, tokenID sql.NullString
+		e                      AuditEvent
+		user, tokenID, details sql.NullString
 	)
-	err := s.Scan(&e.ID, &e.OccurredAt, &user, &tokenID, &e.Action, &e.TargetType, &e.TargetID, &e.Result, &e.SourceIP)
+	err := s.Scan(&e.ID, &e.OccurredAt, &user, &tokenID, &e.Action, &e.TargetType, &e.TargetID, &e.Result, &e.SourceIP, &details)
 	e.ActorUserID, e.ActorTokenID = user.String, tokenID.String
+	if err == nil && details.Valid {
+		if jerr := json.Unmarshal([]byte(details.String), &e.Details); jerr != nil {
+			err = fmt.Errorf("audit event %s: decoding details: %w", e.ID, jerr)
+		}
+	}
 	return e, err
+}
+
+// auditDetails encodes an event's details for the details column: a JSON
+// object, or NULL when there are none.
+func auditDetails(d map[string]string) (any, error) {
+	if len(d) == 0 {
+		return nil, nil
+	}
+	b, err := json.Marshal(d)
+	if err != nil {
+		return nil, err
+	}
+	return string(b), nil
 }
 
 // auditIDs orders events recorded in the same millisecond by insertion, so
@@ -94,10 +117,14 @@ func (r AuditEvents) Insert(ctx context.Context, e *AuditEvent) error {
 	}
 	ins.OccurredAt = utc(ins.OccurredAt)
 	ins.ID = auditIDs.NewAt(ins.OccurredAt)
-	_, err := r.q.ExecContext(ctx,
-		"INSERT INTO audit_events ("+auditColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+	details, err := auditDetails(ins.Details)
+	if err != nil {
+		return fmt.Errorf("insert audit event: %w", err)
+	}
+	_, err = r.q.ExecContext(ctx,
+		"INSERT INTO audit_events ("+auditColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		ins.ID, ins.OccurredAt, nullString(ins.ActorUserID), nullString(ins.ActorTokenID), ins.Action,
-		ins.TargetType, ins.TargetID, string(ins.Result), ins.SourceIP)
+		ins.TargetType, ins.TargetID, string(ins.Result), ins.SourceIP, details)
 	if err != nil {
 		return fmt.Errorf("insert audit event: %w", err)
 	}

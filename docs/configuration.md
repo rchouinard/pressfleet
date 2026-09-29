@@ -168,6 +168,11 @@ database_export:
 | `uploads.max_size_mb` | `PRESSFLEET_UPLOADS_MAX_SIZE_MB` | | `10240` | Largest file, in MiB, that can be sent through the upload API for a site import or a code deployment, from 1 to 1048576. Uploads are stored under `<data_dir>/uploads/`, so leave room there. See [Uploads](#uploads). |
 | `uploads.expiry_hours` | `PRESSFLEET_UPLOADS_EXPIRY_HOURS` | | `24` | How long an upload that no import or deployment has taken may go without a new chunk before it is removed as abandoned, from 1 to 720. |
 | `database_export.ttl_seconds` | `PRESSFLEET_DATABASE_EXPORT_TTL_SECONDS` | | `3600` | How long a database export can be downloaded once it is ready, from 10 seconds to a day (86400); then its file is deleted. See [Database exports](#database-exports). |
+| `sftp.port` | `PRESSFLEET_SFTP_PORT` | | `2222` | Host port of the SFTP gateway, which `pressfleet init` publishes and `pressfleet doctor` checks is free. Not 80 or 443. See [SFTP gateway](#sftp-gateway). |
+| `sftp.listen` | `PRESSFLEET_SFTP_LISTEN` | | `:2222` | The gateway's listen address inside the control plane container. Empty turns the gateway off. |
+| `sftp.host_key_file` | `PRESSFLEET_SFTP_HOST_KEY_FILE` | | `/run/secrets/ssh_host_key` | The gateway's SSH host key. `pressfleet init` generates it once, keeps it in `<data_dir>/platform/secrets/ssh_host_key`, and mounts it here. If the file doesn't exist, the gateway is off and the control plane logs a warning. |
+| `sftp.idle_timeout_minutes` | `PRESSFLEET_SFTP_IDLE_TIMEOUT_MINUTES` | | `15` | Ends SFTP connections without traffic for this long, from 1 to 1440 minutes. |
+| `sftp.max_session_hours` | `PRESSFLEET_SFTP_MAX_SESSION_HOURS` | | `8` | Ends every SFTP connection this long after it started, from 1 to 24 hours. |
 | `wordpress_security.block_user_enumeration` | `PRESSFLEET_WORDPRESS_SECURITY_BLOCK_USER_ENUMERATION` | | `true` | Hide which user names exist from visitors. See [WordPress security set](#wordpress-security-set). |
 | `wordpress_security.password_policy.enabled` | `PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_POLICY_ENABLED` | | `true` | Check new WordPress passwords on the server: minimum length and a common-password list. |
 | `wordpress_security.password_policy.min_length` | `PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_POLICY_MIN_LENGTH` | | `12` | Minimum WordPress password length, from 8 to 64 characters. |
@@ -319,6 +324,24 @@ The control plane records every authenticated request that changes state, every 
 Downloads of database exports are the one kind of read that is recorded, whatever its result, since they hand out a site's data (see [Database exports](#database-exports)).
 
 Admins can list and filter the log with `GET /api/v1/audit-events`. A daily job deletes events older than `audit.retention_days`; a changed retention applies from the next run after the control plane restarts. Events outlive the users and tokens they name, so an event can refer to a user who has since been deleted.
+
+Some events carry `details`, such as the SFTP gateway's sessions (see below).
+
+## SFTP gateway
+
+Developers upload files to a site's `wp-content` through one SSH gateway on the host's `sftp.port` (design doc §5.8):
+
+```sh
+sftp -P 2222 <site-slug>@fleet.agency.example
+```
+
+The SSH username names the site; the key names the platform user. There are no passwords: each user registers their public keys with `POST /api/v1/users/me/ssh-keys` (`{"public_key": "ssh-ed25519 AAAA... me@laptop"}`), and Admins manage anyone's under `/api/v1/users/{user_id}/ssh-keys`. Ed25519, ECDSA, security key (`sk-`), and RSA keys of at least 2048 bits are accepted. A key belongs to one user only. Any role may register keys, but only Operators and Admins may connect.
+
+Each session runs in a short-lived worker container for the site: the control plane image's `pressfleet sftp-server`, running as the site's user with only the site's `wp-content` volume mounted, no network, and a read-only root filesystem. The client sees `wp-content` as `/`. Files it uploads are owned by the site's user, and nothing else of the host, the platform, or other sites is reachable. The gateway offers no shell, commands, or port forwarding (temporary database tunnels come later, #115). Symbolic and hard links can't be created.
+
+Connections end when the client leaves, after `sftp.idle_timeout_minutes` without traffic, after `sftp.max_session_hours`, and within seconds when the user loses access: their key is removed, they are disabled, deleted, or demoted to Viewer. Each session is audited under `site.sftp.connect` when it starts (or is refused) and `site.sftp.disconnect` when it ends, with the user, site, client address, and `details`: the session ID, key ID and fingerprint, and on the end event the bytes received from and sent to the client, the duration, and the reason it ended (`client_closed`, `idle_timeout`, `max_session_length`, `access_revoked`, or `shutdown`).
+
+The gateway's host key is generated by `pressfleet init` and reused by `pressfleet init --force`, so developers' `known_hosts` entries stay valid. Open `sftp.port` in the host's firewall to reach it from outside.
 
 ## Master key
 

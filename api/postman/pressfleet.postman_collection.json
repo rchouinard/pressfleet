@@ -649,6 +649,280 @@
       ]
     },
     {
+      "id": "0ae41d55-60c2-5801-b882-a4ea2d22e89b",
+      "name": "SSH keys",
+      "description": "SSH public keys for the SFTP gateway (`sftp -P 2222 <site-slug>@<dashboard domain>`). Set `ssh_public_key` to a line of a `.pub` file first. Every user manages their own keys; Admins manage anyone's (`user_id`).",
+      "item": [
+        {
+          "id": "79072e6d-32d8-5aae-a9da-08493509550a",
+          "name": "List my SSH keys",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/me/ssh-keys",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "me",
+                "ssh-keys"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Maximum number of items to return (1-200).",
+                  "disabled": true
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "description": "The next_cursor from the previous page.",
+                  "disabled": true
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "d0221b63-2fc4-57ec-864f-832c6951e09d",
+          "name": "Add my SSH key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/me/ssh-keys",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "me",
+                "ssh-keys"
+              ]
+            },
+            "description": "Registers `ssh_public_key` for the current user and saves its ID to `ssh_key_id`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Laptop\",\n  \"public_key\": \"{{ssh_public_key}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "if (pm.response.code === 201) {",
+                  "    pm.environment.set(\"ssh_key_id\", pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "d7bc075d-2982-57ba-82b6-79eb19b66fe6",
+          "name": "Remove my SSH key",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/me/ssh-keys/{{ssh_key_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "me",
+                "ssh-keys",
+                "{{ssh_key_id}}"
+              ]
+            },
+            "description": "Removes `ssh_key_id`; open SFTP sessions using it end within seconds."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));",
+                  "if (pm.response.code === 204) {",
+                  "    pm.environment.set(\"ssh_key_id\", \"\");",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "1aa9efa6-d917-5c13-a5fe-223daaa3d445",
+          "name": "List a user's SSH keys",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{user_id}}/ssh-keys",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "{{user_id}}",
+                "ssh-keys"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Maximum number of items to return (1-200).",
+                  "disabled": true
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "description": "The next_cursor from the previous page.",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Admin only."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "35b9fdf3-58f7-549d-9ff5-ec7197552a47",
+          "name": "Add a user's SSH key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{user_id}}/ssh-keys",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "{{user_id}}",
+                "ssh-keys"
+              ]
+            },
+            "description": "Admin only. Registers `ssh_public_key` for `user_id` and saves its ID to `ssh_key_id`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Laptop\",\n  \"public_key\": \"{{ssh_public_key}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "if (pm.response.code === 201) {",
+                  "    pm.environment.set(\"ssh_key_id\", pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "dce3ac72-f61e-5fad-9dd4-590e4185b66a",
+          "name": "Remove a user's SSH key",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{user_id}}/ssh-keys/{{ssh_key_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "{{user_id}}",
+                "ssh-keys",
+                "{{ssh_key_id}}"
+              ]
+            },
+            "description": "Admin only."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));",
+                  "if (pm.response.code === 204) {",
+                  "    pm.environment.set(\"ssh_key_id\", \"\");",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "8e29334d-1b07-5061-9a04-58d0313dedeb",
       "name": "Client groups",
       "description": "Client groups own sites.",

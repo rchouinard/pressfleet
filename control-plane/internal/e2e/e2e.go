@@ -29,6 +29,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/client"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/ingress"
@@ -36,6 +38,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
+	"github.com/rchouinard/pressfleet/control-plane/internal/sftpgw"
 )
 
 // Environment variables that enable and configure the harness.
@@ -127,9 +130,11 @@ services:
 			b.WriteString("      - " + s + "\n")
 		}
 	}
+	// !override also replaces the SFTP gateway's host port.
 	b.WriteString(`  control-plane:
-    ports:
+    ports: !override
       - "127.0.0.1::8080"
+      - "127.0.0.1::2222"
 `)
 	if len(o.dns) > 0 {
 		b.WriteString("    dns:\n")
@@ -170,6 +175,11 @@ type Platform struct {
 	// HTTPAddr and HTTPSAddr are the host addresses ("127.0.0.1:port") of
 	// Traefik's HTTP and HTTPS entry points.
 	HTTPAddr, HTTPSAddr string
+	// SFTPAddr is the host address of the SFTP gateway.
+	SFTPAddr string
+	// HostKey is the SFTP gateway's public host key; nil for adopted
+	// projects.
+	HostKey ssh.PublicKey
 	// AdminEmail and AdminPassword are the credentials of the admin user
 	// Start created; empty for adopted projects.
 	AdminEmail    string
@@ -243,12 +253,18 @@ func start(t *testing.T, withPebble bool) *Platform {
 		t.Fatal(err)
 	}
 	dir := layout.PlatformDir()
+	hostKey := HostKey(t)
+	signer, err := ssh.ParsePrivateKey([]byte(hostKey.Reveal()))
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg := platform.Config{
 		ProjectName:         "pfe2e-" + randomToken(10),
 		DataDir:             layout.Root,
 		Images:              images,
 		MariaDBRootPassword: redact.Secret(randomToken(26)),
 		RedisAdminPassword:  redact.Secret(randomToken(26)),
+		SSHHostKey:          hostKey,
 		MasterKeyFile:       keyFile,
 		// Development machines and CI runners often lack Docker address pools.
 		SkipPreflight:     true,
@@ -269,6 +285,7 @@ func start(t *testing.T, withPebble bool) *Platform {
 	p := Adopt(t, compose.Project{Name: cfg.ProjectName, Dir: dir}, layout.Root)
 	p.override = o
 	p.masterKey = masterKey
+	p.HostKey = signer.PublicKey()
 	p.AdminEmail, p.AdminPassword = "admin@e2e.test", redact.Secret(randomToken(26))
 
 	ctx, cancel := context.WithTimeout(t.Context(), bootTimeout)
@@ -362,6 +379,7 @@ func (p *Platform) Connect(ctx context.Context, t *testing.T) {
 		{Service, controlPlanePort, &p.BaseURL},
 		{ingress.TraefikService, traefikHTTPPort, &p.HTTPAddr},
 		{ingress.TraefikService, traefikHTTPSPort, &p.HTTPSAddr},
+		{Service, platform.SFTPContainerPort, &p.SFTPAddr},
 	} {
 		addr, err := p.Project.Port(ctx, port.service, port.port)
 		if err != nil {
@@ -576,6 +594,17 @@ func EnsureImages(t *testing.T, images ...string) {
 			t.Logf("pulled %s", image)
 		}
 	}
+}
+
+// HostKey returns a new SFTP gateway host key for a rendered platform
+// (platform.Config.SSHHostKey).
+func HostKey(t *testing.T) redact.Secret {
+	t.Helper()
+	pem, err := sftpgw.GenerateHostKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return redact.Secret(pem)
 }
 
 // randomToken returns n random lowercase base32 characters, which are valid

@@ -28,6 +28,7 @@ var update = flag.Bool("update", false, "rewrite golden files in testdata/")
 const (
 	testPassword      = "s3cret-$root-\"pw\""
 	testRedisPassword = "r3dis-admin-pw"
+	testSSHHostKey    = "-----BEGIN OPENSSH PRIVATE KEY-----\nZ2F0ZXdheS1rZXk=\n-----END OPENSSH PRIVATE KEY-----\n"
 )
 
 func testConfig() platform.Config {
@@ -42,6 +43,7 @@ func testConfig() platform.Config {
 		},
 		MariaDBRootPassword: testPassword,
 		RedisAdminPassword:  testRedisPassword,
+		SSHHostKey:          testSSHHostKey,
 		MasterKeyFile:       "/etc/pressfleet/master.key",
 		PreviewBaseDomain:   "preview.agency.example",
 		PublicIP:            "203.0.113.7",
@@ -112,6 +114,7 @@ func TestRenderFileModesAndSecrets(t *testing.T) {
 		platform.MariaDBRootPasswordSecret: 0o600,
 		platform.RedisConfigFile:           0o644,
 		platform.RedisAdminPasswordSecret:  0o600,
+		platform.SSHHostKeySecret:          0o600,
 		"secrets":                          0o700 | os.ModeDir,
 	} {
 		info, err := os.Stat(filepath.Join(dir, path))
@@ -137,6 +140,9 @@ func TestRenderFileModesAndSecrets(t *testing.T) {
 		}
 		if !strings.HasSuffix(path, platform.RedisAdminPasswordSecret) && bytes.Contains(content, []byte(testRedisPassword)) {
 			t.Errorf("%s contains the Redis admin password", path)
+		}
+		if !strings.HasSuffix(path, platform.SSHHostKeySecret) && bytes.Contains(content, []byte("Z2F0ZXdheS1rZXk")) {
+			t.Errorf("%s contains the SFTP host key", path)
 		}
 		return nil
 	})
@@ -171,8 +177,8 @@ func TestRenderReplacesLooseSecretFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 2 {
-		t.Errorf("secrets dir has %d entries, want 2", len(entries))
+	if len(entries) != 3 {
+		t.Errorf("secrets dir has %d entries, want 3", len(entries))
 	}
 }
 
@@ -268,7 +274,13 @@ func TestRenderedCompose(t *testing.T) {
 				socketMounts[name] = v.ReadOnly
 			}
 		}
-		if len(svc.Ports) > 0 && name != "traefik" {
+		switch {
+		case name == "control-plane":
+			// Only the SFTP gateway (§5.8); the API goes through Traefik.
+			if want := []string{"2222:2222/tcp"}; !slices.Equal(svc.Ports, want) {
+				t.Errorf("control-plane publishes ports %v, want %v", svc.Ports, want)
+			}
+		case len(svc.Ports) > 0 && name != "traefik":
 			t.Errorf("%s publishes ports %v; only Traefik may", name, svc.Ports)
 		}
 	}

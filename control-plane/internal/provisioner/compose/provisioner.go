@@ -21,13 +21,15 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/wpconfig"
 )
 
-// The Compose provisioner implements the Provisioner and TaskRunner parts of
-// the driver. LogReader and StatsReader come with the issues that need them
-// (#78, #68), and the full provisioner.Driver assertion with them; stubbing
-// them now would only hide which parts are missing.
+// The Compose provisioner implements the Provisioner, TaskRunner, and
+// SessionRunner parts of the driver. LogReader and StatsReader come with the
+// issues that need them (#78, #68), and the full provisioner.Driver
+// assertion with them; stubbing them now would only hide which parts are
+// missing.
 var (
-	_ provisioner.Provisioner = (*Provisioner)(nil)
-	_ provisioner.TaskRunner  = (*Provisioner)(nil)
+	_ provisioner.Provisioner   = (*Provisioner)(nil)
+	_ provisioner.TaskRunner    = (*Provisioner)(nil)
+	_ provisioner.SessionRunner = (*Provisioner)(nil)
 )
 
 // ErrSharedServiceUnavailable means a platform container that sites depend
@@ -99,6 +101,10 @@ type ProvisionerConfig struct {
 	// Nil means DockerStreamExec, or, when Docker is set, an adapter over
 	// Docker that only sees standard error on failure.
 	DockerStream StreamExecFunc
+	// DockerAttach runs the docker CLI with its standard streams connected:
+	// RunSession's attached worker. Nil means DockerAttachExec, or, when
+	// Docker is set, an adapter over Docker.
+	DockerAttach AttachExecFunc
 	// TaskImage is the image RunTask uses for a provisioner.Task without an
 	// Image: the control plane's own image (config.Config.TaskImage). Empty
 	// makes such tasks fail with ErrInvalidTask.
@@ -146,6 +152,7 @@ type Provisioner struct {
 	wpcliMaxOutput int
 
 	taskDocker    StreamExecFunc
+	sessionDocker AttachExecFunc
 	taskImage     string
 	backupNetwork string // ProvisionerConfig.BackupNetwork
 }
@@ -212,6 +219,7 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 		wpcliTimeout:   cfg.WPCLITimeout,
 		wpcliMaxOutput: cfg.WPCLIMaxOutput,
 		taskDocker:     cfg.DockerStream,
+		sessionDocker:  cfg.DockerAttach,
 		taskImage:      cfg.TaskImage,
 		backupNetwork:  cfg.BackupNetwork,
 	}
@@ -225,6 +233,12 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 		p.taskDocker = DockerStreamExec
 		if p.docker != nil {
 			p.taskDocker = streamAdapter(p.docker)
+		}
+	}
+	if p.sessionDocker == nil {
+		p.sessionDocker = DockerAttachExec
+		if p.docker != nil {
+			p.sessionDocker = attachAdapter(p.docker)
 		}
 	}
 	if p.docker == nil {

@@ -234,8 +234,8 @@ type SiteStatus struct {
 	Message string
 }
 
-// ExecError is returned by [Provisioner.ExecWPCLI] and [TaskRunner.RunTask]
-// when the command ran but exited non-zero.
+// ExecError is returned by [Provisioner.ExecWPCLI], [TaskRunner.RunTask],
+// and [SessionRunner.RunSession] when the command ran but exited non-zero.
 type ExecError struct {
 	ExitCode int
 	Stdout   string

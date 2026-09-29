@@ -64,7 +64,8 @@ info:
     its scope and its owner's current role. Denied requests get `403`.
 
     * Every role may read sites, client groups, and jobs, and manage its own
-      password and API tokens.
+      password, API tokens, and SSH keys. Only Operators and Admins may
+      connect to the SFTP gateway with their keys.
     * Operators and Admins may also create and change sites and client groups.
     * Only Admins may delete sites and client groups and manage users.
     * `read-only` tokens may only read, whatever the owner's role.
@@ -89,6 +90,11 @@ tags:
     description: The current user's API tokens.
   - name: users
     description: User management (Admin only).
+  - name: ssh-keys
+    description: |
+      SSH public keys for the SFTP gateway (design doc §5.8). Developers
+      connect with `sftp -P <port> <site-slug>@<dashboard domain>`: the SSH
+      username names the site and the key names the user.
   - name: client-groups
     description: Client groups own sites and a backup repository.
   - name: sites
@@ -461,7 +467,7 @@ paths:
       operationId: deleteUser
       tags: [users]
       summary: Delete a user
-      description: Also revokes the user's sessions and tokens. Deleting the last Admin returns `409`.
+      description: Also revokes the user's sessions, tokens, and SSH keys. Deleting the last Admin returns `409`.
       responses:
         "204":
           description: User deleted.
@@ -473,6 +479,176 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/users/me/ssh-keys:
+    get:
+      operationId: listOwnSshKeys
+      tags: [ssh-keys]
+      summary: List the current user's SSH keys
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of SSH keys.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SshKeyList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: addOwnSshKey
+      tags: [ssh-keys]
+      summary: Register an SSH public key for the current user
+      description: |
+        Registers a public key for the SFTP gateway. Only public keys are
+        accepted, and only key login is possible: the gateway has no
+        passwords. A key can belong to one user only; registering a key that
+        is already registered, to anyone, returns `409`.
+
+        Every role may register keys, but only Operators and Admins may
+        connect with them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SshKeyCreate"
+      responses:
+        "201":
+          description: Key registered.
+          headers:
+            Location:
+              $ref: "#/components/headers/Location"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SshKey"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/users/me/ssh-keys/{ssh_key_id}:
+    parameters:
+      - $ref: "#/components/parameters/SSHKeyID"
+    delete:
+      operationId: deleteOwnSshKey
+      tags: [ssh-keys]
+      summary: Remove one of the current user's SSH keys
+      description: |
+        Takes effect immediately: new connections with the key are refused,
+        and open SFTP sessions using it are ended within seconds.
+      responses:
+        "204":
+          description: Key removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/users/{user_id}/ssh-keys:
+    parameters:
+      - $ref: "#/components/parameters/UserID"
+    get:
+      operationId: listUserSshKeys
+      tags: [ssh-keys]
+      summary: List a user's SSH keys (Admin only)
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of SSH keys.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SshKeyList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: addUserSshKey
+      tags: [ssh-keys]
+      summary: Register an SSH public key for a user (Admin only)
+      description: Like `addOwnSshKey`, for another user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SshKeyCreate"
+      responses:
+        "201":
+          description: Key registered.
+          headers:
+            Location:
+              $ref: "#/components/headers/Location"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SshKey"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/users/{user_id}/ssh-keys/{ssh_key_id}:
+    parameters:
+      - $ref: "#/components/parameters/UserID"
+      - $ref: "#/components/parameters/SSHKeyID"
+    delete:
+      operationId: deleteUserSshKey
+      tags: [ssh-keys]
+      summary: Remove one of a user's SSH keys (Admin only)
+      description: Like `deleteOwnSshKey`, for another user.
+      responses:
+        "204":
+          description: Key removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         default:
           $ref: "#/components/responses/Error"
 
@@ -1862,6 +2038,12 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/ID"
+    SSHKeyID:
+      name: ssh_key_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/ID"
     ClientGroupID:
       name: client_group_id
       in: path
@@ -2281,6 +2463,67 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiToken"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+
+    SshKey:
+      type: object
+      required: [id, name, type, fingerprint, public_key, created_at, last_used_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        name:
+          type: string
+          description: A label to tell keys apart; the key's comment unless one was given.
+          examples: ["dev@laptop"]
+        type:
+          type: string
+          description: The key's algorithm.
+          examples: ["ssh-ed25519"]
+        fingerprint:
+          type: string
+          description: The key's SHA-256 fingerprint, as `ssh-keygen -l` prints it.
+          examples: ["SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s"]
+        public_key:
+          type: string
+          description: The public key in authorized_keys format, without its comment.
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        last_used_at:
+          description: When the key last opened an SFTP session; null if never.
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+
+    SshKeyCreate:
+      type: object
+      required: [public_key]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          description: A label for the key. Defaults to the key's comment, or its type.
+        public_key:
+          type: string
+          minLength: 1
+          maxLength: 16384
+          description: |
+            One public key in authorized_keys format, as in a `.pub` file:
+            `ssh-ed25519 AAAA... name@host`. Ed25519 (recommended), ECDSA,
+            security key (`sk-`), and RSA keys of at least 2048 bits are
+            accepted; DSA keys, certificates, and authorized_keys options
+            are not.
+          examples: ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB7Wz8dE9FkE5o0B1QZq9kX0a8Qm3Yt0mC0hEo8dT0c7 dev@laptop"]
+
+    SshKeyList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SshKey"
         next_cursor:
           $ref: "#/components/schemas/NextCursor"
 
@@ -3092,6 +3335,18 @@ components:
           type: string
           description: The client address, after trusted proxies.
           examples: ["203.0.113.7"]
+        details:
+          type: object
+          description: |
+            Extra facts about some events, never secrets. SFTP sessions
+            (`site.sftp.connect` when they start, `site.sftp.disconnect` when
+            they end) record `session_id`, `site_slug`, `ssh_key_id`, and
+            `key_fingerprint`; their end also records `bytes_received` and
+            `bytes_sent` (by the gateway, from and to the client),
+            `duration_seconds`, and `reason`. Absent for events without
+            details.
+          additionalProperties:
+            type: string
 
     AuditEventList:
       type: object

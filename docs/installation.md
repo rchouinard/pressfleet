@@ -48,7 +48,7 @@ Run it as root (or a user in the `docker` group who can write `/etc/pressfleet` 
 
 The config file is written to `--config`, else `$PRESSFLEET_CONFIG`, else `/etc/pressfleet/pressfleet.yaml`. It holds the settings above; everything else keeps its [default](configuration.md#settings).
 
-The dashboard and preview domains must already resolve to this host: the preflight checks look up the dashboard domain and a random name under the preview base domain. Ports 80 and 443 must be free, and reachable from the internet for Let's Encrypt.
+The dashboard and preview domains must already resolve to this host: the preflight checks look up the dashboard domain and a random name under the preview base domain. Ports 80 and 443 must be free, and reachable from the internet for Let's Encrypt. So must the SFTP gateway's port, 2222 unless `PRESSFLEET_SFTP_PORT` names another, for developers (see [SFTP gateway](configuration.md#sftp-gateway)); init generates the gateway's SSH host key and keeps it when reinstalling.
 
 The SMTP settings are optional; see [Outbound email](configuration.md#outbound-email). In interactive mode the other SMTP questions are only asked once a relay host is given. `init` reads the relay password from the first line of `--smtp-password-file`, encrypts it with the master key, and writes only the encrypted value to the config file.
 

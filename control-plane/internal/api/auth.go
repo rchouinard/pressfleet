@@ -190,7 +190,7 @@ func (h *Handlers) authorizeAuth(ctx context.Context, action authz.Action, targe
 // member that holds a new password, for policy violations.
 func authError(err error, passwordField string) error {
 	switch {
-	case errors.Is(err, auth.ErrUserNotFound), errors.Is(err, auth.ErrTokenNotFound):
+	case errors.Is(err, auth.ErrUserNotFound), errors.Is(err, auth.ErrTokenNotFound), errors.Is(err, auth.ErrSSHKeyNotFound):
 		return fmt.Errorf("%w: %w", ErrNotFound, err)
 	case errors.Is(err, auth.ErrEmailTaken), errors.Is(err, auth.ErrLastAdmin):
 		return fmt.Errorf("%w: %w", ErrConflict, err)

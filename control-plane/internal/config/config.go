@@ -97,6 +97,84 @@ type Config struct {
 	Uploads UploadsConfig `yaml:"uploads"`
 	// DatabaseExport configures database exports (§5.8).
 	DatabaseExport DatabaseExportConfig `yaml:"database_export"`
+	// SFTP configures the SFTP gateway (§5.8).
+	SFTP SFTPConfig `yaml:"sftp"`
+}
+
+// SFTPConfig configures the SFTP gateway (§5.8).
+type SFTPConfig struct {
+	// Port is the host port the platform publishes the gateway on, which
+	// developers connect to. The host CLI renders it into the platform
+	// project; `pressfleet doctor` checks it is free.
+	Port int `yaml:"port"`
+	// Listen is the gateway's listen address inside the control plane
+	// container. Empty turns the gateway off.
+	Listen string `yaml:"listen"`
+	// HostKeyFile holds the gateway's SSH host key. `pressfleet init`
+	// generates it once and the platform mounts it there as a Compose
+	// secret, so the key survives reinstalls and upgrades.
+	HostKeyFile string `yaml:"host_key_file"`
+	// IdleTimeoutMinutes ends connections without traffic for this long.
+	IdleTimeoutMinutes int `yaml:"idle_timeout_minutes"`
+	// MaxSessionHours ends every connection this long after it started.
+	MaxSessionHours int `yaml:"max_session_hours"`
+}
+
+// Limits of the SFTP gateway's timeouts.
+const (
+	MaxSFTPIdleTimeoutMinutes = 24 * 60
+	MaxSFTPSessionHours       = 24
+)
+
+// Enabled reports whether the control plane runs the gateway.
+func (s SFTPConfig) Enabled() bool { return s.Listen != "" }
+
+// IdleTimeout returns IdleTimeoutMinutes as a duration.
+func (s SFTPConfig) IdleTimeout() time.Duration {
+	return time.Duration(s.IdleTimeoutMinutes) * time.Minute
+}
+
+// MaxSessionLength returns MaxSessionHours as a duration.
+func (s SFTPConfig) MaxSessionLength() time.Duration {
+	return time.Duration(s.MaxSessionHours) * time.Hour
+}
+
+// Validate reports every problem with the SFTP settings, or nil.
+func (s SFTPConfig) Validate() error {
+	var errs []error
+	if s.Port < 1 || s.Port > 65535 {
+		errs = append(errs, fmt.Errorf("sftp.port must be between 1 and 65535, got %d", s.Port))
+	}
+	if s.Port == 80 || s.Port == 443 {
+		errs = append(errs, fmt.Errorf("sftp.port can't be %d, which Traefik uses", s.Port))
+	}
+	if s.Listen != "" {
+		if _, port, err := net.SplitHostPort(s.Listen); err != nil || !validPort(port) {
+			errs = append(errs, fmt.Errorf("sftp.listen must be host:port or :port, like :2222, got %q", s.Listen))
+		}
+		if !filepath.IsAbs(s.HostKeyFile) {
+			errs = append(errs, fmt.Errorf("sftp.host_key_file must be an absolute path, got %q", s.HostKeyFile))
+		}
+	}
+	if s.IdleTimeoutMinutes < 1 || s.IdleTimeoutMinutes > MaxSFTPIdleTimeoutMinutes {
+		errs = append(errs, fmt.Errorf("sftp.idle_timeout_minutes must be between 1 and %d, got %d", MaxSFTPIdleTimeoutMinutes, s.IdleTimeoutMinutes))
+	}
+	if s.MaxSessionHours < 1 || s.MaxSessionHours > MaxSFTPSessionHours {
+		errs = append(errs, fmt.Errorf("sftp.max_session_hours must be between 1 and %d, got %d", MaxSFTPSessionHours, s.MaxSessionHours))
+	}
+	return errors.Join(errs...)
+}
+
+// DefaultSFTP returns the default SFTP gateway settings: port 2222, a
+// 15-minute idle timeout, and sessions of at most 8 hours.
+func DefaultSFTP() SFTPConfig {
+	return SFTPConfig{
+		Port:               2222,
+		Listen:             ":2222",
+		HostKeyFile:        "/run/secrets/ssh_host_key",
+		IdleTimeoutMinutes: 15,
+		MaxSessionHours:    8,
+	}
 }
 
 // Values of smtp.encryption.
@@ -487,6 +565,7 @@ func Default() Config {
 		WordPressSecurity: DefaultWordPressSecurity(),
 		Uploads:           DefaultUploads(),
 		DatabaseExport:    DatabaseExportConfig{TTLSeconds: 3600},
+		SFTP:              DefaultSFTP(),
 	}
 }
 
@@ -508,6 +587,9 @@ var intEnvVars = []struct {
 	{"PRESSFLEET_UPLOADS_MAX_SIZE_MB", func(c *Config) *int { return &c.Uploads.MaxSizeMB }},
 	{"PRESSFLEET_UPLOADS_EXPIRY_HOURS", func(c *Config) *int { return &c.Uploads.ExpiryHours }},
 	{"PRESSFLEET_DATABASE_EXPORT_TTL_SECONDS", func(c *Config) *int { return &c.DatabaseExport.TTLSeconds }},
+	{"PRESSFLEET_SFTP_PORT", func(c *Config) *int { return &c.SFTP.Port }},
+	{"PRESSFLEET_SFTP_IDLE_TIMEOUT_MINUTES", func(c *Config) *int { return &c.SFTP.IdleTimeoutMinutes }},
+	{"PRESSFLEET_SFTP_MAX_SESSION_HOURS", func(c *Config) *int { return &c.SFTP.MaxSessionHours }},
 }
 
 // envVars maps environment variables to the fields they set.
@@ -555,6 +637,8 @@ var envVars = []struct {
 	{"PRESSFLEET_BACKUP_S3_ACCESS_KEY_ID", func(c *Config) *string { return &c.Backup.S3.AccessKeyID }},
 	{"PRESSFLEET_BACKUP_S3_SECRET_ACCESS_KEY", func(c *Config) *string { return &c.Backup.S3.SecretAccessKey }},
 	{"PRESSFLEET_BACKUP_SCHEDULE_WINDOW_START", func(c *Config) *string { return &c.Backup.Schedule.WindowStart }},
+	{"PRESSFLEET_SFTP_LISTEN", func(c *Config) *string { return &c.SFTP.Listen }},
+	{"PRESSFLEET_SFTP_HOST_KEY_FILE", func(c *Config) *string { return &c.SFTP.HostKeyFile }},
 }
 
 // envTrustedProxies sets http.trusted_proxies as a comma-separated list.
@@ -786,6 +870,9 @@ func (c Config) Validate() error {
 		errs = append(errs, err)
 	}
 	if err := c.Uploads.Validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.SFTP.Validate(); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)

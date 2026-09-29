@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -89,7 +90,7 @@ func TestEveryStateChangingOperationIsAudited(t *testing.T) {
 					// no actor.
 					want.Action, want.ActorUserID, want.ActorTokenID = "self.login", "", ""
 				}
-				if e != want {
+				if !reflect.DeepEqual(e, want) {
 					t.Errorf("event = %+v, want %+v (status %d)", e, want, w.Code)
 				}
 			})

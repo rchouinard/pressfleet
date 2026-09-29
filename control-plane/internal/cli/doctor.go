@@ -59,6 +59,7 @@ func (a *app) doctorOptions() doctor.Options {
 		DataDir:           a.cfg.DataDir,
 		DashboardDomain:   strings.TrimSuffix(a.cfg.DashboardDomain, "."),
 		PreviewBaseDomain: strings.TrimSuffix(a.cfg.PreviewBaseDomain, "."),
+		SFTPPort:          a.cfg.SFTP.Port,
 	}
 	if opts.Host == nil {
 		opts.Host = doctor.System{}
