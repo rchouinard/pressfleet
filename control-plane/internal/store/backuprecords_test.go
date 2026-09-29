@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -188,6 +189,18 @@ func TestBackupKindValid(t *testing.T) {
 	}
 }
 
+// sameRecordIDs reports whether records holds exactly the given IDs in any
+// order: IDs made within one millisecond don't sort in creation order.
+func sameRecordIDs(records []store.BackupRecord, want ...string) bool {
+	got := make([]string, len(records))
+	for i, r := range records {
+		got[i] = r.ID
+	}
+	slices.Sort(got)
+	slices.Sort(want)
+	return slices.Equal(got, want)
+}
+
 func TestBackupRecordsExpire(t *testing.T) {
 	ctx := context.Background()
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
@@ -230,7 +243,7 @@ func TestBackupRecordsExpire(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(got) != 2 || got[0].ID != old.ID || got[1].ID != kept.ID {
+		if !sameRecordIDs(got, old.ID, kept.ID) {
 			t.Errorf("Restorable = %+v, want %s and %s", got, old.ID, kept.ID)
 		}
 
@@ -258,7 +271,7 @@ func TestBackupRecordsExpire(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(got) != 2 || got[0].ID != kept.ID || got[1].ID != late.ID {
+		if !sameRecordIDs(got, kept.ID, late.ID) {
 			t.Errorf("Restorable after expiring = %+v", got)
 		}
 
