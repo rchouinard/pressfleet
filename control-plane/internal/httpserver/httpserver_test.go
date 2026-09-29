@@ -176,6 +176,30 @@ func TestMaxBodyBytes(t *testing.T) {
 	}
 }
 
+func TestSetBodyLimit(t *testing.T) {
+	for _, tt := range []struct {
+		limit int64
+		ok    bool
+	}{{4, false}, {5, true}} {
+		var (
+			body    []byte
+			readErr error
+		)
+		h := httpserver.MaxBodyBytes(2)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			httpserver.SetBodyLimit(w, r, tt.limit)
+			body, readErr = io.ReadAll(r.Body)
+		}))
+		serve(h, httptest.NewRequest(http.MethodPost, "/", strings.NewReader("12345")))
+		var mbe *http.MaxBytesError
+		switch {
+		case tt.ok && (readErr != nil || string(body) != "12345"):
+			t.Errorf("limit %d: read %q, %v", tt.limit, body, readErr)
+		case !tt.ok && !errors.As(readErr, &mbe):
+			t.Errorf("limit %d: read error = %v, want *http.MaxBytesError", tt.limit, readErr)
+		}
+	}
+}
+
 func TestProblemRouter(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /things/{id}", func(w http.ResponseWriter, r *http.Request) {

@@ -61,7 +61,7 @@ func TestEveryStateChangingOperationIsAudited(t *testing.T) {
 		for _, op := range ops {
 			t.Run(op.ID, func(t *testing.T) {
 				before := len(allEvents(t, db))
-				w := do(t, h, request{method: op.Method, target: samplePath(op.Path), body: sampleBodies[op.ID], authed: true})
+				w := do(t, h, sampleRequest(op, true))
 				events := allEvents(t, db)
 				if !isUnsafe(op.Method) {
 					if len(events) != before {
@@ -111,7 +111,7 @@ func TestDenialsAreAudited(t *testing.T) {
 		}
 		t.Run(op.ID, func(t *testing.T) {
 			before := len(allEvents(t, db))
-			w := do(t, h, request{method: op.Method, target: samplePath(op.Path), body: sampleBodies[op.ID], authed: true})
+			w := do(t, h, sampleRequest(op, true))
 			expectStatus(t, w, http.StatusForbidden, op.ID)
 			events := allEvents(t, db)
 			if len(events) != before+1 {

@@ -16,6 +16,7 @@ import (
 //	  backups/
 //	    repositories/<client-group-id>/
 //	                      the group's Restic repository (local backend only)
+//	  uploads/<upload-id> files sent through the upload API (never backed up)
 //	  tmp/               scratch space, e.g. database dumps during backups
 type Layout struct {
 	Root string
@@ -33,6 +34,10 @@ func (l Layout) PlatformDir() string { return filepath.Join(l.Root, "platform") 
 
 // SitesDir holds one directory per site.
 func (l Layout) SitesDir() string { return filepath.Join(l.Root, "sites") }
+
+// UploadsDir holds the files sent through the resumable upload API, one
+// per upload (package uploads). Nothing backs it up.
+func (l Layout) UploadsDir() string { return filepath.Join(l.Root, "uploads") }
 
 // TmpDir is scratch space that may be cleared on startup.
 func (l Layout) TmpDir() string { return filepath.Join(l.Root, "tmp") }
@@ -71,7 +76,7 @@ func localName(name string) bool {
 // Ensure creates the top-level directories, readable only by the owner
 // because they hold rendered credentials.
 func (l Layout) Ensure() error {
-	for _, dir := range []string{l.Root, l.StateDir(), l.PlatformDir(), l.SitesDir(), l.TmpDir()} {
+	for _, dir := range []string{l.Root, l.StateDir(), l.PlatformDir(), l.SitesDir(), l.UploadsDir(), l.TmpDir()} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return fmt.Errorf("creating data directory: %w", err)
 		}

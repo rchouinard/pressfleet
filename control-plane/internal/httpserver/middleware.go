@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -137,15 +138,31 @@ func Recover(log *slog.Logger) Middleware {
 }
 
 // MaxBodyBytes limits request bodies to n bytes. Reading past the limit fails
-// with *http.MaxBytesError, which API error handling maps to 413.
+// with *http.MaxBytesError, which API error handling maps to 413. The few
+// operations that take larger bodies raise the limit with SetBodyLimit.
 func MaxBodyBytes(n int64) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Body != nil && r.Body != http.NoBody {
+				r = r.WithContext(context.WithValue(r.Context(), unlimitedBodyKey{}, r.Body))
 				r.Body = http.MaxBytesReader(w, r.Body, n)
 			}
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+// unlimitedBodyKey holds the request body as it was before MaxBodyBytes
+// limited it.
+type unlimitedBodyKey struct{}
+
+// SetBodyLimit replaces the limit MaxBodyBytes put on r's body with n, for
+// an operation that takes large bodies, such as an upload chunk. Call it
+// before anything reads the body. Requests MaxBodyBytes didn't limit are
+// left alone.
+func SetBodyLimit(w http.ResponseWriter, r *http.Request, n int64) {
+	if body, ok := r.Context().Value(unlimitedBodyKey{}).(io.ReadCloser); ok {
+		r.Body = http.MaxBytesReader(w, body, n)
 	}
 }
 

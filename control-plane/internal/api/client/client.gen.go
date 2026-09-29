@@ -351,6 +351,45 @@ func (e TokenScope) Valid() bool {
 	}
 }
 
+// Defines values for UploadPurpose.
+const (
+	SiteDeploy UploadPurpose = "site_deploy"
+	SiteImport UploadPurpose = "site_import"
+)
+
+// Valid indicates whether the value is a known member of the UploadPurpose enum.
+func (e UploadPurpose) Valid() bool {
+	switch e {
+	case SiteDeploy:
+		return true
+	case SiteImport:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UploadStatus.
+const (
+	Complete  UploadStatus = "complete"
+	InUse     UploadStatus = "in_use"
+	Uploading UploadStatus = "uploading"
+)
+
+// Valid indicates whether the value is a known member of the UploadStatus enum.
+func (e UploadStatus) Valid() bool {
+	switch e {
+	case Complete:
+		return true
+	case InUse:
+		return true
+	case Uploading:
+		return true
+	default:
+		return false
+	}
+}
+
 // APIToken defines model for ApiToken.
 type APIToken struct {
 	// CreatedAt Examples: 2026-09-26T17:25:00Z
@@ -1256,6 +1295,103 @@ type Timestamp = time.Time
 // `read-only` allows only read actions.
 type TokenScope string
 
+// Upload defines model for Upload.
+type Upload struct {
+	// ClientGroupID The client group of the import or deployment.
+	ClientGroupID ID `json:"client_group_id"`
+
+	// CreatedAt Examples: 2026-09-26T17:25:00Z
+	CreatedAt Timestamp `json:"created_at"`
+
+	// ExpiresAt When the upload is removed as abandoned unless another chunk
+	// arrives or a job takes it; null while a job has it.
+	ExpiresAt *Timestamp `json:"expires_at"`
+	Filename  string     `json:"filename"`
+
+	// ID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ID ID `json:"id"`
+
+	// JobID The job that took the upload; null unless `in_use`.
+	JobID *ID `json:"job_id"`
+
+	// MaxChunkBytes The largest chunk one request may carry.
+	//
+	// Examples: 33554432
+	MaxChunkBytes int64 `json:"max_chunk_bytes"`
+
+	// Purpose What the upload is for: a site import's `wp-content` archive or SQL
+	// dump (`site_import`), or a theme or plugin package to deploy to a
+	// site (`site_deploy`). It decides the permission the upload needs,
+	// and only an import or deployment of that kind can take it.
+	Purpose UploadPurpose `json:"purpose"`
+
+	// ReceivedBytes How many bytes have arrived. The next chunk starts here.
+	ReceivedBytes int64 `json:"received_bytes"`
+
+	// Sha256 The declared SHA-256 checksum, lowercase hex; null until declared.
+	Sha256 *string `json:"sha256"`
+
+	// SiteID The site to deploy to; null for imports.
+	SiteID *ID `json:"site_id"`
+
+	// SizeBytes The file's declared size.
+	SizeBytes int64 `json:"size_bytes"`
+
+	// Status `uploading` takes chunks; `complete` has all its bytes and a
+	// verified checksum, and waits for its import or deployment;
+	// `in_use` has been taken by one, and is removed when its job ends.
+	Status UploadStatus `json:"status"`
+
+	// UpdatedAt Examples: 2026-09-26T17:25:00Z
+	UpdatedAt Timestamp `json:"updated_at"`
+}
+
+// UploadComplete defines model for UploadComplete.
+type UploadComplete struct {
+	// Sha256 The file's SHA-256 checksum in hex. Required unless it was given
+	// when the upload was started, and then it must match.
+	Sha256 *string `json:"sha256,omitempty"`
+}
+
+// UploadCreate defines model for UploadCreate.
+type UploadCreate struct {
+	// ClientGroupID The client group the imported site will join. Required for `site_import`; not allowed for `site_deploy`.
+	ClientGroupID *ID `json:"client_group_id,omitempty"`
+
+	// Filename The file's name, for display. No directories.
+	//
+	// Examples: wp-content.tar.gz
+	Filename *string `json:"filename,omitempty"`
+
+	// Purpose What the upload is for: a site import's `wp-content` archive or SQL
+	// dump (`site_import`), or a theme or plugin package to deploy to a
+	// site (`site_deploy`). It decides the permission the upload needs,
+	// and only an import or deployment of that kind can take it.
+	Purpose UploadPurpose `json:"purpose"`
+
+	// Sha256 The file's SHA-256 checksum in hex. Optional here; then required when completing the upload.
+	Sha256 *string `json:"sha256,omitempty"`
+
+	// SiteID The site to deploy to. Required for `site_deploy`; not allowed for `site_import`.
+	SiteID *ID `json:"site_id,omitempty"`
+
+	// SizeBytes The file's exact size, at most `uploads.max_size_mb`.
+	SizeBytes int64 `json:"size_bytes"`
+}
+
+// UploadPurpose What the upload is for: a site import's `wp-content` archive or SQL
+// dump (`site_import`), or a theme or plugin package to deploy to a
+// site (`site_deploy`). It decides the permission the upload needs,
+// and only an import or deployment of that kind can take it.
+type UploadPurpose string
+
+// UploadStatus `uploading` takes chunks; `complete` has all its bytes and a
+// verified checksum, and waits for its import or deployment;
+// `in_use` has been taken by one, and is removed when its job ends.
+type UploadStatus string
+
 // User defines model for User.
 type User struct {
 	// CreatedAt Examples: 2026-09-26T17:25:00Z
@@ -1333,6 +1469,11 @@ type SiteID = ID
 // Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
 type TokenID = ID
 
+// UploadID Opaque, server-assigned identifier.
+//
+// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+type UploadID = ID
+
 // UserID Opaque, server-assigned identifier.
 //
 // Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
@@ -1343,6 +1484,9 @@ type BadRequest = Problem
 
 // Conflict RFC 9457 Problem Details. Additional members may be added.
 type Conflict = Problem
+
+// ContentTooLarge RFC 9457 Problem Details. Additional members may be added.
+type ContentTooLarge = Problem
 
 // Error RFC 9457 Problem Details. Additional members may be added.
 type Error = Problem
@@ -1367,6 +1511,9 @@ type UnprocessableContent = Problem
 
 // UnprocessableDomains RFC 9457 Problem Details. Additional members may be added.
 type UnprocessableDomains = Problem
+
+// UnsupportedMediaType RFC 9457 Problem Details. Additional members may be added.
+type UnsupportedMediaType = Problem
 
 // ListAuditEventsParams defines parameters for ListAuditEvents.
 type ListAuditEventsParams struct {
@@ -1458,6 +1605,12 @@ type ListSiteBackupsParams struct {
 	Status *BackupStatus `form:"status,omitempty" json:"status,omitempty"`
 }
 
+// AppendUploadChunkParams defines parameters for AppendUploadChunk.
+type AppendUploadChunkParams struct {
+	// Offset Where in the file the chunk starts; the upload's current `received_bytes`.
+	Offset int64 `form:"offset" json:"offset"`
+}
+
 // ListUsersParams defines parameters for ListUsers.
 type ListUsersParams struct {
 	// Limit Maximum number of items to return.
@@ -1505,6 +1658,12 @@ type SetSiteMaintenanceJSONRequestBody = SiteMaintenance
 
 // RestoreSiteJSONRequestBody defines body for RestoreSite for application/json ContentType.
 type RestoreSiteJSONRequestBody = SiteRestore
+
+// CreateUploadJSONRequestBody defines body for CreateUpload for application/json ContentType.
+type CreateUploadJSONRequestBody = UploadCreate
+
+// CompleteUploadJSONRequestBody defines body for CompleteUpload for application/json ContentType.
+type CompleteUploadJSONRequestBody = UploadComplete
 
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody = UserCreate
@@ -2315,6 +2474,136 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/stop (the `StopSite` operationId).
 	StopSite(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateUploadWithBody Start an upload
+	//
+	// Starts a resumable upload of a large file for a site import
+	// (`purpose: site_import`, with the `client_group_id` the new site will
+	// join) or a code deployment (`purpose: site_deploy`, with the
+	// `site_id` to deploy to). It needs the same permission as the import
+	// or deployment itself, and only its creator can send it, see it, or
+	// use it.
+	//
+	// Declare the file's exact size, at most `uploads.max_size_mb`
+	// (`422` if larger), and its SHA-256 checksum here or when completing
+	// the upload. Then send the content with `PATCH
+	// /api/v1/uploads/{upload_id}` in chunks of at most `max_chunk_bytes`,
+	// in order, and complete the upload with `POST
+	// /api/v1/uploads/{upload_id}/complete`. The import or deployment then
+	// takes the upload by its `id`.
+	//
+	// If a chunk fails, for example because the connection dropped, none
+	// of it counts: `GET /api/v1/uploads/{upload_id}` says how many bytes
+	// arrived (`received_bytes`), and the upload resumes with a chunk from
+	// there.
+	//
+	// An upload that no job has taken is removed once it goes
+	// `uploads.expiry_hours` (default 24) without a chunk (`expires_at`).
+	// One that a job has taken is removed when the job ends. Uploads are
+	// stored in the data directory, never in backups.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/uploads (the `CreateUpload` operationId).
+	CreateUploadWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateUpload Start an upload
+	//
+	// Starts a resumable upload of a large file for a site import
+	// (`purpose: site_import`, with the `client_group_id` the new site will
+	// join) or a code deployment (`purpose: site_deploy`, with the
+	// `site_id` to deploy to). It needs the same permission as the import
+	// or deployment itself, and only its creator can send it, see it, or
+	// use it.
+	//
+	// Declare the file's exact size, at most `uploads.max_size_mb`
+	// (`422` if larger), and its SHA-256 checksum here or when completing
+	// the upload. Then send the content with `PATCH
+	// /api/v1/uploads/{upload_id}` in chunks of at most `max_chunk_bytes`,
+	// in order, and complete the upload with `POST
+	// /api/v1/uploads/{upload_id}/complete`. The import or deployment then
+	// takes the upload by its `id`.
+	//
+	// If a chunk fails, for example because the connection dropped, none
+	// of it counts: `GET /api/v1/uploads/{upload_id}` says how many bytes
+	// arrived (`received_bytes`), and the upload resumes with a chunk from
+	// there.
+	//
+	// An upload that no job has taken is removed once it goes
+	// `uploads.expiry_hours` (default 24) without a chunk (`expires_at`).
+	// One that a job has taken is removed when the job ends. Uploads are
+	// stored in the data directory, never in backups.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/uploads (the `CreateUpload` operationId).
+	CreateUpload(ctx context.Context, body CreateUploadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteUpload Cancel an upload
+	//
+	// Removes an upload and its content. An upload a job has taken can't
+	// be removed (`409`); it goes when the job ends.
+	//
+	// Corresponds with DELETE /api/v1/uploads/{upload_id} (the `DeleteUpload` operationId).
+	DeleteUpload(ctx context.Context, uploadID UploadID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetUpload Get an upload
+	//
+	// Where the upload stands: after an interrupted chunk, resume from
+	// `received_bytes`. Only the upload's creator can see it; for anyone
+	// else it doesn't exist (`404`).
+	//
+	// Corresponds with GET /api/v1/uploads/{upload_id} (the `GetUpload` operationId).
+	GetUpload(ctx context.Context, uploadID UploadID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AppendUploadChunkWithBody Send a chunk of an upload
+	//
+	// Appends the request body, the file's bytes from `offset` on, to the
+	// upload. `offset` must equal the upload's `received_bytes` (`409`
+	// otherwise, with the expected offset in `detail`), and the chunk
+	// must hold at least one byte, at most `max_chunk_bytes` (`413`), and
+	// not go past the declared size (`413`). The chunk counts only once
+	// all of it has arrived and is on disk: if the request fails, send
+	// the same bytes again. One request at a time may send chunks of an
+	// upload (`409` meanwhile). A completed upload takes no more chunks
+	// (`409`).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /api/v1/uploads/{upload_id} (the `AppendUploadChunk` operationId).
+	AppendUploadChunkWithBody(ctx context.Context, uploadID UploadID, params *AppendUploadChunkParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CompleteUploadWithBody Complete an upload
+	//
+	// Finishes an upload that has received all its bytes (`409`
+	// otherwise): it checks the content against the SHA-256 checksum,
+	// given here or when the upload was started (`422` if neither, or if
+	// they differ), and makes the upload available to the import or
+	// deployment it is for (`status: complete`). If the content doesn't
+	// match the checksum, the upload is removed and the response is
+	// `422`: start a new one. Completing a complete upload again returns
+	// it.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/uploads/{upload_id}/complete (the `CompleteUpload` operationId).
+	CompleteUploadWithBody(ctx context.Context, uploadID UploadID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CompleteUpload Complete an upload
+	//
+	// Finishes an upload that has received all its bytes (`409`
+	// otherwise): it checks the content against the SHA-256 checksum,
+	// given here or when the upload was started (`422` if neither, or if
+	// they differ), and makes the upload available to the import or
+	// deployment it is for (`status: complete`). If the content doesn't
+	// match the checksum, the upload is removed and the response is
+	// `422`: start a new one. Completing a complete upload again returns
+	// it.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/uploads/{upload_id}/complete (the `CompleteUpload` operationId).
+	CompleteUpload(ctx context.Context, uploadID UploadID, body CompleteUploadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListUsers List users
 	//
@@ -3556,6 +3845,206 @@ func (c *Client) StartSite(ctx context.Context, siteID SiteID, reqEditors ...Req
 // Corresponds with POST /api/v1/sites/{site_id}/stop (the `StopSite` operationId).
 func (c *Client) StopSite(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewStopSiteRequest(c.Server, siteID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateUploadWithBody Start an upload
+//
+// Starts a resumable upload of a large file for a site import
+// (`purpose: site_import`, with the `client_group_id` the new site will
+// join) or a code deployment (`purpose: site_deploy`, with the
+// `site_id` to deploy to). It needs the same permission as the import
+// or deployment itself, and only its creator can send it, see it, or
+// use it.
+//
+// Declare the file's exact size, at most `uploads.max_size_mb`
+// (`422` if larger), and its SHA-256 checksum here or when completing
+// the upload. Then send the content with `PATCH
+// /api/v1/uploads/{upload_id}` in chunks of at most `max_chunk_bytes`,
+// in order, and complete the upload with `POST
+// /api/v1/uploads/{upload_id}/complete`. The import or deployment then
+// takes the upload by its `id`.
+//
+// If a chunk fails, for example because the connection dropped, none
+// of it counts: `GET /api/v1/uploads/{upload_id}` says how many bytes
+// arrived (`received_bytes`), and the upload resumes with a chunk from
+// there.
+//
+// An upload that no job has taken is removed once it goes
+// `uploads.expiry_hours` (default 24) without a chunk (`expires_at`).
+// One that a job has taken is removed when the job ends. Uploads are
+// stored in the data directory, never in backups.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/uploads (the `CreateUpload` operationId).
+func (c *Client) CreateUploadWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateUploadRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateUpload Start an upload
+//
+// Starts a resumable upload of a large file for a site import
+// (`purpose: site_import`, with the `client_group_id` the new site will
+// join) or a code deployment (`purpose: site_deploy`, with the
+// `site_id` to deploy to). It needs the same permission as the import
+// or deployment itself, and only its creator can send it, see it, or
+// use it.
+//
+// Declare the file's exact size, at most `uploads.max_size_mb`
+// (`422` if larger), and its SHA-256 checksum here or when completing
+// the upload. Then send the content with `PATCH
+// /api/v1/uploads/{upload_id}` in chunks of at most `max_chunk_bytes`,
+// in order, and complete the upload with `POST
+// /api/v1/uploads/{upload_id}/complete`. The import or deployment then
+// takes the upload by its `id`.
+//
+// If a chunk fails, for example because the connection dropped, none
+// of it counts: `GET /api/v1/uploads/{upload_id}` says how many bytes
+// arrived (`received_bytes`), and the upload resumes with a chunk from
+// there.
+//
+// An upload that no job has taken is removed once it goes
+// `uploads.expiry_hours` (default 24) without a chunk (`expires_at`).
+// One that a job has taken is removed when the job ends. Uploads are
+// stored in the data directory, never in backups.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/uploads (the `CreateUpload` operationId).
+func (c *Client) CreateUpload(ctx context.Context, body CreateUploadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateUploadRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteUpload Cancel an upload
+//
+// Removes an upload and its content. An upload a job has taken can't
+// be removed (`409`); it goes when the job ends.
+//
+// Corresponds with DELETE /api/v1/uploads/{upload_id} (the `DeleteUpload` operationId).
+func (c *Client) DeleteUpload(ctx context.Context, uploadID UploadID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteUploadRequest(c.Server, uploadID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetUpload Get an upload
+//
+// Where the upload stands: after an interrupted chunk, resume from
+// `received_bytes`. Only the upload's creator can see it; for anyone
+// else it doesn't exist (`404`).
+//
+// Corresponds with GET /api/v1/uploads/{upload_id} (the `GetUpload` operationId).
+func (c *Client) GetUpload(ctx context.Context, uploadID UploadID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUploadRequest(c.Server, uploadID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AppendUploadChunkWithBody Send a chunk of an upload
+//
+// Appends the request body, the file's bytes from `offset` on, to the
+// upload. `offset` must equal the upload's `received_bytes` (`409`
+// otherwise, with the expected offset in `detail`), and the chunk
+// must hold at least one byte, at most `max_chunk_bytes` (`413`), and
+// not go past the declared size (`413`). The chunk counts only once
+// all of it has arrived and is on disk: if the request fails, send
+// the same bytes again. One request at a time may send chunks of an
+// upload (`409` meanwhile). A completed upload takes no more chunks
+// (`409`).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /api/v1/uploads/{upload_id} (the `AppendUploadChunk` operationId).
+func (c *Client) AppendUploadChunkWithBody(ctx context.Context, uploadID UploadID, params *AppendUploadChunkParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAppendUploadChunkRequestWithBody(c.Server, uploadID, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CompleteUploadWithBody Complete an upload
+//
+// Finishes an upload that has received all its bytes (`409`
+// otherwise): it checks the content against the SHA-256 checksum,
+// given here or when the upload was started (`422` if neither, or if
+// they differ), and makes the upload available to the import or
+// deployment it is for (`status: complete`). If the content doesn't
+// match the checksum, the upload is removed and the response is
+// `422`: start a new one. Completing a complete upload again returns
+// it.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/uploads/{upload_id}/complete (the `CompleteUpload` operationId).
+func (c *Client) CompleteUploadWithBody(ctx context.Context, uploadID UploadID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCompleteUploadRequestWithBody(c.Server, uploadID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CompleteUpload Complete an upload
+//
+// Finishes an upload that has received all its bytes (`409`
+// otherwise): it checks the content against the SHA-256 checksum,
+// given here or when the upload was started (`422` if neither, or if
+// they differ), and makes the upload available to the import or
+// deployment it is for (`status: complete`). If the content doesn't
+// match the checksum, the upload is removed and the response is
+// `422`: start a new one. Completing a complete upload again returns
+// it.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/uploads/{upload_id}/complete (the `CompleteUpload` operationId).
+func (c *Client) CompleteUpload(ctx context.Context, uploadID UploadID, body CompleteUploadJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCompleteUploadRequest(c.Server, uploadID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5297,6 +5786,220 @@ func NewStopSiteRequest(server string, siteID SiteID) (*http.Request, error) {
 	return req, nil
 }
 
+// NewCreateUploadRequest calls the generic CreateUpload builder with application/json body
+func NewCreateUploadRequest(server string, body CreateUploadJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateUploadRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateUploadRequestWithBody constructs an http.Request for the CreateUpload method, with any body, and a specified content type
+func NewCreateUploadRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/uploads")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteUploadRequest constructs an http.Request for the DeleteUpload method
+func NewDeleteUploadRequest(server string, uploadID UploadID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "upload_id", uploadID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/uploads/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetUploadRequest constructs an http.Request for the GetUpload method
+func NewGetUploadRequest(server string, uploadID UploadID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "upload_id", uploadID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/uploads/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAppendUploadChunkRequestWithBody constructs an http.Request for the AppendUploadChunk method, with any body, and a specified content type
+func NewAppendUploadChunkRequestWithBody(server string, uploadID UploadID, params *AppendUploadChunkParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "upload_id", uploadID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/uploads/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewCompleteUploadRequest calls the generic CompleteUpload builder with application/json body
+func NewCompleteUploadRequest(server string, uploadID UploadID, body CompleteUploadJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCompleteUploadRequestWithBody(server, uploadID, "application/json", bodyReader)
+}
+
+// NewCompleteUploadRequestWithBody constructs an http.Request for the CompleteUpload method, with any body, and a specified content type
+func NewCompleteUploadRequestWithBody(server string, uploadID UploadID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "upload_id", uploadID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/uploads/%s/complete", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListUsersRequest constructs an http.Request for the ListUsers method
 func NewListUsersRequest(server string, params *ListUsersParams) (*http.Request, error) {
 	var err error
@@ -6399,6 +7102,140 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/stop (the `StopSite` operationId).
 	StopSiteWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*StopSiteResponse, error)
+
+	// CreateUploadWithBodyWithResponse Start an upload
+	//
+	// Starts a resumable upload of a large file for a site import
+	// (`purpose: site_import`, with the `client_group_id` the new site will
+	// join) or a code deployment (`purpose: site_deploy`, with the
+	// `site_id` to deploy to). It needs the same permission as the import
+	// or deployment itself, and only its creator can send it, see it, or
+	// use it.
+	//
+	// Declare the file's exact size, at most `uploads.max_size_mb`
+	// (`422` if larger), and its SHA-256 checksum here or when completing
+	// the upload. Then send the content with `PATCH
+	// /api/v1/uploads/{upload_id}` in chunks of at most `max_chunk_bytes`,
+	// in order, and complete the upload with `POST
+	// /api/v1/uploads/{upload_id}/complete`. The import or deployment then
+	// takes the upload by its `id`.
+	//
+	// If a chunk fails, for example because the connection dropped, none
+	// of it counts: `GET /api/v1/uploads/{upload_id}` says how many bytes
+	// arrived (`received_bytes`), and the upload resumes with a chunk from
+	// there.
+	//
+	// An upload that no job has taken is removed once it goes
+	// `uploads.expiry_hours` (default 24) without a chunk (`expires_at`).
+	// One that a job has taken is removed when the job ends. Uploads are
+	// stored in the data directory, never in backups.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/uploads (the `CreateUpload` operationId).
+	CreateUploadWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateUploadResponse, error)
+
+	// CreateUploadWithResponse Start an upload
+	//
+	// Starts a resumable upload of a large file for a site import
+	// (`purpose: site_import`, with the `client_group_id` the new site will
+	// join) or a code deployment (`purpose: site_deploy`, with the
+	// `site_id` to deploy to). It needs the same permission as the import
+	// or deployment itself, and only its creator can send it, see it, or
+	// use it.
+	//
+	// Declare the file's exact size, at most `uploads.max_size_mb`
+	// (`422` if larger), and its SHA-256 checksum here or when completing
+	// the upload. Then send the content with `PATCH
+	// /api/v1/uploads/{upload_id}` in chunks of at most `max_chunk_bytes`,
+	// in order, and complete the upload with `POST
+	// /api/v1/uploads/{upload_id}/complete`. The import or deployment then
+	// takes the upload by its `id`.
+	//
+	// If a chunk fails, for example because the connection dropped, none
+	// of it counts: `GET /api/v1/uploads/{upload_id}` says how many bytes
+	// arrived (`received_bytes`), and the upload resumes with a chunk from
+	// there.
+	//
+	// An upload that no job has taken is removed once it goes
+	// `uploads.expiry_hours` (default 24) without a chunk (`expires_at`).
+	// One that a job has taken is removed when the job ends. Uploads are
+	// stored in the data directory, never in backups.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/uploads (the `CreateUpload` operationId).
+	CreateUploadWithResponse(ctx context.Context, body CreateUploadJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateUploadResponse, error)
+
+	// DeleteUploadWithResponse Cancel an upload
+	//
+	// Removes an upload and its content. An upload a job has taken can't
+	// be removed (`409`); it goes when the job ends.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v1/uploads/{upload_id} (the `DeleteUpload` operationId).
+	DeleteUploadWithResponse(ctx context.Context, uploadID UploadID, reqEditors ...RequestEditorFn) (*DeleteUploadResponse, error)
+
+	// GetUploadWithResponse Get an upload
+	//
+	// Where the upload stands: after an interrupted chunk, resume from
+	// `received_bytes`. Only the upload's creator can see it; for anyone
+	// else it doesn't exist (`404`).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/uploads/{upload_id} (the `GetUpload` operationId).
+	GetUploadWithResponse(ctx context.Context, uploadID UploadID, reqEditors ...RequestEditorFn) (*GetUploadResponse, error)
+
+	// AppendUploadChunkWithBodyWithResponse Send a chunk of an upload
+	//
+	// Appends the request body, the file's bytes from `offset` on, to the
+	// upload. `offset` must equal the upload's `received_bytes` (`409`
+	// otherwise, with the expected offset in `detail`), and the chunk
+	// must hold at least one byte, at most `max_chunk_bytes` (`413`), and
+	// not go past the declared size (`413`). The chunk counts only once
+	// all of it has arrived and is on disk: if the request fails, send
+	// the same bytes again. One request at a time may send chunks of an
+	// upload (`409` meanwhile). A completed upload takes no more chunks
+	// (`409`).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v1/uploads/{upload_id} (the `AppendUploadChunk` operationId).
+	AppendUploadChunkWithBodyWithResponse(ctx context.Context, uploadID UploadID, params *AppendUploadChunkParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AppendUploadChunkResponse, error)
+
+	// CompleteUploadWithBodyWithResponse Complete an upload
+	//
+	// Finishes an upload that has received all its bytes (`409`
+	// otherwise): it checks the content against the SHA-256 checksum,
+	// given here or when the upload was started (`422` if neither, or if
+	// they differ), and makes the upload available to the import or
+	// deployment it is for (`status: complete`). If the content doesn't
+	// match the checksum, the upload is removed and the response is
+	// `422`: start a new one. Completing a complete upload again returns
+	// it.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/uploads/{upload_id}/complete (the `CompleteUpload` operationId).
+	CompleteUploadWithBodyWithResponse(ctx context.Context, uploadID UploadID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CompleteUploadResponse, error)
+
+	// CompleteUploadWithResponse Complete an upload
+	//
+	// Finishes an upload that has received all its bytes (`409`
+	// otherwise): it checks the content against the SHA-256 checksum,
+	// given here or when the upload was started (`422` if neither, or if
+	// they differ), and makes the upload available to the import or
+	// deployment it is for (`status: complete`). If the content doesn't
+	// match the checksum, the upload is removed and the response is
+	// `422`: start a new one. Completing a complete upload again returns
+	// it.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/uploads/{upload_id}/complete (the `CompleteUpload` operationId).
+	CompleteUploadWithResponse(ctx context.Context, uploadID UploadID, body CompleteUploadJSONRequestBody, reqEditors ...RequestEditorFn) (*CompleteUploadResponse, error)
 
 	// ListUsersWithResponse List users
 	//
@@ -9122,6 +9959,414 @@ func (r StopSiteResponse) ContentType() string {
 	return ""
 }
 
+// CreateUploadResponse201Headers the declared response headers of an HTTP 201 response for CreateUpload
+type CreateUploadResponse201Headers struct {
+	Location *string
+}
+
+type CreateUploadResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Upload
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers201 the parsed response headers for an HTTP 201 response
+	Headers201 *CreateUploadResponse201Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateUploadResponse) GetJSON201() *Upload {
+	return r.JSON201
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CreateUploadResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CreateUploadResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CreateUploadResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r CreateUploadResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateUploadResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateUploadResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateUploadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateUploadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateUploadResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteUploadResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DeleteUploadResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DeleteUploadResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DeleteUploadResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r DeleteUploadResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteUploadResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteUploadResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteUploadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteUploadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteUploadResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetUploadResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Upload
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUploadResponse) GetJSON200() *Upload {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetUploadResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetUploadResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetUploadResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetUploadResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUploadResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUploadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUploadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUploadResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AppendUploadChunkResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Upload
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSON413 the response for an HTTP 413 `application/problem+json` response
+	ApplicationProblemJSON413 *ContentTooLarge
+	// ApplicationProblemJSON415 the response for an HTTP 415 `application/problem+json` response
+	ApplicationProblemJSON415 *UnsupportedMediaType
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AppendUploadChunkResponse) GetJSON200() *Upload {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r AppendUploadChunkResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r AppendUploadChunkResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r AppendUploadChunkResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r AppendUploadChunkResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r AppendUploadChunkResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
+func (r AppendUploadChunkResponse) GetApplicationProblemJSON413() *ContentTooLarge {
+	return r.ApplicationProblemJSON413
+}
+
+// GetApplicationProblemJSON415 returns the response for an HTTP 415 `application/problem+json` response
+func (r AppendUploadChunkResponse) GetApplicationProblemJSON415() *UnsupportedMediaType {
+	return r.ApplicationProblemJSON415
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r AppendUploadChunkResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r AppendUploadChunkResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AppendUploadChunkResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AppendUploadChunkResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AppendUploadChunkResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CompleteUploadResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Upload
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CompleteUploadResponse) GetJSON200() *Upload {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CompleteUploadResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CompleteUploadResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CompleteUploadResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r CompleteUploadResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CompleteUploadResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r CompleteUploadResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CompleteUploadResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CompleteUploadResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CompleteUploadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CompleteUploadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CompleteUploadResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListUsersResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -10638,6 +11883,182 @@ func (c *ClientWithResponses) StopSiteWithResponse(ctx context.Context, siteID S
 		return nil, err
 	}
 	return ParseStopSiteResponse(rsp)
+}
+
+// CreateUploadWithBodyWithResponse Start an upload
+//
+// Starts a resumable upload of a large file for a site import
+// (`purpose: site_import`, with the `client_group_id` the new site will
+// join) or a code deployment (`purpose: site_deploy`, with the
+// `site_id` to deploy to). It needs the same permission as the import
+// or deployment itself, and only its creator can send it, see it, or
+// use it.
+//
+// Declare the file's exact size, at most `uploads.max_size_mb`
+// (`422` if larger), and its SHA-256 checksum here or when completing
+// the upload. Then send the content with `PATCH
+// /api/v1/uploads/{upload_id}` in chunks of at most `max_chunk_bytes`,
+// in order, and complete the upload with `POST
+// /api/v1/uploads/{upload_id}/complete`. The import or deployment then
+// takes the upload by its `id`.
+//
+// If a chunk fails, for example because the connection dropped, none
+// of it counts: `GET /api/v1/uploads/{upload_id}` says how many bytes
+// arrived (`received_bytes`), and the upload resumes with a chunk from
+// there.
+//
+// An upload that no job has taken is removed once it goes
+// `uploads.expiry_hours` (default 24) without a chunk (`expires_at`).
+// One that a job has taken is removed when the job ends. Uploads are
+// stored in the data directory, never in backups.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/uploads (the `CreateUpload` operationId).
+func (c *ClientWithResponses) CreateUploadWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateUploadResponse, error) {
+	rsp, err := c.CreateUploadWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateUploadResponse(rsp)
+}
+
+// CreateUploadWithResponse Start an upload
+//
+// Starts a resumable upload of a large file for a site import
+// (`purpose: site_import`, with the `client_group_id` the new site will
+// join) or a code deployment (`purpose: site_deploy`, with the
+// `site_id` to deploy to). It needs the same permission as the import
+// or deployment itself, and only its creator can send it, see it, or
+// use it.
+//
+// Declare the file's exact size, at most `uploads.max_size_mb`
+// (`422` if larger), and its SHA-256 checksum here or when completing
+// the upload. Then send the content with `PATCH
+// /api/v1/uploads/{upload_id}` in chunks of at most `max_chunk_bytes`,
+// in order, and complete the upload with `POST
+// /api/v1/uploads/{upload_id}/complete`. The import or deployment then
+// takes the upload by its `id`.
+//
+// If a chunk fails, for example because the connection dropped, none
+// of it counts: `GET /api/v1/uploads/{upload_id}` says how many bytes
+// arrived (`received_bytes`), and the upload resumes with a chunk from
+// there.
+//
+// An upload that no job has taken is removed once it goes
+// `uploads.expiry_hours` (default 24) without a chunk (`expires_at`).
+// One that a job has taken is removed when the job ends. Uploads are
+// stored in the data directory, never in backups.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/uploads (the `CreateUpload` operationId).
+func (c *ClientWithResponses) CreateUploadWithResponse(ctx context.Context, body CreateUploadJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateUploadResponse, error) {
+	rsp, err := c.CreateUpload(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateUploadResponse(rsp)
+}
+
+// DeleteUploadWithResponse Cancel an upload
+//
+// Removes an upload and its content. An upload a job has taken can't
+// be removed (`409`); it goes when the job ends.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v1/uploads/{upload_id} (the `DeleteUpload` operationId).
+func (c *ClientWithResponses) DeleteUploadWithResponse(ctx context.Context, uploadID UploadID, reqEditors ...RequestEditorFn) (*DeleteUploadResponse, error) {
+	rsp, err := c.DeleteUpload(ctx, uploadID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteUploadResponse(rsp)
+}
+
+// GetUploadWithResponse Get an upload
+//
+// Where the upload stands: after an interrupted chunk, resume from
+// `received_bytes`. Only the upload's creator can see it; for anyone
+// else it doesn't exist (`404`).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/uploads/{upload_id} (the `GetUpload` operationId).
+func (c *ClientWithResponses) GetUploadWithResponse(ctx context.Context, uploadID UploadID, reqEditors ...RequestEditorFn) (*GetUploadResponse, error) {
+	rsp, err := c.GetUpload(ctx, uploadID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUploadResponse(rsp)
+}
+
+// AppendUploadChunkWithBodyWithResponse Send a chunk of an upload
+//
+// Appends the request body, the file's bytes from `offset` on, to the
+// upload. `offset` must equal the upload's `received_bytes` (`409`
+// otherwise, with the expected offset in `detail`), and the chunk
+// must hold at least one byte, at most `max_chunk_bytes` (`413`), and
+// not go past the declared size (`413`). The chunk counts only once
+// all of it has arrived and is on disk: if the request fails, send
+// the same bytes again. One request at a time may send chunks of an
+// upload (`409` meanwhile). A completed upload takes no more chunks
+// (`409`).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v1/uploads/{upload_id} (the `AppendUploadChunk` operationId).
+func (c *ClientWithResponses) AppendUploadChunkWithBodyWithResponse(ctx context.Context, uploadID UploadID, params *AppendUploadChunkParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AppendUploadChunkResponse, error) {
+	rsp, err := c.AppendUploadChunkWithBody(ctx, uploadID, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAppendUploadChunkResponse(rsp)
+}
+
+// CompleteUploadWithBodyWithResponse Complete an upload
+//
+// Finishes an upload that has received all its bytes (`409`
+// otherwise): it checks the content against the SHA-256 checksum,
+// given here or when the upload was started (`422` if neither, or if
+// they differ), and makes the upload available to the import or
+// deployment it is for (`status: complete`). If the content doesn't
+// match the checksum, the upload is removed and the response is
+// `422`: start a new one. Completing a complete upload again returns
+// it.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/uploads/{upload_id}/complete (the `CompleteUpload` operationId).
+func (c *ClientWithResponses) CompleteUploadWithBodyWithResponse(ctx context.Context, uploadID UploadID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CompleteUploadResponse, error) {
+	rsp, err := c.CompleteUploadWithBody(ctx, uploadID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCompleteUploadResponse(rsp)
+}
+
+// CompleteUploadWithResponse Complete an upload
+//
+// Finishes an upload that has received all its bytes (`409`
+// otherwise): it checks the content against the SHA-256 checksum,
+// given here or when the upload was started (`422` if neither, or if
+// they differ), and makes the upload available to the import or
+// deployment it is for (`status: complete`). If the content doesn't
+// match the checksum, the upload is removed and the response is
+// `422`: start a new one. Completing a complete upload again returns
+// it.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/uploads/{upload_id}/complete (the `CompleteUpload` operationId).
+func (c *ClientWithResponses) CompleteUploadWithResponse(ctx context.Context, uploadID UploadID, body CompleteUploadJSONRequestBody, reqEditors ...RequestEditorFn) (*CompleteUploadResponse, error) {
+	rsp, err := c.CompleteUpload(ctx, uploadID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCompleteUploadResponse(rsp)
 }
 
 // ListUsersWithResponse List users
@@ -13044,6 +14465,348 @@ func ParseStopSiteResponse(rsp *http.Response) (*StopSiteResponse, error) {
 			headers.Location = &value
 		}
 		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCreateUploadResponse parses an HTTP response from a CreateUploadWithResponse call
+func ParseCreateUploadResponse(rsp *http.Response) (*CreateUploadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateUploadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Upload
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 201:
+		var headers CreateUploadResponse201Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers201 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteUploadResponse parses an HTTP response from a DeleteUploadWithResponse call
+func ParseDeleteUploadResponse(rsp *http.Response) (*DeleteUploadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteUploadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetUploadResponse parses an HTTP response from a GetUploadWithResponse call
+func ParseGetUploadResponse(rsp *http.Response) (*GetUploadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUploadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Upload
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAppendUploadChunkResponse parses an HTTP response from a AppendUploadChunkWithResponse call
+func ParseAppendUploadChunkResponse(rsp *http.Response) (*AppendUploadChunkResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AppendUploadChunkResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Upload
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest ContentTooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest UnsupportedMediaType
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCompleteUploadResponse parses an HTTP response from a CompleteUploadWithResponse call
+func ParseCompleteUploadResponse(rsp *http.Response) (*CompleteUploadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CompleteUploadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Upload
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
 	}
 
 	return response, nil

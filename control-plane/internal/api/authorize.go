@@ -60,6 +60,28 @@ var operationActions = map[string]authz.Action{
 	"getJob":   authz.ViewJobs,
 
 	"listAuditEvents": authz.ViewAuditLog,
+
+	// An upload needs the permission of the job it is for (#111): these
+	// check UploadForDeploy instead for deployments (operationAltActions).
+	// Requests for uploads that don't exist are checked as imports.
+	"createUpload":      authz.UploadForImport,
+	"getUpload":         authz.UploadForImport,
+	"appendUploadChunk": authz.UploadForImport,
+	"completeUpload":    authz.UploadForImport,
+	"deleteUpload":      authz.UploadForImport,
+}
+
+// operationAltActions declares the other actions an operation's handler
+// may check, for operations whose action depends on their target. The
+// audit log records the action the handler checked; requests that fail
+// before reaching the handler, such as invalid ones, are recorded with the
+// operationActions one.
+var operationAltActions = map[string][]authz.Action{
+	"createUpload":      {authz.UploadForDeploy},
+	"getUpload":         {authz.UploadForDeploy},
+	"appendUploadChunk": {authz.UploadForDeploy},
+	"completeUpload":    {authz.UploadForDeploy},
+	"deleteUpload":      {authz.UploadForDeploy},
 }
 
 // errActionMismatch is a programming error: a handler checked a different
@@ -71,7 +93,7 @@ var errActionMismatch = errors.New("api: handler checked an action its operation
 // and returns its error as is: ErrForbidden (403) when the caller may not
 // take the action on the target. It returns the caller.
 func (h *Handlers) authorize(ctx context.Context, action authz.Action, target authz.Target) (auth.Principal, error) {
-	if op, ok := OperationFromContext(ctx); ok && op.Action != action {
+	if op, ok := OperationFromContext(ctx); ok && !op.allows(action) {
 		return auth.Principal{}, fmt.Errorf("%w: %s declares %q, handler checked %q", errActionMismatch, op.ID, op.Action, action)
 	}
 	p, ok := auth.PrincipalFromContext(ctx)

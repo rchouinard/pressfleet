@@ -3,15 +3,18 @@ package api
 import (
 	"errors"
 	"log/slog"
+	"mime"
 	"net/http"
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
+	"github.com/rchouinard/pressfleet/control-plane/internal/uploads"
 )
 
 // validationOptions configures request validation. Authentication is
@@ -21,6 +24,26 @@ var validationOptions = &openapi3filter.Options{
 	MultiError:         true,
 	AuthenticationFunc: openapi3filter.NoopAuthenticationFunc,
 }
+
+// binaryValidationOptions validate the parameters of operations with raw
+// bodies, which the validator would read into memory whole; the handler
+// streams them instead.
+var binaryValidationOptions = &openapi3filter.Options{
+	MultiError:         true,
+	AuthenticationFunc: openapi3filter.NoopAuthenticationFunc,
+	ExcludeRequestBody: true,
+}
+
+// operationBodyLimits raise the server's request body limit
+// (httpserver.MaxBodyBytes) for operations with raw bodies.
+var operationBodyLimits = map[string]int64{
+	"appendUploadChunk": uploads.MaxChunkBytes,
+}
+
+// largeBodyTimeout replaces the server's read and write timeouts for
+// operations with raw bodies: a 32 MiB chunk takes minutes on a slow
+// uplink. Only authenticated callers get this far.
+const largeBodyTimeout = 10 * time.Minute
 
 // validateRequests checks parameters and bodies against the OpenAPI
 // document before the generated code decodes them, so handlers only receive
@@ -40,6 +63,22 @@ func validateRequests(log *slog.Logger) func(http.Handler) http.Handler {
 				PathParams: pathParams(r, op),
 				Route:      op.route,
 				Options:    validationOptions,
+			}
+			if op.BinaryBody {
+				if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != binaryMediaType {
+					writeError(log, w, r, httpserver.NewProblem(http.StatusUnsupportedMediaType, "The request body must be "+binaryMediaType+"."))
+					return
+				}
+				input.Options = binaryValidationOptions
+				if n, ok := operationBodyLimits[op.ID]; ok {
+					httpserver.SetBodyLimit(w, r, n)
+					rc := http.NewResponseController(w)
+					deadline := time.Now().Add(largeBodyTimeout)
+					// Not every ResponseWriter supports deadlines (tests'
+					// recorders don't); the server's own timeouts then apply.
+					_ = rc.SetReadDeadline(deadline)
+					_ = rc.SetWriteDeadline(deadline)
+				}
 			}
 			if err := openapi3filter.ValidateRequest(r.Context(), input); err != nil {
 				writeError(log, w, r, validationProblem(err))

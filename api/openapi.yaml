@@ -95,6 +95,8 @@ tags:
     description: WordPress sites.
   - name: backups
     description: Site backups, kept in the site's client group backup repository.
+  - name: uploads
+    description: Resumable uploads of large files for site imports and code deployments.
   - name: jobs
     description: Long-running operations.
   - name: audit
@@ -1399,6 +1401,207 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/uploads:
+    post:
+      operationId: createUpload
+      tags: [uploads]
+      summary: Start an upload
+      description: |
+        Starts a resumable upload of a large file for a site import
+        (`purpose: site_import`, with the `client_group_id` the new site will
+        join) or a code deployment (`purpose: site_deploy`, with the
+        `site_id` to deploy to). It needs the same permission as the import
+        or deployment itself, and only its creator can send it, see it, or
+        use it.
+
+        Declare the file's exact size, at most `uploads.max_size_mb`
+        (`422` if larger), and its SHA-256 checksum here or when completing
+        the upload. Then send the content with `PATCH
+        /api/v1/uploads/{upload_id}` in chunks of at most `max_chunk_bytes`,
+        in order, and complete the upload with `POST
+        /api/v1/uploads/{upload_id}/complete`. The import or deployment then
+        takes the upload by its `id`.
+
+        If a chunk fails, for example because the connection dropped, none
+        of it counts: `GET /api/v1/uploads/{upload_id}` says how many bytes
+        arrived (`received_bytes`), and the upload resumes with a chunk from
+        there.
+
+        An upload that no job has taken is removed once it goes
+        `uploads.expiry_hours` (default 24) without a chunk (`expires_at`).
+        One that a job has taken is removed when the job ends. Uploads are
+        stored in the data directory, never in backups.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadCreate"
+      responses:
+        "201":
+          description: Upload started; send its first chunk.
+          headers:
+            Location:
+              $ref: "#/components/headers/Location"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Upload"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/uploads/{upload_id}:
+    parameters:
+      - $ref: "#/components/parameters/UploadID"
+    get:
+      operationId: getUpload
+      tags: [uploads]
+      summary: Get an upload
+      description: |
+        Where the upload stands: after an interrupted chunk, resume from
+        `received_bytes`. Only the upload's creator can see it; for anyone
+        else it doesn't exist (`404`).
+      responses:
+        "200":
+          description: The upload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Upload"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: appendUploadChunk
+      tags: [uploads]
+      summary: Send a chunk of an upload
+      description: |
+        Appends the request body, the file's bytes from `offset` on, to the
+        upload. `offset` must equal the upload's `received_bytes` (`409`
+        otherwise, with the expected offset in `detail`), and the chunk
+        must hold at least one byte, at most `max_chunk_bytes` (`413`), and
+        not go past the declared size (`413`). The chunk counts only once
+        all of it has arrived and is on disk: if the request fails, send
+        the same bytes again. One request at a time may send chunks of an
+        upload (`409` meanwhile). A completed upload takes no more chunks
+        (`409`).
+      parameters:
+        - name: offset
+          in: query
+          required: true
+          description: Where in the file the chunk starts; the upload's current `received_bytes`.
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: The chunk was stored; the upload after it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Upload"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/ContentTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteUpload
+      tags: [uploads]
+      summary: Cancel an upload
+      description: |
+        Removes an upload and its content. An upload a job has taken can't
+        be removed (`409`); it goes when the job ends.
+      responses:
+        "204":
+          description: Upload removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/uploads/{upload_id}/complete:
+    parameters:
+      - $ref: "#/components/parameters/UploadID"
+    post:
+      operationId: completeUpload
+      tags: [uploads]
+      summary: Complete an upload
+      description: |
+        Finishes an upload that has received all its bytes (`409`
+        otherwise): it checks the content against the SHA-256 checksum,
+        given here or when the upload was started (`422` if neither, or if
+        they differ), and makes the upload available to the import or
+        deployment it is for (`status: complete`). If the content doesn't
+        match the checksum, the upload is removed and the response is
+        `422`: start a new one. Completing a complete upload again returns
+        it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadComplete"
+      responses:
+        "200":
+          description: The complete upload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Upload"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/jobs:
     get:
       operationId: listJobs
@@ -1586,6 +1789,12 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/ID"
+    UploadID:
+      name: upload_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/ID"
 
   headers:
     Location:
@@ -1651,6 +1860,18 @@ components:
         problem, and nothing was changed. A DNS check that couldn't run at
         all, because the control plane doesn't know this host's public
         address, has the DNS type, no `errors`, and says why in `detail`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    ContentTooLarge:
+      description: The request body is larger than the operation allows.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    UnsupportedMediaType:
+      description: The request body has the wrong content type.
       content:
         application/problem+json:
           schema:
@@ -2797,3 +3018,118 @@ components:
       oneOf:
         - type: string
         - type: "null"
+
+    UploadPurpose:
+      type: string
+      description: |
+        What the upload is for: a site import's `wp-content` archive or SQL
+        dump (`site_import`), or a theme or plugin package to deploy to a
+        site (`site_deploy`). It decides the permission the upload needs,
+        and only an import or deployment of that kind can take it.
+      enum: [site_import, site_deploy]
+
+    UploadStatus:
+      type: string
+      description: |
+        `uploading` takes chunks; `complete` has all its bytes and a
+        verified checksum, and waits for its import or deployment;
+        `in_use` has been taken by one, and is removed when its job ends.
+      enum: [uploading, complete, in_use]
+
+    UploadCreate:
+      type: object
+      required: [purpose, size_bytes]
+      additionalProperties: false
+      properties:
+        purpose:
+          $ref: "#/components/schemas/UploadPurpose"
+        client_group_id:
+          description: The client group the imported site will join. Required for `site_import`; not allowed for `site_deploy`.
+          allOf:
+            - $ref: "#/components/schemas/ID"
+        site_id:
+          description: The site to deploy to. Required for `site_deploy`; not allowed for `site_import`.
+          allOf:
+            - $ref: "#/components/schemas/ID"
+        filename:
+          type: string
+          description: The file's name, for display. No directories.
+          maxLength: 255
+          examples: ["wp-content.tar.gz"]
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          description: The file's exact size, at most `uploads.max_size_mb`.
+        sha256:
+          type: string
+          description: The file's SHA-256 checksum in hex. Optional here; then required when completing the upload.
+          pattern: "^[0-9A-Fa-f]{64}$"
+
+    UploadComplete:
+      type: object
+      additionalProperties: false
+      properties:
+        sha256:
+          type: string
+          description: |
+            The file's SHA-256 checksum in hex. Required unless it was given
+            when the upload was started, and then it must match.
+          pattern: "^[0-9A-Fa-f]{64}$"
+
+    Upload:
+      type: object
+      required: [id, purpose, client_group_id, site_id, filename, size_bytes, received_bytes, sha256, status, job_id,
+        max_chunk_bytes, created_at, updated_at, expires_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        purpose:
+          $ref: "#/components/schemas/UploadPurpose"
+        client_group_id:
+          description: The client group of the import or deployment.
+          allOf:
+            - $ref: "#/components/schemas/ID"
+        site_id:
+          description: The site to deploy to; null for imports.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        filename:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+          description: The file's declared size.
+        received_bytes:
+          type: integer
+          format: int64
+          description: How many bytes have arrived. The next chunk starts here.
+        sha256:
+          description: The declared SHA-256 checksum, lowercase hex; null until declared.
+          oneOf:
+            - type: string
+            - type: "null"
+        status:
+          $ref: "#/components/schemas/UploadStatus"
+        job_id:
+          description: The job that took the upload; null unless `in_use`.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        max_chunk_bytes:
+          type: integer
+          format: int64
+          description: The largest chunk one request may carry.
+          examples: [33554432]
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+        expires_at:
+          description: |
+            When the upload is removed as abandoned unless another chunk
+            arrives or a job takes it; null while a job has it.
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"

@@ -53,6 +53,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
+	"github.com/rchouinard/pressfleet/control-plane/internal/uploads"
 )
 
 // Authenticator identifies the caller of an operation that requires
@@ -90,6 +91,9 @@ type Options struct {
 	// Backups takes and lists site backups. If nil, the backup operations
 	// fail with 500.
 	Backups *sitebackup.Service
+	// Uploads receives large files for site imports and deployments. If
+	// nil, the upload operations fail with 500.
+	Uploads *uploads.Service
 	// SecureCookies forces the Secure flag on the session cookie. Otherwise
 	// it is set when the request arrived over HTTPS, directly or through a
 	// trusted proxy, so plain-HTTP development on localhost still works.
@@ -104,6 +108,7 @@ type Handlers struct {
 	auth          *auth.Service
 	sites         *sites.Service
 	backups       *sitebackup.Service
+	uploads       *uploads.Service
 	resolver      authz.Resolver
 	secureCookies bool
 }
@@ -137,7 +142,7 @@ func NewHandler(opts Options) (http.Handler, error) {
 	}
 
 	h := &Handlers{log: opts.Logger, readiness: opts.Readiness, db: opts.DB, auth: opts.Auth, sites: opts.Sites, backups: opts.Backups,
-		secureCookies: opts.SecureCookies}
+		uploads: opts.Uploads, secureCookies: opts.SecureCookies}
 	if opts.DB != nil {
 		h.resolver = authz.NewResolver(opts.DB)
 	}

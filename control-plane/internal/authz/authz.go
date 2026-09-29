@@ -66,10 +66,11 @@ const (
 	ViewBackups      Action = "backup.view"
 	ViewMonitoring   Action = "monitoring.view" // metrics, logs, and alerts
 
-	// Create sites; change site settings (PHP version, core pin,
+	// Create and import sites; change site settings (PHP version, core pin,
 	// resources, preview password protection); go-live and domains;
 	// start/stop; maintenance mode; cache purge.
 	CreateSite              Action = "site.create"
+	ImportSite              Action = "site.import"
 	RetrieveSiteCredentials Action = "site.credentials.retrieve" // the one-time admin password of a new site
 	UpdateSite              Action = "site.update"
 	ManageSiteDomains       Action = "site.domains.manage"
@@ -77,6 +78,15 @@ const (
 	StopSite                Action = "site.stop"
 	SetSiteMaintenance      Action = "site.maintenance.set"
 	PurgeSiteCache          Action = "site.cache.purge"
+
+	// Deploy code; connect over SFTP; export the database; open read-only
+	// database sessions.
+	DeployCode Action = "site.code.deploy"
+
+	// Send a large file through the upload API (#111) for a site import or
+	// a code deployment. Each needs the permission of the job it is for.
+	UploadForImport Action = "upload.site_import"
+	UploadForDeploy Action = "upload.site_deploy"
 
 	// Take backups, restore, and approve core updates.
 	CreateBackup      Action = "backup.create"
@@ -144,6 +154,13 @@ var rules = map[Action]rule{
 	StopSite:                {store.RoleOperator, true},
 	SetSiteMaintenance:      {store.RoleOperator, true},
 	PurgeSiteCache:          {store.RoleOperator, true},
+	ImportSite:              {store.RoleOperator, true},
+
+	DeployCode: {store.RoleOperator, true},
+
+	// An upload needs the permission of the job it is for.
+	UploadForImport: {store.RoleOperator, true}, // as ImportSite
+	UploadForDeploy: {store.RoleOperator, true}, // as DeployCode
 
 	CreateBackup:      {store.RoleOperator, true},
 	RestoreBackup:     {store.RoleOperator, true},
@@ -225,6 +242,7 @@ const (
 	TargetJob         TargetType = "job"
 	TargetUser        TargetType = "user"
 	TargetAPIToken    TargetType = "api_token"
+	TargetUpload      TargetType = "upload"
 )
 
 // Target is what an action applies to.
@@ -260,6 +278,10 @@ func User(id string) Target { return Target{Type: TargetUser, ID: id} }
 
 // APIToken returns the target for an API token.
 func APIToken(id string) Target { return Target{Type: TargetAPIToken, ID: id} }
+
+// Upload returns the target for an upload (#111), which belongs to the
+// client group of the import or deployment it is for.
+func Upload(id string) Target { return Target{Type: TargetUpload, ID: id} }
 
 // Check is the single authorization decision: it returns nil if p may take
 // action on t, and an error wrapping ErrDenied otherwise. t should have been

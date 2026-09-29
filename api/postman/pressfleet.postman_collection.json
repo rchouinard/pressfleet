@@ -1777,6 +1777,226 @@
       ]
     },
     {
+      "id": "7e69873f-6dd0-5a93-9581-cd3379f0edd8",
+      "name": "Uploads",
+      "description": "Resumable uploads of large files for site imports and code deployments. Only the user who starts an upload can use it.",
+      "item": [
+        {
+          "id": "45fb927e-cb3e-5ce4-9d4e-056e3fac1b46",
+          "name": "Start upload",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/uploads",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads"
+              ]
+            },
+            "description": "Starts a resumable upload for a site import into `client_group_id` (for a deployment, use `\"purpose\": \"site_deploy\"` and `\"site_id\"` instead). The sample declares the 11 bytes `hello world` that **Send chunk** sends; for a real file, declare its size and SHA-256 and send it with a file body. Saves the upload to `upload_id` and resets `upload_offset`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"purpose\": \"site_import\",\n  \"client_group_id\": \"{{client_group_id}}\",\n  \"filename\": \"hello.txt\",\n  \"size_bytes\": 11,\n  \"sha256\": \"b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "if (pm.response.code === 201) {",
+                  "    pm.environment.set(\"upload_id\", pm.response.json().id);",
+                  "    pm.environment.set(\"upload_offset\", 0);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "353a112e-522d-55bd-884a-87ddcd1a2396",
+          "name": "Get upload",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/uploads/{{upload_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "{{upload_id}}"
+              ]
+            },
+            "description": "Where the upload stands. After a failed chunk, resume from `received_bytes`, which this saves to `upload_offset`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "    pm.environment.set(\"upload_offset\", pm.response.json().received_bytes);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "ae446099-1211-5dba-9f35-1d060f2bc139",
+          "name": "Send chunk",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/octet-stream"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/uploads/{{upload_id}}?offset={{upload_offset}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "{{upload_id}}"
+              ],
+              "query": [
+                {
+                  "key": "offset",
+                  "value": "{{upload_offset}}"
+                }
+              ]
+            },
+            "description": "Sends the next chunk (at most 32 MiB) from `upload_offset`, and saves the new `received_bytes` to it. A chunk that fails counts for nothing; send it again.",
+            "body": {
+              "mode": "raw",
+              "raw": "hello world"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200) {",
+                  "    pm.environment.set(\"upload_offset\", pm.response.json().received_bytes);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "66b21d76-0f0e-51aa-98e0-346c7928efcb",
+          "name": "Complete upload",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/uploads/{{upload_id}}/complete",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "{{upload_id}}",
+                "complete"
+              ]
+            },
+            "description": "Checks the content against the SHA-256 checksum given when the upload started (or pass `\"sha256\"` here) and makes the upload available to its import or deployment. On a mismatch the upload is removed (`422`).",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "5e1a5697-df50-5d12-9c30-5b902fb7c20d",
+          "name": "Cancel upload",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/uploads/{{upload_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "{{upload_id}}"
+              ]
+            },
+            "description": "Removes an upload that no job has taken."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "e6e4ae4e-bd53-5c62-929c-0923010ae276",
       "name": "Jobs",
       "description": "Long-running operations.",

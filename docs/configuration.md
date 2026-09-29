@@ -99,6 +99,9 @@ backup:
   check:
     interval_days: 7
     read_data_percent: 10
+uploads:                         # see "Uploads"
+  max_size_mb: 10240
+  expiry_hours: 24
 ```
 
 ## Settings
@@ -160,6 +163,8 @@ backup:
 | `backup.retention.keep_yearly` | `PRESSFLEET_BACKUP_RETENTION_KEEP_YEARLY` | | `0` | Likewise for years. With every `keep_*` setting `0`, no snapshot is ever removed. |
 | `backup.check.interval_days` | `PRESSFLEET_BACKUP_CHECK_INTERVAL_DAYS` | | `7` | Days between integrity checks of each backup repository, from 1 to 365. |
 | `backup.check.read_data_percent` | `PRESSFLEET_BACKUP_CHECK_READ_DATA_PERCENT` | | `10` | Share of a repository's data, from 0 to 100, that each check downloads and verifies, chosen at random each time. `0` checks only the repository's structure. On S3, each check downloads this share of the repository. |
+| `uploads.max_size_mb` | `PRESSFLEET_UPLOADS_MAX_SIZE_MB` | | `10240` | Largest file, in MiB, that can be sent through the upload API for a site import or a code deployment, from 1 to 1048576. Uploads are stored under `<data_dir>/uploads/`, so leave room there. See [Uploads](#uploads). |
+| `uploads.expiry_hours` | `PRESSFLEET_UPLOADS_EXPIRY_HOURS` | | `24` | How long an upload that no import or deployment has taken may go without a new chunk before it is removed as abandoned, from 1 to 720. |
 | `wordpress_security.block_user_enumeration` | `PRESSFLEET_WORDPRESS_SECURITY_BLOCK_USER_ENUMERATION` | | `true` | Hide which user names exist from visitors. See [WordPress security set](#wordpress-security-set). |
 | `wordpress_security.password_policy.enabled` | `PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_POLICY_ENABLED` | | `true` | Check new WordPress passwords on the server: minimum length and a common-password list. |
 | `wordpress_security.password_policy.min_length` | `PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_POLICY_MIN_LENGTH` | | `12` | Minimum WordPress password length, from 8 to 64 characters. |
@@ -364,6 +369,7 @@ The DNS checks are skipped until `dashboard_domain` and `preview_base_domain` ar
     repositories/<client-group-id>/
                       the client group's Restic repository (backup.backend local;
                       mode 2770, group 60000; see "Backup repositories")
+  uploads/<upload-id> files sent through the upload API (never backed up; see "Uploads")
   tmp/                scratch space, e.g. database dumps during backups
 ```
 
@@ -512,6 +518,34 @@ The files are restored by `restic restore` in a short-lived container that runs 
 **Failures.** A failed step is retried; the ones that can't succeed on a retry (a missing snapshot, WordPress failing to load the restored site) fail at once. If the job fails after the site's data was touched, it restores the pre-restore backup, moves the site back to its previous WordPress core, and leaves the site **in maintenance mode** with the error in its `status_message`: check the site, then turn maintenance mode off (`PUT /api/v1/sites/{id}/maintenance`). If even the pre-restore backup can't be restored, the site is marked `failed` and the status message names the pre-restore backup; restore it like any other once the cause is fixed.
 
 **Client groups.** Restores stay within a client group: each group's repository has its own key, and a restore task opens one repository. Restoring a snapshot into a site of another group is refused with `422`.
+
+## Uploads
+
+Large files reach the control plane through a resumable upload API: the `wp-content` archive and SQL dump of a site import, and the theme or plugin package of a code deployment (design doc §5.7, §5.8).
+
+1. `POST /api/v1/uploads` declares what the file is for (`"purpose": "site_import"` with the `client_group_id` the new site will join, or `"purpose": "site_deploy"` with the `site_id`), its exact `size_bytes` (at most `uploads.max_size_mb`), and optionally its `sha256`.
+2. `PATCH /api/v1/uploads/{id}?offset=<n>` with an `application/octet-stream` body sends the next chunk, at most 32 MiB (`max_chunk_bytes`), starting at the upload's `received_bytes`. A chunk counts only once all of it is on disk: if a connection drops, `GET /api/v1/uploads/{id}` says where the upload stands, and the client resumes from there.
+3. `POST /api/v1/uploads/{id}/complete` checks the content against the SHA-256 checksum (given now or in step 1). Content that doesn't match is removed; start again.
+
+The import or deployment then takes the upload by its ID. An upload needs the permission of the job it is for (Operators and Admins; not read-only tokens), and only the user who created it can send, see, complete, cancel (`DELETE`), or use it. Every request is recorded in the audit log as `upload.site_import` or `upload.site_deploy`.
+
+Uploads are stored in `<data_dir>/uploads/`, which no backup includes. A job every 10 minutes removes uploads that went `uploads.expiry_hours` without a chunk while no job had taken them, uploads whose job has ended (succeeded or failed), and files without a record. One control plane process serves uploads, since they live on its disk.
+
+```sh
+# Upload wp-content.tar.gz in 16 MiB chunks with a bearer token.
+size=$(stat -c %s wp-content.tar.gz); sum=$(sha256sum wp-content.tar.gz | cut -d' ' -f1)
+id=$(curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d "{\"purpose\":\"site_import\",\"client_group_id\":\"$GROUP\",\"size_bytes\":$size,\"sha256\":\"$sum\"}" \
+  "$BASE/api/v1/uploads" | jq -r .id)
+split -b 16M -d wp-content.tar.gz chunk.
+offset=0
+for f in chunk.*; do
+  curl -sf -X PATCH -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/octet-stream' \
+    --data-binary @"$f" "$BASE/api/v1/uploads/$id?offset=$offset" >/dev/null
+  offset=$((offset + $(stat -c %s "$f")))
+done
+curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}' "$BASE/api/v1/uploads/$id/complete"
+```
 
 ## Site databases
 

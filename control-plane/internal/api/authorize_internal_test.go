@@ -22,6 +22,18 @@ func TestAuthorizeRejectsUndeclaredAction(t *testing.T) {
 	if _, err := h.authorize(ctx, authz.DeleteSite, authz.Site("s")); !errors.Is(err, errActionMismatch) {
 		t.Errorf("undeclared action: err = %v, want errActionMismatch", err)
 	}
+	// An operation whose action depends on its target accepts its
+	// alternatives too.
+	upload := context.WithValue(auth.WithPrincipal(context.Background(), admin), operationKey{},
+		&Operation{ID: "getUpload", Action: authz.UploadForImport, AltActions: []authz.Action{authz.UploadForDeploy}})
+	for _, a := range []authz.Action{authz.UploadForImport, authz.UploadForDeploy} {
+		if _, err := h.authorize(upload, a, authz.Upload("u")); err != nil {
+			t.Errorf("declared action %s: %v", a, err)
+		}
+	}
+	if _, err := h.authorize(upload, authz.DeployCode, authz.Upload("u")); !errors.Is(err, errActionMismatch) {
+		t.Errorf("undeclared alternative: err = %v, want errActionMismatch", err)
+	}
 	if _, err := h.authorize(context.Background(), authz.ViewSites, authz.Site("s")); !errors.Is(err, ErrUnauthenticated) {
 		t.Errorf("no principal: err = %v, want ErrUnauthenticated", err)
 	}
@@ -38,6 +50,8 @@ func TestCheckActions(t *testing.T) {
 		"protected without action": {"GET /a": {ID: "getSite"}},
 		"unknown action":           {"GET /a": {ID: "getSite", Action: "site.explode"}},
 		"public with action":       {"GET /h": {ID: "getHealth", Public: true, Action: authz.ViewSites}},
+		"unknown alternative":      {"GET /a": {ID: "getSite", Action: authz.ViewSites, AltActions: []authz.Action{"site.explode"}}},
+		"public with alternative":  {"GET /h": {ID: "getHealth", Public: true, AltActions: []authz.Action{authz.ViewSites}}},
 	} {
 		if err := tbl.checkActions(); err == nil {
 			t.Errorf("%s: checkActions passed", name)

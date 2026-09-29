@@ -44,7 +44,7 @@ func TestEveryOperationChecksAuthorization(t *testing.T) {
 			continue
 		}
 		t.Run(op.ID, func(t *testing.T) {
-			w := do(t, h, request{method: op.Method, target: samplePath(op.Path), body: sampleBodies[op.ID], authed: true})
+			w := do(t, h, sampleRequest(op, true))
 			if w.Code != http.StatusForbidden {
 				t.Fatalf("status = %d, want 403: the handler must call authorize first; body: %s", w.Code, w.Body)
 			}

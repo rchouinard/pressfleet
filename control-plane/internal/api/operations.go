@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -28,12 +29,29 @@ type Operation struct {
 	// Action is the authorization action the operation's handler checks
 	// (package authz), or empty for public operations.
 	Action authz.Action
+	// AltActions are further actions the handler may check instead of
+	// Action, for operations whose action depends on their target (see
+	// operationAltActions).
+	AltActions []authz.Action
+	// BinaryBody reports whether the request body is raw bytes
+	// (application/octet-stream), which is streamed to the handler rather
+	// than validated.
+	BinaryBody bool
 
 	route *routers.Route
 }
 
 // Pattern returns the http.ServeMux pattern for the operation.
 func (o *Operation) Pattern() string { return o.Method + " " + o.Path }
+
+// allows reports whether the operation's handler may check action.
+func (o *Operation) allows(action authz.Action) bool {
+	return action == o.Action || slices.Contains(o.AltActions, action)
+}
+
+// binaryMediaType is the content type of raw request bodies, such as
+// upload chunks.
+const binaryMediaType = "application/octet-stream"
 
 // loadSpec parses and validates the embedded OpenAPI document.
 func loadSpec() (*openapi3.T, error) {
@@ -60,12 +78,16 @@ func newOperationTable(doc *openapi3.T) operationTable {
 				security = *op.Security
 			}
 			o := &Operation{
-				ID:     op.OperationID,
-				Method: method,
-				Path:   path,
-				Public: len(security) == 0,
-				Action: operationActions[op.OperationID],
-				route:  &routers.Route{Spec: doc, Path: path, PathItem: item, Method: method, Operation: op},
+				ID:         op.OperationID,
+				Method:     method,
+				Path:       path,
+				Public:     len(security) == 0,
+				Action:     operationActions[op.OperationID],
+				AltActions: operationAltActions[op.OperationID],
+				route:      &routers.Route{Spec: doc, Path: path, PathItem: item, Method: method, Operation: op},
+			}
+			if op.RequestBody != nil && op.RequestBody.Value != nil {
+				o.BinaryBody = op.RequestBody.Value.Content.Get(binaryMediaType) != nil
 			}
 			ops[o.Pattern()] = o
 		}
@@ -87,10 +109,20 @@ func (t operationTable) checkActions() error {
 		case !o.Public && !o.Action.Known():
 			errs = append(errs, fmt.Errorf("operation %s has no known authorization action; add it to operationActions", o.ID))
 		}
+		for _, a := range o.AltActions {
+			if o.Public || !a.Known() {
+				errs = append(errs, fmt.Errorf("operation %s declares alternative action %q, which is unknown or on a public operation", o.ID, a))
+			}
+		}
 	}
 	for id := range operationActions {
 		if !declared[id] {
 			errs = append(errs, fmt.Errorf("operationActions declares %s, which isn't in the OpenAPI document", id))
+		}
+	}
+	for id := range operationAltActions {
+		if !declared[id] {
+			errs = append(errs, fmt.Errorf("operationAltActions declares %s, which isn't in the OpenAPI document", id))
 		}
 	}
 	if err := errors.Join(errs...); err != nil {

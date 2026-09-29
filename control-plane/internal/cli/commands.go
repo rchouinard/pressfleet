@@ -33,6 +33,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/sitedb/mariadb"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
+	"github.com/rchouinard/pressfleet/control-plane/internal/uploads"
 )
 
 // reattachTimeout bounds reconnecting the platform services to site
@@ -219,6 +220,13 @@ func (a *app) serveCommand() *cobra.Command {
 			if a.cfg.PreviewBaseDomain == "" {
 				a.log.Warn("preview_base_domain is not set; site creation is refused until it is")
 			}
+			uploadSvc, err := uploads.New(uploads.Options{
+				DB: db, Dir: layout.UploadsDir(), MaxSize: a.cfg.Uploads.MaxSizeBytes(), Expiry: a.cfg.Uploads.Expiry(),
+				Logger: a.log.With("component", "uploads"),
+			})
+			if err != nil {
+				return err
+			}
 			handler, err := api.NewHandler(api.Options{
 				Logger:         a.log,
 				Readiness:      readiness,
@@ -227,6 +235,7 @@ func (a *app) serveCommand() *cobra.Command {
 				Authenticator:  api.NewAuthenticator(authn),
 				Sites:          siteSvc,
 				Backups:        backups,
+				Uploads:        uploadSvc,
 				TrustedProxies: proxies,
 				SecureCookies:  a.cfg.HTTP.SecureCookies == config.SecureCookiesAlways,
 			})
@@ -245,7 +254,7 @@ func (a *app) serveCommand() *cobra.Command {
 			if err := pool.Register(audit.CleanupHandler(db, a.cfg.Audit.Retention(), nil)); err != nil {
 				return err
 			}
-			for _, h := range slices.Concat(siteSvc.Handlers(), []jobs.Handler{backups.Handler()}, repoMaint.Handlers()) {
+			for _, h := range slices.Concat(siteSvc.Handlers(), []jobs.Handler{backups.Handler(), uploadSvc.CleanupHandler()}, repoMaint.Handlers()) {
 				if err := pool.Register(h); err != nil {
 					return err
 				}
@@ -273,6 +282,9 @@ func (a *app) serveCommand() *cobra.Command {
 			// A canceled context means serve is already stopping; the
 			// server below returns at once.
 			if err := audit.EnsureCleanupSchedule(cmd.Context(), db); err != nil && cmd.Context().Err() == nil {
+				return err
+			}
+			if err := uploads.EnsureCleanupSchedule(cmd.Context(), db); err != nil && cmd.Context().Err() == nil {
 				return err
 			}
 			scheduler := jobs.NewScheduler(db, jobs.SchedulerOptions{Logger: a.log.With("component", "scheduler")})

@@ -13,7 +13,7 @@ func TestLayoutEnsure(t *testing.T) {
 	if err := l.Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	for _, dir := range []string{l.Root, l.StateDir(), l.PlatformDir(), l.SitesDir(), l.TmpDir()} {
+	for _, dir := range []string{l.Root, l.StateDir(), l.PlatformDir(), l.SitesDir(), l.UploadsDir(), l.TmpDir()} {
 		info, err := os.Stat(dir)
 		if err != nil {
 			t.Fatal(err)

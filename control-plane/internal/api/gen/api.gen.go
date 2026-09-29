@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -345,6 +346,45 @@ func (e TokenScope) Valid() bool {
 	case Full:
 		return true
 	case ReadOnly:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UploadPurpose.
+const (
+	SiteDeploy UploadPurpose = "site_deploy"
+	SiteImport UploadPurpose = "site_import"
+)
+
+// Valid indicates whether the value is a known member of the UploadPurpose enum.
+func (e UploadPurpose) Valid() bool {
+	switch e {
+	case SiteDeploy:
+		return true
+	case SiteImport:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UploadStatus.
+const (
+	Complete  UploadStatus = "complete"
+	InUse     UploadStatus = "in_use"
+	Uploading UploadStatus = "uploading"
+)
+
+// Valid indicates whether the value is a known member of the UploadStatus enum.
+func (e UploadStatus) Valid() bool {
+	switch e {
+	case Complete:
+		return true
+	case InUse:
+		return true
+	case Uploading:
 		return true
 	default:
 		return false
@@ -1256,6 +1296,103 @@ type Timestamp = time.Time
 // `read-only` allows only read actions.
 type TokenScope string
 
+// Upload defines model for Upload.
+type Upload struct {
+	// ClientGroupID The client group of the import or deployment.
+	ClientGroupID ID `json:"client_group_id"`
+
+	// CreatedAt Examples: 2026-09-26T17:25:00Z
+	CreatedAt Timestamp `json:"created_at"`
+
+	// ExpiresAt When the upload is removed as abandoned unless another chunk
+	// arrives or a job takes it; null while a job has it.
+	ExpiresAt *Timestamp `json:"expires_at"`
+	Filename  string     `json:"filename"`
+
+	// ID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ID ID `json:"id"`
+
+	// JobID The job that took the upload; null unless `in_use`.
+	JobID *ID `json:"job_id"`
+
+	// MaxChunkBytes The largest chunk one request may carry.
+	//
+	// Examples: 33554432
+	MaxChunkBytes int64 `json:"max_chunk_bytes"`
+
+	// Purpose What the upload is for: a site import's `wp-content` archive or SQL
+	// dump (`site_import`), or a theme or plugin package to deploy to a
+	// site (`site_deploy`). It decides the permission the upload needs,
+	// and only an import or deployment of that kind can take it.
+	Purpose UploadPurpose `json:"purpose"`
+
+	// ReceivedBytes How many bytes have arrived. The next chunk starts here.
+	ReceivedBytes int64 `json:"received_bytes"`
+
+	// Sha256 The declared SHA-256 checksum, lowercase hex; null until declared.
+	Sha256 *string `json:"sha256"`
+
+	// SiteID The site to deploy to; null for imports.
+	SiteID *ID `json:"site_id"`
+
+	// SizeBytes The file's declared size.
+	SizeBytes int64 `json:"size_bytes"`
+
+	// Status `uploading` takes chunks; `complete` has all its bytes and a
+	// verified checksum, and waits for its import or deployment;
+	// `in_use` has been taken by one, and is removed when its job ends.
+	Status UploadStatus `json:"status"`
+
+	// UpdatedAt Examples: 2026-09-26T17:25:00Z
+	UpdatedAt Timestamp `json:"updated_at"`
+}
+
+// UploadComplete defines model for UploadComplete.
+type UploadComplete struct {
+	// Sha256 The file's SHA-256 checksum in hex. Required unless it was given
+	// when the upload was started, and then it must match.
+	Sha256 *string `json:"sha256,omitempty"`
+}
+
+// UploadCreate defines model for UploadCreate.
+type UploadCreate struct {
+	// ClientGroupID The client group the imported site will join. Required for `site_import`; not allowed for `site_deploy`.
+	ClientGroupID *ID `json:"client_group_id,omitempty"`
+
+	// Filename The file's name, for display. No directories.
+	//
+	// Examples: wp-content.tar.gz
+	Filename *string `json:"filename,omitempty"`
+
+	// Purpose What the upload is for: a site import's `wp-content` archive or SQL
+	// dump (`site_import`), or a theme or plugin package to deploy to a
+	// site (`site_deploy`). It decides the permission the upload needs,
+	// and only an import or deployment of that kind can take it.
+	Purpose UploadPurpose `json:"purpose"`
+
+	// Sha256 The file's SHA-256 checksum in hex. Optional here; then required when completing the upload.
+	Sha256 *string `json:"sha256,omitempty"`
+
+	// SiteID The site to deploy to. Required for `site_deploy`; not allowed for `site_import`.
+	SiteID *ID `json:"site_id,omitempty"`
+
+	// SizeBytes The file's exact size, at most `uploads.max_size_mb`.
+	SizeBytes int64 `json:"size_bytes"`
+}
+
+// UploadPurpose What the upload is for: a site import's `wp-content` archive or SQL
+// dump (`site_import`), or a theme or plugin package to deploy to a
+// site (`site_deploy`). It decides the permission the upload needs,
+// and only an import or deployment of that kind can take it.
+type UploadPurpose string
+
+// UploadStatus `uploading` takes chunks; `complete` has all its bytes and a
+// verified checksum, and waits for its import or deployment;
+// `in_use` has been taken by one, and is removed when its job ends.
+type UploadStatus string
+
 // User defines model for User.
 type User struct {
 	// CreatedAt Examples: 2026-09-26T17:25:00Z
@@ -1333,6 +1470,11 @@ type SiteID = ID
 // Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
 type TokenID = ID
 
+// UploadID Opaque, server-assigned identifier.
+//
+// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+type UploadID = ID
+
 // UserID Opaque, server-assigned identifier.
 //
 // Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
@@ -1343,6 +1485,9 @@ type BadRequest = Problem
 
 // Conflict RFC 9457 Problem Details. Additional members may be added.
 type Conflict = Problem
+
+// ContentTooLarge RFC 9457 Problem Details. Additional members may be added.
+type ContentTooLarge = Problem
 
 // Error RFC 9457 Problem Details. Additional members may be added.
 type Error = Problem
@@ -1367,6 +1512,9 @@ type UnprocessableContent = Problem
 
 // UnprocessableDomains RFC 9457 Problem Details. Additional members may be added.
 type UnprocessableDomains = Problem
+
+// UnsupportedMediaType RFC 9457 Problem Details. Additional members may be added.
+type UnsupportedMediaType = Problem
 
 // ListAuditEventsParams defines parameters for ListAuditEvents.
 type ListAuditEventsParams struct {
@@ -1458,6 +1606,12 @@ type ListSiteBackupsParams struct {
 	Status *BackupStatus `form:"status,omitempty" json:"status,omitempty"`
 }
 
+// AppendUploadChunkParams defines parameters for AppendUploadChunk.
+type AppendUploadChunkParams struct {
+	// Offset Where in the file the chunk starts; the upload's current `received_bytes`.
+	Offset int64 `form:"offset" json:"offset"`
+}
+
 // ListUsersParams defines parameters for ListUsers.
 type ListUsersParams struct {
 	// Limit Maximum number of items to return.
@@ -1505,6 +1659,12 @@ type SetSiteMaintenanceJSONRequestBody = SiteMaintenance
 
 // RestoreSiteJSONRequestBody defines body for RestoreSite for application/json ContentType.
 type RestoreSiteJSONRequestBody = SiteRestore
+
+// CreateUploadJSONRequestBody defines body for CreateUpload for application/json ContentType.
+type CreateUploadJSONRequestBody = UploadCreate
+
+// CompleteUploadJSONRequestBody defines body for CompleteUpload for application/json ContentType.
+type CompleteUploadJSONRequestBody = UploadComplete
 
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody = UserCreate
@@ -1613,6 +1773,21 @@ type ServerInterface interface {
 	// StopSite Stop a running site
 	// (POST /api/v1/sites/{site_id}/stop)
 	StopSite(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// CreateUpload Start an upload
+	// (POST /api/v1/uploads)
+	CreateUpload(w http.ResponseWriter, r *http.Request)
+	// DeleteUpload Cancel an upload
+	// (DELETE /api/v1/uploads/{upload_id})
+	DeleteUpload(w http.ResponseWriter, r *http.Request, uploadID UploadID)
+	// GetUpload Get an upload
+	// (GET /api/v1/uploads/{upload_id})
+	GetUpload(w http.ResponseWriter, r *http.Request, uploadID UploadID)
+	// AppendUploadChunk Send a chunk of an upload
+	// (PATCH /api/v1/uploads/{upload_id})
+	AppendUploadChunk(w http.ResponseWriter, r *http.Request, uploadID UploadID, params AppendUploadChunkParams)
+	// CompleteUpload Complete an upload
+	// (POST /api/v1/uploads/{upload_id}/complete)
+	CompleteUpload(w http.ResponseWriter, r *http.Request, uploadID UploadID)
 	// ListUsers List users
 	// (GET /api/v1/users)
 	ListUsers(w http.ResponseWriter, r *http.Request, params ListUsersParams)
@@ -2704,6 +2879,140 @@ func (siw *ServerInterfaceWrapper) StopSite(w http.ResponseWriter, r *http.Reque
 	handler.ServeHTTP(w, r)
 }
 
+// CreateUpload operation middleware
+func (siw *ServerInterfaceWrapper) CreateUpload(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateUpload(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteUpload operation middleware
+func (siw *ServerInterfaceWrapper) DeleteUpload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "upload_id" -------------
+	var uploadID UploadID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "upload_id", r.PathValue("upload_id"), &uploadID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "upload_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteUpload(w, r, uploadID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetUpload operation middleware
+func (siw *ServerInterfaceWrapper) GetUpload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "upload_id" -------------
+	var uploadID UploadID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "upload_id", r.PathValue("upload_id"), &uploadID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "upload_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUpload(w, r, uploadID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AppendUploadChunk operation middleware
+func (siw *ServerInterfaceWrapper) AppendUploadChunk(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "upload_id" -------------
+	var uploadID UploadID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "upload_id", r.PathValue("upload_id"), &uploadID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "upload_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params AppendUploadChunkParams
+
+	// ------------- Required query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AppendUploadChunk(w, r, uploadID, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CompleteUpload operation middleware
+func (siw *ServerInterfaceWrapper) CompleteUpload(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "upload_id" -------------
+	var uploadID UploadID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "upload_id", r.PathValue("upload_id"), &uploadID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "upload_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompleteUpload(w, r, uploadID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListUsers operation middleware
 func (siw *ServerInterfaceWrapper) ListUsers(w http.ResponseWriter, r *http.Request) {
 
@@ -3040,6 +3349,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/backup-schedule", wrapper.GetSiteBackupSchedule)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/sites/{site_id}/backup-schedule", wrapper.SetSiteBackupSchedule)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/restore", wrapper.RestoreSite)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/uploads", wrapper.CreateUpload)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/uploads/{upload_id}", wrapper.DeleteUpload)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/uploads/{upload_id}", wrapper.GetUpload)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/v1/uploads/{upload_id}", wrapper.AppendUploadChunk)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/uploads/{upload_id}/complete", wrapper.CompleteUpload)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs", wrapper.ListJobs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs/{job_id}", wrapper.GetJob)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit-events", wrapper.ListAuditEvents)
@@ -3050,6 +3364,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 type BadRequestApplicationProblemPlusJSONResponse Problem
 
 type ConflictApplicationProblemPlusJSONResponse Problem
+
+type ContentTooLargeApplicationProblemPlusJSONResponse Problem
 
 type ErrorApplicationProblemPlusJSONResponse Problem
 
@@ -3073,6 +3389,8 @@ type UnauthorizedApplicationProblemPlusJSONResponse Problem
 type UnprocessableContentApplicationProblemPlusJSONResponse Problem
 
 type UnprocessableDomainsApplicationProblemPlusJSONResponse Problem
+
+type UnsupportedMediaTypeApplicationProblemPlusJSONResponse Problem
 
 type ListAuditEventsRequestObject struct {
 	Params ListAuditEventsParams
@@ -6697,6 +7015,592 @@ func (response StopSitedefaultApplicationProblemPlusJSONResponse) VisitStopSiteR
 	return err
 }
 
+type CreateUploadRequestObject struct {
+	Body *CreateUploadJSONRequestBody
+}
+
+type CreateUploadResponseObject interface {
+	VisitCreateUploadResponse(w http.ResponseWriter) error
+}
+
+type CreateUpload201ResponseHeaders struct {
+	Location *string
+}
+
+type CreateUpload201JSONResponse struct {
+	Body    Upload
+	Headers CreateUpload201ResponseHeaders
+}
+
+func (response CreateUpload201JSONResponse) VisitCreateUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateUpload400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response CreateUpload400ApplicationProblemPlusJSONResponse) VisitCreateUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateUpload401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response CreateUpload401ApplicationProblemPlusJSONResponse) VisitCreateUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateUpload403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response CreateUpload403ApplicationProblemPlusJSONResponse) VisitCreateUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateUpload422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response CreateUpload422ApplicationProblemPlusJSONResponse) VisitCreateUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateUploaddefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response CreateUploaddefaultApplicationProblemPlusJSONResponse) VisitCreateUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteUploadRequestObject struct {
+	UploadID UploadID `json:"upload_id"`
+}
+
+type DeleteUploadResponseObject interface {
+	VisitDeleteUploadResponse(w http.ResponseWriter) error
+}
+
+type DeleteUpload204Response struct {
+}
+
+func (response DeleteUpload204Response) VisitDeleteUploadResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteUpload401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteUpload401ApplicationProblemPlusJSONResponse) VisitDeleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteUpload403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteUpload403ApplicationProblemPlusJSONResponse) VisitDeleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteUpload404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteUpload404ApplicationProblemPlusJSONResponse) VisitDeleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteUpload409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteUpload409ApplicationProblemPlusJSONResponse) VisitDeleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteUploaddefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response DeleteUploaddefaultApplicationProblemPlusJSONResponse) VisitDeleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUploadRequestObject struct {
+	UploadID UploadID `json:"upload_id"`
+}
+
+type GetUploadResponseObject interface {
+	VisitGetUploadResponse(w http.ResponseWriter) error
+}
+
+type GetUpload200JSONResponse Upload
+
+func (response GetUpload200JSONResponse) VisitGetUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUpload401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetUpload401ApplicationProblemPlusJSONResponse) VisitGetUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUpload403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetUpload403ApplicationProblemPlusJSONResponse) VisitGetUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUpload404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response GetUpload404ApplicationProblemPlusJSONResponse) VisitGetUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUploaddefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetUploaddefaultApplicationProblemPlusJSONResponse) VisitGetUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AppendUploadChunkRequestObject struct {
+	UploadID UploadID `json:"upload_id"`
+	Params   AppendUploadChunkParams
+	Body     io.Reader
+}
+
+type AppendUploadChunkResponseObject interface {
+	VisitAppendUploadChunkResponse(w http.ResponseWriter) error
+}
+
+type AppendUploadChunk200JSONResponse Upload
+
+func (response AppendUploadChunk200JSONResponse) VisitAppendUploadChunkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AppendUploadChunk400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response AppendUploadChunk400ApplicationProblemPlusJSONResponse) VisitAppendUploadChunkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AppendUploadChunk401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response AppendUploadChunk401ApplicationProblemPlusJSONResponse) VisitAppendUploadChunkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AppendUploadChunk403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response AppendUploadChunk403ApplicationProblemPlusJSONResponse) VisitAppendUploadChunkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AppendUploadChunk404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response AppendUploadChunk404ApplicationProblemPlusJSONResponse) VisitAppendUploadChunkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AppendUploadChunk409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response AppendUploadChunk409ApplicationProblemPlusJSONResponse) VisitAppendUploadChunkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AppendUploadChunk413ApplicationProblemPlusJSONResponse struct {
+	ContentTooLargeApplicationProblemPlusJSONResponse
+}
+
+func (response AppendUploadChunk413ApplicationProblemPlusJSONResponse) VisitAppendUploadChunkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AppendUploadChunk415ApplicationProblemPlusJSONResponse struct {
+	UnsupportedMediaTypeApplicationProblemPlusJSONResponse
+}
+
+func (response AppendUploadChunk415ApplicationProblemPlusJSONResponse) VisitAppendUploadChunkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(415)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AppendUploadChunkdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response AppendUploadChunkdefaultApplicationProblemPlusJSONResponse) VisitAppendUploadChunkResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteUploadRequestObject struct {
+	UploadID UploadID `json:"upload_id"`
+	Body     *CompleteUploadJSONRequestBody
+}
+
+type CompleteUploadResponseObject interface {
+	VisitCompleteUploadResponse(w http.ResponseWriter) error
+}
+
+type CompleteUpload200JSONResponse Upload
+
+func (response CompleteUpload200JSONResponse) VisitCompleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteUpload400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response CompleteUpload400ApplicationProblemPlusJSONResponse) VisitCompleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteUpload401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response CompleteUpload401ApplicationProblemPlusJSONResponse) VisitCompleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteUpload403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response CompleteUpload403ApplicationProblemPlusJSONResponse) VisitCompleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteUpload404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response CompleteUpload404ApplicationProblemPlusJSONResponse) VisitCompleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteUpload409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response CompleteUpload409ApplicationProblemPlusJSONResponse) VisitCompleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteUpload422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response CompleteUpload422ApplicationProblemPlusJSONResponse) VisitCompleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CompleteUploaddefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response CompleteUploaddefaultApplicationProblemPlusJSONResponse) VisitCompleteUploadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListUsersRequestObject struct {
 	Params ListUsersParams
 }
@@ -7390,6 +8294,21 @@ type StrictServerInterface interface {
 	// StopSite Stop a running site
 	// (POST /api/v1/sites/{site_id}/stop)
 	StopSite(ctx context.Context, request StopSiteRequestObject) (StopSiteResponseObject, error)
+	// CreateUpload Start an upload
+	// (POST /api/v1/uploads)
+	CreateUpload(ctx context.Context, request CreateUploadRequestObject) (CreateUploadResponseObject, error)
+	// DeleteUpload Cancel an upload
+	// (DELETE /api/v1/uploads/{upload_id})
+	DeleteUpload(ctx context.Context, request DeleteUploadRequestObject) (DeleteUploadResponseObject, error)
+	// GetUpload Get an upload
+	// (GET /api/v1/uploads/{upload_id})
+	GetUpload(ctx context.Context, request GetUploadRequestObject) (GetUploadResponseObject, error)
+	// AppendUploadChunk Send a chunk of an upload
+	// (PATCH /api/v1/uploads/{upload_id})
+	AppendUploadChunk(ctx context.Context, request AppendUploadChunkRequestObject) (AppendUploadChunkResponseObject, error)
+	// CompleteUpload Complete an upload
+	// (POST /api/v1/uploads/{upload_id}/complete)
+	CompleteUpload(ctx context.Context, request CompleteUploadRequestObject) (CompleteUploadResponseObject, error)
 	// ListUsers List users
 	// (GET /api/v1/users)
 	ListUsers(ctx context.Context, request ListUsersRequestObject) (ListUsersResponseObject, error)
@@ -8374,6 +9293,151 @@ func (sh *strictHandler) StopSite(w http.ResponseWriter, r *http.Request, siteID
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(StopSiteResponseObject); ok {
 		if err := validResponse.VisitStopSiteResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateUpload operation middleware
+func (sh *strictHandler) CreateUpload(w http.ResponseWriter, r *http.Request) {
+	var request CreateUploadRequestObject
+
+	var body CreateUploadJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateUpload(ctx, request.(CreateUploadRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateUpload")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateUploadResponseObject); ok {
+		if err := validResponse.VisitCreateUploadResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteUpload operation middleware
+func (sh *strictHandler) DeleteUpload(w http.ResponseWriter, r *http.Request, uploadID UploadID) {
+	var request DeleteUploadRequestObject
+
+	request.UploadID = uploadID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteUpload(ctx, request.(DeleteUploadRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteUpload")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteUploadResponseObject); ok {
+		if err := validResponse.VisitDeleteUploadResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetUpload operation middleware
+func (sh *strictHandler) GetUpload(w http.ResponseWriter, r *http.Request, uploadID UploadID) {
+	var request GetUploadRequestObject
+
+	request.UploadID = uploadID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetUpload(ctx, request.(GetUploadRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetUpload")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetUploadResponseObject); ok {
+		if err := validResponse.VisitGetUploadResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AppendUploadChunk operation middleware
+func (sh *strictHandler) AppendUploadChunk(w http.ResponseWriter, r *http.Request, uploadID UploadID, params AppendUploadChunkParams) {
+	var request AppendUploadChunkRequestObject
+
+	request.UploadID = uploadID
+	request.Params = params
+
+	request.Body = r.Body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AppendUploadChunk(ctx, request.(AppendUploadChunkRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AppendUploadChunk")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AppendUploadChunkResponseObject); ok {
+		if err := validResponse.VisitAppendUploadChunkResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CompleteUpload operation middleware
+func (sh *strictHandler) CompleteUpload(w http.ResponseWriter, r *http.Request, uploadID UploadID) {
+	var request CompleteUploadRequestObject
+
+	request.UploadID = uploadID
+
+	var body CompleteUploadJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CompleteUpload(ctx, request.(CompleteUploadRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CompleteUpload")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CompleteUploadResponseObject); ok {
+		if err := validResponse.VisitCompleteUploadResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

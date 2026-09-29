@@ -115,7 +115,7 @@ func decodeProblem(t *testing.T, w *httptest.ResponseRecorder) problem {
 
 // samplePath fills in path parameters with a valid ID.
 func samplePath(path string) string {
-	for _, p := range []string{"{token_id}", "{user_id}", "{client_group_id}", "{site_id}", "{job_id}"} {
+	for _, p := range []string{"{token_id}", "{user_id}", "{client_group_id}", "{site_id}", "{job_id}", "{upload_id}"} {
 		path = strings.ReplaceAll(path, p, "abc123")
 	}
 	return path
@@ -137,6 +137,24 @@ var sampleBodies = map[string]string{
 	"setSiteAliases":        `{"aliases":["acme.example"]}`,
 	"setSiteBackupSchedule": `{"enabled":true}`,
 	"restoreSite":           `{"snapshot_id":"3be90c95"}`,
+	"createUpload":          `{"purpose":"site_import","client_group_id":"abc123","size_bytes":10}`,
+	"appendUploadChunk":     `0123456789`,
+	"completeUpload":        `{}`,
+}
+
+// sampleQueries are the required query parameters of operations that have
+// some.
+var sampleQueries = map[string]string{
+	"appendUploadChunk": "?offset=0",
+}
+
+// sampleRequest is a minimal valid request for op.
+func sampleRequest(op api.Operation, authed bool) request {
+	req := request{method: op.Method, target: samplePath(op.Path) + sampleQueries[op.ID], body: sampleBodies[op.ID], authed: authed}
+	if op.BinaryBody {
+		req.contentType = "application/octet-stream"
+	}
+	return req
 }
 
 func TestOpenAPIDocumentIsValid(t *testing.T) {
@@ -188,10 +206,10 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 	fa := &fakeAuth{principal: &auth.Principal{UserID: u.ID, Email: u.Email, Role: u.Role, Method: auth.MethodSession, SessionID: "none"}}
 	db := storetest.Open(t, store.SQLite)
 	env := newSiteEnv(t, db, testPreviewBase)
-	h := newHandler(t, api.Options{Authenticator: fa, Auth: svc, DB: db, Sites: env.svc, Backups: env.backups})
+	h := newHandler(t, api.Options{Authenticator: fa, Auth: svc, DB: db, Sites: env.svc, Backups: env.backups, Uploads: newUploadService(t, db)})
 	for _, op := range ops {
 		t.Run(op.ID, func(t *testing.T) {
-			req := request{method: op.Method, target: samplePath(op.Path), body: sampleBodies[op.ID]}
+			req := sampleRequest(op, false)
 
 			// Without credentials, only public operations get through.
 			fa.calls = nil
@@ -237,7 +255,7 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 					t.Errorf("status = %d, want 401; body: %s", w.Code, w.Body)
 				}
 			case strings.HasPrefix(op.Path, "/api/v1/auth/") || strings.HasPrefix(op.Path, "/api/v1/users") ||
-				strings.HasPrefix(op.Path, "/api/v1/client-groups") || implementedSiteOps[op.ID]:
+				strings.HasPrefix(op.Path, "/api/v1/client-groups") || strings.HasPrefix(op.Path, "/api/v1/uploads") || implementedSiteOps[op.ID]:
 				if w.Code == http.StatusUnauthorized || w.Code >= 500 {
 					t.Errorf("status = %d; body: %s", w.Code, w.Body)
 				}

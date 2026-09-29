@@ -93,6 +93,8 @@ type Config struct {
 	// Backup configures where client group backup repositories live
 	// (§4.1, §5.3).
 	Backup BackupConfig `yaml:"backup"`
+	// Uploads configures the resumable upload API for large files (#111).
+	Uploads UploadsConfig `yaml:"uploads"`
 }
 
 // Values of smtp.encryption.
@@ -462,6 +464,7 @@ func Default() Config {
 			Retention: DefaultBackupRetention(), Check: DefaultBackupCheck(),
 		},
 		WordPressSecurity: DefaultWordPressSecurity(),
+		Uploads:           DefaultUploads(),
 	}
 }
 
@@ -480,6 +483,8 @@ var intEnvVars = []struct {
 	{"PRESSFLEET_BACKUP_RETENTION_KEEP_YEARLY", func(c *Config) *int { return &c.Backup.Retention.KeepYearly }},
 	{"PRESSFLEET_BACKUP_CHECK_INTERVAL_DAYS", func(c *Config) *int { return &c.Backup.Check.IntervalDays }},
 	{"PRESSFLEET_BACKUP_CHECK_READ_DATA_PERCENT", func(c *Config) *int { return &c.Backup.Check.ReadDataPercent }},
+	{"PRESSFLEET_UPLOADS_MAX_SIZE_MB", func(c *Config) *int { return &c.Uploads.MaxSizeMB }},
+	{"PRESSFLEET_UPLOADS_EXPIRY_HOURS", func(c *Config) *int { return &c.Uploads.ExpiryHours }},
 }
 
 // envVars maps environment variables to the fields they set.
@@ -751,6 +756,9 @@ func (c Config) Validate() error {
 		errs = append(errs, err)
 	}
 	if err := c.Backup.Check.Validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.Uploads.Validate(); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)

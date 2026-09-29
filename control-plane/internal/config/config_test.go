@@ -77,6 +77,7 @@ func TestLoadPrecedence(t *testing.T) {
 		// default
 		PlatformProject:   "pressfleet",
 		WordPressSecurity: config.DefaultWordPressSecurity(), // default
+		Uploads:           config.DefaultUploads(),           // default
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("Load() = %+v, want %+v", cfg, want)

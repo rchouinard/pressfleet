@@ -432,7 +432,7 @@ func TestFailsClosedWithoutAuthenticator(t *testing.T) {
 			continue
 		}
 		// Even requests that would satisfy a test authenticator are refused.
-		w := do(t, h, request{method: op.Method, target: samplePath(op.Path), body: sampleBodies[op.ID], authed: true})
+		w := do(t, h, sampleRequest(op, true))
 		if w.Code != http.StatusUnauthorized {
 			t.Errorf("%s: status = %d, want 401", op.ID, w.Code)
 			continue
