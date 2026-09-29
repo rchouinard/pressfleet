@@ -140,7 +140,9 @@ Done when: a site can be backed up, modified, and restored to its earlier state,
 | [#114](https://github.com/rchouinard/pressfleet/issues/114) | Database export download | P1 | S | #61, #49 |
 | [#115](https://github.com/rchouinard/pressfleet/issues/115) | Temporary database sessions through the SFTP gateway | P1 | M | #61, #62, #23 |
 
-**Status: in progress (2026-09-28).** Backup and restore are in place: #49, #50, #51, #52, #53, #54, and #55 are closed. Decisions made along the way:
+**Status: in progress (2026-09-29).** All feature issues are implemented: #49–#55, #57, #58, #62, and #111–#115. #63 (the M3 acceptance tests in CI) is in progress. Decisions made along the way:
+
+Backup and restore:
 
 - Local Restic repositories are shared by a client group's sites through one platform GID (`provisioner.RepositoryGID`, 60000), since each site's backup task runs as the site's own UID.
 - A group's repository is created lazily on its first backup; a group with a repository can't be deleted until the repository is exported or deleted (`pressfleet repository export|delete`).
@@ -149,7 +151,30 @@ Done when: a site can be backed up, modified, and restored to its earlier state,
 - A self-hosted S3 service on the same host attaches to the platform's internal backup network (`<project>_backup`), which the control plane and S3 backup/restore tasks join; PressFleet doesn't bundle one.
 - Retention applies per site (`restic forget --group-by host`); backups whose snapshots are gone get `expired_at` in the API rather than being deleted.
 
-Known gaps to pick up: nothing sweeps `tmp/` at startup, so a crashed backup can leave a dump behind; site import (#112) must strip `DEFINER` clauses from external dumps.
+Updates (#57, #58):
+
+- Core rollout policy is per site, overriding its client group: minor and security releases of the site's branch roll out automatically; a major release waits for an approved branch or `updates.core.major_auto_approve_days` (off by default); a hold keeps the branch. Holds and approvals share one policy endpoint (`core_update.approve`). The old `wp_core_pinned` field became a hold.
+- New releases are detected from the control plane's built-in image manifest (or `image_manifest_file`), so a new WordPress release normally reaches sites through a PressFleet release. The manifest keeps the newest release of every branch, with `published`, `insecure`, and `dbVersion`.
+- Rollouts go one site at a time, only for running sites, inside the optional maintenance window (`updates.window_*`), and halt after `updates.max_failures` consecutive failures until resumed or the releases change. A release that failed on a site isn't retried automatically; `POST /sites/{id}/core/update` retries it by hand.
+- A core update takes a `pre_update` backup and restores it on failure only if the schema changed; the health check (HTTP probe plus WP-CLI core version) times out after 90 s.
+- Sites run image builds pinned per site and tag (`site_image_pins`), so a re-render or another site's pull never moves them; only the image rollout does. Image updates take no backup (the schema can't change), and the registry is checked every `updates.images.check_hours` (6).
+
+Import, deployment, and developer access (#111–#115, #62):
+
+- Uploads are authorized by the job they're for (`site.import` on the client group, `site.code.deploy` on the site), are visible only to their creator, and take chunks of up to 32 MiB.
+- Import validates the archive and dump as the job's first step, not in the handler (uploads can be 10 GiB); the site row appears only after validation, and a failed import deletes the row. "Too new" compares the dump's `db_version` with the manifest's `dbVersion`. Imported sites keep their own users, and `DEFINER` clauses are stripped.
+- Deployments swap directories with `renameat2(RENAME_EXCHANGE)` and reload PHP-FPM (`SIGUSR2`) so the opcode cache doesn't mix versions; site-php images set `process_control_timeout = 10s` so the reload doesn't cut off requests.
+- Database export downloads are the only reads recorded in the audit log; any Operator or Admin may download an export, which expires after `database_export.ttl_seconds` (1 h).
+- The SFTP gateway runs inside the control plane on its own host port (`sftp.port`, 2222), so audit events see clients' real addresses. Each SSH connection is one audit session; access is rechecked every 10 s. Workers run the control plane image as the site's UID with only `wp-content` mounted and no network.
+- Database sessions last 60 s to 8 h per request (no install-wide setting); read-write needs an Admin. The tunnel command uses local port 3307. Operators may end anyone's session on a site. `audit_events.details` carries structured details for these events.
+
+Known gaps to pick up:
+
+- Nothing sweeps `tmp/` at startup, so a crashed backup can leave a dump behind; nothing reaps SFTP session workers left by a control plane crash; old `pin-*` image tags are never removed.
+- No list endpoints for uploads or database exports (the dashboard, #116, may want them), no per-site "update images now" or image status endpoint, and no per-user limits on uploads, exports, or SFTP connections.
+- Restoring one site's snapshot into another site in the same group doesn't reconcile different table prefixes.
+- Major core updates are covered by unit tests only, since the image matrix has one WordPress branch today.
+- The published site-php images need a rebuild for `process_control_timeout`.
 
 ### M4: Monitoring & Alerting
 
