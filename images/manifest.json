@@ -25,7 +25,8 @@
   "wordpress": {
     "latest": {
       "version": "7.1.2",
-      "sha1": "761b8101538f0631a0bfc4fba7bc4abeea92f81c"
+      "sha1": "761b8101538f0631a0bfc4fba7bc4abeea92f81c",
+      "published": "2026-09-26"
     },
     "pinned": []
   }

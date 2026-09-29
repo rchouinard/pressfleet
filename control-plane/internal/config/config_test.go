@@ -80,6 +80,7 @@ func TestLoadPrecedence(t *testing.T) {
 		WordPressSecurity: config.DefaultWordPressSecurity(),             // default
 		Uploads:           config.DefaultUploads(),                       // default
 		DatabaseExport:    config.DatabaseExportConfig{TTLSeconds: 3600}, // default
+		Updates:           config.DefaultUpdates(),                       // default
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("Load() = %+v, want %+v", cfg, want)

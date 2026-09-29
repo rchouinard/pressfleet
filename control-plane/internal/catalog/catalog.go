@@ -10,6 +10,13 @@
 // security support. Branches past that date stay in the manifest so sites
 // still on them can be flagged, but no new images are built for them.
 //
+// WordPress releases are grouped by major branch (x.y, [Branch]). The
+// manifest has one release per branch, its newest: the latest release, and
+// the newest release of every older branch that sites are held on or
+// awaiting approval to leave (§5.5). Core updates (package sites) move a
+// site to the newest release of its branch, or of a newer branch once the
+// major release is approved.
+//
 // Image digests are not part of the manifest: they are only known after CI
 // has pushed the images, and a weekly rebuild moves a tag to a new digest
 // without a manifest change. Detecting updated images (#58) therefore means
@@ -22,6 +29,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -94,6 +102,21 @@ type WordPressVersion struct {
 	// SHA1 is the checksum of wordpress-<Version>.tar.gz the images were
 	// built from.
 	SHA1 string
+	// Published is the day (midnight UTC) the release entered the manifest,
+	// which is when its images were first published; zero if the manifest
+	// doesn't say. Major releases can be approved automatically a set time
+	// after it (§5.5).
+	Published time.Time
+	// Insecure means wordpress.org reports this release, the newest of its
+	// branch, as having known security issues: the branch no longer gets
+	// security releases.
+	Insecure bool
+}
+
+// Branch returns the release's major branch (see [Branch]).
+func (w WordPressVersion) Branch() string {
+	b, _ := Branch(w.Version)
+	return b
 }
 
 // Images are the references of a site's two container images.
@@ -107,12 +130,13 @@ type Images struct {
 type Catalog struct {
 	registry  string
 	php       []PHPVersion       // newest first
-	wordpress []WordPressVersion // latest first, then pinned
+	wordpress []WordPressVersion // latest first, then older branches, newest first
 }
 
 var (
 	phpVersionRE = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
 	wpVersionRE  = regexp.MustCompile(`^[0-9]+\.[0-9]+(\.[0-9]+)?$`)
+	wpBranchRE   = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
 	sha1RE       = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 
@@ -131,13 +155,29 @@ type manifest struct {
 }
 
 type manifestWP struct {
-	Version string `json:"version"`
-	SHA1    string `json:"sha1"`
+	Version   string `json:"version"`
+	SHA1      string `json:"sha1"`
+	Published string `json:"published"`
+	Insecure  bool   `json:"insecure"`
 }
 
 // Load parses the manifest embedded in the binary.
 func Load() (*Catalog, error) {
 	return Parse(images.Manifest())
+}
+
+// LoadFile parses the manifest in a file, which replaces the embedded one
+// (config image_manifest_file).
+func LoadFile(path string) (*Catalog, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // G304: the path is the operator's configuration
+	if err != nil {
+		return nil, fmt.Errorf("reading version manifest: %w", err)
+	}
+	c, err := Parse(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return c, nil
 }
 
 // Parse parses and validates a version manifest.
@@ -191,8 +231,25 @@ func Parse(data []byte) (*Catalog, error) {
 		if slices.ContainsFunc(c.wordpress, func(v WordPressVersion) bool { return v.Version == w.Version }) {
 			return nil, fmt.Errorf("%w: duplicate WordPress version %s", ErrInvalidManifest, w.Version)
 		}
-		c.wordpress = append(c.wordpress, WordPressVersion(w))
+		v := WordPressVersion{Version: w.Version, SHA1: w.SHA1, Insecure: w.Insecure}
+		// Each branch has one release in the matrix, its newest, which
+		// every site on the branch moves to (§5.5).
+		if slices.ContainsFunc(c.wordpress, func(o WordPressVersion) bool { return o.Branch() == v.Branch() }) {
+			return nil, fmt.Errorf("%w: more than one WordPress release of branch %s", ErrInvalidManifest, v.Branch())
+		}
+		if len(c.wordpress) > 0 && compareVersions(v.Version, c.wordpress[0].Version) > 0 {
+			return nil, fmt.Errorf("%w: WordPress %s is newer than the latest, %s", ErrInvalidManifest, v.Version, c.wordpress[0].Version)
+		}
+		if w.Published != "" {
+			published, err := time.Parse(time.DateOnly, w.Published)
+			if err != nil {
+				return nil, fmt.Errorf("%w: WordPress %s published: %w", ErrInvalidManifest, w.Version, err)
+			}
+			v.Published = published
+		}
+		c.wordpress = append(c.wordpress, v)
 	}
+	slices.SortStableFunc(c.wordpress[1:], func(a, b WordPressVersion) int { return compareVersions(b.Version, a.Version) })
 	return c, nil
 }
 
@@ -263,10 +320,48 @@ func (c *Catalog) LatestWordPress() WordPressVersion {
 	return c.wordpress[0]
 }
 
-// WordPressVersions returns every WordPress release images are built for:
-// the latest first, then the versions kept for pinned sites.
+// WordPressVersions returns every WordPress release images are built for,
+// newest first: the latest, then the newest release of each older branch
+// kept for sites held on it or awaiting approval of a newer one (§5.5).
 func (c *Catalog) WordPressVersions() []WordPressVersion {
 	return slices.Clone(c.wordpress)
+}
+
+// LatestInBranch returns the newest release images are built for on a
+// major branch ("7.1"), and whether the branch is in the manifest at all.
+func (c *Catalog) LatestInBranch(branch string) (WordPressVersion, bool) {
+	i := slices.IndexFunc(c.wordpress, func(w WordPressVersion) bool { return w.Branch() == branch })
+	if i < 0 {
+		return WordPressVersion{}, false
+	}
+	return c.wordpress[i], true
+}
+
+// Branch returns a WordPress version's major branch. WordPress numbers its
+// major releases x.y and their minor and security releases x.y.z (§5.5),
+// so "7.1.2" and "7.1" are both on branch "7.1". A malformed version is
+// ErrInvalidVersion.
+func Branch(version string) (string, error) {
+	if !wpVersionRE.MatchString(version) {
+		return "", fmt.Errorf("%w: WordPress version %q", ErrInvalidVersion, version)
+	}
+	major, rest, _ := strings.Cut(version, ".")
+	minor, _, _ := strings.Cut(rest, ".")
+	return major + "." + minor, nil
+}
+
+// ValidBranch reports whether s is a WordPress major branch, like "7.1".
+func ValidBranch(s string) bool { return wpBranchRE.MatchString(s) }
+
+// CompareBranches orders two WordPress branches like cmp.Compare.
+// Malformed branches are ErrInvalidVersion.
+func CompareBranches(a, b string) (int, error) {
+	for _, v := range []string{a, b} {
+		if !wpBranchRE.MatchString(v) {
+			return 0, fmt.Errorf("%w: WordPress branch %q", ErrInvalidVersion, v)
+		}
+	}
+	return compareVersions(a, b), nil
 }
 
 // WordPressAtLeast returns the oldest WordPress release images are built

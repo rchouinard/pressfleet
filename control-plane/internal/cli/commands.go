@@ -192,7 +192,7 @@ func (a *app) serveCommand() *cobra.Command {
 			// Neither the provisioner nor the MariaDB manager touches Docker
 			// or MariaDB until a job uses them, so serve starts (and passes
 			// /readyz) while either is down.
-			cat, err := catalog.Load()
+			cat, err := a.catalog()
 			if err != nil {
 				return err
 			}
@@ -252,6 +252,7 @@ func (a *app) serveCommand() *cobra.Command {
 				DashboardDomain:   a.cfg.DashboardDomain,
 				DNSChecker:        a.dnsChecker(),
 				BackupWindow:      backupWindow,
+				CoreUpdates:       a.coreUpdates(),
 				Logger:            a.log.With("component", "sites"),
 			})
 			if err != nil {
@@ -330,6 +331,14 @@ func (a *app) serveCommand() *cobra.Command {
 			// Likewise every backup repository's prune and check schedules.
 			if err := repomaint.ReconcileSchedules(cmd.Context(), db, a.maintenanceTiming()); err != nil && cmd.Context().Err() == nil {
 				a.log.Warn("reconciling backup repository maintenance schedules failed", "error", err)
+			}
+			// The core rollout runs on a schedule, and once now, so releases
+			// new to the version manifest start rolling out. Best effort.
+			if err := siteSvc.EnsureRolloutSchedule(cmd.Context()); err != nil && cmd.Context().Err() == nil {
+				a.log.Warn("scheduling the core rollout failed", "error", err)
+			}
+			if err := siteSvc.EnqueueRollout(cmd.Context()); err != nil && cmd.Context().Err() == nil {
+				a.log.Warn("queuing the core rollout failed", "error", err)
 			}
 			// A canceled context means serve is already stopping; the
 			// server below returns at once.

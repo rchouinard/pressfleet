@@ -71,7 +71,7 @@
 //	site:<site ID>              the site the snapshot is of
 //	wp-core:<version>           the site's WordPress core version at backup
 //	                            time; a restore needs at least this version
-//	kind:<kind>                 manual, scheduled, or pre_restore
+//	kind:<kind>                 manual, scheduled, pre_restore, or pre_update
 //	                            (store.BackupKind)
 //	backup:<backup record ID>   the platform's record of the backup
 //	                            (store.BackupRecord), when there is one

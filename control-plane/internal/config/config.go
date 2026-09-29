@@ -99,6 +99,13 @@ type Config struct {
 	DatabaseExport DatabaseExportConfig `yaml:"database_export"`
 	// SFTP configures the SFTP gateway (§5.8).
 	SFTP SFTPConfig `yaml:"sftp"`
+	// Updates configures how new site images roll out (§5.5).
+	Updates UpdatesConfig `yaml:"updates"`
+	// ImageManifestFile, if set, is a site image version manifest
+	// (images/manifest.json) that replaces the one built into the control
+	// plane, e.g. to roll out a WordPress security release before the
+	// PressFleet release that carries it, or in tests.
+	ImageManifestFile string `yaml:"image_manifest_file"`
 }
 
 // SFTPConfig configures the SFTP gateway (§5.8).
@@ -566,6 +573,7 @@ func Default() Config {
 		Uploads:           DefaultUploads(),
 		DatabaseExport:    DatabaseExportConfig{TTLSeconds: 3600},
 		SFTP:              DefaultSFTP(),
+		Updates:           DefaultUpdates(),
 	}
 }
 
@@ -590,6 +598,10 @@ var intEnvVars = []struct {
 	{"PRESSFLEET_SFTP_PORT", func(c *Config) *int { return &c.SFTP.Port }},
 	{"PRESSFLEET_SFTP_IDLE_TIMEOUT_MINUTES", func(c *Config) *int { return &c.SFTP.IdleTimeoutMinutes }},
 	{"PRESSFLEET_SFTP_MAX_SESSION_HOURS", func(c *Config) *int { return &c.SFTP.MaxSessionHours }},
+	{"PRESSFLEET_UPDATES_WINDOW_HOURS", func(c *Config) *int { return &c.Updates.WindowHours }},
+	{"PRESSFLEET_UPDATES_MAX_FAILURES", func(c *Config) *int { return &c.Updates.MaxFailures }},
+	{"PRESSFLEET_UPDATES_CORE_MAJOR_AUTO_APPROVE_DAYS", func(c *Config) *int { return &c.Updates.Core.MajorAutoApproveDays }},
+	{"PRESSFLEET_UPDATES_CORE_HOLD_WARNING_DAYS", func(c *Config) *int { return &c.Updates.Core.HoldWarningDays }},
 }
 
 // envVars maps environment variables to the fields they set.
@@ -639,6 +651,8 @@ var envVars = []struct {
 	{"PRESSFLEET_BACKUP_SCHEDULE_WINDOW_START", func(c *Config) *string { return &c.Backup.Schedule.WindowStart }},
 	{"PRESSFLEET_SFTP_LISTEN", func(c *Config) *string { return &c.SFTP.Listen }},
 	{"PRESSFLEET_SFTP_HOST_KEY_FILE", func(c *Config) *string { return &c.SFTP.HostKeyFile }},
+	{"PRESSFLEET_UPDATES_WINDOW_START", func(c *Config) *string { return &c.Updates.WindowStart }},
+	{"PRESSFLEET_IMAGE_MANIFEST_FILE", func(c *Config) *string { return &c.ImageManifestFile }},
 }
 
 // envTrustedProxies sets http.trusted_proxies as a comma-separated list.
@@ -874,6 +888,12 @@ func (c Config) Validate() error {
 	}
 	if err := c.SFTP.Validate(); err != nil {
 		errs = append(errs, err)
+	}
+	if err := c.Updates.Validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if c.ImageManifestFile != "" && !filepath.IsAbs(c.ImageManifestFile) {
+		errs = append(errs, fmt.Errorf("image_manifest_file must be an absolute path, got %q", c.ImageManifestFile))
 	}
 	return errors.Join(errs...)
 }

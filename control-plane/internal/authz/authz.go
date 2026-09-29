@@ -66,7 +66,7 @@ const (
 	ViewBackups      Action = "backup.view"
 	ViewMonitoring   Action = "monitoring.view" // metrics, logs, and alerts
 
-	// Create and import sites; change site settings (PHP version, core pin,
+	// Create and import sites; change site settings (PHP version, core branch hold,
 	// resources, preview password protection); go-live and domains;
 	// start/stop; maintenance mode; cache purge.
 	CreateSite              Action = "site.create"

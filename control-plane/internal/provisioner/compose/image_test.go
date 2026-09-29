@@ -49,3 +49,30 @@ func TestEnsureImage(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildAndRemoveImage(t *testing.T) {
+	var calls []string
+	var stdin string
+	noSuchImage := &compose.CommandError{Stderr: "Error response from daemon: No such image: x", Err: errors.New("exit status 1")}
+	docker := func(_ context.Context, in io.Reader, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(args, " "))
+		if in != nil {
+			b, _ := io.ReadAll(in)
+			stdin = string(b)
+		}
+		if args[0] == "image" {
+			return nil, noSuchImage
+		}
+		return nil, nil
+	}
+	if err := compose.BuildImage(context.Background(), docker, "e2e.local/x:1", "FROM scratch\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := compose.RemoveImage(context.Background(), docker, "e2e.local/x:1"); err != nil {
+		t.Errorf("removing a missing image: %v", err)
+	}
+	want := []string{"build --quiet --tag e2e.local/x:1 -", "image rm -- e2e.local/x:1"}
+	if !slices.Equal(calls, want) || stdin != "FROM scratch\n" {
+		t.Errorf("calls = %q (stdin %q), want %q", calls, stdin, want)
+	}
+}

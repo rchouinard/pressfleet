@@ -47,7 +47,6 @@ type Site struct {
 	PrimaryDomain string // empty until go-live
 	PHPVersion    string
 	WPCoreVersion string
-	WPCorePinned  bool
 	EnableCache   bool
 	// CPULimit, MemoryReservationMB, and MemoryLimitMB are the site's
 	// resource limits (provisioner.ResourceLimits).
@@ -96,7 +95,7 @@ func NewSites(q Querier) Sites {
 
 // siteColumns lists columns in the order scanSite expects.
 const siteColumns = "id, client_group_id, name, slug, status, status_message, preview_domain, primary_domain, " +
-	"php_version, wp_core_version, wp_core_pinned, enable_cache, cpu_limit, memory_reservation_mb, memory_limit_mb, " +
+	"php_version, wp_core_version, enable_cache, cpu_limit, memory_reservation_mb, memory_limit_mb, " +
 	"uid, wp_salts_secret_ref, admin_username, admin_email, admin_password_secret_ref, " +
 	"preview_protection, preview_username, preview_password_hash, preview_password_secret_ref, maintenance, url_rewrite_from, " +
 	"created_at, updated_at"
@@ -108,7 +107,7 @@ func scanSite(s scanner) (Site, error) {
 		rewrite string
 	)
 	err := s.Scan(&site.ID, &site.ClientGroupID, &site.Name, &site.Slug, &site.Status, &site.StatusMessage,
-		&site.PreviewDomain, &primary, &site.PHPVersion, &site.WPCoreVersion, &site.WPCorePinned, &site.EnableCache,
+		&site.PreviewDomain, &primary, &site.PHPVersion, &site.WPCoreVersion, &site.EnableCache,
 		&site.CPULimit, &site.MemoryReservationMB, &site.MemoryLimitMB, &site.UID, &site.WPSaltsSecretRef,
 		&site.AdminUsername, &site.AdminEmail, &site.AdminPasswordSecretRef,
 		&site.PreviewProtection, &site.PreviewUsername, &site.PreviewPasswordHash, &site.PreviewPasswordSecretRef,
@@ -132,10 +131,10 @@ func (r Sites) Create(ctx context.Context, s *Site) error {
 	created.CreatedAt = now()
 	created.UpdatedAt = created.CreatedAt
 	_, err := r.q.ExecContext(ctx, "INSERT INTO sites ("+siteColumns+") VALUES "+
-		"("+placeholders(28)+")",
+		"("+placeholders(27)+")",
 		created.ID, created.ClientGroupID, created.Name, created.Slug, string(created.Status), created.StatusMessage,
 		created.PreviewDomain, nullString(created.PrimaryDomain), created.PHPVersion, created.WPCoreVersion,
-		created.WPCorePinned, created.EnableCache, created.CPULimit, created.MemoryReservationMB, created.MemoryLimitMB,
+		created.EnableCache, created.CPULimit, created.MemoryReservationMB, created.MemoryLimitMB,
 		created.UID, created.WPSaltsSecretRef, created.AdminUsername, created.AdminEmail, created.AdminPasswordSecretRef,
 		created.PreviewProtection, created.PreviewUsername, created.PreviewPasswordHash, created.PreviewPasswordSecretRef,
 		created.Maintenance, strings.Join(created.URLRewriteFrom, " "), created.CreatedAt, created.UpdatedAt)

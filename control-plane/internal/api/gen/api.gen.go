@@ -44,6 +44,7 @@ func (e AuditResult) Valid() bool {
 const (
 	Manual     BackupKind = "manual"
 	PreRestore BackupKind = "pre_restore"
+	PreUpdate  BackupKind = "pre_update"
 	Scheduled  BackupKind = "scheduled"
 )
 
@@ -53,6 +54,8 @@ func (e BackupKind) Valid() bool {
 	case Manual:
 		return true
 	case PreRestore:
+		return true
+	case PreUpdate:
 		return true
 	case Scheduled:
 		return true
@@ -76,6 +79,63 @@ func (e BackupStatus) Valid() bool {
 	case BackupStatusRunning:
 		return true
 	case BackupStatusSucceeded:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CorePendingReason.
+const (
+	AwaitingApproval CorePendingReason = "awaiting_approval"
+	Held             CorePendingReason = "held"
+)
+
+// Valid indicates whether the value is a known member of the CorePendingReason enum.
+func (e CorePendingReason) Valid() bool {
+	switch e {
+	case AwaitingApproval:
+		return true
+	case Held:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CoreTargetKind.
+const (
+	Major CoreTargetKind = "major"
+	Minor CoreTargetKind = "minor"
+)
+
+// Valid indicates whether the value is a known member of the CoreTargetKind enum.
+func (e CoreTargetKind) Valid() bool {
+	switch e {
+	case Major:
+		return true
+	case Minor:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CoreWarningCode.
+const (
+	BranchInsecure CoreWarningCode = "branch_insecure"
+	BranchNotBuilt CoreWarningCode = "branch_not_built"
+	HeldLong       CoreWarningCode = "held_long"
+)
+
+// Valid indicates whether the value is a known member of the CoreWarningCode enum.
+func (e CoreWarningCode) Valid() bool {
+	switch e {
+	case BranchInsecure:
+		return true
+	case BranchNotBuilt:
+		return true
+	case HeldLong:
 		return true
 	default:
 		return false
@@ -268,6 +328,30 @@ func (e Role) Valid() bool {
 	case Operator:
 		return true
 	case Viewer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SiteCoreDecidedBy.
+const (
+	SiteCoreDecidedByAuto        SiteCoreDecidedBy = "auto"
+	SiteCoreDecidedByClientGroup SiteCoreDecidedBy = "client_group"
+	SiteCoreDecidedByDefault     SiteCoreDecidedBy = "default"
+	SiteCoreDecidedBySite        SiteCoreDecidedBy = "site"
+)
+
+// Valid indicates whether the value is a known member of the SiteCoreDecidedBy enum.
+func (e SiteCoreDecidedBy) Valid() bool {
+	switch e {
+	case SiteCoreDecidedByAuto:
+		return true
+	case SiteCoreDecidedByClientGroup:
+		return true
+	case SiteCoreDecidedByDefault:
+		return true
+	case SiteCoreDecidedBySite:
 		return true
 	default:
 		return false
@@ -572,7 +656,9 @@ type Backup struct {
 
 	// Kind What asked for the backup: a user (`manual`), the site's backup
 	// schedule (`scheduled`), or a restore, which backs up its target site
-	// first so the restore can be undone (`pre_restore`).
+	// first so the restore can be undone (`pre_restore`), or a WordPress
+	// core update, which backs up its site first so a failed update can
+	// be reverted (`pre_update`).
 	Kind BackupKind `json:"kind"`
 
 	// Message Why the backup failed, or a warning about a backup that succeeded
@@ -615,7 +701,9 @@ type BackupIntervalHours = int
 
 // BackupKind What asked for the backup: a user (`manual`), the site's backup
 // schedule (`scheduled`), or a restore, which backs up its target site
-// first so the restore can be undone (`pre_restore`).
+// first so the restore can be undone (`pre_restore`), or a WordPress
+// core update, which backs up its site first so a failed update can
+// be reverted (`pre_update`).
 type BackupKind string
 
 // BackupList defines model for BackupList.
@@ -730,6 +818,114 @@ type ClientGroupUpdate struct {
 	Name  *string `json:"name,omitempty"`
 	Notes *string `json:"notes,omitempty"`
 }
+
+// CorePending The newest major release the site may not move to yet.
+type CorePending struct {
+	// AutoApproveAt Examples: 2026-09-26T17:25:00Z
+	AutoApproveAt *Timestamp `json:"auto_approve_at,omitempty"`
+
+	// Branch A WordPress major branch (x.y).
+	//
+	// Examples: 7.2
+	Branch  WordPressBranch   `json:"branch"`
+	Reason  CorePendingReason `json:"reason"`
+	Version string            `json:"version"`
+}
+
+// CorePendingReason defines model for CorePending.Reason.
+type CorePendingReason string
+
+// CorePolicy defines model for CorePolicy.
+type CorePolicy struct {
+	// ApprovedBranch A WordPress major branch (x.y).
+	//
+	// Examples: 7.2
+	ApprovedBranch *WordPressBranch `json:"approved_branch,omitempty"`
+
+	// Hold Keeps the site on its current major branch, which still gets its minor and security releases.
+	Hold bool `json:"hold"`
+
+	// HoldSince Examples: 2026-09-26T17:25:00Z
+	HoldSince *Timestamp `json:"hold_since,omitempty"`
+}
+
+// CorePolicyUpdate At most one of `hold` and `approved_branch`; neither clears the policy.
+type CorePolicyUpdate struct {
+	// ApprovedBranch A WordPress major branch (x.y).
+	//
+	// Examples: 7.2
+	ApprovedBranch *WordPressBranch `json:"approved_branch,omitempty"`
+	Hold           *bool            `json:"hold,omitempty"`
+}
+
+// CoreRelease defines model for CoreRelease.
+type CoreRelease struct {
+	// Branch A WordPress major branch (x.y).
+	//
+	// Examples: 7.2
+	Branch    WordPressBranch     `json:"branch"`
+	Insecure  bool                `json:"insecure"`
+	Published *openapi_types.Date `json:"published,omitempty"`
+	Version   string              `json:"version"`
+}
+
+// CoreRollout defines model for CoreRollout.
+type CoreRollout struct {
+	ConsecutiveFailures int                 `json:"consecutive_failures"`
+	Failures            []CoreUpdateFailure `json:"failures"`
+	HaltReason          *string             `json:"halt_reason,omitempty"`
+	Halted              bool                `json:"halted"`
+
+	// HaltedAt Examples: 2026-09-26T17:25:00Z
+	HaltedAt    *Timestamp `json:"halted_at,omitempty"`
+	MaxFailures int        `json:"max_failures"`
+
+	// Releases The WordPress releases with site images, newest first; one per branch.
+	Releases []CoreRelease `json:"releases"`
+
+	// Window The daily maintenance window, in UTC; absent if there is none.
+	Window *UpdateWindow `json:"window,omitempty"`
+}
+
+// CoreTarget The release the site moves to at the rollout's next chance; absent if it is up to date as far as its policy allows.
+type CoreTarget struct {
+	Kind    CoreTargetKind `json:"kind"`
+	Version string         `json:"version"`
+}
+
+// CoreTargetKind defines model for CoreTarget.Kind.
+type CoreTargetKind string
+
+// CoreUpdateFailure A site's failed update to `version`, which the rollout doesn't retry.
+type CoreUpdateFailure struct {
+	// FailedAt Examples: 2026-09-26T17:25:00Z
+	FailedAt Timestamp `json:"failed_at"`
+	Message  string    `json:"message"`
+
+	// SiteID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	SiteID  ID     `json:"site_id"`
+	Version string `json:"version"`
+}
+
+// CoreWarning defines model for CoreWarning.
+type CoreWarning struct {
+	// Code `held_long`: held on an older branch for longer than
+	// `updates.core.hold_warning_days`. `branch_not_built`: the
+	// site's branch has no site images any more, so it gets no core
+	// updates. `branch_insecure`: wordpress.org reports the branch's
+	// newest release as insecure; it no longer gets security fixes.
+	Code    CoreWarningCode `json:"code"`
+	Message string          `json:"message"`
+}
+
+// CoreWarningCode `held_long`: held on an older branch for longer than
+// `updates.core.hold_warning_days`. `branch_not_built`: the
+// site's branch has no site images any more, so it gets no core
+// updates. `branch_insecure`: wordpress.org reports the branch's
+// newest release as insecure; it no longer gets security fixes.
+type CoreWarningCode string
 
 // CurrentUser The authenticated user, and how they authenticated.
 type CurrentUser struct {
@@ -1130,10 +1326,7 @@ type Site struct {
 	// Examples: https://acme-marketing.preview.agency.example
 	URL *string `json:"url,omitempty"`
 
-	// WpCorePinned Whether the site is pinned to its current core version and skipped by core rollouts.
-	WpCorePinned bool `json:"wp_core_pinned"`
-
-	// WpCoreVersion WordPress core version of the site's images. Managed by the platform.
+	// WpCoreVersion WordPress core version of the site's images. Managed by the platform; `GET /api/v1/sites/{site_id}/core` shows its updates.
 	//
 	// Examples: 6.9.1
 	WpCoreVersion string `json:"wp_core_version"`
@@ -1170,6 +1363,43 @@ type SiteAliases struct {
 	// SkipDNSCheck Skip the DNS check of new aliases, for hosts behind a CDN or load balancer.
 	SkipDNSCheck *bool `json:"skip_dns_check,omitempty"`
 }
+
+// SiteCore defines model for SiteCore.
+type SiteCore struct {
+	// ApprovedBranch A WordPress major branch (x.y).
+	//
+	// Examples: 7.2
+	ApprovedBranch *WordPressBranch `json:"approved_branch,omitempty"`
+
+	// Branch A WordPress major branch (x.y).
+	//
+	// Examples: 7.2
+	Branch            WordPressBranch `json:"branch"`
+	ClientGroupPolicy CorePolicy      `json:"client_group_policy"`
+
+	// DecidedBy Whose hold or approval applies; `auto` is `updates.core.major_auto_approve_days`.
+	DecidedBy SiteCoreDecidedBy `json:"decided_by"`
+
+	// Held Whether a hold, the site's or its group's, keeps the site on its branch.
+	Held bool `json:"held"`
+
+	// LastFailure A site's failed update to `version`, which the rollout doesn't retry.
+	LastFailure *CoreUpdateFailure `json:"last_failure,omitempty"`
+
+	// Pending The newest major release the site may not move to yet.
+	Pending *CorePending `json:"pending,omitempty"`
+	Policy  CorePolicy   `json:"policy"`
+
+	// Target The release the site moves to at the rollout's next chance; absent if it is up to date as far as its policy allows.
+	Target *CoreTarget `json:"target,omitempty"`
+
+	// Version Examples: 7.1.2
+	Version  string        `json:"version"`
+	Warnings []CoreWarning `json:"warnings"`
+}
+
+// SiteCoreDecidedBy Whose hold or approval applies; `auto` is `updates.core.major_auto_approve_days`.
+type SiteCoreDecidedBy string
 
 // SiteCreate defines model for SiteCreate.
 type SiteCreate struct {
@@ -1361,6 +1591,14 @@ type Timestamp = time.Time
 // `read-only` allows only read actions.
 type TokenScope string
 
+// UpdateWindow The daily maintenance window, in UTC; absent if there is none.
+type UpdateWindow struct {
+	Hours int `json:"hours"`
+
+	// Start Examples: 02:00
+	Start string `json:"start"`
+}
+
 // Upload defines model for Upload.
 type Upload struct {
 	// ClientGroupID The client group of the import or deployment.
@@ -1508,6 +1746,11 @@ type UserUpdate struct {
 	// Role Platform-wide role (design doc §4.6).
 	Role *Role `json:"role,omitempty"`
 }
+
+// WordPressBranch A WordPress major branch (x.y).
+//
+// Examples: 7.2
+type WordPressBranch = string
 
 // ClientGroupID Opaque, server-assigned identifier.
 //
@@ -1727,6 +1970,9 @@ type CreateClientGroupJSONRequestBody = ClientGroupCreate
 // UpdateClientGroupJSONRequestBody defines body for UpdateClientGroup for application/json ContentType.
 type UpdateClientGroupJSONRequestBody = ClientGroupUpdate
 
+// SetClientGroupCorePolicyJSONRequestBody defines body for SetClientGroupCorePolicy for application/json ContentType.
+type SetClientGroupCorePolicyJSONRequestBody = CorePolicyUpdate
+
 // CreateSiteJSONRequestBody defines body for CreateSite for application/json ContentType.
 type CreateSiteJSONRequestBody = SiteCreate
 
@@ -1738,6 +1984,9 @@ type SetSiteAliasesJSONRequestBody = SiteAliases
 
 // SetSiteBackupScheduleJSONRequestBody defines body for SetSiteBackupSchedule for application/json ContentType.
 type SetSiteBackupScheduleJSONRequestBody = BackupScheduleUpdate
+
+// SetSiteCorePolicyJSONRequestBody defines body for SetSiteCorePolicy for application/json ContentType.
+type SetSiteCorePolicyJSONRequestBody = CorePolicyUpdate
 
 // GoLiveSiteJSONRequestBody defines body for GoLiveSite for application/json ContentType.
 type GoLiveSiteJSONRequestBody = SiteGoLive
@@ -1807,6 +2056,18 @@ type ServerInterface interface {
 	// UpdateClientGroup Update a client group
 	// (PATCH /api/v1/client-groups/{client_group_id})
 	UpdateClientGroup(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID)
+	// GetClientGroupCorePolicy Get a client group's core update policy
+	// (GET /api/v1/client-groups/{client_group_id}/core-policy)
+	GetClientGroupCorePolicy(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID)
+	// SetClientGroupCorePolicy Hold a client group's cores, or approve a major release
+	// (PUT /api/v1/client-groups/{client_group_id}/core-policy)
+	SetClientGroupCorePolicy(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID)
+	// GetCoreRollout Get the WordPress core rollout
+	// (GET /api/v1/core-rollout)
+	GetCoreRollout(w http.ResponseWriter, r *http.Request)
+	// ResumeCoreRollout Resume a halted core rollout
+	// (POST /api/v1/core-rollout/resume)
+	ResumeCoreRollout(w http.ResponseWriter, r *http.Request)
 	// ListJobs List jobs
 	// (GET /api/v1/jobs)
 	ListJobs(w http.ResponseWriter, r *http.Request, params ListJobsParams)
@@ -1849,6 +2110,15 @@ type ServerInterface interface {
 	// PurgeSiteCache Purge a site's caches
 	// (POST /api/v1/sites/{site_id}/cache/purge)
 	PurgeSiteCache(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// GetSiteCore Get a site's WordPress core updates
+	// (GET /api/v1/sites/{site_id}/core)
+	GetSiteCore(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// SetSiteCorePolicy Hold a site's core, or approve a major release
+	// (PUT /api/v1/sites/{site_id}/core/policy)
+	SetSiteCorePolicy(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// UpdateSiteCore Update a site's WordPress core now
+	// (POST /api/v1/sites/{site_id}/core/update)
+	UpdateSiteCore(w http.ResponseWriter, r *http.Request, siteID SiteID)
 	// ExportSiteDatabase Export a site's database
 	// (POST /api/v1/sites/{site_id}/database/export)
 	ExportSiteDatabase(w http.ResponseWriter, r *http.Request, siteID SiteID)
@@ -2333,6 +2603,86 @@ func (siw *ServerInterfaceWrapper) UpdateClientGroup(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateClientGroup(w, r, clientGroupID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetClientGroupCorePolicy operation middleware
+func (siw *ServerInterfaceWrapper) GetClientGroupCorePolicy(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "client_group_id" -------------
+	var clientGroupID ClientGroupID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "client_group_id", r.PathValue("client_group_id"), &clientGroupID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "client_group_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetClientGroupCorePolicy(w, r, clientGroupID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetClientGroupCorePolicy operation middleware
+func (siw *ServerInterfaceWrapper) SetClientGroupCorePolicy(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "client_group_id" -------------
+	var clientGroupID ClientGroupID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "client_group_id", r.PathValue("client_group_id"), &clientGroupID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "client_group_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetClientGroupCorePolicy(w, r, clientGroupID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetCoreRollout operation middleware
+func (siw *ServerInterfaceWrapper) GetCoreRollout(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetCoreRollout(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResumeCoreRollout operation middleware
+func (siw *ServerInterfaceWrapper) ResumeCoreRollout(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResumeCoreRollout(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2832,6 +3182,84 @@ func (siw *ServerInterfaceWrapper) PurgeSiteCache(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PurgeSiteCache(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSiteCore operation middleware
+func (siw *ServerInterfaceWrapper) GetSiteCore(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSiteCore(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetSiteCorePolicy operation middleware
+func (siw *ServerInterfaceWrapper) SetSiteCorePolicy(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetSiteCorePolicy(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateSiteCore operation middleware
+func (siw *ServerInterfaceWrapper) UpdateSiteCore(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateSiteCore(w, r, siteID)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3743,6 +4171,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/uploads/{upload_id}/complete", wrapper.CompleteUpload)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/database/export", wrapper.ExportSiteDatabase)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/database/exports/{export_id}/download", wrapper.DownloadSiteDatabaseExport)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/core", wrapper.GetSiteCore)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/sites/{site_id}/core/policy", wrapper.SetSiteCorePolicy)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/core/update", wrapper.UpdateSiteCore)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/client-groups/{client_group_id}/core-policy", wrapper.GetClientGroupCorePolicy)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/client-groups/{client_group_id}/core-policy", wrapper.SetClientGroupCorePolicy)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/core-rollout", wrapper.GetCoreRollout)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/core-rollout/resume", wrapper.ResumeCoreRollout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs", wrapper.ListJobs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs/{job_id}", wrapper.GetJob)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit-events", wrapper.ListAuditEvents)
@@ -5064,6 +5499,353 @@ type UpdateClientGroupdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response UpdateClientGroupdefaultApplicationProblemPlusJSONResponse) VisitUpdateClientGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClientGroupCorePolicyRequestObject struct {
+	ClientGroupID ClientGroupID `json:"client_group_id"`
+}
+
+type GetClientGroupCorePolicyResponseObject interface {
+	VisitGetClientGroupCorePolicyResponse(w http.ResponseWriter) error
+}
+
+type GetClientGroupCorePolicy200JSONResponse CorePolicy
+
+func (response GetClientGroupCorePolicy200JSONResponse) VisitGetClientGroupCorePolicyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClientGroupCorePolicy401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetClientGroupCorePolicy401ApplicationProblemPlusJSONResponse) VisitGetClientGroupCorePolicyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClientGroupCorePolicy403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetClientGroupCorePolicy403ApplicationProblemPlusJSONResponse) VisitGetClientGroupCorePolicyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClientGroupCorePolicy404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response GetClientGroupCorePolicy404ApplicationProblemPlusJSONResponse) VisitGetClientGroupCorePolicyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClientGroupCorePolicydefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetClientGroupCorePolicydefaultApplicationProblemPlusJSONResponse) VisitGetClientGroupCorePolicyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetClientGroupCorePolicyRequestObject struct {
+	ClientGroupID ClientGroupID `json:"client_group_id"`
+	Body          *SetClientGroupCorePolicyJSONRequestBody
+}
+
+type SetClientGroupCorePolicyResponseObject interface {
+	VisitSetClientGroupCorePolicyResponse(w http.ResponseWriter) error
+}
+
+type SetClientGroupCorePolicy200JSONResponse CorePolicy
+
+func (response SetClientGroupCorePolicy200JSONResponse) VisitSetClientGroupCorePolicyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetClientGroupCorePolicy400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response SetClientGroupCorePolicy400ApplicationProblemPlusJSONResponse) VisitSetClientGroupCorePolicyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetClientGroupCorePolicy401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response SetClientGroupCorePolicy401ApplicationProblemPlusJSONResponse) VisitSetClientGroupCorePolicyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetClientGroupCorePolicy403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response SetClientGroupCorePolicy403ApplicationProblemPlusJSONResponse) VisitSetClientGroupCorePolicyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetClientGroupCorePolicy404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response SetClientGroupCorePolicy404ApplicationProblemPlusJSONResponse) VisitSetClientGroupCorePolicyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetClientGroupCorePolicy422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response SetClientGroupCorePolicy422ApplicationProblemPlusJSONResponse) VisitSetClientGroupCorePolicyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetClientGroupCorePolicydefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response SetClientGroupCorePolicydefaultApplicationProblemPlusJSONResponse) VisitSetClientGroupCorePolicyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCoreRolloutRequestObject struct {
+}
+
+type GetCoreRolloutResponseObject interface {
+	VisitGetCoreRolloutResponse(w http.ResponseWriter) error
+}
+
+type GetCoreRollout200JSONResponse CoreRollout
+
+func (response GetCoreRollout200JSONResponse) VisitGetCoreRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCoreRollout401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetCoreRollout401ApplicationProblemPlusJSONResponse) VisitGetCoreRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCoreRollout403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetCoreRollout403ApplicationProblemPlusJSONResponse) VisitGetCoreRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCoreRolloutdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetCoreRolloutdefaultApplicationProblemPlusJSONResponse) VisitGetCoreRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResumeCoreRolloutRequestObject struct {
+}
+
+type ResumeCoreRolloutResponseObject interface {
+	VisitResumeCoreRolloutResponse(w http.ResponseWriter) error
+}
+
+type ResumeCoreRollout200JSONResponse CoreRollout
+
+func (response ResumeCoreRollout200JSONResponse) VisitResumeCoreRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResumeCoreRollout401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ResumeCoreRollout401ApplicationProblemPlusJSONResponse) VisitResumeCoreRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResumeCoreRollout403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ResumeCoreRollout403ApplicationProblemPlusJSONResponse) VisitResumeCoreRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResumeCoreRolloutdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ResumeCoreRolloutdefaultApplicationProblemPlusJSONResponse) VisitResumeCoreRolloutResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -6612,6 +7394,326 @@ type PurgeSiteCachedefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response PurgeSiteCachedefaultApplicationProblemPlusJSONResponse) VisitPurgeSiteCacheResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteCoreRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+}
+
+type GetSiteCoreResponseObject interface {
+	VisitGetSiteCoreResponse(w http.ResponseWriter) error
+}
+
+type GetSiteCore200JSONResponse SiteCore
+
+func (response GetSiteCore200JSONResponse) VisitGetSiteCoreResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteCore401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetSiteCore401ApplicationProblemPlusJSONResponse) VisitGetSiteCoreResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteCore403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetSiteCore403ApplicationProblemPlusJSONResponse) VisitGetSiteCoreResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteCore404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response GetSiteCore404ApplicationProblemPlusJSONResponse) VisitGetSiteCoreResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteCoredefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetSiteCoredefaultApplicationProblemPlusJSONResponse) VisitGetSiteCoreResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteCorePolicyRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+	Body   *SetSiteCorePolicyJSONRequestBody
+}
+
+type SetSiteCorePolicyResponseObject interface {
+	VisitSetSiteCorePolicyResponse(w http.ResponseWriter) error
+}
+
+type SetSiteCorePolicy200JSONResponse SiteCore
+
+func (response SetSiteCorePolicy200JSONResponse) VisitSetSiteCorePolicyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteCorePolicy400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteCorePolicy400ApplicationProblemPlusJSONResponse) VisitSetSiteCorePolicyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteCorePolicy401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteCorePolicy401ApplicationProblemPlusJSONResponse) VisitSetSiteCorePolicyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteCorePolicy403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteCorePolicy403ApplicationProblemPlusJSONResponse) VisitSetSiteCorePolicyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteCorePolicy404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteCorePolicy404ApplicationProblemPlusJSONResponse) VisitSetSiteCorePolicyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteCorePolicy422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response SetSiteCorePolicy422ApplicationProblemPlusJSONResponse) VisitSetSiteCorePolicyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetSiteCorePolicydefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response SetSiteCorePolicydefaultApplicationProblemPlusJSONResponse) VisitSetSiteCorePolicyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateSiteCoreRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+}
+
+type UpdateSiteCoreResponseObject interface {
+	VisitUpdateSiteCoreResponse(w http.ResponseWriter) error
+}
+
+type UpdateSiteCore202ResponseHeaders struct {
+	Location *string
+}
+
+type UpdateSiteCore202JSONResponse struct {
+	Body    SiteAccepted
+	Headers UpdateSiteCore202ResponseHeaders
+}
+
+func (response UpdateSiteCore202JSONResponse) VisitUpdateSiteCoreResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateSiteCore401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateSiteCore401ApplicationProblemPlusJSONResponse) VisitUpdateSiteCoreResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateSiteCore403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateSiteCore403ApplicationProblemPlusJSONResponse) VisitUpdateSiteCoreResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateSiteCore404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateSiteCore404ApplicationProblemPlusJSONResponse) VisitUpdateSiteCoreResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateSiteCore409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateSiteCore409ApplicationProblemPlusJSONResponse) VisitUpdateSiteCoreResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateSiteCoredefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response UpdateSiteCoredefaultApplicationProblemPlusJSONResponse) VisitUpdateSiteCoreResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -9467,6 +10569,18 @@ type StrictServerInterface interface {
 	// UpdateClientGroup Update a client group
 	// (PATCH /api/v1/client-groups/{client_group_id})
 	UpdateClientGroup(ctx context.Context, request UpdateClientGroupRequestObject) (UpdateClientGroupResponseObject, error)
+	// GetClientGroupCorePolicy Get a client group's core update policy
+	// (GET /api/v1/client-groups/{client_group_id}/core-policy)
+	GetClientGroupCorePolicy(ctx context.Context, request GetClientGroupCorePolicyRequestObject) (GetClientGroupCorePolicyResponseObject, error)
+	// SetClientGroupCorePolicy Hold a client group's cores, or approve a major release
+	// (PUT /api/v1/client-groups/{client_group_id}/core-policy)
+	SetClientGroupCorePolicy(ctx context.Context, request SetClientGroupCorePolicyRequestObject) (SetClientGroupCorePolicyResponseObject, error)
+	// GetCoreRollout Get the WordPress core rollout
+	// (GET /api/v1/core-rollout)
+	GetCoreRollout(ctx context.Context, request GetCoreRolloutRequestObject) (GetCoreRolloutResponseObject, error)
+	// ResumeCoreRollout Resume a halted core rollout
+	// (POST /api/v1/core-rollout/resume)
+	ResumeCoreRollout(ctx context.Context, request ResumeCoreRolloutRequestObject) (ResumeCoreRolloutResponseObject, error)
 	// ListJobs List jobs
 	// (GET /api/v1/jobs)
 	ListJobs(ctx context.Context, request ListJobsRequestObject) (ListJobsResponseObject, error)
@@ -9509,6 +10623,15 @@ type StrictServerInterface interface {
 	// PurgeSiteCache Purge a site's caches
 	// (POST /api/v1/sites/{site_id}/cache/purge)
 	PurgeSiteCache(ctx context.Context, request PurgeSiteCacheRequestObject) (PurgeSiteCacheResponseObject, error)
+	// GetSiteCore Get a site's WordPress core updates
+	// (GET /api/v1/sites/{site_id}/core)
+	GetSiteCore(ctx context.Context, request GetSiteCoreRequestObject) (GetSiteCoreResponseObject, error)
+	// SetSiteCorePolicy Hold a site's core, or approve a major release
+	// (PUT /api/v1/sites/{site_id}/core/policy)
+	SetSiteCorePolicy(ctx context.Context, request SetSiteCorePolicyRequestObject) (SetSiteCorePolicyResponseObject, error)
+	// UpdateSiteCore Update a site's WordPress core now
+	// (POST /api/v1/sites/{site_id}/core/update)
+	UpdateSiteCore(ctx context.Context, request UpdateSiteCoreRequestObject) (UpdateSiteCoreResponseObject, error)
 	// ExportSiteDatabase Export a site's database
 	// (POST /api/v1/sites/{site_id}/database/export)
 	ExportSiteDatabase(ctx context.Context, request ExportSiteDatabaseRequestObject) (ExportSiteDatabaseResponseObject, error)
@@ -9989,6 +11112,113 @@ func (sh *strictHandler) UpdateClientGroup(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// GetClientGroupCorePolicy operation middleware
+func (sh *strictHandler) GetClientGroupCorePolicy(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID) {
+	var request GetClientGroupCorePolicyRequestObject
+
+	request.ClientGroupID = clientGroupID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetClientGroupCorePolicy(ctx, request.(GetClientGroupCorePolicyRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetClientGroupCorePolicy")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetClientGroupCorePolicyResponseObject); ok {
+		if err := validResponse.VisitGetClientGroupCorePolicyResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetClientGroupCorePolicy operation middleware
+func (sh *strictHandler) SetClientGroupCorePolicy(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID) {
+	var request SetClientGroupCorePolicyRequestObject
+
+	request.ClientGroupID = clientGroupID
+
+	var body SetClientGroupCorePolicyJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetClientGroupCorePolicy(ctx, request.(SetClientGroupCorePolicyRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetClientGroupCorePolicy")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetClientGroupCorePolicyResponseObject); ok {
+		if err := validResponse.VisitSetClientGroupCorePolicyResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetCoreRollout operation middleware
+func (sh *strictHandler) GetCoreRollout(w http.ResponseWriter, r *http.Request) {
+	var request GetCoreRolloutRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetCoreRollout(ctx, request.(GetCoreRolloutRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetCoreRollout")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetCoreRolloutResponseObject); ok {
+		if err := validResponse.VisitGetCoreRolloutResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ResumeCoreRollout operation middleware
+func (sh *strictHandler) ResumeCoreRollout(w http.ResponseWriter, r *http.Request) {
+	var request ResumeCoreRolloutRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ResumeCoreRollout(ctx, request.(ResumeCoreRolloutRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ResumeCoreRollout")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ResumeCoreRolloutResponseObject); ok {
+		if err := validResponse.VisitResumeCoreRolloutResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListJobs operation middleware
 func (sh *strictHandler) ListJobs(w http.ResponseWriter, r *http.Request, params ListJobsParams) {
 	var request ListJobsRequestObject
@@ -10373,6 +11603,91 @@ func (sh *strictHandler) PurgeSiteCache(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PurgeSiteCacheResponseObject); ok {
 		if err := validResponse.VisitPurgeSiteCacheResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetSiteCore operation middleware
+func (sh *strictHandler) GetSiteCore(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request GetSiteCoreRequestObject
+
+	request.SiteID = siteID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSiteCore(ctx, request.(GetSiteCoreRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSiteCore")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetSiteCoreResponseObject); ok {
+		if err := validResponse.VisitGetSiteCoreResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetSiteCorePolicy operation middleware
+func (sh *strictHandler) SetSiteCorePolicy(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request SetSiteCorePolicyRequestObject
+
+	request.SiteID = siteID
+
+	var body SetSiteCorePolicyJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetSiteCorePolicy(ctx, request.(SetSiteCorePolicyRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetSiteCorePolicy")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetSiteCorePolicyResponseObject); ok {
+		if err := validResponse.VisitSetSiteCorePolicyResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateSiteCore operation middleware
+func (sh *strictHandler) UpdateSiteCore(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request UpdateSiteCoreRequestObject
+
+	request.SiteID = siteID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateSiteCore(ctx, request.(UpdateSiteCoreRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateSiteCore")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateSiteCoreResponseObject); ok {
+		if err := validResponse.VisitUpdateSiteCoreResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

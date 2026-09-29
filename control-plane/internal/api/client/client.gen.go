@@ -43,6 +43,7 @@ func (e AuditResult) Valid() bool {
 const (
 	Manual     BackupKind = "manual"
 	PreRestore BackupKind = "pre_restore"
+	PreUpdate  BackupKind = "pre_update"
 	Scheduled  BackupKind = "scheduled"
 )
 
@@ -52,6 +53,8 @@ func (e BackupKind) Valid() bool {
 	case Manual:
 		return true
 	case PreRestore:
+		return true
+	case PreUpdate:
 		return true
 	case Scheduled:
 		return true
@@ -75,6 +78,63 @@ func (e BackupStatus) Valid() bool {
 	case BackupStatusRunning:
 		return true
 	case BackupStatusSucceeded:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CorePendingReason.
+const (
+	AwaitingApproval CorePendingReason = "awaiting_approval"
+	Held             CorePendingReason = "held"
+)
+
+// Valid indicates whether the value is a known member of the CorePendingReason enum.
+func (e CorePendingReason) Valid() bool {
+	switch e {
+	case AwaitingApproval:
+		return true
+	case Held:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CoreTargetKind.
+const (
+	Major CoreTargetKind = "major"
+	Minor CoreTargetKind = "minor"
+)
+
+// Valid indicates whether the value is a known member of the CoreTargetKind enum.
+func (e CoreTargetKind) Valid() bool {
+	switch e {
+	case Major:
+		return true
+	case Minor:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CoreWarningCode.
+const (
+	BranchInsecure CoreWarningCode = "branch_insecure"
+	BranchNotBuilt CoreWarningCode = "branch_not_built"
+	HeldLong       CoreWarningCode = "held_long"
+)
+
+// Valid indicates whether the value is a known member of the CoreWarningCode enum.
+func (e CoreWarningCode) Valid() bool {
+	switch e {
+	case BranchInsecure:
+		return true
+	case BranchNotBuilt:
+		return true
+	case HeldLong:
 		return true
 	default:
 		return false
@@ -267,6 +327,30 @@ func (e Role) Valid() bool {
 	case Operator:
 		return true
 	case Viewer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SiteCoreDecidedBy.
+const (
+	SiteCoreDecidedByAuto        SiteCoreDecidedBy = "auto"
+	SiteCoreDecidedByClientGroup SiteCoreDecidedBy = "client_group"
+	SiteCoreDecidedByDefault     SiteCoreDecidedBy = "default"
+	SiteCoreDecidedBySite        SiteCoreDecidedBy = "site"
+)
+
+// Valid indicates whether the value is a known member of the SiteCoreDecidedBy enum.
+func (e SiteCoreDecidedBy) Valid() bool {
+	switch e {
+	case SiteCoreDecidedByAuto:
+		return true
+	case SiteCoreDecidedByClientGroup:
+		return true
+	case SiteCoreDecidedByDefault:
+		return true
+	case SiteCoreDecidedBySite:
 		return true
 	default:
 		return false
@@ -571,7 +655,9 @@ type Backup struct {
 
 	// Kind What asked for the backup: a user (`manual`), the site's backup
 	// schedule (`scheduled`), or a restore, which backs up its target site
-	// first so the restore can be undone (`pre_restore`).
+	// first so the restore can be undone (`pre_restore`), or a WordPress
+	// core update, which backs up its site first so a failed update can
+	// be reverted (`pre_update`).
 	Kind BackupKind `json:"kind"`
 
 	// Message Why the backup failed, or a warning about a backup that succeeded
@@ -614,7 +700,9 @@ type BackupIntervalHours = int
 
 // BackupKind What asked for the backup: a user (`manual`), the site's backup
 // schedule (`scheduled`), or a restore, which backs up its target site
-// first so the restore can be undone (`pre_restore`).
+// first so the restore can be undone (`pre_restore`), or a WordPress
+// core update, which backs up its site first so a failed update can
+// be reverted (`pre_update`).
 type BackupKind string
 
 // BackupList defines model for BackupList.
@@ -729,6 +817,114 @@ type ClientGroupUpdate struct {
 	Name  *string `json:"name,omitempty"`
 	Notes *string `json:"notes,omitempty"`
 }
+
+// CorePending The newest major release the site may not move to yet.
+type CorePending struct {
+	// AutoApproveAt Examples: 2026-09-26T17:25:00Z
+	AutoApproveAt *Timestamp `json:"auto_approve_at,omitempty"`
+
+	// Branch A WordPress major branch (x.y).
+	//
+	// Examples: 7.2
+	Branch  WordPressBranch   `json:"branch"`
+	Reason  CorePendingReason `json:"reason"`
+	Version string            `json:"version"`
+}
+
+// CorePendingReason defines model for CorePending.Reason.
+type CorePendingReason string
+
+// CorePolicy defines model for CorePolicy.
+type CorePolicy struct {
+	// ApprovedBranch A WordPress major branch (x.y).
+	//
+	// Examples: 7.2
+	ApprovedBranch *WordPressBranch `json:"approved_branch,omitempty"`
+
+	// Hold Keeps the site on its current major branch, which still gets its minor and security releases.
+	Hold bool `json:"hold"`
+
+	// HoldSince Examples: 2026-09-26T17:25:00Z
+	HoldSince *Timestamp `json:"hold_since,omitempty"`
+}
+
+// CorePolicyUpdate At most one of `hold` and `approved_branch`; neither clears the policy.
+type CorePolicyUpdate struct {
+	// ApprovedBranch A WordPress major branch (x.y).
+	//
+	// Examples: 7.2
+	ApprovedBranch *WordPressBranch `json:"approved_branch,omitempty"`
+	Hold           *bool            `json:"hold,omitempty"`
+}
+
+// CoreRelease defines model for CoreRelease.
+type CoreRelease struct {
+	// Branch A WordPress major branch (x.y).
+	//
+	// Examples: 7.2
+	Branch    WordPressBranch     `json:"branch"`
+	Insecure  bool                `json:"insecure"`
+	Published *openapi_types.Date `json:"published,omitempty"`
+	Version   string              `json:"version"`
+}
+
+// CoreRollout defines model for CoreRollout.
+type CoreRollout struct {
+	ConsecutiveFailures int                 `json:"consecutive_failures"`
+	Failures            []CoreUpdateFailure `json:"failures"`
+	HaltReason          *string             `json:"halt_reason,omitempty"`
+	Halted              bool                `json:"halted"`
+
+	// HaltedAt Examples: 2026-09-26T17:25:00Z
+	HaltedAt    *Timestamp `json:"halted_at,omitempty"`
+	MaxFailures int        `json:"max_failures"`
+
+	// Releases The WordPress releases with site images, newest first; one per branch.
+	Releases []CoreRelease `json:"releases"`
+
+	// Window The daily maintenance window, in UTC; absent if there is none.
+	Window *UpdateWindow `json:"window,omitempty"`
+}
+
+// CoreTarget The release the site moves to at the rollout's next chance; absent if it is up to date as far as its policy allows.
+type CoreTarget struct {
+	Kind    CoreTargetKind `json:"kind"`
+	Version string         `json:"version"`
+}
+
+// CoreTargetKind defines model for CoreTarget.Kind.
+type CoreTargetKind string
+
+// CoreUpdateFailure A site's failed update to `version`, which the rollout doesn't retry.
+type CoreUpdateFailure struct {
+	// FailedAt Examples: 2026-09-26T17:25:00Z
+	FailedAt Timestamp `json:"failed_at"`
+	Message  string    `json:"message"`
+
+	// SiteID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	SiteID  ID     `json:"site_id"`
+	Version string `json:"version"`
+}
+
+// CoreWarning defines model for CoreWarning.
+type CoreWarning struct {
+	// Code `held_long`: held on an older branch for longer than
+	// `updates.core.hold_warning_days`. `branch_not_built`: the
+	// site's branch has no site images any more, so it gets no core
+	// updates. `branch_insecure`: wordpress.org reports the branch's
+	// newest release as insecure; it no longer gets security fixes.
+	Code    CoreWarningCode `json:"code"`
+	Message string          `json:"message"`
+}
+
+// CoreWarningCode `held_long`: held on an older branch for longer than
+// `updates.core.hold_warning_days`. `branch_not_built`: the
+// site's branch has no site images any more, so it gets no core
+// updates. `branch_insecure`: wordpress.org reports the branch's
+// newest release as insecure; it no longer gets security fixes.
+type CoreWarningCode string
 
 // CurrentUser The authenticated user, and how they authenticated.
 type CurrentUser struct {
@@ -1129,10 +1325,7 @@ type Site struct {
 	// Examples: https://acme-marketing.preview.agency.example
 	URL *string `json:"url,omitempty"`
 
-	// WpCorePinned Whether the site is pinned to its current core version and skipped by core rollouts.
-	WpCorePinned bool `json:"wp_core_pinned"`
-
-	// WpCoreVersion WordPress core version of the site's images. Managed by the platform.
+	// WpCoreVersion WordPress core version of the site's images. Managed by the platform; `GET /api/v1/sites/{site_id}/core` shows its updates.
 	//
 	// Examples: 6.9.1
 	WpCoreVersion string `json:"wp_core_version"`
@@ -1169,6 +1362,43 @@ type SiteAliases struct {
 	// SkipDNSCheck Skip the DNS check of new aliases, for hosts behind a CDN or load balancer.
 	SkipDNSCheck *bool `json:"skip_dns_check,omitempty"`
 }
+
+// SiteCore defines model for SiteCore.
+type SiteCore struct {
+	// ApprovedBranch A WordPress major branch (x.y).
+	//
+	// Examples: 7.2
+	ApprovedBranch *WordPressBranch `json:"approved_branch,omitempty"`
+
+	// Branch A WordPress major branch (x.y).
+	//
+	// Examples: 7.2
+	Branch            WordPressBranch `json:"branch"`
+	ClientGroupPolicy CorePolicy      `json:"client_group_policy"`
+
+	// DecidedBy Whose hold or approval applies; `auto` is `updates.core.major_auto_approve_days`.
+	DecidedBy SiteCoreDecidedBy `json:"decided_by"`
+
+	// Held Whether a hold, the site's or its group's, keeps the site on its branch.
+	Held bool `json:"held"`
+
+	// LastFailure A site's failed update to `version`, which the rollout doesn't retry.
+	LastFailure *CoreUpdateFailure `json:"last_failure,omitempty"`
+
+	// Pending The newest major release the site may not move to yet.
+	Pending *CorePending `json:"pending,omitempty"`
+	Policy  CorePolicy   `json:"policy"`
+
+	// Target The release the site moves to at the rollout's next chance; absent if it is up to date as far as its policy allows.
+	Target *CoreTarget `json:"target,omitempty"`
+
+	// Version Examples: 7.1.2
+	Version  string        `json:"version"`
+	Warnings []CoreWarning `json:"warnings"`
+}
+
+// SiteCoreDecidedBy Whose hold or approval applies; `auto` is `updates.core.major_auto_approve_days`.
+type SiteCoreDecidedBy string
 
 // SiteCreate defines model for SiteCreate.
 type SiteCreate struct {
@@ -1360,6 +1590,14 @@ type Timestamp = time.Time
 // `read-only` allows only read actions.
 type TokenScope string
 
+// UpdateWindow The daily maintenance window, in UTC; absent if there is none.
+type UpdateWindow struct {
+	Hours int `json:"hours"`
+
+	// Start Examples: 02:00
+	Start string `json:"start"`
+}
+
 // Upload defines model for Upload.
 type Upload struct {
 	// ClientGroupID The client group of the import or deployment.
@@ -1507,6 +1745,11 @@ type UserUpdate struct {
 	// Role Platform-wide role (design doc §4.6).
 	Role *Role `json:"role,omitempty"`
 }
+
+// WordPressBranch A WordPress major branch (x.y).
+//
+// Examples: 7.2
+type WordPressBranch = string
 
 // ClientGroupID Opaque, server-assigned identifier.
 //
@@ -1726,6 +1969,9 @@ type CreateClientGroupJSONRequestBody = ClientGroupCreate
 // UpdateClientGroupJSONRequestBody defines body for UpdateClientGroup for application/json ContentType.
 type UpdateClientGroupJSONRequestBody = ClientGroupUpdate
 
+// SetClientGroupCorePolicyJSONRequestBody defines body for SetClientGroupCorePolicy for application/json ContentType.
+type SetClientGroupCorePolicyJSONRequestBody = CorePolicyUpdate
+
 // CreateSiteJSONRequestBody defines body for CreateSite for application/json ContentType.
 type CreateSiteJSONRequestBody = SiteCreate
 
@@ -1737,6 +1983,9 @@ type SetSiteAliasesJSONRequestBody = SiteAliases
 
 // SetSiteBackupScheduleJSONRequestBody defines body for SetSiteBackupSchedule for application/json ContentType.
 type SetSiteBackupScheduleJSONRequestBody = BackupScheduleUpdate
+
+// SetSiteCorePolicyJSONRequestBody defines body for SetSiteCorePolicy for application/json ContentType.
+type SetSiteCorePolicyJSONRequestBody = CorePolicyUpdate
 
 // GoLiveSiteJSONRequestBody defines body for GoLiveSite for application/json ContentType.
 type GoLiveSiteJSONRequestBody = SiteGoLive
@@ -1998,6 +2247,52 @@ type ClientInterface interface {
 	//
 	// Corresponds with PATCH /api/v1/client-groups/{client_group_id} (the `UpdateClientGroup` operationId).
 	UpdateClientGroup(ctx context.Context, clientGroupID ClientGroupID, body UpdateClientGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetClientGroupCorePolicy Get a client group's core update policy
+	//
+	// The policy the group's sites follow unless they have one of their own.
+	//
+	// Corresponds with GET /api/v1/client-groups/{client_group_id}/core-policy (the `GetClientGroupCorePolicy` operationId).
+	GetClientGroupCorePolicy(ctx context.Context, clientGroupID ClientGroupID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetClientGroupCorePolicyWithBody Hold a client group's cores, or approve a major release
+	//
+	// Like `PUT /api/v1/sites/{site_id}/core/policy`, for every site of
+	// the group that has no policy of its own.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /api/v1/client-groups/{client_group_id}/core-policy (the `SetClientGroupCorePolicy` operationId).
+	SetClientGroupCorePolicyWithBody(ctx context.Context, clientGroupID ClientGroupID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetClientGroupCorePolicy Hold a client group's cores, or approve a major release
+	//
+	// Like `PUT /api/v1/sites/{site_id}/core/policy`, for every site of
+	// the group that has no policy of its own.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /api/v1/client-groups/{client_group_id}/core-policy (the `SetClientGroupCorePolicy` operationId).
+	SetClientGroupCorePolicy(ctx context.Context, clientGroupID ClientGroupID, body SetClientGroupCorePolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCoreRollout Get the WordPress core rollout
+	//
+	// The releases the platform has site images for, the maintenance
+	// window, and whether the rollout is halted. The rollout updates one
+	// site at a time and halts after `max_failures` failed site updates
+	// in a row (`updates.max_failures`), until it is resumed or new
+	// releases arrive. Sites whose update failed aren't tried again with
+	// the same release.
+	//
+	// Corresponds with GET /api/v1/core-rollout (the `GetCoreRollout` operationId).
+	GetCoreRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeCoreRollout Resume a halted core rollout
+	//
+	// Lifts a halt, resets the failure count, and queues a rollout pass.
+	//
+	// Corresponds with POST /api/v1/core-rollout/resume (the `ResumeCoreRollout` operationId).
+	ResumeCoreRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListJobs List jobs
 	//
@@ -2286,6 +2581,72 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/cache/purge (the `PurgeSiteCache` operationId).
 	PurgeSiteCache(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSiteCore Get a site's WordPress core updates
+	//
+	// The site's WordPress core version and what the core rollout will do
+	// with it (design doc §5.5): the release it moves to next (`target`),
+	// the newest major release it may not move to yet (`pending`), its
+	// own and its client group's policy, and warnings about its branch.
+	// Minor and security releases (x.y.Z) roll out automatically, one
+	// site at a time and within the maintenance window if one is set
+	// (`updates` in the config file). Major releases (x.Y) wait for
+	// approval of the site or its client group, or for
+	// `updates.core.major_auto_approve_days`. A held site stays on its
+	// major branch and keeps getting the branch's minor and security
+	// releases.
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/core (the `GetSiteCore` operationId).
+	GetSiteCore(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetSiteCorePolicyWithBody Hold a site's core, or approve a major release
+	//
+	// Replaces the site's own core update policy. `{"hold": true}` keeps
+	// the site on its current major branch, which still gets its minor
+	// and security releases. `{"approved_branch": "7.2"}` lets it move
+	// to the newest release of any branch up to 7.2; the branch must
+	// have site images. `{}` makes the site follow its client group
+	// again. A site's own policy wins over its group's. The change takes
+	// effect at the core rollout's next pass, which is queued at once.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /api/v1/sites/{site_id}/core/policy (the `SetSiteCorePolicy` operationId).
+	SetSiteCorePolicyWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetSiteCorePolicy Hold a site's core, or approve a major release
+	//
+	// Replaces the site's own core update policy. `{"hold": true}` keeps
+	// the site on its current major branch, which still gets its minor
+	// and security releases. `{"approved_branch": "7.2"}` lets it move
+	// to the newest release of any branch up to 7.2; the branch must
+	// have site images. `{}` makes the site follow its client group
+	// again. A site's own policy wins over its group's. The change takes
+	// effect at the core rollout's next pass, which is queued at once.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /api/v1/sites/{site_id}/core/policy (the `SetSiteCorePolicy` operationId).
+	SetSiteCorePolicy(ctx context.Context, siteID SiteID, body SetSiteCorePolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateSiteCore Update a site's WordPress core now
+	//
+	// Queues the update to the site's `target` release (`GET
+	// /api/v1/sites/{site_id}/core`) now, outside the maintenance window
+	// and even if the rollout's update to it failed before. The job takes
+	// a pre-update backup (kind `pre_update`), recreates the site's
+	// `php` and `nginx` containers on the new release's images (both
+	// always carry the same WordPress core), runs `wp core update-db`,
+	// and checks the site's health (an HTTP request to the site and
+	// WP-CLI loading WordPress on the new core). If anything fails, it
+	// restores the pre-update backup if the database schema changed, and
+	// moves the site back to its previous images; `status_message` says
+	// what happened. A site without a `target` returns `409`, as does a
+	// site that isn't `running`, is `provisioning`, `updating`, or
+	// `deleting`, or whose provisioning failed.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/core/update (the `UpdateSiteCore` operationId).
+	UpdateSiteCore(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExportSiteDatabase Export a site's database
 	//
@@ -3218,6 +3579,102 @@ func (c *Client) UpdateClientGroup(ctx context.Context, clientGroupID ClientGrou
 	return c.Client.Do(req)
 }
 
+// GetClientGroupCorePolicy Get a client group's core update policy
+//
+// The policy the group's sites follow unless they have one of their own.
+//
+// Corresponds with GET /api/v1/client-groups/{client_group_id}/core-policy (the `GetClientGroupCorePolicy` operationId).
+func (c *Client) GetClientGroupCorePolicy(ctx context.Context, clientGroupID ClientGroupID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetClientGroupCorePolicyRequest(c.Server, clientGroupID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetClientGroupCorePolicyWithBody Hold a client group's cores, or approve a major release
+//
+// Like `PUT /api/v1/sites/{site_id}/core/policy`, for every site of
+// the group that has no policy of its own.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /api/v1/client-groups/{client_group_id}/core-policy (the `SetClientGroupCorePolicy` operationId).
+func (c *Client) SetClientGroupCorePolicyWithBody(ctx context.Context, clientGroupID ClientGroupID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetClientGroupCorePolicyRequestWithBody(c.Server, clientGroupID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetClientGroupCorePolicy Hold a client group's cores, or approve a major release
+//
+// Like `PUT /api/v1/sites/{site_id}/core/policy`, for every site of
+// the group that has no policy of its own.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /api/v1/client-groups/{client_group_id}/core-policy (the `SetClientGroupCorePolicy` operationId).
+func (c *Client) SetClientGroupCorePolicy(ctx context.Context, clientGroupID ClientGroupID, body SetClientGroupCorePolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetClientGroupCorePolicyRequest(c.Server, clientGroupID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCoreRollout Get the WordPress core rollout
+//
+// The releases the platform has site images for, the maintenance
+// window, and whether the rollout is halted. The rollout updates one
+// site at a time and halts after `max_failures` failed site updates
+// in a row (`updates.max_failures`), until it is resumed or new
+// releases arrive. Sites whose update failed aren't tried again with
+// the same release.
+//
+// Corresponds with GET /api/v1/core-rollout (the `GetCoreRollout` operationId).
+func (c *Client) GetCoreRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCoreRolloutRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResumeCoreRollout Resume a halted core rollout
+//
+// Lifts a halt, resets the failure count, and queues a rollout pass.
+//
+// Corresponds with POST /api/v1/core-rollout/resume (the `ResumeCoreRollout` operationId).
+func (c *Client) ResumeCoreRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeCoreRolloutRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListJobs List jobs
 //
 // Newest first.
@@ -3676,6 +4133,112 @@ func (c *Client) CreateSiteBackup(ctx context.Context, siteID SiteID, reqEditors
 // Corresponds with POST /api/v1/sites/{site_id}/cache/purge (the `PurgeSiteCache` operationId).
 func (c *Client) PurgeSiteCache(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPurgeSiteCacheRequest(c.Server, siteID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetSiteCore Get a site's WordPress core updates
+//
+// The site's WordPress core version and what the core rollout will do
+// with it (design doc §5.5): the release it moves to next (`target`),
+// the newest major release it may not move to yet (`pending`), its
+// own and its client group's policy, and warnings about its branch.
+// Minor and security releases (x.y.Z) roll out automatically, one
+// site at a time and within the maintenance window if one is set
+// (`updates` in the config file). Major releases (x.Y) wait for
+// approval of the site or its client group, or for
+// `updates.core.major_auto_approve_days`. A held site stays on its
+// major branch and keeps getting the branch's minor and security
+// releases.
+//
+// Corresponds with GET /api/v1/sites/{site_id}/core (the `GetSiteCore` operationId).
+func (c *Client) GetSiteCore(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSiteCoreRequest(c.Server, siteID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetSiteCorePolicyWithBody Hold a site's core, or approve a major release
+//
+// Replaces the site's own core update policy. `{"hold": true}` keeps
+// the site on its current major branch, which still gets its minor
+// and security releases. `{"approved_branch": "7.2"}` lets it move
+// to the newest release of any branch up to 7.2; the branch must
+// have site images. `{}` makes the site follow its client group
+// again. A site's own policy wins over its group's. The change takes
+// effect at the core rollout's next pass, which is queued at once.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /api/v1/sites/{site_id}/core/policy (the `SetSiteCorePolicy` operationId).
+func (c *Client) SetSiteCorePolicyWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSiteCorePolicyRequestWithBody(c.Server, siteID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SetSiteCorePolicy Hold a site's core, or approve a major release
+//
+// Replaces the site's own core update policy. `{"hold": true}` keeps
+// the site on its current major branch, which still gets its minor
+// and security releases. `{"approved_branch": "7.2"}` lets it move
+// to the newest release of any branch up to 7.2; the branch must
+// have site images. `{}` makes the site follow its client group
+// again. A site's own policy wins over its group's. The change takes
+// effect at the core rollout's next pass, which is queued at once.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /api/v1/sites/{site_id}/core/policy (the `SetSiteCorePolicy` operationId).
+func (c *Client) SetSiteCorePolicy(ctx context.Context, siteID SiteID, body SetSiteCorePolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetSiteCorePolicyRequest(c.Server, siteID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateSiteCore Update a site's WordPress core now
+//
+// Queues the update to the site's `target` release (`GET
+// /api/v1/sites/{site_id}/core`) now, outside the maintenance window
+// and even if the rollout's update to it failed before. The job takes
+// a pre-update backup (kind `pre_update`), recreates the site's
+// `php` and `nginx` containers on the new release's images (both
+// always carry the same WordPress core), runs `wp core update-db`,
+// and checks the site's health (an HTTP request to the site and
+// WP-CLI loading WordPress on the new core). If anything fails, it
+// restores the pre-update backup if the database schema changed, and
+// moves the site back to its previous images; `status_message` says
+// what happened. A site without a `target` returns `409`, as does a
+// site that isn't `running`, is `provisioning`, `updating`, or
+// `deleting`, or whose provisioning failed.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/core/update (the `UpdateSiteCore` operationId).
+func (c *Client) UpdateSiteCore(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateSiteCoreRequest(c.Server, siteID)
 	if err != nil {
 		return nil, err
 	}
@@ -5259,6 +5822,141 @@ func NewUpdateClientGroupRequestWithBody(server string, clientGroupID ClientGrou
 	return req, nil
 }
 
+// NewGetClientGroupCorePolicyRequest constructs an http.Request for the GetClientGroupCorePolicy method
+func NewGetClientGroupCorePolicyRequest(server string, clientGroupID ClientGroupID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "client_group_id", clientGroupID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/client-groups/%s/core-policy", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSetClientGroupCorePolicyRequest calls the generic SetClientGroupCorePolicy builder with application/json body
+func NewSetClientGroupCorePolicyRequest(server string, clientGroupID ClientGroupID, body SetClientGroupCorePolicyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetClientGroupCorePolicyRequestWithBody(server, clientGroupID, "application/json", bodyReader)
+}
+
+// NewSetClientGroupCorePolicyRequestWithBody constructs an http.Request for the SetClientGroupCorePolicy method, with any body, and a specified content type
+func NewSetClientGroupCorePolicyRequestWithBody(server string, clientGroupID ClientGroupID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "client_group_id", clientGroupID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/client-groups/%s/core-policy", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetCoreRolloutRequest constructs an http.Request for the GetCoreRollout method
+func NewGetCoreRolloutRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/core-rollout")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewResumeCoreRolloutRequest constructs an http.Request for the ResumeCoreRollout method
+func NewResumeCoreRolloutRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/core-rollout/resume")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListJobsRequest constructs an http.Request for the ListJobs method
 func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, error) {
 	var err error
@@ -5938,6 +6636,121 @@ func NewPurgeSiteCacheRequest(server string, siteID SiteID) (*http.Request, erro
 	}
 
 	operationPath := fmt.Sprintf("/api/v1/sites/%s/cache/purge", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetSiteCoreRequest constructs an http.Request for the GetSiteCore method
+func NewGetSiteCoreRequest(server string, siteID SiteID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/core", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSetSiteCorePolicyRequest calls the generic SetSiteCorePolicy builder with application/json body
+func NewSetSiteCorePolicyRequest(server string, siteID SiteID, body SetSiteCorePolicyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetSiteCorePolicyRequestWithBody(server, siteID, "application/json", bodyReader)
+}
+
+// NewSetSiteCorePolicyRequestWithBody constructs an http.Request for the SetSiteCorePolicy method, with any body, and a specified content type
+func NewSetSiteCorePolicyRequestWithBody(server string, siteID SiteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/core/policy", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewUpdateSiteCoreRequest constructs an http.Request for the UpdateSiteCore method
+func NewUpdateSiteCoreRequest(server string, siteID SiteID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/core/update", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -7295,6 +8108,58 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /api/v1/client-groups/{client_group_id} (the `UpdateClientGroup` operationId).
 	UpdateClientGroupWithResponse(ctx context.Context, clientGroupID ClientGroupID, body UpdateClientGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateClientGroupResponse, error)
 
+	// GetClientGroupCorePolicyWithResponse Get a client group's core update policy
+	//
+	// The policy the group's sites follow unless they have one of their own.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/client-groups/{client_group_id}/core-policy (the `GetClientGroupCorePolicy` operationId).
+	GetClientGroupCorePolicyWithResponse(ctx context.Context, clientGroupID ClientGroupID, reqEditors ...RequestEditorFn) (*GetClientGroupCorePolicyResponse, error)
+
+	// SetClientGroupCorePolicyWithBodyWithResponse Hold a client group's cores, or approve a major release
+	//
+	// Like `PUT /api/v1/sites/{site_id}/core/policy`, for every site of
+	// the group that has no policy of its own.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v1/client-groups/{client_group_id}/core-policy (the `SetClientGroupCorePolicy` operationId).
+	SetClientGroupCorePolicyWithBodyWithResponse(ctx context.Context, clientGroupID ClientGroupID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetClientGroupCorePolicyResponse, error)
+
+	// SetClientGroupCorePolicyWithResponse Hold a client group's cores, or approve a major release
+	//
+	// Like `PUT /api/v1/sites/{site_id}/core/policy`, for every site of
+	// the group that has no policy of its own.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v1/client-groups/{client_group_id}/core-policy (the `SetClientGroupCorePolicy` operationId).
+	SetClientGroupCorePolicyWithResponse(ctx context.Context, clientGroupID ClientGroupID, body SetClientGroupCorePolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*SetClientGroupCorePolicyResponse, error)
+
+	// GetCoreRolloutWithResponse Get the WordPress core rollout
+	//
+	// The releases the platform has site images for, the maintenance
+	// window, and whether the rollout is halted. The rollout updates one
+	// site at a time and halts after `max_failures` failed site updates
+	// in a row (`updates.max_failures`), until it is resumed or new
+	// releases arrive. Sites whose update failed aren't tried again with
+	// the same release.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/core-rollout (the `GetCoreRollout` operationId).
+	GetCoreRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCoreRolloutResponse, error)
+
+	// ResumeCoreRolloutWithResponse Resume a halted core rollout
+	//
+	// Lifts a halt, resets the failure count, and queues a rollout pass.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/core-rollout/resume (the `ResumeCoreRollout` operationId).
+	ResumeCoreRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ResumeCoreRolloutResponse, error)
+
 	// ListJobsWithResponse List jobs
 	//
 	// Newest first.
@@ -7602,6 +8467,76 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/cache/purge (the `PurgeSiteCache` operationId).
 	PurgeSiteCacheWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*PurgeSiteCacheResponse, error)
+
+	// GetSiteCoreWithResponse Get a site's WordPress core updates
+	//
+	// The site's WordPress core version and what the core rollout will do
+	// with it (design doc §5.5): the release it moves to next (`target`),
+	// the newest major release it may not move to yet (`pending`), its
+	// own and its client group's policy, and warnings about its branch.
+	// Minor and security releases (x.y.Z) roll out automatically, one
+	// site at a time and within the maintenance window if one is set
+	// (`updates` in the config file). Major releases (x.Y) wait for
+	// approval of the site or its client group, or for
+	// `updates.core.major_auto_approve_days`. A held site stays on its
+	// major branch and keeps getting the branch's minor and security
+	// releases.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/core (the `GetSiteCore` operationId).
+	GetSiteCoreWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*GetSiteCoreResponse, error)
+
+	// SetSiteCorePolicyWithBodyWithResponse Hold a site's core, or approve a major release
+	//
+	// Replaces the site's own core update policy. `{"hold": true}` keeps
+	// the site on its current major branch, which still gets its minor
+	// and security releases. `{"approved_branch": "7.2"}` lets it move
+	// to the newest release of any branch up to 7.2; the branch must
+	// have site images. `{}` makes the site follow its client group
+	// again. A site's own policy wins over its group's. The change takes
+	// effect at the core rollout's next pass, which is queued at once.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v1/sites/{site_id}/core/policy (the `SetSiteCorePolicy` operationId).
+	SetSiteCorePolicyWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSiteCorePolicyResponse, error)
+
+	// SetSiteCorePolicyWithResponse Hold a site's core, or approve a major release
+	//
+	// Replaces the site's own core update policy. `{"hold": true}` keeps
+	// the site on its current major branch, which still gets its minor
+	// and security releases. `{"approved_branch": "7.2"}` lets it move
+	// to the newest release of any branch up to 7.2; the branch must
+	// have site images. `{}` makes the site follow its client group
+	// again. A site's own policy wins over its group's. The change takes
+	// effect at the core rollout's next pass, which is queued at once.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v1/sites/{site_id}/core/policy (the `SetSiteCorePolicy` operationId).
+	SetSiteCorePolicyWithResponse(ctx context.Context, siteID SiteID, body SetSiteCorePolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSiteCorePolicyResponse, error)
+
+	// UpdateSiteCoreWithResponse Update a site's WordPress core now
+	//
+	// Queues the update to the site's `target` release (`GET
+	// /api/v1/sites/{site_id}/core`) now, outside the maintenance window
+	// and even if the rollout's update to it failed before. The job takes
+	// a pre-update backup (kind `pre_update`), recreates the site's
+	// `php` and `nginx` containers on the new release's images (both
+	// always carry the same WordPress core), runs `wp core update-db`,
+	// and checks the site's health (an HTTP request to the site and
+	// WP-CLI loading WordPress on the new core). If anything fails, it
+	// restores the pre-update backup if the database schema changed, and
+	// moves the site back to its previous images; `status_message` says
+	// what happened. A site without a `target` returns `409`, as does a
+	// site that isn't `running`, is `provisioning`, `updating`, or
+	// `deleting`, or whose provisioning failed.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/core/update (the `UpdateSiteCore` operationId).
+	UpdateSiteCoreWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*UpdateSiteCoreResponse, error)
 
 	// ExportSiteDatabaseWithResponse Export a site's database
 	//
@@ -9200,6 +10135,282 @@ func (r UpdateClientGroupResponse) ContentType() string {
 	return ""
 }
 
+type GetClientGroupCorePolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CorePolicy
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetClientGroupCorePolicyResponse) GetJSON200() *CorePolicy {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetClientGroupCorePolicyResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetClientGroupCorePolicyResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetClientGroupCorePolicyResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetClientGroupCorePolicyResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetClientGroupCorePolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetClientGroupCorePolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetClientGroupCorePolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetClientGroupCorePolicyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetClientGroupCorePolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CorePolicy
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetClientGroupCorePolicyResponse) GetJSON200() *CorePolicy {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r SetClientGroupCorePolicyResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r SetClientGroupCorePolicyResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r SetClientGroupCorePolicyResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r SetClientGroupCorePolicyResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r SetClientGroupCorePolicyResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SetClientGroupCorePolicyResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SetClientGroupCorePolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetClientGroupCorePolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetClientGroupCorePolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetClientGroupCorePolicyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetCoreRolloutResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CoreRollout
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCoreRolloutResponse) GetJSON200() *CoreRollout {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetCoreRolloutResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetCoreRolloutResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetCoreRolloutResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCoreRolloutResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCoreRolloutResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCoreRolloutResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCoreRolloutResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ResumeCoreRolloutResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CoreRollout
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ResumeCoreRolloutResponse) GetJSON200() *CoreRollout {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ResumeCoreRolloutResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ResumeCoreRolloutResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ResumeCoreRolloutResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ResumeCoreRolloutResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResumeCoreRolloutResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResumeCoreRolloutResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResumeCoreRolloutResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListJobsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -10321,6 +11532,241 @@ func (r PurgeSiteCacheResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r PurgeSiteCacheResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetSiteCoreResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SiteCore
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetSiteCoreResponse) GetJSON200() *SiteCore {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetSiteCoreResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetSiteCoreResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetSiteCoreResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetSiteCoreResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetSiteCoreResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetSiteCoreResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetSiteCoreResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetSiteCoreResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetSiteCorePolicyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SiteCore
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SetSiteCorePolicyResponse) GetJSON200() *SiteCore {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r SetSiteCorePolicyResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r SetSiteCorePolicyResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r SetSiteCorePolicyResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r SetSiteCorePolicyResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r SetSiteCorePolicyResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r SetSiteCorePolicyResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r SetSiteCorePolicyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SetSiteCorePolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetSiteCorePolicyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetSiteCorePolicyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// UpdateSiteCoreResponse202Headers the declared response headers of an HTTP 202 response for UpdateSiteCore
+type UpdateSiteCoreResponse202Headers struct {
+	Location *string
+}
+
+type UpdateSiteCoreResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *SiteAccepted
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *UpdateSiteCoreResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r UpdateSiteCoreResponse) GetJSON202() *SiteAccepted {
+	return r.JSON202
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r UpdateSiteCoreResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r UpdateSiteCoreResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r UpdateSiteCoreResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r UpdateSiteCoreResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateSiteCoreResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateSiteCoreResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateSiteCoreResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateSiteCoreResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateSiteCoreResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -12644,6 +14090,88 @@ func (c *ClientWithResponses) UpdateClientGroupWithResponse(ctx context.Context,
 	return ParseUpdateClientGroupResponse(rsp)
 }
 
+// GetClientGroupCorePolicyWithResponse Get a client group's core update policy
+//
+// The policy the group's sites follow unless they have one of their own.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/client-groups/{client_group_id}/core-policy (the `GetClientGroupCorePolicy` operationId).
+func (c *ClientWithResponses) GetClientGroupCorePolicyWithResponse(ctx context.Context, clientGroupID ClientGroupID, reqEditors ...RequestEditorFn) (*GetClientGroupCorePolicyResponse, error) {
+	rsp, err := c.GetClientGroupCorePolicy(ctx, clientGroupID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetClientGroupCorePolicyResponse(rsp)
+}
+
+// SetClientGroupCorePolicyWithBodyWithResponse Hold a client group's cores, or approve a major release
+//
+// Like `PUT /api/v1/sites/{site_id}/core/policy`, for every site of
+// the group that has no policy of its own.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v1/client-groups/{client_group_id}/core-policy (the `SetClientGroupCorePolicy` operationId).
+func (c *ClientWithResponses) SetClientGroupCorePolicyWithBodyWithResponse(ctx context.Context, clientGroupID ClientGroupID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetClientGroupCorePolicyResponse, error) {
+	rsp, err := c.SetClientGroupCorePolicyWithBody(ctx, clientGroupID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetClientGroupCorePolicyResponse(rsp)
+}
+
+// SetClientGroupCorePolicyWithResponse Hold a client group's cores, or approve a major release
+//
+// Like `PUT /api/v1/sites/{site_id}/core/policy`, for every site of
+// the group that has no policy of its own.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v1/client-groups/{client_group_id}/core-policy (the `SetClientGroupCorePolicy` operationId).
+func (c *ClientWithResponses) SetClientGroupCorePolicyWithResponse(ctx context.Context, clientGroupID ClientGroupID, body SetClientGroupCorePolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*SetClientGroupCorePolicyResponse, error) {
+	rsp, err := c.SetClientGroupCorePolicy(ctx, clientGroupID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetClientGroupCorePolicyResponse(rsp)
+}
+
+// GetCoreRolloutWithResponse Get the WordPress core rollout
+//
+// The releases the platform has site images for, the maintenance
+// window, and whether the rollout is halted. The rollout updates one
+// site at a time and halts after `max_failures` failed site updates
+// in a row (`updates.max_failures`), until it is resumed or new
+// releases arrive. Sites whose update failed aren't tried again with
+// the same release.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/core-rollout (the `GetCoreRollout` operationId).
+func (c *ClientWithResponses) GetCoreRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCoreRolloutResponse, error) {
+	rsp, err := c.GetCoreRollout(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCoreRolloutResponse(rsp)
+}
+
+// ResumeCoreRolloutWithResponse Resume a halted core rollout
+//
+// Lifts a halt, resets the failure count, and queues a rollout pass.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/core-rollout/resume (the `ResumeCoreRollout` operationId).
+func (c *ClientWithResponses) ResumeCoreRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ResumeCoreRolloutResponse, error) {
+	rsp, err := c.ResumeCoreRollout(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeCoreRolloutResponse(rsp)
+}
+
 // ListJobsWithResponse List jobs
 //
 // Newest first.
@@ -13058,6 +14586,100 @@ func (c *ClientWithResponses) PurgeSiteCacheWithResponse(ctx context.Context, si
 		return nil, err
 	}
 	return ParsePurgeSiteCacheResponse(rsp)
+}
+
+// GetSiteCoreWithResponse Get a site's WordPress core updates
+//
+// The site's WordPress core version and what the core rollout will do
+// with it (design doc §5.5): the release it moves to next (`target`),
+// the newest major release it may not move to yet (`pending`), its
+// own and its client group's policy, and warnings about its branch.
+// Minor and security releases (x.y.Z) roll out automatically, one
+// site at a time and within the maintenance window if one is set
+// (`updates` in the config file). Major releases (x.Y) wait for
+// approval of the site or its client group, or for
+// `updates.core.major_auto_approve_days`. A held site stays on its
+// major branch and keeps getting the branch's minor and security
+// releases.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/sites/{site_id}/core (the `GetSiteCore` operationId).
+func (c *ClientWithResponses) GetSiteCoreWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*GetSiteCoreResponse, error) {
+	rsp, err := c.GetSiteCore(ctx, siteID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSiteCoreResponse(rsp)
+}
+
+// SetSiteCorePolicyWithBodyWithResponse Hold a site's core, or approve a major release
+//
+// Replaces the site's own core update policy. `{"hold": true}` keeps
+// the site on its current major branch, which still gets its minor
+// and security releases. `{"approved_branch": "7.2"}` lets it move
+// to the newest release of any branch up to 7.2; the branch must
+// have site images. `{}` makes the site follow its client group
+// again. A site's own policy wins over its group's. The change takes
+// effect at the core rollout's next pass, which is queued at once.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v1/sites/{site_id}/core/policy (the `SetSiteCorePolicy` operationId).
+func (c *ClientWithResponses) SetSiteCorePolicyWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetSiteCorePolicyResponse, error) {
+	rsp, err := c.SetSiteCorePolicyWithBody(ctx, siteID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSiteCorePolicyResponse(rsp)
+}
+
+// SetSiteCorePolicyWithResponse Hold a site's core, or approve a major release
+//
+// Replaces the site's own core update policy. `{"hold": true}` keeps
+// the site on its current major branch, which still gets its minor
+// and security releases. `{"approved_branch": "7.2"}` lets it move
+// to the newest release of any branch up to 7.2; the branch must
+// have site images. `{}` makes the site follow its client group
+// again. A site's own policy wins over its group's. The change takes
+// effect at the core rollout's next pass, which is queued at once.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v1/sites/{site_id}/core/policy (the `SetSiteCorePolicy` operationId).
+func (c *ClientWithResponses) SetSiteCorePolicyWithResponse(ctx context.Context, siteID SiteID, body SetSiteCorePolicyJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSiteCorePolicyResponse, error) {
+	rsp, err := c.SetSiteCorePolicy(ctx, siteID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetSiteCorePolicyResponse(rsp)
+}
+
+// UpdateSiteCoreWithResponse Update a site's WordPress core now
+//
+// Queues the update to the site's `target` release (`GET
+// /api/v1/sites/{site_id}/core`) now, outside the maintenance window
+// and even if the rollout's update to it failed before. The job takes
+// a pre-update backup (kind `pre_update`), recreates the site's
+// `php` and `nginx` containers on the new release's images (both
+// always carry the same WordPress core), runs `wp core update-db`,
+// and checks the site's health (an HTTP request to the site and
+// WP-CLI loading WordPress on the new core). If anything fails, it
+// restores the pre-update backup if the database schema changed, and
+// moves the site back to its previous images; `status_message` says
+// what happened. A site without a `target` returns `409`, as does a
+// site that isn't `running`, is `provisioning`, `updating`, or
+// `deleting`, or whose provisioning failed.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/core/update (the `UpdateSiteCore` operationId).
+func (c *ClientWithResponses) UpdateSiteCoreWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*UpdateSiteCoreResponse, error) {
+	rsp, err := c.UpdateSiteCore(ctx, siteID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateSiteCoreResponse(rsp)
 }
 
 // ExportSiteDatabaseWithResponse Export a site's database
@@ -14716,6 +16338,222 @@ func ParseUpdateClientGroupResponse(rsp *http.Response) (*UpdateClientGroupRespo
 	return response, nil
 }
 
+// ParseGetClientGroupCorePolicyResponse parses an HTTP response from a GetClientGroupCorePolicyWithResponse call
+func ParseGetClientGroupCorePolicyResponse(rsp *http.Response) (*GetClientGroupCorePolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetClientGroupCorePolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CorePolicy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetClientGroupCorePolicyResponse parses an HTTP response from a SetClientGroupCorePolicyWithResponse call
+func ParseSetClientGroupCorePolicyResponse(rsp *http.Response) (*SetClientGroupCorePolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetClientGroupCorePolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CorePolicy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCoreRolloutResponse parses an HTTP response from a GetCoreRolloutWithResponse call
+func ParseGetCoreRolloutResponse(rsp *http.Response) (*GetCoreRolloutResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCoreRolloutResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CoreRollout
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseResumeCoreRolloutResponse parses an HTTP response from a ResumeCoreRolloutWithResponse call
+func ParseResumeCoreRolloutResponse(rsp *http.Response) (*ResumeCoreRolloutResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResumeCoreRolloutResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CoreRollout
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListJobsResponse parses an HTTP response from a ListJobsWithResponse call
 func ParseListJobsResponse(rsp *http.Response) (*ListJobsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -15662,6 +17500,202 @@ func ParsePurgeSiteCacheResponse(rsp *http.Response) (*PurgeSiteCacheResponse, e
 	switch {
 	case rsp.StatusCode == 202:
 		var headers PurgeSiteCacheResponse202Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetSiteCoreResponse parses an HTTP response from a GetSiteCoreWithResponse call
+func ParseGetSiteCoreResponse(rsp *http.Response) (*GetSiteCoreResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetSiteCoreResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SiteCore
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetSiteCorePolicyResponse parses an HTTP response from a SetSiteCorePolicyWithResponse call
+func ParseSetSiteCorePolicyResponse(rsp *http.Response) (*SetSiteCorePolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetSiteCorePolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SiteCore
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateSiteCoreResponse parses an HTTP response from a UpdateSiteCoreWithResponse call
+func ParseUpdateSiteCoreResponse(rsp *http.Response) (*UpdateSiteCoreResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateSiteCoreResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest SiteAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers UpdateSiteCoreResponse202Headers
 		if values := rsp.Header.Values("Location"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {

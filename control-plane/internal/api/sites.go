@@ -470,7 +470,6 @@ func siteResponse(s store.Site, aliases []string) gen.Site {
 		Aliases:                   aliases,
 		PhpVersion:                s.PHPVersion,
 		WpCoreVersion:             s.WPCoreVersion,
-		WpCorePinned:              s.WPCorePinned,
 		Resources:                 gen.ResourceLimits{CPU: s.CPULimit, MemoryReservationMb: s.MemoryReservationMB, MemoryLimitMb: s.MemoryLimitMB},
 		Status:                    gen.SiteStatus(s.Status),
 		URL:                       &url,

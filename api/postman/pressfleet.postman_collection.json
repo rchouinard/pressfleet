@@ -2051,6 +2051,319 @@
       ]
     },
     {
+      "id": "1bc43e4b-754e-51fe-a671-c0201b0fc862",
+      "name": "Core updates",
+      "description": "WordPress core updates (design doc \u00a75.5): minor and security releases roll out automatically, one site at a time; major releases wait for approval per site or client group; holds keep a site on its major branch.",
+      "item": [
+        {
+          "id": "c2af8d50-da1c-50ad-89df-5ec0af953eb1",
+          "name": "Get site core",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/core",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "core"
+              ]
+            },
+            "description": "The site's WordPress version, the release it moves to next, a pending major release, its and its group's policy, and warnings."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "c0c3394c-32c7-5d12-84c1-570bd54ed45c",
+          "name": "Hold site core",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/core/policy",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "core",
+                "policy"
+              ]
+            },
+            "description": "Keeps the site on its current major branch, which still gets its minor and security releases. `{}` makes it follow its client group again.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"hold\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "cdd95c1e-b0f3-5e23-9786-c2a0be05ccf1",
+          "name": "Approve major release for site",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/core/policy",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "core",
+                "policy"
+              ]
+            },
+            "description": "Lets the site move to the newest release of any branch up to `approved_branch`, which must have site images (`GET /api/v1/core-rollout`).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"approved_branch\": \"7.2\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "72156799-d437-5570-a9f4-f08ec2c30539",
+          "name": "Update site core now",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/sites/{{site_id}}/core/update",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "sites",
+                "{{site_id}}",
+                "core",
+                "update"
+              ]
+            },
+            "description": "Queues the update to the site's next release now, outside the maintenance window. Returns 409 if there is none."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "cf39b1c8-3886-551d-9fde-8825caa300d1",
+          "name": "Get client group core policy",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/client-groups/{{client_group_id}}/core-policy",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "client-groups",
+                "{{client_group_id}}",
+                "core-policy"
+              ]
+            },
+            "description": "The policy the group's sites follow unless they have their own."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "f5bb5f2c-778f-5cce-9b8b-04f51adb1767",
+          "name": "Set client group core policy",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/client-groups/{{client_group_id}}/core-policy",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "client-groups",
+                "{{client_group_id}}",
+                "core-policy"
+              ]
+            },
+            "description": "`{\"hold\": true}`, `{\"approved_branch\": \"7.2\"}`, or `{}` for the group's sites without a policy of their own.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"approved_branch\": \"7.2\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "3de8ad3a-521c-5224-8207-d58a09499239",
+          "name": "Get core rollout",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/core-rollout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "core-rollout"
+              ]
+            },
+            "description": "The releases with site images, the maintenance window, failed site updates, and whether the rollout is halted."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "3ba1540c-c3b6-508c-a8d8-1680090c34df",
+          "name": "Resume core rollout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/core-rollout/resume",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "core-rollout",
+                "resume"
+              ]
+            },
+            "description": "Lifts a halt after repeated failures and queues a rollout pass."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "7e69873f-6dd0-5a93-9581-cd3379f0edd8",
       "name": "Uploads",
       "description": "Resumable uploads of large files for site imports and code deployments. Only the user who starts an upload can use it.",

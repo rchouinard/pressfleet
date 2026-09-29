@@ -42,6 +42,9 @@ type Fake struct {
 	// RunSessionFunc, if set, handles RunSession calls for existing sites,
 	// e.g. by serving SFTP from a temporary directory in the test process.
 	RunSessionFunc func(ctx context.Context, siteID string, s provisioner.Session) error
+	// Probe, if set, handles ProbeHTTP calls for running sites. By default
+	// they answer 200.
+	Probe func(siteID string, req provisioner.ProbeRequest) (*provisioner.ProbeResponse, error)
 	// Err, if set, is consulted at the start of every call; a non-nil result
 	// is returned without changing state. Use it to inject failures.
 	Err func(op, siteID string) error
@@ -251,6 +254,31 @@ func (f *Fake) ExecWPCLI(_ context.Context, siteID string, args []string) (strin
 		return "", nil
 	}
 	return handler(siteID, slices.Clone(args))
+}
+
+// ProbeHTTP implements provisioner.Prober. By default a running site
+// answers 200; Probe, if set, answers instead.
+func (f *Fake) ProbeHTTP(_ context.Context, siteID string, req provisioner.ProbeRequest) (*provisioner.ProbeResponse, error) {
+	f.mu.Lock()
+	if err := f.begin("ProbeHTTP", siteID, []string{req.Host, req.Path}); err != nil {
+		f.mu.Unlock()
+		return nil, err
+	}
+	s, err := f.lookup(siteID)
+	if err != nil {
+		f.mu.Unlock()
+		return nil, err
+	}
+	if s.Phase != provisioner.SiteRunning {
+		f.mu.Unlock()
+		return nil, provisioner.ErrSiteNotRunning
+	}
+	handler := f.Probe
+	f.mu.Unlock()
+	if handler == nil {
+		return &provisioner.ProbeResponse{StatusCode: 200}, nil
+	}
+	return handler(siteID, req)
 }
 
 // PurgeCache implements provisioner.Provisioner.

@@ -24,12 +24,15 @@ const (
 	// BackupPreRestore is the snapshot a restore takes of its target site
 	// first, so the restore can be undone (design doc §5.4).
 	BackupPreRestore BackupKind = "pre_restore"
+	// BackupPreUpdate is the snapshot a core update takes of its site
+	// first, so a failed update can be reverted (design doc §5.5).
+	BackupPreUpdate BackupKind = "pre_update"
 )
 
 // Valid reports whether k is a known kind.
 func (k BackupKind) Valid() bool {
 	switch k {
-	case BackupManual, BackupScheduled, BackupPreRestore:
+	case BackupManual, BackupScheduled, BackupPreRestore, BackupPreUpdate:
 		return true
 	}
 	return false

@@ -104,7 +104,14 @@ type restoreEnv struct {
 
 func newRestoreEnv(t *testing.T, db *store.DB) *restoreEnv {
 	t.Helper()
-	cat, err := catalog.Parse([]byte(restoreManifest))
+	return newRestoreEnvWith(t, db, restoreManifest)
+}
+
+// newRestoreEnvWith is newRestoreEnv with another version manifest, after
+// applying opts to the service's options.
+func newRestoreEnvWith(t *testing.T, db *store.DB, manifest string, opts ...func(*sites.Options)) *restoreEnv {
+	t.Helper()
+	cat, err := catalog.Parse([]byte(manifest))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,6 +127,9 @@ func newRestoreEnv(t *testing.T, db *store.DB) *restoreEnv {
 			t.Fatal(err)
 		}
 		o.Backups, o.BackupEngine = svc, re.engine
+		for _, opt := range opts {
+			opt(o)
+		}
 	})
 	re.prov.WPCLI = re.wpcli
 	return re

@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"errors"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -298,5 +299,122 @@ func TestCompareWordPressVersions(t *testing.T) {
 	}
 	if _, err := CompareWordPressVersions("6.9", "x"); !errors.Is(err, ErrInvalidVersion) {
 		t.Errorf("CompareWordPressVersions(6.9, x) error = %v", err)
+	}
+}
+
+func TestBranch(t *testing.T) {
+	tests := []struct {
+		version, want string
+		err           error
+	}{
+		{"7.1.2", "7.1", nil},
+		{"7.1", "7.1", nil},
+		{"10.12.3", "10.12", nil},
+		{"7", "", ErrInvalidVersion},
+		{"7.1.x", "", ErrInvalidVersion},
+	}
+	for _, tt := range tests {
+		got, err := Branch(tt.version)
+		if got != tt.want || !errors.Is(err, tt.err) || (tt.err == nil) != (err == nil) {
+			t.Errorf("Branch(%q) = %q, %v; want %q, %v", tt.version, got, err, tt.want, tt.err)
+		}
+	}
+	if !ValidBranch("7.1") || ValidBranch("7.1.2") || ValidBranch("7") {
+		t.Error("ValidBranch accepts or rejects the wrong strings")
+	}
+	if n, err := CompareBranches("7.10", "7.9"); n <= 0 || err != nil {
+		t.Errorf("CompareBranches(7.10, 7.9) = %d, %v", n, err)
+	}
+	if _, err := CompareBranches("7.1.2", "7.1"); !errors.Is(err, ErrInvalidVersion) {
+		t.Errorf("CompareBranches(7.1.2, 7.1) error = %v", err)
+	}
+}
+
+func TestBranches(t *testing.T) {
+	c, err := Parse([]byte(`{
+  "registry": "r",
+  "php": [{"version": "8.4", "activeSupportEnds": "2026-12-31", "securitySupportEnds": "2028-12-31"}],
+  "wordpress": {
+    "latest": {"version": "7.2.1", "sha1": "761b8101538f0631a0bfc4fba7bc4abeea92f81c", "published": "2026-09-01"},
+    "pinned": [
+      {"version": "6.9.4", "sha1": "0000000000000000000000000000000000000000", "insecure": true},
+      {"version": "7.1.5", "sha1": "1111111111111111111111111111111111111111", "published": "2026-08-15"}
+    ]
+  }
+}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, w := range c.WordPressVersions() {
+		got = append(got, w.Version)
+	}
+	if want := []string{"7.2.1", "7.1.5", "6.9.4"}; !slices.Equal(got, want) {
+		t.Errorf("WordPressVersions() = %v, want %v (newest first)", got, want)
+	}
+	tests := []struct {
+		branch    string
+		want      string
+		published string
+		insecure  bool
+	}{
+		{"7.2", "7.2.1", "2026-09-01", false},
+		{"7.1", "7.1.5", "2026-08-15", false},
+		{"6.9", "6.9.4", "", true},
+		{"7.0", "", "", false},
+	}
+	for _, tt := range tests {
+		w, ok := c.LatestInBranch(tt.branch)
+		if ok != (tt.want != "") || w.Version != tt.want || w.Insecure != tt.insecure {
+			t.Errorf("LatestInBranch(%s) = %+v, %t; want %s", tt.branch, w, ok, tt.want)
+			continue
+		}
+		if ok && (tt.published == "") != w.Published.IsZero() {
+			t.Errorf("LatestInBranch(%s).Published = %v, want %q", tt.branch, w.Published, tt.published)
+		}
+		if ok && tt.published != "" && w.Published.Format(time.DateOnly) != tt.published {
+			t.Errorf("LatestInBranch(%s).Published = %v, want %s", tt.branch, w.Published, tt.published)
+		}
+		if ok && w.Branch() != tt.branch {
+			t.Errorf("%s.Branch() = %s", w.Version, w.Branch())
+		}
+	}
+}
+
+func TestParseWordPressErrors(t *testing.T) {
+	const php = `"php": [{"version": "8.4", "activeSupportEnds": "2026-12-31", "securitySupportEnds": "2028-12-31"}]`
+	tests := []struct{ name, wordpress string }{
+		{"two releases of a branch", `{"latest": {"version": "7.1.2", "sha1": "761b8101538f0631a0bfc4fba7bc4abeea92f81c"},
+			"pinned": [{"version": "7.1.1", "sha1": "0000000000000000000000000000000000000000"}]}`},
+		{"pinned newer than latest", `{"latest": {"version": "7.1.2", "sha1": "761b8101538f0631a0bfc4fba7bc4abeea92f81c"},
+			"pinned": [{"version": "7.2", "sha1": "0000000000000000000000000000000000000000"}]}`},
+		{"bad published", `{"latest": {"version": "7.1.2", "sha1": "761b8101538f0631a0bfc4fba7bc4abeea92f81c", "published": "Sep 1"}}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Parse([]byte(`{"registry": "r", ` + php + `, "wordpress": ` + tt.wordpress + `}`)); !errors.Is(err, ErrInvalidManifest) {
+				t.Errorf("Parse = %v, want ErrInvalidManifest", err)
+			}
+		})
+	}
+}
+
+func TestLoadFile(t *testing.T) {
+	path := t.TempDir() + "/manifest.json"
+	if err := os.WriteFile(path, []byte(testManifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadFile(path)
+	if err != nil || c.LatestWordPress().Version != "7.1.2" {
+		t.Fatalf("LoadFile = %v, %v", c, err)
+	}
+	if err := os.WriteFile(path, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadFile(path); !errors.Is(err, ErrInvalidManifest) {
+		t.Errorf("LoadFile(invalid) error = %v, want ErrInvalidManifest", err)
+	}
+	if _, err := LoadFile(path + ".missing"); err == nil {
+		t.Error("LoadFile(missing) succeeded")
 	}
 }

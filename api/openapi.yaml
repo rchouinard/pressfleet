@@ -1869,6 +1869,226 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/sites/{site_id}/core:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    get:
+      operationId: getSiteCore
+      tags: [sites]
+      summary: Get a site's WordPress core updates
+      description: |
+        The site's WordPress core version and what the core rollout will do
+        with it (design doc §5.5): the release it moves to next (`target`),
+        the newest major release it may not move to yet (`pending`), its
+        own and its client group's policy, and warnings about its branch.
+        Minor and security releases (x.y.Z) roll out automatically, one
+        site at a time and within the maintenance window if one is set
+        (`updates` in the config file). Major releases (x.Y) wait for
+        approval of the site or its client group, or for
+        `updates.core.major_auto_approve_days`. A held site stays on its
+        major branch and keeps getting the branch's minor and security
+        releases.
+      responses:
+        "200":
+          description: The site's core update status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteCore"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/sites/{site_id}/core/policy:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    put:
+      operationId: setSiteCorePolicy
+      tags: [sites]
+      summary: Hold a site's core, or approve a major release
+      description: |
+        Replaces the site's own core update policy. `{"hold": true}` keeps
+        the site on its current major branch, which still gets its minor
+        and security releases. `{"approved_branch": "7.2"}` lets it move
+        to the newest release of any branch up to 7.2; the branch must
+        have site images. `{}` makes the site follow its client group
+        again. A site's own policy wins over its group's. The change takes
+        effect at the core rollout's next pass, which is queued at once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CorePolicyUpdate"
+      responses:
+        "200":
+          description: The site's core update status with the new policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteCore"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/sites/{site_id}/core/update:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    post:
+      operationId: updateSiteCore
+      tags: [sites]
+      summary: Update a site's WordPress core now
+      description: |
+        Queues the update to the site's `target` release (`GET
+        /api/v1/sites/{site_id}/core`) now, outside the maintenance window
+        and even if the rollout's update to it failed before. The job takes
+        a pre-update backup (kind `pre_update`), recreates the site's
+        `php` and `nginx` containers on the new release's images (both
+        always carry the same WordPress core), runs `wp core update-db`,
+        and checks the site's health (an HTTP request to the site and
+        WP-CLI loading WordPress on the new core). If anything fails, it
+        restores the pre-update backup if the database schema changed, and
+        moves the site back to its previous images; `status_message` says
+        what happened. A site without a `target` returns `409`, as does a
+        site that isn't `running`, is `provisioning`, `updating`, or
+        `deleting`, or whose provisioning failed.
+      responses:
+        "202":
+          description: The site, now updating, and the core update job.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/client-groups/{client_group_id}/core-policy:
+    parameters:
+      - $ref: "#/components/parameters/ClientGroupID"
+    get:
+      operationId: getClientGroupCorePolicy
+      tags: [client-groups]
+      summary: Get a client group's core update policy
+      description: The policy the group's sites follow unless they have one of their own.
+      responses:
+        "200":
+          description: The group's core update policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CorePolicy"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      operationId: setClientGroupCorePolicy
+      tags: [client-groups]
+      summary: Hold a client group's cores, or approve a major release
+      description: |
+        Like `PUT /api/v1/sites/{site_id}/core/policy`, for every site of
+        the group that has no policy of its own.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CorePolicyUpdate"
+      responses:
+        "200":
+          description: The group's new core update policy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CorePolicy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/core-rollout:
+    get:
+      operationId: getCoreRollout
+      tags: [sites]
+      summary: Get the WordPress core rollout
+      description: |
+        The releases the platform has site images for, the maintenance
+        window, and whether the rollout is halted. The rollout updates one
+        site at a time and halts after `max_failures` failed site updates
+        in a row (`updates.max_failures`), until it is resumed or new
+        releases arrive. Sites whose update failed aren't tried again with
+        the same release.
+      responses:
+        "200":
+          description: The core rollout.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CoreRollout"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/core-rollout/resume:
+    post:
+      operationId: resumeCoreRollout
+      tags: [sites]
+      summary: Resume a halted core rollout
+      description: Lifts a halt, resets the failure count, and queues a rollout pass.
+      responses:
+        "200":
+          description: The core rollout.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CoreRollout"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/jobs:
     get:
       operationId: listJobs
@@ -2561,8 +2781,10 @@ components:
       description: |
         What asked for the backup: a user (`manual`), the site's backup
         schedule (`scheduled`), or a restore, which backs up its target site
-        first so the restore can be undone (`pre_restore`).
-      enum: [manual, scheduled, pre_restore]
+        first so the restore can be undone (`pre_restore`), or a WordPress
+        core update, which backs up its site first so a failed update can
+        be reverted (`pre_update`).
+      enum: [manual, scheduled, pre_restore, pre_update]
 
     BackupStatus:
       type: string
@@ -2873,7 +3095,6 @@ components:
         - aliases
         - php_version
         - wp_core_version
-        - wp_core_pinned
         - resources
         - preview_protection
         - maintenance
@@ -2913,11 +3134,8 @@ components:
           $ref: "#/components/schemas/PHPVersion"
         wp_core_version:
           type: string
-          description: WordPress core version of the site's images. Managed by the platform.
+          description: WordPress core version of the site's images. Managed by the platform; `GET /api/v1/sites/{site_id}/core` shows its updates.
           examples: ["6.9.1"]
-        wp_core_pinned:
-          type: boolean
-          description: Whether the site is pinned to its current core version and skipped by core rollouts.
         resources:
           $ref: "#/components/schemas/ResourceLimits"
         preview_protection:
@@ -2951,6 +3169,174 @@ components:
           $ref: "#/components/schemas/Timestamp"
         updated_at:
           $ref: "#/components/schemas/Timestamp"
+
+    WordPressBranch:
+      type: string
+      description: A WordPress major branch (x.y).
+      pattern: "^[0-9]+\\.[0-9]+$"
+      examples: ["7.2"]
+
+    CorePolicy:
+      type: object
+      required: [hold]
+      properties:
+        hold:
+          type: boolean
+          description: Keeps the site on its current major branch, which still gets its minor and security releases.
+        hold_since:
+          $ref: "#/components/schemas/Timestamp"
+        approved_branch:
+          $ref: "#/components/schemas/WordPressBranch"
+
+    CorePolicyUpdate:
+      type: object
+      additionalProperties: false
+      description: At most one of `hold` and `approved_branch`; neither clears the policy.
+      properties:
+        hold:
+          type: boolean
+        approved_branch:
+          $ref: "#/components/schemas/WordPressBranch"
+
+    CoreWarning:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: |
+            `held_long`: held on an older branch for longer than
+            `updates.core.hold_warning_days`. `branch_not_built`: the
+            site's branch has no site images any more, so it gets no core
+            updates. `branch_insecure`: wordpress.org reports the branch's
+            newest release as insecure; it no longer gets security fixes.
+          enum: [held_long, branch_not_built, branch_insecure]
+        message:
+          type: string
+
+    SiteCore:
+      type: object
+      required: [version, branch, policy, client_group_policy, held, decided_by, warnings]
+      properties:
+        version:
+          type: string
+          examples: ["7.1.2"]
+        branch:
+          $ref: "#/components/schemas/WordPressBranch"
+        policy:
+          $ref: "#/components/schemas/CorePolicy"
+        client_group_policy:
+          $ref: "#/components/schemas/CorePolicy"
+        held:
+          type: boolean
+          description: Whether a hold, the site's or its group's, keeps the site on its branch.
+        approved_branch:
+          $ref: "#/components/schemas/WordPressBranch"
+        decided_by:
+          type: string
+          description: Whose hold or approval applies; `auto` is `updates.core.major_auto_approve_days`.
+          enum: [default, site, client_group, auto]
+        target:
+          $ref: "#/components/schemas/CoreTarget"
+        pending:
+          $ref: "#/components/schemas/CorePending"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/CoreWarning"
+        last_failure:
+          $ref: "#/components/schemas/CoreUpdateFailure"
+
+    CoreTarget:
+      type: object
+      description: The release the site moves to at the rollout's next chance; absent if it is up to date as far as its policy allows.
+      required: [version, kind]
+      properties:
+        version:
+          type: string
+        kind:
+          type: string
+          enum: [minor, major]
+
+    CorePending:
+      type: object
+      description: The newest major release the site may not move to yet.
+      required: [version, branch, reason]
+      properties:
+        version:
+          type: string
+        branch:
+          $ref: "#/components/schemas/WordPressBranch"
+        reason:
+          type: string
+          enum: [held, awaiting_approval]
+        auto_approve_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    CoreRelease:
+      type: object
+      required: [version, branch, insecure]
+      properties:
+        version:
+          type: string
+        branch:
+          $ref: "#/components/schemas/WordPressBranch"
+        published:
+          type: string
+          format: date
+        insecure:
+          type: boolean
+
+    UpdateWindow:
+      type: object
+      description: The daily maintenance window, in UTC; absent if there is none.
+      required: [start, hours]
+      properties:
+        start:
+          type: string
+          examples: ["02:00"]
+        hours:
+          type: integer
+
+    CoreUpdateFailure:
+      type: object
+      description: A site's failed update to `version`, which the rollout doesn't retry.
+      required: [site_id, version, message, failed_at]
+      properties:
+        site_id:
+          $ref: "#/components/schemas/ID"
+        version:
+          type: string
+        message:
+          type: string
+        failed_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    CoreRollout:
+      type: object
+      required: [halted, consecutive_failures, max_failures, releases, failures]
+      properties:
+        halted:
+          type: boolean
+        halted_at:
+          $ref: "#/components/schemas/Timestamp"
+        halt_reason:
+          type: string
+        consecutive_failures:
+          type: integer
+        max_failures:
+          type: integer
+        window:
+          $ref: "#/components/schemas/UpdateWindow"
+        releases:
+          type: array
+          description: The WordPress releases with site images, newest first; one per branch.
+          items:
+            $ref: "#/components/schemas/CoreRelease"
+        failures:
+          type: array
+          items:
+            $ref: "#/components/schemas/CoreUpdateFailure"
 
     SiteCreate:
       type: object

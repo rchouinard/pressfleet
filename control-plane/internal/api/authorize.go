@@ -65,6 +65,13 @@ var operationActions = map[string]authz.Action{
 
 	"exportSiteDatabase":         authz.ExportDatabase,
 	"downloadSiteDatabaseExport": authz.DownloadDatabaseExport,
+	"getSiteCore":                authz.ViewSites,
+	"setSiteCorePolicy":          authz.ApproveCoreUpdate,
+	"updateSiteCore":             authz.ApproveCoreUpdate,
+	"getClientGroupCorePolicy":   authz.ViewClientGroups,
+	"setClientGroupCorePolicy":   authz.ApproveCoreUpdate,
+	"getCoreRollout":             authz.ViewSites,
+	"resumeCoreRollout":          authz.ApproveCoreUpdate,
 
 	"listJobs": authz.ViewJobs,
 	"getJob":   authz.ViewJobs,

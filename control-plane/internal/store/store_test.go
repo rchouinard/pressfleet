@@ -203,15 +203,15 @@ func TestSchemaConstraints(t *testing.T) {
 		}
 
 		var parent *string
-		var pinned, cache bool
+		var cache bool
 		var memRes, memLimit int
 		if err := db.QueryRowContext(ctx,
-			"SELECT parent_site_id, wp_core_pinned, enable_cache, memory_reservation_mb, memory_limit_mb FROM sites WHERE id = ?",
-			staging).Scan(&parent, &pinned, &cache, &memRes, &memLimit); err != nil {
+			"SELECT parent_site_id, enable_cache, memory_reservation_mb, memory_limit_mb FROM sites WHERE id = ?",
+			staging).Scan(&parent, &cache, &memRes, &memLimit); err != nil {
 			t.Fatal(err)
 		}
-		if parent == nil || *parent != prod || pinned || !cache || memRes != 128 || memLimit != 512 {
-			t.Errorf("staging site: parent=%v pinned=%v cache=%v mem=%d/%d", parent, pinned, cache, memRes, memLimit)
+		if parent == nil || *parent != prod || !cache || memRes != 128 || memLimit != 512 {
+			t.Errorf("staging site: parent=%v cache=%v mem=%d/%d", parent, cache, memRes, memLimit)
 		}
 
 		if _, err := insertSite("prod", g.ID, nil); !errors.Is(err, store.ErrConflict) {

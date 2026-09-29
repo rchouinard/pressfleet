@@ -33,6 +33,11 @@ const testPreviewBase = "preview.example.test"
 
 // implementedSiteOps are the site operations that no longer answer 501.
 var implementedSiteOps = map[string]bool{
+	"getSiteCore":                   true,
+	"setSiteCorePolicy":             true,
+	"updateSiteCore":                true,
+	"getCoreRollout":                true,
+	"resumeCoreRollout":             true,
 	"listSites":                     true,
 	"createSite":                    true,
 	"getSite":                       true,

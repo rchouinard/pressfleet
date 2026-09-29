@@ -116,6 +116,16 @@
 // mode, restores the snapshot into it, and rolls it back to the
 // pre-restore backup if anything fails; see restore.go.
 //
+// # WordPress core updates
+//
+// The core rollout moves running sites, one at a time, to the release
+// their core update policy allows (package coreupdate): the newest release
+// of their branch, or of a newer branch once approved. Each site's update is
+// a [CoreUpdateJobType] job that takes a pre-update backup, recreates both
+// containers on the new images, upgrades the database, checks the site's
+// health, and reverts if anything fails; see coreupdate.go, rollout.go, and
+// corepolicy.go.
+//
 // Updating, going live, starting, stopping, and purging are refused with ErrBusy while
 // a job is provisioning, updating, or deleting the site, and with
 // ErrNotProvisioned for a site whose provisioning failed, which has nothing
@@ -280,6 +290,13 @@ type Options struct {
 	// StatusTimeout bounds each live status query (Service.Runtime); zero
 	// means DefaultStatusTimeout.
 	StatusTimeout time.Duration
+	// CoreUpdates configures WordPress core updates and their rollout
+	// (coreupdate.go, rollout.go), which also need Backups and
+	// BackupEngine.
+	CoreUpdates CoreUpdateOptions
+	// Prober sends the HTTP request of health checks; nil means the
+	// Provisioner, if it implements provisioner.Prober, or no HTTP check.
+	Prober provisioner.Prober
 }
 
 // Service runs the site workflows.
@@ -301,6 +318,8 @@ type Service struct {
 	now          func() time.Time
 
 	statusTimeout time.Duration
+	core          CoreUpdateOptions
+	prober        provisioner.Prober
 }
 
 // New returns a Service.
@@ -342,6 +361,20 @@ func New(opts Options) (*Service, error) {
 		now:          opts.Now,
 
 		statusTimeout: opts.StatusTimeout,
+		core:          opts.CoreUpdates,
+		prober:        opts.Prober,
+	}
+	if s.prober == nil {
+		s.prober, _ = opts.Provisioner.(provisioner.Prober)
+	}
+	if s.core.MaxFailures <= 0 {
+		s.core.MaxFailures = 3
+	}
+	if s.core.HealthTimeout <= 0 {
+		s.core.HealthTimeout = DefaultHealthTimeout
+	}
+	if s.core.HealthInterval <= 0 {
+		s.core.HealthInterval = DefaultHealthInterval
 	}
 	if s.statusTimeout <= 0 {
 		s.statusTimeout = DefaultStatusTimeout
@@ -661,6 +694,7 @@ func (s *Service) Handlers() []jobs.Handler {
 	}
 	if s.restores() {
 		handlers = append(handlers, s.restoreHandler())
+		handlers = append(handlers, s.coreUpdateHandler(), s.rolloutHandler())
 	}
 	return handlers
 }

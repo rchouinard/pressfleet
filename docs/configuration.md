@@ -173,6 +173,12 @@ database_export:
 | `sftp.host_key_file` | `PRESSFLEET_SFTP_HOST_KEY_FILE` | | `/run/secrets/ssh_host_key` | The gateway's SSH host key. `pressfleet init` generates it once, keeps it in `<data_dir>/platform/secrets/ssh_host_key`, and mounts it here. If the file doesn't exist, the gateway is off and the control plane logs a warning. |
 | `sftp.idle_timeout_minutes` | `PRESSFLEET_SFTP_IDLE_TIMEOUT_MINUTES` | | `15` | Ends SFTP connections without traffic for this long, from 1 to 1440 minutes. |
 | `sftp.max_session_hours` | `PRESSFLEET_SFTP_MAX_SESSION_HOURS` | | `8` | Ends every SFTP connection this long after it started, from 1 to 24 hours. |
+| `updates.window_start` | `PRESSFLEET_UPDATES_WINDOW_START` | | (none) | UTC time of day (`HH:MM`) the maintenance window opens; rollouts only start site updates inside it. Empty: no window. See [WordPress core updates](#wordpress-core-updates). |
+| `updates.window_hours` | `PRESSFLEET_UPDATES_WINDOW_HOURS` | | `4` | Length of the maintenance window in hours, 1 to 24. |
+| `updates.max_failures` | `PRESSFLEET_UPDATES_MAX_FAILURES` | | `3` | Failed site updates in a row, 1 to 100, after which a rollout halts until it is resumed or new releases arrive. |
+| `updates.core.major_auto_approve_days` | `PRESSFLEET_UPDATES_CORE_MAJOR_AUTO_APPROVE_DAYS` | | `0` | Approve a major WordPress release automatically this many days after its images were published (the manifest's `published` date), for sites and groups without a hold or approval of their own. `0`: never. |
+| `updates.core.hold_warning_days` | `PRESSFLEET_UPDATES_CORE_HOLD_WARNING_DAYS` | | `90` | Warn (`held_long`) when a site has been held on an older major branch this many days, 1 to 3650. |
+| `image_manifest_file` | `PRESSFLEET_IMAGE_MANIFEST_FILE` | | (built in) | Absolute path of a site image version manifest (`images/manifest.json` format) that replaces the one built into the control plane, read at startup. For rolling out a WordPress release before the PressFleet release that carries it, and for tests. |
 | `wordpress_security.block_user_enumeration` | `PRESSFLEET_WORDPRESS_SECURITY_BLOCK_USER_ENUMERATION` | | `true` | Hide which user names exist from visitors. See [WordPress security set](#wordpress-security-set). |
 | `wordpress_security.password_policy.enabled` | `PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_POLICY_ENABLED` | | `true` | Check new WordPress passwords on the server: minimum length and a common-password list. |
 | `wordpress_security.password_policy.min_length` | `PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_POLICY_MIN_LENGTH` | | `12` | Minimum WordPress password length, from 8 to 64 characters. |
@@ -576,6 +582,15 @@ for f in chunk.*; do
 done
 curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}' "$BASE/api/v1/uploads/$id/complete"
 ```
+## WordPress core updates
+
+The site image version manifest (built into the control plane, or `image_manifest_file`) lists one WordPress release per major branch: the latest, and the newest release of each older branch that sites may be held on or awaiting approval to leave. When the control plane starts, and every 15 minutes, a rollout pass (job `rollout.pass`) looks for running sites with a newer release to move to (design doc §5.5):
+
+- **Minor and security releases** (x.y.Z) of a site's own branch roll out automatically.
+- **Major releases** (x.Y) wait for approval: `PUT /api/v1/sites/{id}/core/policy` with `{"approved_branch": "7.2"}`, or the same on the client group (`PUT /api/v1/client-groups/{id}/core-policy`), or `updates.core.major_auto_approve_days` after the release's images were published.
+- **Holds**: `{"hold": true}` keeps a site (or every site of a group) on its current branch, which still gets its minor and security releases. A site's own policy wins over its group's; `{}` clears it. `GET /api/v1/sites/{id}/core` shows the site's next release, a pending major release, and warnings: held on an older branch for longer than `updates.core.hold_warning_days`, a branch no longer built, or one wordpress.org reports as insecure.
+
+Sites are updated one at a time, inside the maintenance window if one is set. Each update is a `site.core_update` job: a pre-update backup (kind `pre_update`), both containers recreated on the new release's images (`php` and `nginx` always carry the same core), `wp core update-db`, and a health check (an HTTP request to the site's nginx from inside its network, and WP-CLI loading WordPress and reporting the new version). If anything fails, the job restores the pre-update backup if the database schema changed, moves the site back to its previous images, and says so in the site's `status_message`; the rollout doesn't try that release on the site again (`POST /api/v1/sites/{id}/core/update` does, at once). After `updates.max_failures` failed updates in a row the rollout halts; `GET /api/v1/core-rollout` shows it, and `POST /api/v1/core-rollout/resume` or a new manifest resumes it.
 
 ## Site databases
 

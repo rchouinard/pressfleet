@@ -21,7 +21,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/wpconfig"
 )
 
-// The Compose provisioner implements the Provisioner, TaskRunner, and
+// The Compose provisioner implements the Provisioner, TaskRunner, Prober, and
 // SessionRunner parts of the driver. LogReader and StatsReader come with the
 // issues that need them (#78, #68), and the full provisioner.Driver
 // assertion with them; stubbing them now would only hide which parts are
@@ -30,6 +30,7 @@ var (
 	_ provisioner.Provisioner   = (*Provisioner)(nil)
 	_ provisioner.TaskRunner    = (*Provisioner)(nil)
 	_ provisioner.SessionRunner = (*Provisioner)(nil)
+	_ provisioner.Prober        = (*Provisioner)(nil)
 )
 
 // ErrSharedServiceUnavailable means a platform container that sites depend

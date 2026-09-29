@@ -18,6 +18,35 @@ type Driver interface {
 	StatsReader
 	TaskRunner
 	SessionRunner
+	Prober
+}
+
+// ProbeRequest is an HTTP GET a driver sends to a site's web server.
+type ProbeRequest struct {
+	// Host is the Host header: one of the site's domains.
+	Host string
+	// Path is the request target, starting with "/"; it may have a query.
+	Path string
+}
+
+// ProbeResponse is what the site's web server answered.
+type ProbeResponse struct {
+	StatusCode int
+}
+
+// Prober checks that a site serves HTTP, for health checks after its
+// containers were recreated (§5.5). The request goes to the site's web
+// server (the nginx component) from inside the site's runtime, as the edge
+// router's requests do, so it reaches WordPress whether or not the site
+// is in maintenance mode or its preview domain is password protected, and
+// needs no DNS or certificate. It says the request came over HTTPS, as the
+// edge router does, and follows no redirects.
+type Prober interface {
+	// ProbeHTTP sends the request and returns the response status. A site
+	// whose web server can't be reached is an error, not a status. Returns
+	// ErrSiteNotFound if the site does not exist and ErrSiteNotRunning if
+	// it isn't running.
+	ProbeHTTP(ctx context.Context, siteID string, req ProbeRequest) (*ProbeResponse, error)
 }
 
 // Component identifies one of a site's runtime components. Names describe

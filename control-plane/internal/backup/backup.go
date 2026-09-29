@@ -42,7 +42,7 @@ type SnapshotID string
 // Options describe one backup.
 type Options struct {
 	// Kind says what asked for the backup (store.BackupKind: manual,
-	// scheduled, pre_restore). It is recorded on the snapshot.
+	// scheduled, pre_restore, pre_update). It is recorded on the snapshot.
 	Kind string
 	// BackupID is the platform's ID of the backup (store.BackupRecord.ID),
 	// recorded on the snapshot. When set, Backup is idempotent: if the
