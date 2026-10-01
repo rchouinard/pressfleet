@@ -186,6 +186,17 @@ The site page's "Domains" section is one mount, `<SiteDomains :site @changed>`. 
 - **Safety**: lines render as text only (`SiteLogLine`; never `v-html`); a line over 2,000 characters is cut behind a "show more" button, and the SSE parser drops lines over 1 MiB. Search, source and level filters are applied by the server.
 - **Accessibility**: the log box is `role="log"` with `aria-live="off"`; the only live region is the coarse status (Live, Paused, Reconnecting, ...). Auto-scroll stops when the user scrolls up and "Jump to latest" brings it back.
 
+## Backups and restore
+
+`/sites/<id>/backups` (linked from the site page's "Backups" button; `backup.view` to see it). Pieces in `components/backup/`, logic in `utils/backup.ts`:
+
+- **History**: `BackupTable` over `createPagedList` (`GET /sites/{id}/backups`, "Load more"). Status always has an icon and text; a succeeded backup whose snapshot was removed by retention shows "Expired" and can't be restored; failure messages show under the status.
+- **Back up now** (`backup.create`): `POST /sites/{id}/backups`; offered unless the site is provisioning, deleting or failed (`canBackUpSite`, the API's `409`s).
+- **Schedule**: `BackupScheduleCard` shows the schedule and next run; with `backup.create` it edits it in place (`PUT /backup-schedule`: interval from the spec's allowed values, start hour in UTC or "platform window" which is the API's `null`). 422s show next to the fields.
+- **Restore** (`backup.restore`, running sites only): `BackupRestoreDialog` states that the site's database and `wp-content` are overwritten, that a pre-restore backup is taken and the site goes into maintenance mode, and requires typing the site's name before the button enables. The page runs the request; failures (`409`, `422`) show in the dialog.
+- **Jobs**: backup and restore return a job, followed with `<JobProgress>` on the page (an unfinished job of the site is picked up on load). When it ends the site, history and schedule reload. Restore and "Back up now" are disabled meanwhile.
+- Restoring another site's snapshot (`source_site_id`) is not offered; the API supports it but the MVP UI restores the site's own backups.
+
 ## Embedding in the Go binary
 
 `go:embed` can't reach outside a package directory, and the Nuxt output lives in `ui/.output/public`, so `ui/` is also the Go package `github.com/rchouinard/pressfleet/ui`, which exposes the files as an `fs.FS`:

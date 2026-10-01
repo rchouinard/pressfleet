@@ -179,6 +179,7 @@ function when(iso: string): string {
             <UButton v-if="canStopSite(site)" icon="i-lucide-square" color="neutral" variant="outline" :loading="powerBusy" @click="power('stop')">Stop</UButton>
           </IfCan>
           <UButton :to="`/sites/${site.id}/logs`" icon="i-lucide-scroll-text" color="neutral" variant="outline">Logs</UButton>
+          <UButton :to="`/sites/${site.id}/backups`" icon="i-lucide-archive" color="neutral" variant="outline">Backups</UButton>
           <IfCan action="site.delete">
             <UButton v-if="canDeleteSite(site)" icon="i-lucide-trash-2" color="error" variant="outline" @click="askDelete()">Delete</UButton>
           </IfCan>
