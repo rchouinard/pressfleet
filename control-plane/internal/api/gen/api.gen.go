@@ -421,6 +421,111 @@ func (e SiteDeploymentKind) Valid() bool {
 	}
 }
 
+// Defines values for SiteJobLogEntryLevel.
+const (
+	SiteJobLogEntryLevelError SiteJobLogEntryLevel = "error"
+	SiteJobLogEntryLevelInfo  SiteJobLogEntryLevel = "info"
+	SiteJobLogEntryLevelWarn  SiteJobLogEntryLevel = "warn"
+)
+
+// Valid indicates whether the value is a known member of the SiteJobLogEntryLevel enum.
+func (e SiteJobLogEntryLevel) Valid() bool {
+	switch e {
+	case SiteJobLogEntryLevelError:
+		return true
+	case SiteJobLogEntryLevelInfo:
+		return true
+	case SiteJobLogEntryLevelWarn:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SiteLogEntryComponent.
+const (
+	SiteLogEntryComponentNginx SiteLogEntryComponent = "nginx"
+	SiteLogEntryComponentPhp   SiteLogEntryComponent = "php"
+)
+
+// Valid indicates whether the value is a known member of the SiteLogEntryComponent enum.
+func (e SiteLogEntryComponent) Valid() bool {
+	switch e {
+	case SiteLogEntryComponentNginx:
+		return true
+	case SiteLogEntryComponentPhp:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SiteLogEntryStream.
+const (
+	Stderr SiteLogEntryStream = "stderr"
+	Stdout SiteLogEntryStream = "stdout"
+)
+
+// Valid indicates whether the value is a known member of the SiteLogEntryStream enum.
+func (e SiteLogEntryStream) Valid() bool {
+	switch e {
+	case Stderr:
+		return true
+	case Stdout:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SiteLogLevel.
+const (
+	SiteLogLevelDebug SiteLogLevel = "debug"
+	SiteLogLevelError SiteLogLevel = "error"
+	SiteLogLevelInfo  SiteLogLevel = "info"
+	SiteLogLevelWarn  SiteLogLevel = "warn"
+)
+
+// Valid indicates whether the value is a known member of the SiteLogLevel enum.
+func (e SiteLogLevel) Valid() bool {
+	switch e {
+	case SiteLogLevelDebug:
+		return true
+	case SiteLogLevelError:
+		return true
+	case SiteLogLevelInfo:
+		return true
+	case SiteLogLevelWarn:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SiteLogSource.
+const (
+	SiteLogSourceAccess SiteLogSource = "access"
+	SiteLogSourceError  SiteLogSource = "error"
+	SiteLogSourcePhp    SiteLogSource = "php"
+	SiteLogSourceSlow   SiteLogSource = "slow"
+)
+
+// Valid indicates whether the value is a known member of the SiteLogSource enum.
+func (e SiteLogSource) Valid() bool {
+	switch e {
+	case SiteLogSourceAccess:
+		return true
+	case SiteLogSourceError:
+		return true
+	case SiteLogSourcePhp:
+		return true
+	case SiteLogSourceSlow:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SiteRuntimePhase.
 const (
 	SiteRuntimePhaseAbsent  SiteRuntimePhase = "absent"
@@ -1716,6 +1821,42 @@ type SiteImportAccepted struct {
 	SiteID ID `json:"site_id"`
 }
 
+// SiteJobLogEntry defines model for SiteJobLogEntry.
+type SiteJobLogEntry struct {
+	// ID Identifies the line; unique across the site's jobs.
+	ID string `json:"id"`
+
+	// JobID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	JobID ID `json:"job_id"`
+
+	// JobType The type of the job that wrote the line.
+	//
+	// Examples: site.create
+	JobType string               `json:"job_type"`
+	Level   SiteJobLogEntryLevel `json:"level"`
+	Message string               `json:"message"`
+
+	// Step The name of the job step the line belongs to, or null for lines outside a step.
+	Step *string `json:"step"`
+
+	// Time Examples: 2026-09-26T17:25:00Z
+	Time Timestamp `json:"time"`
+}
+
+// SiteJobLogEntryLevel defines model for SiteJobLogEntry.Level.
+type SiteJobLogEntryLevel string
+
+// SiteJobLogList defines model for SiteJobLogList.
+type SiteJobLogList struct {
+	// Items The page's lines, newest first.
+	Items []SiteJobLogEntry `json:"items"`
+
+	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
+	NextCursor *NextCursor `json:"next_cursor"`
+}
+
 // SiteList defines model for SiteList.
 type SiteList struct {
 	Items []Site `json:"items"`
@@ -1723,6 +1864,58 @@ type SiteList struct {
 	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
 	NextCursor *NextCursor `json:"next_cursor"`
 }
+
+// SiteLogEntry defines model for SiteLogEntry.
+type SiteLogEntry struct {
+	// Component The site container that wrote the line.
+	Component SiteLogEntryComponent `json:"component"`
+	Level     SiteLogLevel          `json:"level"`
+
+	// Message The log line without its line terminator. For `access` entries
+	// it is a JSON object with `time`, `remote_addr`, `host`,
+	// `method`, `uri`, `protocol`, `status`, `body_bytes_sent`,
+	// `request_time`, `upstream_response_time`,
+	// `upstream_cache_status`, `referer`, and `user_agent`, which
+	// clients can parse for display. It may hold personal data, such
+	// as visitor IP addresses.
+	Message string `json:"message"`
+
+	// Source The kind of log an entry belongs to: `access` (nginx, one JSON object
+	// per request), `error` (nginx), `slow` (PHP-FPM slow log), or `php`
+	// (PHP errors and warnings, PHP-FPM messages, and other output of the
+	// PHP container).
+	Source SiteLogSource `json:"source"`
+
+	// Stream The output stream of the line. Absent if the orchestrator doesn't keep them apart.
+	Stream *SiteLogEntryStream `json:"stream,omitempty"`
+
+	// Time Examples: 2026-09-26T17:25:00Z
+	Time Timestamp `json:"time"`
+}
+
+// SiteLogEntryComponent The site container that wrote the line.
+type SiteLogEntryComponent string
+
+// SiteLogEntryStream The output stream of the line. Absent if the orchestrator doesn't keep them apart.
+type SiteLogEntryStream string
+
+// SiteLogLevel defines model for SiteLogLevel.
+type SiteLogLevel string
+
+// SiteLogList defines model for SiteLogList.
+type SiteLogList struct {
+	// Items The page's entries, oldest first.
+	Items []SiteLogEntry `json:"items"`
+
+	// NextCursor Pass as `cursor` to get the next, older page. Null when there are no older entries.
+	NextCursor *NextCursor `json:"next_cursor"`
+}
+
+// SiteLogSource The kind of log an entry belongs to: `access` (nginx, one JSON object
+// per request), `error` (nginx), `slow` (PHP-FPM slow log), or `php`
+// (PHP errors and warnings, PHP-FPM messages, and other output of the
+// PHP container).
+type SiteLogSource string
 
 // SiteMaintenance defines model for SiteMaintenance.
 type SiteMaintenance struct {
@@ -2034,6 +2227,15 @@ type JobID = ID
 // Limit defines model for Limit.
 type Limit = int
 
+// LogLevel defines model for LogLevel.
+type LogLevel = SiteLogLevel
+
+// LogQuery defines model for LogQuery.
+type LogQuery = string
+
+// LogSource defines model for LogSource.
+type LogSource = []SiteLogSource
+
 // SSHKeyID Opaque, server-assigned identifier.
 //
 // Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
@@ -2183,6 +2385,64 @@ type ListSiteBackupsParams struct {
 
 	// Status Only return backups with this status.
 	Status *BackupStatus `form:"status,omitempty" json:"status,omitempty"`
+}
+
+// ListSiteJobLogsParams defines parameters for ListSiteJobLogs.
+type ListSiteJobLogsParams struct {
+	// Limit Maximum number of lines to return.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListSiteLogsParams defines parameters for ListSiteLogs.
+type ListSiteLogsParams struct {
+	// Source Only return entries from these log sources; repeat the parameter to
+	// select several (`source=access&source=error`). Without it, entries
+	// of every source are returned.
+	Source *LogSource `form:"source,omitempty" json:"source,omitempty"`
+
+	// Level Only return entries of at least this level.
+	Level *LogLevel `form:"level,omitempty" json:"level,omitempty"`
+
+	// Q Only return entries whose line contains this text, ignoring case.
+	Q *LogQuery `form:"q,omitempty" json:"q,omitempty"`
+
+	// Since Only return entries at or after this time.
+	Since *Timestamp `form:"since,omitempty" json:"since,omitempty"`
+
+	// Until Only return entries before this time.
+	Until *Timestamp `form:"until,omitempty" json:"until,omitempty"`
+
+	// Limit Maximum number of entries to return in a page.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// StreamSiteLogsParams defines parameters for StreamSiteLogs.
+type StreamSiteLogsParams struct {
+	// Source Only return entries from these log sources; repeat the parameter to
+	// select several (`source=access&source=error`). Without it, entries
+	// of every source are returned.
+	Source *LogSource `form:"source,omitempty" json:"source,omitempty"`
+
+	// Level Only return entries of at least this level.
+	Level *LogLevel `form:"level,omitempty" json:"level,omitempty"`
+
+	// Q Only return entries whose line contains this text, ignoring case.
+	Q *LogQuery `form:"q,omitempty" json:"q,omitempty"`
+
+	// Tail How many of the newest matching entries to send before
+	// following. `0` sends only new entries.
+	Tail *int `form:"tail,omitempty" json:"tail,omitempty"`
+
+	// LastEventID The `id` of the last `log` event the client received. Sent by
+	// `EventSource` when it reconnects. When present, the stream
+	// sends the entries after it instead of the tail.
+	LastEventID *string `json:"Last-Event-ID,omitempty"`
 }
 
 // AppendUploadChunkParams defines parameters for AppendUploadChunk.
@@ -2424,6 +2684,15 @@ type ServerInterface interface {
 	// GoLiveSite Switch a site to its primary domain
 	// (POST /api/v1/sites/{site_id}/go-live)
 	GoLiveSite(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// ListSiteJobLogs Read the log lines of a site's jobs
+	// (GET /api/v1/sites/{site_id}/job-logs)
+	ListSiteJobLogs(w http.ResponseWriter, r *http.Request, siteID SiteID, params ListSiteJobLogsParams)
+	// ListSiteLogs Read a site's runtime logs
+	// (GET /api/v1/sites/{site_id}/logs)
+	ListSiteLogs(w http.ResponseWriter, r *http.Request, siteID SiteID, params ListSiteLogsParams)
+	// StreamSiteLogs Follow a site's runtime logs
+	// (GET /api/v1/sites/{site_id}/logs/stream)
+	StreamSiteLogs(w http.ResponseWriter, r *http.Request, siteID SiteID, params StreamSiteLogsParams)
 	// SetSiteMaintenance Turn maintenance mode on or off
 	// (PUT /api/v1/sites/{site_id}/maintenance)
 	SetSiteMaintenance(w http.ResponseWriter, r *http.Request, siteID SiteID)
@@ -3807,6 +4076,283 @@ func (siw *ServerInterfaceWrapper) GoLiveSite(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// ListSiteJobLogs operation middleware
+func (siw *ServerInterfaceWrapper) ListSiteJobLogs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListSiteJobLogsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSiteJobLogs(w, r, siteID, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListSiteLogs operation middleware
+func (siw *ServerInterfaceWrapper) ListSiteLogs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListSiteLogsParams
+
+	// ------------- Optional query parameter "source" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "source", r.URL.Query(), &params.Source, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "source"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "source", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "level" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "level", r.URL.Query(), &params.Level, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "level"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "level", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "since" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "since", r.URL.Query(), &params.Since, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "since"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "since", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "until" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "until", r.URL.Query(), &params.Until, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "until"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "until", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSiteLogs(w, r, siteID, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StreamSiteLogs operation middleware
+func (siw *ServerInterfaceWrapper) StreamSiteLogs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params StreamSiteLogsParams
+
+	// ------------- Optional query parameter "source" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "source", r.URL.Query(), &params.Source, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "source"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "source", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "level" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "level", r.URL.Query(), &params.Level, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "level"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "level", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "tail" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "tail", r.URL.Query(), &params.Tail, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "tail"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tail", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "Last-Event-ID" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Last-Event-ID")]; found {
+		var LastEventID string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Last-Event-ID", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Last-Event-ID", valueList[0], &LastEventID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Last-Event-ID", Err: err})
+			return
+		}
+
+		params.LastEventID = &LastEventID
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StreamSiteLogs(w, r, siteID, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SetSiteMaintenance operation middleware
 func (siw *ServerInterfaceWrapper) SetSiteMaintenance(w http.ResponseWriter, r *http.Request) {
 
@@ -4611,6 +5157,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/go-live", wrapper.GoLiveSite)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/sites/{site_id}/aliases", wrapper.SetSiteAliases)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/preview-password", wrapper.RegenerateSitePreviewPassword)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/logs", wrapper.ListSiteLogs)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/logs/stream", wrapper.StreamSiteLogs)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/job-logs", wrapper.ListSiteJobLogs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/backups", wrapper.ListSiteBackups)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/backups", wrapper.CreateSiteBackup)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/backup-schedule", wrapper.GetSiteBackupSchedule)
@@ -9248,6 +9797,371 @@ func (response GoLiveSitedefaultApplicationProblemPlusJSONResponse) VisitGoLiveS
 	return err
 }
 
+type ListSiteJobLogsRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+	Params ListSiteJobLogsParams
+}
+
+type ListSiteJobLogsResponseObject interface {
+	VisitListSiteJobLogsResponse(w http.ResponseWriter) error
+}
+
+type ListSiteJobLogs200JSONResponse SiteJobLogList
+
+func (response ListSiteJobLogs200JSONResponse) VisitListSiteJobLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteJobLogs400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response ListSiteJobLogs400ApplicationProblemPlusJSONResponse) VisitListSiteJobLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteJobLogs401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ListSiteJobLogs401ApplicationProblemPlusJSONResponse) VisitListSiteJobLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteJobLogs403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ListSiteJobLogs403ApplicationProblemPlusJSONResponse) VisitListSiteJobLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteJobLogs404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response ListSiteJobLogs404ApplicationProblemPlusJSONResponse) VisitListSiteJobLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteJobLogsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ListSiteJobLogsdefaultApplicationProblemPlusJSONResponse) VisitListSiteJobLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteLogsRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+	Params ListSiteLogsParams
+}
+
+type ListSiteLogsResponseObject interface {
+	VisitListSiteLogsResponse(w http.ResponseWriter) error
+}
+
+type ListSiteLogs200JSONResponse SiteLogList
+
+func (response ListSiteLogs200JSONResponse) VisitListSiteLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteLogs400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response ListSiteLogs400ApplicationProblemPlusJSONResponse) VisitListSiteLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteLogs401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ListSiteLogs401ApplicationProblemPlusJSONResponse) VisitListSiteLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteLogs403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ListSiteLogs403ApplicationProblemPlusJSONResponse) VisitListSiteLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteLogs404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response ListSiteLogs404ApplicationProblemPlusJSONResponse) VisitListSiteLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteLogsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ListSiteLogsdefaultApplicationProblemPlusJSONResponse) VisitListSiteLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StreamSiteLogsRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+	Params StreamSiteLogsParams
+}
+
+type StreamSiteLogsResponseObject interface {
+	VisitStreamSiteLogsResponse(w http.ResponseWriter) error
+}
+
+type StreamSiteLogs200ResponseHeaders struct {
+	CacheControl *string
+}
+
+type StreamSiteLogs200TextEventStreamResponse struct {
+	Body          io.Reader
+	Headers       StreamSiteLogs200ResponseHeaders
+	ContentLength int64
+}
+
+func (response StreamSiteLogs200TextEventStreamResponse) VisitStreamSiteLogsResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		// If w doesn't support flushing, fall back to io.Copy.
+		_, err := io.Copy(w, response.Body)
+		return err
+	}
+	// text/event-stream messages are typically small; use a
+	// modest buffer and flush after each chunk so clients see
+	// events immediately instead of waiting on OS buffering.
+	buf := make([]byte, 4096)
+	for {
+		n, err := response.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				return writeErr
+			}
+			flusher.Flush()
+		}
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+	}
+}
+
+type StreamSiteLogs400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response StreamSiteLogs400ApplicationProblemPlusJSONResponse) VisitStreamSiteLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StreamSiteLogs401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response StreamSiteLogs401ApplicationProblemPlusJSONResponse) VisitStreamSiteLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StreamSiteLogs403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response StreamSiteLogs403ApplicationProblemPlusJSONResponse) VisitStreamSiteLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StreamSiteLogs404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response StreamSiteLogs404ApplicationProblemPlusJSONResponse) VisitStreamSiteLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StreamSiteLogs409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response StreamSiteLogs409ApplicationProblemPlusJSONResponse) VisitStreamSiteLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StreamSiteLogsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response StreamSiteLogsdefaultApplicationProblemPlusJSONResponse) VisitStreamSiteLogsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type SetSiteMaintenanceRequestObject struct {
 	SiteID SiteID `json:"site_id"`
 	Body   *SetSiteMaintenanceJSONRequestBody
@@ -11824,6 +12738,15 @@ type StrictServerInterface interface {
 	// GoLiveSite Switch a site to its primary domain
 	// (POST /api/v1/sites/{site_id}/go-live)
 	GoLiveSite(ctx context.Context, request GoLiveSiteRequestObject) (GoLiveSiteResponseObject, error)
+	// ListSiteJobLogs Read the log lines of a site's jobs
+	// (GET /api/v1/sites/{site_id}/job-logs)
+	ListSiteJobLogs(ctx context.Context, request ListSiteJobLogsRequestObject) (ListSiteJobLogsResponseObject, error)
+	// ListSiteLogs Read a site's runtime logs
+	// (GET /api/v1/sites/{site_id}/logs)
+	ListSiteLogs(ctx context.Context, request ListSiteLogsRequestObject) (ListSiteLogsResponseObject, error)
+	// StreamSiteLogs Follow a site's runtime logs
+	// (GET /api/v1/sites/{site_id}/logs/stream)
+	StreamSiteLogs(ctx context.Context, request StreamSiteLogsRequestObject) (StreamSiteLogsResponseObject, error)
 	// SetSiteMaintenance Turn maintenance mode on or off
 	// (PUT /api/v1/sites/{site_id}/maintenance)
 	SetSiteMaintenance(ctx context.Context, request SetSiteMaintenanceRequestObject) (SetSiteMaintenanceResponseObject, error)
@@ -13158,6 +14081,87 @@ func (sh *strictHandler) GoLiveSite(w http.ResponseWriter, r *http.Request, site
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GoLiveSiteResponseObject); ok {
 		if err := validResponse.VisitGoLiveSiteResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListSiteJobLogs operation middleware
+func (sh *strictHandler) ListSiteJobLogs(w http.ResponseWriter, r *http.Request, siteID SiteID, params ListSiteJobLogsParams) {
+	var request ListSiteJobLogsRequestObject
+
+	request.SiteID = siteID
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListSiteJobLogs(ctx, request.(ListSiteJobLogsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListSiteJobLogs")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListSiteJobLogsResponseObject); ok {
+		if err := validResponse.VisitListSiteJobLogsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListSiteLogs operation middleware
+func (sh *strictHandler) ListSiteLogs(w http.ResponseWriter, r *http.Request, siteID SiteID, params ListSiteLogsParams) {
+	var request ListSiteLogsRequestObject
+
+	request.SiteID = siteID
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListSiteLogs(ctx, request.(ListSiteLogsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListSiteLogs")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListSiteLogsResponseObject); ok {
+		if err := validResponse.VisitListSiteLogsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StreamSiteLogs operation middleware
+func (sh *strictHandler) StreamSiteLogs(w http.ResponseWriter, r *http.Request, siteID SiteID, params StreamSiteLogsParams) {
+	var request StreamSiteLogsRequestObject
+
+	request.SiteID = siteID
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StreamSiteLogs(ctx, request.(StreamSiteLogsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StreamSiteLogs")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StreamSiteLogsResponseObject); ok {
+		if err := validResponse.VisitStreamSiteLogsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

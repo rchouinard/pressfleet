@@ -22,9 +22,9 @@ import (
 )
 
 // The Compose provisioner implements the Provisioner, TaskRunner, Prober,
-// ImagePinner, and SessionRunner parts of the driver. LogReader and StatsReader come with the
-// issues that need them (#78, #68), and the full provisioner.Driver
-// assertion with them; stubbing them now would only hide which parts are
+// ImagePinner, SessionRunner, and LogReader parts of the driver. StatsReader
+// comes with the issue that needs it (#68), and the full provisioner.Driver
+// assertion with it; stubbing it now would only hide which parts are
 // missing.
 var (
 	_ provisioner.Provisioner   = (*Provisioner)(nil)
@@ -32,6 +32,7 @@ var (
 	_ provisioner.SessionRunner = (*Provisioner)(nil)
 	_ provisioner.Prober        = (*Provisioner)(nil)
 	_ provisioner.ImagePinner   = (*Provisioner)(nil)
+	_ provisioner.LogReader     = (*Provisioner)(nil)
 )
 
 // ErrSharedServiceUnavailable means a platform container that sites depend

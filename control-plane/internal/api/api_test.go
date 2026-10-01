@@ -213,7 +213,7 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 	db := storetest.Open(t, store.SQLite)
 	env := newSiteEnv(t, db, testPreviewBase)
 	up := newUploadService(t, db)
-	h := newHandler(t, api.Options{Authenticator: fa, Auth: svc, DB: db, Sites: env.svc, Backups: env.backups, Uploads: up,
+	h := newHandler(t, api.Options{Authenticator: fa, Auth: svc, DB: db, Sites: env.svc, Backups: env.backups, Uploads: up, Logs: env.prov,
 		DatabaseExports: newDatabaseExports(t, db, env), Deployments: newDeployments(t, db, env, up),
 		DatabaseSessions: newDatabaseSessions(t, db, env, nil)})
 	for _, op := range ops {

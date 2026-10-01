@@ -471,3 +471,80 @@ func TestExecWPCLIDocker(t *testing.T) {
 		t.Errorf("on a stopped site: %v, want ErrSiteNotRunning", err)
 	}
 }
+
+// TestLogsDocker reads a real site's logs through the provisioner: lines
+// the containers write to their standard streams come back classified into
+// the access, error, slow, and PHP sources, and both containers have the
+// rotation limits that cap their disk use (§7.4).
+func TestLogsDocker(t *testing.T) {
+	s := newDockerSite(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if _, err := s.prov.CreateSite(ctx, s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	s.exec(t, ctx, "nginx", "sh", "-c",
+		`echo '{"time":"2026-10-01T12:00:00+00:00","status":502,"uri":"/logs-test"}' >/proc/1/fd/1; `+
+			`echo '2026/10/01 12:00:00 [error] 7#7: logs-test upstream failed' >/proc/1/fd/2`)
+	s.exec(t, ctx, "php", "sh", "-c",
+		`echo 'PHP Warning:  logs-test warning' >/proc/1/fd/2; `+
+			`printf '[01-Oct-2026 12:00:00]  [pool www] pid 9\nscript_filename = /var/www/wordpress/slow.php\n[0x00007f] sleep() /x.php:1\n' >/proc/1/fd/2`)
+
+	sources := map[provisioner.LogSource]int{}
+	for e, err := range s.prov.Logs(ctx, s.cfg.ID, provisioner.LogOptions{Contains: "logs-test"}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		sources[e.Source]++
+	}
+	if sources[provisioner.LogAccess] != 1 || sources[provisioner.LogError] != 1 || sources[provisioner.LogPHP] != 1 {
+		t.Errorf("sources = %v", sources)
+	}
+	slow := 0
+	for e, err := range s.prov.Logs(ctx, s.cfg.ID, provisioner.LogOptions{Sources: []provisioner.LogSource{provisioner.LogSlow}}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		slow++
+		if e.Level != provisioner.LevelWarn {
+			t.Errorf("slow entry %+v", e)
+		}
+	}
+	if slow != 3 {
+		t.Errorf("slow entries = %d, want 3", slow)
+	}
+
+	// Following sees a line written after it started.
+	fctx, fcancel := context.WithTimeout(ctx, time.Minute)
+	defer fcancel()
+	seen := make(chan bool)
+	go func() {
+		ok := false
+		for e, err := range s.prov.Logs(fctx, s.cfg.ID, provisioner.LogOptions{Follow: true, Contains: "logs-test-follow"}) {
+			if err == nil && e.Source == provisioner.LogPHP {
+				ok = true
+				fcancel()
+			}
+		}
+		seen <- ok
+	}()
+	time.Sleep(2 * time.Second)
+	s.exec(t, ctx, "php", "sh", "-c", `echo 'PHP Notice:  logs-test-follow' >/proc/1/fd/2`)
+	if !<-seen {
+		t.Error("follow did not see the new line")
+	}
+
+	for _, svc := range []string{"php", "nginx"} {
+		out := s.docker(t, ctx, "container", "inspect", "--format", "{{json .HostConfig.LogConfig}}", s.containerID(t, ctx, svc))
+		var lc struct {
+			Type   string
+			Config map[string]string
+		}
+		if err := json.Unmarshal([]byte(out), &lc); err != nil {
+			t.Fatal(err)
+		}
+		if lc.Type != "json-file" || lc.Config["max-size"] == "" || lc.Config["max-file"] == "" {
+			t.Errorf("%s log config = %+v, want json-file with rotation", svc, lc)
+		}
+	}
+}

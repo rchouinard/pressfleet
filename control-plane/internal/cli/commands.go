@@ -327,6 +327,7 @@ func (a *app) serveCommand() *cobra.Command {
 				DatabaseExports:  dbExports,
 				DatabaseSessions: dbSessions,
 				Deployments:      deploys,
+				Logs:             prov,
 				TrustedProxies:   proxies,
 				SecureCookies:    a.cfg.HTTP.SecureCookies == config.SecureCookiesAlways,
 			})

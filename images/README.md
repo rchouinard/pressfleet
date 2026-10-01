@@ -238,3 +238,5 @@ Everything goes to the container's stdout/stderr (§7.4):
 - nginx access log: stdout, one JSON object per request with `time`, `remote_addr` (real client IP), `host`, `method`, `uri`, `protocol`, `status`, `body_bytes_sent`, `request_time`, `upstream_response_time`, `upstream_cache_status` (`HIT`, `MISS`, `BYPASS`, ...; empty for static files and with the cache off), `referer`, `user_agent`. The status port is not logged.
 - nginx error log: stderr.
 - PHP-FPM log, PHP errors, and the FPM slow log: stderr. There is no FPM access log (nginx logs every request).
+
+The control plane's logs API tells these sources apart by content, not by stream, so that it works on orchestrators that merge stdout and stderr (`provisioner.LogClassifier`): a JSON line starting `{"time":"` from nginx is the access log, any other nginx line is the error log, and a PHP-FPM slow log entry (a `[date]  [pool name] pid N` header followed by `script_filename = ` and `[0x...]` stack lines) is the slow log; everything else the php container writes is PHP output. Keep those formats when changing the nginx `log_format` or the FPM slow log settings.

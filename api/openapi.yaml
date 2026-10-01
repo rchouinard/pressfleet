@@ -109,6 +109,8 @@ tags:
     description: Access to a site's database without its password (exports and temporary database sessions through the SFTP gateway).
   - name: jobs
     description: Long-running operations.
+  - name: logs
+    description: A site's runtime logs (nginx access and error, PHP-FPM slow log, PHP output) and the log lines of its jobs.
   - name: audit
     description: The audit log (Admin only).
 
@@ -1439,6 +1441,229 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/sites/{site_id}/logs:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    get:
+      operationId: listSiteLogs
+      tags: [logs]
+      summary: Read a site's runtime logs
+      description: |
+        The site's nginx access and error logs, PHP-FPM slow log, and PHP
+        output (design doc §7.4), read from the site's containers through
+        the orchestrator driver. A stopped site's logs can be read. Logs
+        are kept only as long as the container log rotation allows (a few
+        tens of megabytes per container), so old entries disappear.
+
+        Every entry has a `source`: `access` (one request, as the JSON
+        object nginx writes), `error` (nginx), `slow` (PHP-FPM slow log;
+        one entry per line of a stack trace, which starts at the line that
+        names the pool and pid), and `php` (PHP errors and warnings,
+        PHP-FPM messages, and anything a plugin prints). Sources are told
+        apart by their content, so they work the same on every
+        orchestrator. `level` is derived the same way: access entries are
+        `info`, `warn` for 4xx, `error` for 5xx; the other sources use the
+        level the line names, and slow log entries are `warn`.
+
+        **Pagination.** This endpoint pages backwards through time, the way
+        a log viewer scrolls. Without a `cursor` it returns the newest
+        `limit` entries that match the filters. Each page lists its
+        entries oldest first, and `next_cursor` is set when there are
+        older matches: pass it as `cursor` for the next, older page.
+        Entries with the same timestamp are never split across pages, so a
+        page can hold a few more than `limit`. `since` and `until` bound
+        the window the pages cover (`until` is exclusive); a cursor
+        continues below its page, but never past `since`. To load only
+        what is new, call again with `since` set to the time of the newest
+        entry you have plus a nanosecond, or use
+        `GET /api/v1/sites/{site_id}/logs/stream`.
+
+        All filters combine. A site that has no runtime yet (still being
+        created) has no logs and returns an empty page.
+      parameters:
+        - $ref: "#/components/parameters/LogSource"
+        - $ref: "#/components/parameters/LogLevel"
+        - $ref: "#/components/parameters/LogQuery"
+        - name: since
+          in: query
+          description: Only return entries at or after this time.
+          schema:
+            $ref: "#/components/schemas/Timestamp"
+        - name: until
+          in: query
+          description: Only return entries before this time.
+          schema:
+            $ref: "#/components/schemas/Timestamp"
+        - name: limit
+          in: query
+          description: Maximum number of entries to return in a page.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 200
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of log entries, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteLogList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/sites/{site_id}/logs/stream:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    get:
+      operationId: streamSiteLogs
+      tags: [logs]
+      summary: Follow a site's runtime logs
+      description: |
+        Streams the site's logs as server-sent events (`text/event-stream`)
+        until the client disconnects: first the newest `tail` entries that
+        match the filters, then new entries as the site writes them. The
+        entries are the ones `GET /api/v1/sites/{site_id}/logs` returns;
+        the filters mean the same, and the stream follows the same sources.
+
+        Server-sent events fit because the stream only flows one way, they
+        run over the same HTTP connection and cookie session as the rest of
+        the API (a browser's `EventSource` reconnects by itself and needs
+        no extra client library), and they work through reverse proxies
+        that buffer nothing. Clients that authenticate with a bearer token
+        read the response as a stream with `fetch`. The generated client
+        doesn't wrap this operation; use `EventSource` or `fetch`.
+
+        Event types:
+
+        * `log`: `data` is one `SiteLogEntry` as JSON, and `id` is the
+          entry's timestamp in nanoseconds since the Unix epoch. A client
+          that reconnects sends it back as `Last-Event-ID` (a browser does
+          so on its own), and the stream continues after that entry
+          instead of repeating the tail.
+        * `error`: `data` is a Problem Details document, sent once before
+          the stream ends because of a failure on the server (for
+          example, the site was deleted). Clients should not reconnect
+          immediately.
+        * Comment lines (`: keepalive`) are sent every 15 seconds so
+          proxies don't close an idle stream. Ignore them.
+
+        Problems that exist before the stream starts (an invalid filter,
+        a missing site) are ordinary Problem Details responses with the
+        usual status. A site that has no runtime yet returns `409`.
+      parameters:
+        - $ref: "#/components/parameters/LogSource"
+        - $ref: "#/components/parameters/LogLevel"
+        - $ref: "#/components/parameters/LogQuery"
+        - name: tail
+          in: query
+          description: |
+            How many of the newest matching entries to send before
+            following. `0` sends only new entries.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 1000
+            default: 100
+        - name: Last-Event-ID
+          in: header
+          description: |
+            The `id` of the last `log` event the client received. Sent by
+            `EventSource` when it reconnects. When present, the stream
+            sends the entries after it instead of the tail.
+          schema:
+            type: string
+            maxLength: 32
+      responses:
+        "200":
+          description: An open event stream.
+          headers:
+            Cache-Control:
+              description: Always `no-store`.
+              schema:
+                type: string
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  Server-sent events as described above. The `data` of a
+                  `log` event is a `SiteLogEntry`.
+                examples:
+                  - |
+                    id: 1790856000123456789
+                    event: log
+                    data: {"time":"2026-10-01T12:00:00.123456789Z","component":"php","source":"php","level":"warn","stream":"stderr","message":"PHP Warning:  Undefined variable $x"}
+
+                    : keepalive
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/sites/{site_id}/job-logs:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    get:
+      operationId: listSiteJobLogs
+      tags: [logs]
+      summary: Read the log lines of a site's jobs
+      description: |
+        The log lines that jobs for this site wrote (creating, updating,
+        backing up, restoring, deploying, and so on; design doc §7.4),
+        across all of the site's jobs, newest first, so the dashboard can
+        show what the platform did to a site without opening each job. Each
+        line names its job and step. Use `GET /api/v1/jobs/{job_id}` for
+        one job's steps and complete log, and `GET /api/v1/jobs` with
+        `target_type=site&target_id=<site_id>` to list the jobs.
+
+        Pass `next_cursor` as `cursor` for the next, older page. A site
+        that has no jobs, or whose jobs wrote no log, returns an empty page.
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of lines to return.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 200
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of job log lines, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteJobLogList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/sites/{site_id}/backups:
     parameters:
       - $ref: "#/components/parameters/SiteID"
@@ -2557,6 +2782,32 @@ components:
       schema:
         type: string
         maxLength: 512
+    LogSource:
+      name: source
+      in: query
+      description: |
+        Only return entries from these log sources; repeat the parameter to
+        select several (`source=access&source=error`). Without it, entries
+        of every source are returned.
+      schema:
+        type: array
+        maxItems: 4
+        items:
+          $ref: "#/components/schemas/SiteLogSource"
+    LogLevel:
+      name: level
+      in: query
+      description: Only return entries of at least this level.
+      schema:
+        $ref: "#/components/schemas/SiteLogLevel"
+    LogQuery:
+      name: q
+      in: query
+      description: Only return entries whose line contains this text, ignoring case.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 200
     TokenID:
       name: token_id
       in: path
@@ -3180,6 +3431,99 @@ components:
           oneOf:
             - $ref: "#/components/schemas/Timestamp"
             - type: "null"
+
+    SiteLogSource:
+      type: string
+      enum: [access, error, slow, php]
+      description: |
+        The kind of log an entry belongs to: `access` (nginx, one JSON object
+        per request), `error` (nginx), `slow` (PHP-FPM slow log), or `php`
+        (PHP errors and warnings, PHP-FPM messages, and other output of the
+        PHP container).
+
+    SiteLogLevel:
+      type: string
+      enum: [debug, info, warn, error]
+
+    SiteLogEntry:
+      type: object
+      required: [time, component, source, level, message]
+      properties:
+        time:
+          $ref: "#/components/schemas/Timestamp"
+        component:
+          type: string
+          enum: [nginx, php]
+          description: The site container that wrote the line.
+        source:
+          $ref: "#/components/schemas/SiteLogSource"
+        level:
+          $ref: "#/components/schemas/SiteLogLevel"
+        stream:
+          type: string
+          enum: [stdout, stderr]
+          description: The output stream of the line. Absent if the orchestrator doesn't keep them apart.
+        message:
+          type: string
+          description: |
+            The log line without its line terminator. For `access` entries
+            it is a JSON object with `time`, `remote_addr`, `host`,
+            `method`, `uri`, `protocol`, `status`, `body_bytes_sent`,
+            `request_time`, `upstream_response_time`,
+            `upstream_cache_status`, `referer`, and `user_agent`, which
+            clients can parse for display. It may hold personal data, such
+            as visitor IP addresses.
+
+    SiteLogList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          description: The page's entries, oldest first.
+          items:
+            $ref: "#/components/schemas/SiteLogEntry"
+        next_cursor:
+          description: Pass as `cursor` to get the next, older page. Null when there are no older entries.
+          $ref: "#/components/schemas/NextCursor"
+
+    SiteJobLogEntry:
+      type: object
+      required: [id, time, level, message, job_id, job_type, step]
+      properties:
+        id:
+          type: string
+          description: Identifies the line; unique across the site's jobs.
+        time:
+          $ref: "#/components/schemas/Timestamp"
+        level:
+          type: string
+          enum: [info, warn, error]
+        message:
+          type: string
+        job_id:
+          $ref: "#/components/schemas/ID"
+        job_type:
+          type: string
+          description: The type of the job that wrote the line.
+          examples: ["site.create"]
+        step:
+          description: The name of the job step the line belongs to, or null for lines outside a step.
+          oneOf:
+            - type: string
+            - type: "null"
+
+    SiteJobLogList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          description: The page's lines, newest first.
+          items:
+            $ref: "#/components/schemas/SiteJobLogEntry"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
 
     BackupList:
       type: object

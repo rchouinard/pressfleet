@@ -494,6 +494,61 @@ func (r Jobs) Logs(ctx context.Context, jobID string, afterID int64, limit int) 
 	return logs, nil
 }
 
+// TargetJobLog is a log line of a job, with what identifies the job and
+// step it belongs to.
+type TargetJobLog struct {
+	JobLog
+	JobType string
+	// StepName is empty for lines that don't belong to a step.
+	StepName string
+}
+
+// LogsForTarget returns up to limit log lines of the jobs for one target
+// (for example a site), newest first, with IDs below beforeID. A zero
+// beforeID starts at the newest line. Line IDs grow with time, so passing
+// the last ID of a page continues with the older lines.
+func (r Jobs) LogsForTarget(ctx context.Context, targetType, targetID string, beforeID int64, limit int) ([]TargetJobLog, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	query := `SELECT l.id, l.job_id, l.step_seq, l.logged_at, l.level, l.message, j.type, COALESCE(s.name, '')
+FROM job_logs l
+JOIN jobs j ON j.id = l.job_id
+LEFT JOIN job_steps s ON s.job_id = l.job_id AND s.seq = l.step_seq
+WHERE j.target_type = ? AND j.target_id = ?`
+	args := []any{targetType, targetID}
+	if beforeID > 0 {
+		query += " AND l.id < ?"
+		args = append(args, beforeID)
+	}
+	query += " ORDER BY l.id DESC LIMIT ?"
+	args = append(args, limit)
+	rows, err := r.q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get target job logs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	logs := []TargetJobLog{}
+	for rows.Next() {
+		var (
+			l   TargetJobLog
+			seq sql.NullInt64
+		)
+		if err := rows.Scan(&l.ID, &l.JobID, &seq, &l.LoggedAt, &l.Level, &l.Message, &l.JobType, &l.StepName); err != nil {
+			return nil, fmt.Errorf("get target job logs: %w", err)
+		}
+		l.StepSeq = -1
+		if seq.Valid {
+			l.StepSeq = int(seq.Int64)
+		}
+		logs = append(logs, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("get target job logs: %w", err)
+	}
+	return logs, nil
+}
+
 // JobDetail is a job with its steps and logs.
 type JobDetail struct {
 	Job   Job

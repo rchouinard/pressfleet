@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -381,6 +382,64 @@ func TestJobsConcurrentLease(t *testing.T) {
 		}
 		if len(seen) != n {
 			t.Errorf("leased %d jobs, want %d", len(seen), n)
+		}
+	})
+}
+
+func TestJobsLogsForTarget(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		jobs := store.NewJobs(db)
+		now := time.Now().UTC().Add(time.Minute)
+		site := id.New()
+		mk := func(target string) store.Job {
+			t.Helper()
+			j := store.Job{Type: "test.a", TargetType: "site", TargetID: target}
+			if err := jobs.Enqueue(ctx, &j); err != nil {
+				t.Fatal(err)
+			}
+			return j
+		}
+		mk(site)
+		leased, ok := lease(t, db, now)
+		if !ok {
+			t.Fatal("no job leased")
+		}
+		if err := jobs.InitSteps(ctx, leased.ID, leased.LeaseOwner, []string{"first"}); err != nil {
+			t.Fatal(err)
+		}
+		second, other := mk(site), mk(id.New())
+		for i, line := range []struct {
+			job  string
+			step int
+			msg  string
+		}{{leased.ID, 0, "one"}, {leased.ID, -1, "two"}, {other.ID, -1, "elsewhere"}, {second.ID, -1, "three"}, {second.ID, -1, "four"}} {
+			if err := jobs.AppendLog(ctx, line.job, line.step, "info", line.msg, now.Add(time.Duration(i)*time.Second)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var got []string
+		var before int64
+		for range 5 {
+			page, err := jobs.LogsForTarget(ctx, "site", site, before, 2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(page) == 0 {
+				break
+			}
+			for _, l := range page {
+				got = append(got, l.Message+"/"+l.StepName)
+			}
+			before = page[len(page)-1].ID
+		}
+		// Newest first, paged by ID, without the other target's line; the
+		// step name is there for the line of a step.
+		if want := []string{"four/", "three/", "two/", "one/first"}; !slices.Equal(got, want) {
+			t.Errorf("logs = %v, want %v", got, want)
+		}
+		if empty, err := jobs.LogsForTarget(ctx, "site", id.New(), 0, 10); err != nil || len(empty) != 0 {
+			t.Errorf("logs of another target = %v, %v", empty, err)
 		}
 	})
 }

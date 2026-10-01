@@ -127,6 +127,15 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
+// Flush lets streaming responses (the log stream) reach the client as they
+// are written; without it the generated handler wouldn't see a Flusher.
+func (s *statusRecorder) Flush() {
+	if s.status == 0 {
+		s.status = http.StatusOK
+	}
+	_ = http.NewResponseController(s.ResponseWriter).Flush()
+}
+
 // auditRequests writes the audit event for each request that needs one.
 // It runs after authentication, so the principal is in the context. With
 // no database, nothing is recorded.

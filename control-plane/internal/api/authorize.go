@@ -87,6 +87,11 @@ var operationActions = map[string]authz.Action{
 	"listJobs": authz.ViewJobs,
 	"getJob":   authz.ViewJobs,
 
+	// Runtime logs are monitoring data; a site's job logs are job data.
+	"listSiteLogs":    authz.ViewMonitoring,
+	"streamSiteLogs":  authz.ViewMonitoring,
+	"listSiteJobLogs": authz.ViewJobs,
+
 	"listAuditEvents": authz.ViewAuditLog,
 
 	// An upload needs the permission of the job it is for (#111): these

@@ -55,8 +55,10 @@ type Fake struct {
 	mu    sync.Mutex
 	sites map[string]*Site
 	logs  map[string][]provisioner.LogEntry
-	stats map[string][]provisioner.ComponentStats
-	calls []Call
+	// logWakeCh is closed when logs are added, waking followers.
+	logWakeCh chan struct{}
+	stats     map[string][]provisioner.ComponentStats
+	calls     []Call
 	// local and registry map image tags to builds (ImagePinner).
 	local    map[string]string
 	registry map[string]string
@@ -76,11 +78,16 @@ func New() *Fake {
 	}
 }
 
-// AddLogs appends log entries returned by Logs for siteID.
+// AddLogs appends log entries returned by Logs for siteID. Entries without a
+// Source are classified from their component and line when read.
 func (f *Fake) AddLogs(siteID string, entries ...provisioner.LogEntry) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.logs[siteID] = append(f.logs[siteID], entries...)
+	if f.logWakeCh != nil {
+		close(f.logWakeCh)
+		f.logWakeCh = nil
+	}
 }
 
 // SetStats sets the samples returned by Stats for siteID.
@@ -323,34 +330,27 @@ func (f *Fake) ReloadCode(_ context.Context, siteID string) error {
 	return nil
 }
 
-// Logs implements provisioner.LogReader. It filters stored entries by
-// component, Since, and Tail; Follow is ignored.
-func (f *Fake) Logs(_ context.Context, siteID string, opts provisioner.LogOptions) iter.Seq2[provisioner.LogEntry, error] {
+// Logs implements provisioner.LogReader. It selects stored entries with
+// provisioner.SelectLogs, classifying those added without a source or level
+// as a driver would. With Follow it then yields entries added by AddLogs
+// until ctx is canceled.
+func (f *Fake) Logs(ctx context.Context, siteID string, opts provisioner.LogOptions) iter.Seq2[provisioner.LogEntry, error] {
 	f.mu.Lock()
 	err := f.begin("Logs", siteID, nil)
 	if err == nil {
 		_, err = f.lookup(siteID)
 	}
-	var out []provisioner.LogEntry
 	if err == nil {
-		counts := map[provisioner.Component]int{}
-		stored := f.logs[siteID]
-		// Walk backwards so Tail keeps the newest lines per component.
-		for i := len(stored) - 1; i >= 0; i-- {
-			e := stored[i]
-			if len(opts.Components) > 0 && !slices.Contains(opts.Components, e.Component) {
-				continue
-			}
-			if !opts.Since.IsZero() && e.Time.Before(opts.Since) {
-				continue
-			}
-			if opts.Tail > 0 && counts[e.Component] >= opts.Tail {
-				continue
-			}
-			counts[e.Component]++
-			out = append(out, e)
-		}
-		slices.Reverse(out)
+		err = opts.Validate()
+	}
+	var out []provisioner.LogEntry
+	var next int
+	var wake <-chan struct{}
+	if err == nil {
+		stored := f.classifiedLogs(siteID)
+		out = provisioner.SelectLogs(stored, opts)
+		next = len(stored)
+		wake = f.logWake()
 	}
 	f.mu.Unlock()
 
@@ -364,7 +364,53 @@ func (f *Fake) Logs(_ context.Context, siteID string, opts provisioner.LogOption
 				return
 			}
 		}
+		for opts.Follow {
+			select {
+			case <-ctx.Done():
+				return
+			case <-wake:
+			}
+			f.mu.Lock()
+			stored := f.classifiedLogs(siteID)
+			wake = f.logWake()
+			fresh := slices.Clone(stored[next:])
+			next = len(stored)
+			f.mu.Unlock()
+			for _, e := range fresh {
+				if opts.Match(e) && !yield(e, nil) {
+					return
+				}
+			}
+		}
 	}
+}
+
+// classifiedLogs returns the site's stored entries with Source and Level
+// filled in. The caller holds f.mu.
+func (f *Fake) classifiedLogs(siteID string) []provisioner.LogEntry {
+	classifiers := map[provisioner.Component]*provisioner.LogClassifier{}
+	out := slices.Clone(f.logs[siteID])
+	for i, e := range out {
+		if e.Source != "" {
+			continue
+		}
+		c := classifiers[e.Component]
+		if c == nil {
+			c = provisioner.NewLogClassifier(e.Component)
+			classifiers[e.Component] = c
+		}
+		out[i].Source, out[i].Level = c.Classify(e.Line)
+	}
+	return out
+}
+
+// logWake returns a channel that is closed by the next AddLogs. The caller
+// holds f.mu.
+func (f *Fake) logWake() <-chan struct{} {
+	if f.logWakeCh == nil {
+		f.logWakeCh = make(chan struct{})
+	}
+	return f.logWakeCh
 }
 
 // Stats implements provisioner.StatsReader.

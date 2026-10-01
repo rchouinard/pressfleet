@@ -45,6 +45,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
@@ -54,6 +55,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/dbsession"
 	"github.com/rchouinard/pressfleet/control-plane/internal/deploy"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 	"github.com/rchouinard/pressfleet/control-plane/internal/uploads"
@@ -106,6 +108,9 @@ type Options struct {
 	// DatabaseSessions opens and ends temporary database sessions. If nil,
 	// the database session operations fail with 500.
 	DatabaseSessions *dbsession.Service
+	// Logs reads the site containers' logs through the orchestrator
+	// driver. If nil, the site log operations fail with 500.
+	Logs provisioner.LogReader
 	// SecureCookies forces the Secure flag on the session cookie. Otherwise
 	// it is set when the request arrived over HTTPS, directly or through a
 	// trusted proxy, so plain-HTTP development on localhost still works.
@@ -124,6 +129,7 @@ type Handlers struct {
 	dbExports     *dbexport.Service
 	deploys       *deploy.Service
 	dbSessions    *dbsession.Service
+	logs          provisioner.LogReader
 	resolver      authz.Resolver
 	secureCookies bool
 }
@@ -161,6 +167,7 @@ func NewHandler(opts Options) (http.Handler, error) {
 	h.dbExports = opts.DatabaseExports
 	h.deploys = opts.Deployments
 	h.dbSessions = opts.DatabaseSessions
+	h.logs = opts.Logs
 	if opts.DB != nil {
 		h.resolver = authz.NewResolver(opts.DB)
 	}
@@ -194,6 +201,12 @@ func withOperation(ops operationTable) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if op, ok := ops.forRequest(r); ok {
 				r = r.WithContext(context.WithValue(r.Context(), operationKey{}, op))
+				if op.ID == "streamSiteLogs" {
+					// The server's write timeout is for responses that end;
+					// a followed log lasts as long as the client watches.
+					// Keepalive comments make a vanished client's writes fail.
+					_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
+				}
 			}
 			// Responses are per-user and may carry credentials (tokens, CSRF
 			// tokens); keep them out of shared and browser caches.

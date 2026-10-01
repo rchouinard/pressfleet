@@ -175,12 +175,58 @@ func TestFakeLogs(t *testing.T) {
 	if got := collect(provisioner.LogOptions{Components: []provisioner.Component{provisioner.ComponentPHP}, Tail: 2}); !slices.Equal(got, []string{"php 2", "php 3"}) {
 		t.Errorf("php tail 2 = %v", got)
 	}
+	if got := collect(provisioner.LogOptions{Tail: 3}); !slices.Equal(got, []string{"php 2", "nginx 3", "php 3"}) {
+		t.Errorf("tail 3 = %v", got)
+	}
+	if got := collect(provisioner.LogOptions{Until: base.Add(time.Minute), Contains: "PHP"}); !slices.Equal(got, []string{"php 0"}) {
+		t.Errorf("until + contains = %v", got)
+	}
 	if got := collect(provisioner.LogOptions{Since: base.Add(3 * time.Minute)}); !slices.Equal(got, []string{"nginx 3", "php 3"}) {
 		t.Errorf("since = %v", got)
 	}
 	for _, err := range f.Logs(ctx, "missing", provisioner.LogOptions{}) {
 		if !errors.Is(err, provisioner.ErrSiteNotFound) {
 			t.Errorf("Logs(missing) err = %v, want ErrSiteNotFound", err)
+		}
+	}
+}
+
+func TestFakeLogsFollowAndClassify(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := provisionertest.New()
+	if _, err := f.CreateSite(ctx, config("a")); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
+	f.AddLogs("a", provisioner.LogEntry{Time: base, Component: provisioner.ComponentNginx, Line: `{"time":"x","status":502}`})
+	got := make(chan provisioner.LogEntry)
+	go func() {
+		defer close(got)
+		for e, err := range f.Logs(ctx, "a", provisioner.LogOptions{Follow: true, MinLevel: provisioner.LevelWarn}) {
+			if err != nil {
+				return
+			}
+			got <- e
+		}
+	}()
+	if e := <-got; e.Source != provisioner.LogAccess || e.Level != provisioner.LevelError {
+		t.Errorf("backlog entry = %+v", e)
+	}
+	f.AddLogs("a",
+		provisioner.LogEntry{Time: base.Add(time.Second), Component: provisioner.ComponentPHP, Line: "PHP Notice:  ignored"},
+		provisioner.LogEntry{Time: base.Add(2 * time.Second), Component: provisioner.ComponentPHP, Line: "PHP Warning:  followed"},
+	)
+	if e := <-got; e.Line != "PHP Warning:  followed" || e.Source != provisioner.LogPHP {
+		t.Errorf("followed entry = %+v", e)
+	}
+	cancel()
+	for range got {
+	}
+
+	for _, err := range f.Logs(context.Background(), "a", provisioner.LogOptions{Sources: []provisioner.LogSource{"bogus"}}) {
+		if !errors.Is(err, provisioner.ErrInvalidLogOptions) {
+			t.Errorf("invalid options err = %v", err)
 		}
 	}
 }

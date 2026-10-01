@@ -88,32 +88,55 @@ const (
 	Stderr LogStream = "stderr"
 )
 
-// LogOptions selects which log lines to read.
+// LogOptions selects which log entries to read. Filters combine: an entry
+// has to pass all of them.
 type LogOptions struct {
 	// Components to read; empty means all of the site's components.
 	Components []Component
-	// Since, if non-zero, skips lines written before it.
-	Since time.Time
-	// Tail, if positive, starts at the last Tail lines per component.
+	// Sources to read; empty means all of them.
+	Sources []LogSource
+	// Since, if non-zero, skips entries written before it. Until, if
+	// non-zero, skips entries written at or after it, so a page of older
+	// entries ends where the previous one began.
+	Since, Until time.Time
+	// Contains, if set, keeps entries whose line contains it, ignoring case.
+	Contains string
+	// MinLevel, if set, keeps entries of at least this level; entries
+	// without a known level count as info.
+	MinLevel LogLevel
+	// Tail, if positive, keeps the newest Tail entries of what the other
+	// options select, across components. It is applied after the filters, so
+	// the result holds Tail matching entries whenever there are that many.
 	Tail int
-	// Follow keeps the stream open for new lines until ctx is canceled.
+	// Follow keeps the stream open for new entries until ctx is canceled.
+	// The entries Tail selects come first. Follow can't be combined with
+	// Until.
 	Follow bool
 }
 
 // LogEntry is one line of a site component's output.
 type LogEntry struct {
+	// Time is when the orchestrator received the line.
 	Time      time.Time
 	Component Component
-	Stream    LogStream
-	Line      string
+	// Stream is empty if the driver can't tell stdout from stderr.
+	Stream LogStream
+	// Source and Level are derived from the line by [LogClassifier]; a
+	// driver sets them on every entry it yields.
+	Source LogSource
+	Level  LogLevel
+	// Line is the line without its line terminator. Access log lines are
+	// the JSON objects nginx writes.
+	Line string
 }
 
 // LogReader reads site container logs (§7.4).
 type LogReader interface {
-	// Logs yields log entries for the site. Iteration ends when the logs are
-	// exhausted (or, with Follow, when ctx is canceled); a non-nil error is
-	// yielded once and ends iteration. Returns ErrSiteNotFound via the error
-	// value if the site does not exist.
+	// Logs yields log entries for the site, oldest first, with Source and
+	// Level set. Iteration ends when the logs are exhausted (or, with Follow,
+	// when ctx is canceled); a non-nil error is yielded once and ends
+	// iteration. Invalid options yield ErrInvalidLogOptions, and a site that
+	// does not exist ErrSiteNotFound, via the error value.
 	Logs(ctx context.Context, siteID string, opts LogOptions) iter.Seq2[LogEntry, error]
 }
 

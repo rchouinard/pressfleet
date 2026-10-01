@@ -420,6 +420,111 @@ func (e SiteDeploymentKind) Valid() bool {
 	}
 }
 
+// Defines values for SiteJobLogEntryLevel.
+const (
+	SiteJobLogEntryLevelError SiteJobLogEntryLevel = "error"
+	SiteJobLogEntryLevelInfo  SiteJobLogEntryLevel = "info"
+	SiteJobLogEntryLevelWarn  SiteJobLogEntryLevel = "warn"
+)
+
+// Valid indicates whether the value is a known member of the SiteJobLogEntryLevel enum.
+func (e SiteJobLogEntryLevel) Valid() bool {
+	switch e {
+	case SiteJobLogEntryLevelError:
+		return true
+	case SiteJobLogEntryLevelInfo:
+		return true
+	case SiteJobLogEntryLevelWarn:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SiteLogEntryComponent.
+const (
+	SiteLogEntryComponentNginx SiteLogEntryComponent = "nginx"
+	SiteLogEntryComponentPhp   SiteLogEntryComponent = "php"
+)
+
+// Valid indicates whether the value is a known member of the SiteLogEntryComponent enum.
+func (e SiteLogEntryComponent) Valid() bool {
+	switch e {
+	case SiteLogEntryComponentNginx:
+		return true
+	case SiteLogEntryComponentPhp:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SiteLogEntryStream.
+const (
+	Stderr SiteLogEntryStream = "stderr"
+	Stdout SiteLogEntryStream = "stdout"
+)
+
+// Valid indicates whether the value is a known member of the SiteLogEntryStream enum.
+func (e SiteLogEntryStream) Valid() bool {
+	switch e {
+	case Stderr:
+		return true
+	case Stdout:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SiteLogLevel.
+const (
+	SiteLogLevelDebug SiteLogLevel = "debug"
+	SiteLogLevelError SiteLogLevel = "error"
+	SiteLogLevelInfo  SiteLogLevel = "info"
+	SiteLogLevelWarn  SiteLogLevel = "warn"
+)
+
+// Valid indicates whether the value is a known member of the SiteLogLevel enum.
+func (e SiteLogLevel) Valid() bool {
+	switch e {
+	case SiteLogLevelDebug:
+		return true
+	case SiteLogLevelError:
+		return true
+	case SiteLogLevelInfo:
+		return true
+	case SiteLogLevelWarn:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SiteLogSource.
+const (
+	SiteLogSourceAccess SiteLogSource = "access"
+	SiteLogSourceError  SiteLogSource = "error"
+	SiteLogSourcePhp    SiteLogSource = "php"
+	SiteLogSourceSlow   SiteLogSource = "slow"
+)
+
+// Valid indicates whether the value is a known member of the SiteLogSource enum.
+func (e SiteLogSource) Valid() bool {
+	switch e {
+	case SiteLogSourceAccess:
+		return true
+	case SiteLogSourceError:
+		return true
+	case SiteLogSourcePhp:
+		return true
+	case SiteLogSourceSlow:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SiteRuntimePhase.
 const (
 	SiteRuntimePhaseAbsent  SiteRuntimePhase = "absent"
@@ -1715,6 +1820,42 @@ type SiteImportAccepted struct {
 	SiteID ID `json:"site_id"`
 }
 
+// SiteJobLogEntry defines model for SiteJobLogEntry.
+type SiteJobLogEntry struct {
+	// ID Identifies the line; unique across the site's jobs.
+	ID string `json:"id"`
+
+	// JobID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	JobID ID `json:"job_id"`
+
+	// JobType The type of the job that wrote the line.
+	//
+	// Examples: site.create
+	JobType string               `json:"job_type"`
+	Level   SiteJobLogEntryLevel `json:"level"`
+	Message string               `json:"message"`
+
+	// Step The name of the job step the line belongs to, or null for lines outside a step.
+	Step *string `json:"step"`
+
+	// Time Examples: 2026-09-26T17:25:00Z
+	Time Timestamp `json:"time"`
+}
+
+// SiteJobLogEntryLevel defines model for SiteJobLogEntry.Level.
+type SiteJobLogEntryLevel string
+
+// SiteJobLogList defines model for SiteJobLogList.
+type SiteJobLogList struct {
+	// Items The page's lines, newest first.
+	Items []SiteJobLogEntry `json:"items"`
+
+	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
+	NextCursor *NextCursor `json:"next_cursor"`
+}
+
 // SiteList defines model for SiteList.
 type SiteList struct {
 	Items []Site `json:"items"`
@@ -1722,6 +1863,58 @@ type SiteList struct {
 	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
 	NextCursor *NextCursor `json:"next_cursor"`
 }
+
+// SiteLogEntry defines model for SiteLogEntry.
+type SiteLogEntry struct {
+	// Component The site container that wrote the line.
+	Component SiteLogEntryComponent `json:"component"`
+	Level     SiteLogLevel          `json:"level"`
+
+	// Message The log line without its line terminator. For `access` entries
+	// it is a JSON object with `time`, `remote_addr`, `host`,
+	// `method`, `uri`, `protocol`, `status`, `body_bytes_sent`,
+	// `request_time`, `upstream_response_time`,
+	// `upstream_cache_status`, `referer`, and `user_agent`, which
+	// clients can parse for display. It may hold personal data, such
+	// as visitor IP addresses.
+	Message string `json:"message"`
+
+	// Source The kind of log an entry belongs to: `access` (nginx, one JSON object
+	// per request), `error` (nginx), `slow` (PHP-FPM slow log), or `php`
+	// (PHP errors and warnings, PHP-FPM messages, and other output of the
+	// PHP container).
+	Source SiteLogSource `json:"source"`
+
+	// Stream The output stream of the line. Absent if the orchestrator doesn't keep them apart.
+	Stream *SiteLogEntryStream `json:"stream,omitempty"`
+
+	// Time Examples: 2026-09-26T17:25:00Z
+	Time Timestamp `json:"time"`
+}
+
+// SiteLogEntryComponent The site container that wrote the line.
+type SiteLogEntryComponent string
+
+// SiteLogEntryStream The output stream of the line. Absent if the orchestrator doesn't keep them apart.
+type SiteLogEntryStream string
+
+// SiteLogLevel defines model for SiteLogLevel.
+type SiteLogLevel string
+
+// SiteLogList defines model for SiteLogList.
+type SiteLogList struct {
+	// Items The page's entries, oldest first.
+	Items []SiteLogEntry `json:"items"`
+
+	// NextCursor Pass as `cursor` to get the next, older page. Null when there are no older entries.
+	NextCursor *NextCursor `json:"next_cursor"`
+}
+
+// SiteLogSource The kind of log an entry belongs to: `access` (nginx, one JSON object
+// per request), `error` (nginx), `slow` (PHP-FPM slow log), or `php`
+// (PHP errors and warnings, PHP-FPM messages, and other output of the
+// PHP container).
+type SiteLogSource string
 
 // SiteMaintenance defines model for SiteMaintenance.
 type SiteMaintenance struct {
@@ -2033,6 +2226,15 @@ type JobID = ID
 // Limit defines model for Limit.
 type Limit = int
 
+// LogLevel defines model for LogLevel.
+type LogLevel = SiteLogLevel
+
+// LogQuery defines model for LogQuery.
+type LogQuery = string
+
+// LogSource defines model for LogSource.
+type LogSource = []SiteLogSource
+
 // SSHKeyID Opaque, server-assigned identifier.
 //
 // Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
@@ -2182,6 +2384,64 @@ type ListSiteBackupsParams struct {
 
 	// Status Only return backups with this status.
 	Status *BackupStatus `form:"status,omitempty" json:"status,omitempty"`
+}
+
+// ListSiteJobLogsParams defines parameters for ListSiteJobLogs.
+type ListSiteJobLogsParams struct {
+	// Limit Maximum number of lines to return.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListSiteLogsParams defines parameters for ListSiteLogs.
+type ListSiteLogsParams struct {
+	// Source Only return entries from these log sources; repeat the parameter to
+	// select several (`source=access&source=error`). Without it, entries
+	// of every source are returned.
+	Source *LogSource `form:"source,omitempty" json:"source,omitempty"`
+
+	// Level Only return entries of at least this level.
+	Level *LogLevel `form:"level,omitempty" json:"level,omitempty"`
+
+	// Q Only return entries whose line contains this text, ignoring case.
+	Q *LogQuery `form:"q,omitempty" json:"q,omitempty"`
+
+	// Since Only return entries at or after this time.
+	Since *Timestamp `form:"since,omitempty" json:"since,omitempty"`
+
+	// Until Only return entries before this time.
+	Until *Timestamp `form:"until,omitempty" json:"until,omitempty"`
+
+	// Limit Maximum number of entries to return in a page.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// StreamSiteLogsParams defines parameters for StreamSiteLogs.
+type StreamSiteLogsParams struct {
+	// Source Only return entries from these log sources; repeat the parameter to
+	// select several (`source=access&source=error`). Without it, entries
+	// of every source are returned.
+	Source *LogSource `form:"source,omitempty" json:"source,omitempty"`
+
+	// Level Only return entries of at least this level.
+	Level *LogLevel `form:"level,omitempty" json:"level,omitempty"`
+
+	// Q Only return entries whose line contains this text, ignoring case.
+	Q *LogQuery `form:"q,omitempty" json:"q,omitempty"`
+
+	// Tail How many of the newest matching entries to send before
+	// following. `0` sends only new entries.
+	Tail *int `form:"tail,omitempty" json:"tail,omitempty"`
+
+	// LastEventID The `id` of the last `log` event the client received. Sent by
+	// `EventSource` when it reconnects. When present, the stream
+	// sends the entries after it instead of the tail.
+	LastEventID *string `json:"Last-Event-ID,omitempty"`
 }
 
 // AppendUploadChunkParams defines parameters for AppendUploadChunk.
@@ -3360,6 +3620,96 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/go-live (the `GoLiveSite` operationId).
 	GoLiveSite(ctx context.Context, siteID SiteID, body GoLiveSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSiteJobLogs Read the log lines of a site's jobs
+	//
+	// The log lines that jobs for this site wrote (creating, updating,
+	// backing up, restoring, deploying, and so on; design doc §7.4),
+	// across all of the site's jobs, newest first, so the dashboard can
+	// show what the platform did to a site without opening each job. Each
+	// line names its job and step. Use `GET /api/v1/jobs/{job_id}` for
+	// one job's steps and complete log, and `GET /api/v1/jobs` with
+	// `target_type=site&target_id=<site_id>` to list the jobs.
+	//
+	// Pass `next_cursor` as `cursor` for the next, older page. A site
+	// that has no jobs, or whose jobs wrote no log, returns an empty page.
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/job-logs (the `ListSiteJobLogs` operationId).
+	ListSiteJobLogs(ctx context.Context, siteID SiteID, params *ListSiteJobLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSiteLogs Read a site's runtime logs
+	//
+	// The site's nginx access and error logs, PHP-FPM slow log, and PHP
+	// output (design doc §7.4), read from the site's containers through
+	// the orchestrator driver. A stopped site's logs can be read. Logs
+	// are kept only as long as the container log rotation allows (a few
+	// tens of megabytes per container), so old entries disappear.
+	//
+	// Every entry has a `source`: `access` (one request, as the JSON
+	// object nginx writes), `error` (nginx), `slow` (PHP-FPM slow log;
+	// one entry per line of a stack trace, which starts at the line that
+	// names the pool and pid), and `php` (PHP errors and warnings,
+	// PHP-FPM messages, and anything a plugin prints). Sources are told
+	// apart by their content, so they work the same on every
+	// orchestrator. `level` is derived the same way: access entries are
+	// `info`, `warn` for 4xx, `error` for 5xx; the other sources use the
+	// level the line names, and slow log entries are `warn`.
+	//
+	// **Pagination.** This endpoint pages backwards through time, the way
+	// a log viewer scrolls. Without a `cursor` it returns the newest
+	// `limit` entries that match the filters. Each page lists its
+	// entries oldest first, and `next_cursor` is set when there are
+	// older matches: pass it as `cursor` for the next, older page.
+	// Entries with the same timestamp are never split across pages, so a
+	// page can hold a few more than `limit`. `since` and `until` bound
+	// the window the pages cover (`until` is exclusive); a cursor
+	// continues below its page, but never past `since`. To load only
+	// what is new, call again with `since` set to the time of the newest
+	// entry you have plus a nanosecond, or use
+	// `GET /api/v1/sites/{site_id}/logs/stream`.
+	//
+	// All filters combine. A site that has no runtime yet (still being
+	// created) has no logs and returns an empty page.
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/logs (the `ListSiteLogs` operationId).
+	ListSiteLogs(ctx context.Context, siteID SiteID, params *ListSiteLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StreamSiteLogs Follow a site's runtime logs
+	//
+	// Streams the site's logs as server-sent events (`text/event-stream`)
+	// until the client disconnects: first the newest `tail` entries that
+	// match the filters, then new entries as the site writes them. The
+	// entries are the ones `GET /api/v1/sites/{site_id}/logs` returns;
+	// the filters mean the same, and the stream follows the same sources.
+	//
+	// Server-sent events fit because the stream only flows one way, they
+	// run over the same HTTP connection and cookie session as the rest of
+	// the API (a browser's `EventSource` reconnects by itself and needs
+	// no extra client library), and they work through reverse proxies
+	// that buffer nothing. Clients that authenticate with a bearer token
+	// read the response as a stream with `fetch`. The generated client
+	// doesn't wrap this operation; use `EventSource` or `fetch`.
+	//
+	// Event types:
+	//
+	// * `log`: `data` is one `SiteLogEntry` as JSON, and `id` is the
+	//   entry's timestamp in nanoseconds since the Unix epoch. A client
+	//   that reconnects sends it back as `Last-Event-ID` (a browser does
+	//   so on its own), and the stream continues after that entry
+	//   instead of repeating the tail.
+	// * `error`: `data` is a Problem Details document, sent once before
+	//   the stream ends because of a failure on the server (for
+	//   example, the site was deleted). Clients should not reconnect
+	//   immediately.
+	// * Comment lines (`: keepalive`) are sent every 15 seconds so
+	//   proxies don't close an idle stream. Ignore them.
+	//
+	// Problems that exist before the stream starts (an invalid filter,
+	// a missing site) are ordinary Problem Details responses with the
+	// usual status. A site that has no runtime yet returns `409`.
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/logs/stream (the `StreamSiteLogs` operationId).
+	StreamSiteLogs(ctx context.Context, siteID SiteID, params *StreamSiteLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetSiteMaintenanceWithBody Turn maintenance mode on or off
 	//
@@ -5382,6 +5732,126 @@ func (c *Client) GoLiveSiteWithBody(ctx context.Context, siteID SiteID, contentT
 // Corresponds with POST /api/v1/sites/{site_id}/go-live (the `GoLiveSite` operationId).
 func (c *Client) GoLiveSite(ctx context.Context, siteID SiteID, body GoLiveSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGoLiveSiteRequest(c.Server, siteID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListSiteJobLogs Read the log lines of a site's jobs
+//
+// The log lines that jobs for this site wrote (creating, updating,
+// backing up, restoring, deploying, and so on; design doc §7.4),
+// across all of the site's jobs, newest first, so the dashboard can
+// show what the platform did to a site without opening each job. Each
+// line names its job and step. Use `GET /api/v1/jobs/{job_id}` for
+// one job's steps and complete log, and `GET /api/v1/jobs` with
+// `target_type=site&target_id=<site_id>` to list the jobs.
+//
+// Pass `next_cursor` as `cursor` for the next, older page. A site
+// that has no jobs, or whose jobs wrote no log, returns an empty page.
+//
+// Corresponds with GET /api/v1/sites/{site_id}/job-logs (the `ListSiteJobLogs` operationId).
+func (c *Client) ListSiteJobLogs(ctx context.Context, siteID SiteID, params *ListSiteJobLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSiteJobLogsRequest(c.Server, siteID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListSiteLogs Read a site's runtime logs
+//
+// The site's nginx access and error logs, PHP-FPM slow log, and PHP
+// output (design doc §7.4), read from the site's containers through
+// the orchestrator driver. A stopped site's logs can be read. Logs
+// are kept only as long as the container log rotation allows (a few
+// tens of megabytes per container), so old entries disappear.
+//
+// Every entry has a `source`: `access` (one request, as the JSON
+// object nginx writes), `error` (nginx), `slow` (PHP-FPM slow log;
+// one entry per line of a stack trace, which starts at the line that
+// names the pool and pid), and `php` (PHP errors and warnings,
+// PHP-FPM messages, and anything a plugin prints). Sources are told
+// apart by their content, so they work the same on every
+// orchestrator. `level` is derived the same way: access entries are
+// `info`, `warn` for 4xx, `error` for 5xx; the other sources use the
+// level the line names, and slow log entries are `warn`.
+//
+// **Pagination.** This endpoint pages backwards through time, the way
+// a log viewer scrolls. Without a `cursor` it returns the newest
+// `limit` entries that match the filters. Each page lists its
+// entries oldest first, and `next_cursor` is set when there are
+// older matches: pass it as `cursor` for the next, older page.
+// Entries with the same timestamp are never split across pages, so a
+// page can hold a few more than `limit`. `since` and `until` bound
+// the window the pages cover (`until` is exclusive); a cursor
+// continues below its page, but never past `since`. To load only
+// what is new, call again with `since` set to the time of the newest
+// entry you have plus a nanosecond, or use
+// `GET /api/v1/sites/{site_id}/logs/stream`.
+//
+// All filters combine. A site that has no runtime yet (still being
+// created) has no logs and returns an empty page.
+//
+// Corresponds with GET /api/v1/sites/{site_id}/logs (the `ListSiteLogs` operationId).
+func (c *Client) ListSiteLogs(ctx context.Context, siteID SiteID, params *ListSiteLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSiteLogsRequest(c.Server, siteID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StreamSiteLogs Follow a site's runtime logs
+//
+// Streams the site's logs as server-sent events (`text/event-stream`)
+// until the client disconnects: first the newest `tail` entries that
+// match the filters, then new entries as the site writes them. The
+// entries are the ones `GET /api/v1/sites/{site_id}/logs` returns;
+// the filters mean the same, and the stream follows the same sources.
+//
+// Server-sent events fit because the stream only flows one way, they
+// run over the same HTTP connection and cookie session as the rest of
+// the API (a browser's `EventSource` reconnects by itself and needs
+// no extra client library), and they work through reverse proxies
+// that buffer nothing. Clients that authenticate with a bearer token
+// read the response as a stream with `fetch`. The generated client
+// doesn't wrap this operation; use `EventSource` or `fetch`.
+//
+// Event types:
+//
+//   - `log`: `data` is one `SiteLogEntry` as JSON, and `id` is the
+//     entry's timestamp in nanoseconds since the Unix epoch. A client
+//     that reconnects sends it back as `Last-Event-ID` (a browser does
+//     so on its own), and the stream continues after that entry
+//     instead of repeating the tail.
+//   - `error`: `data` is a Problem Details document, sent once before
+//     the stream ends because of a failure on the server (for
+//     example, the site was deleted). Clients should not reconnect
+//     immediately.
+//   - Comment lines (`: keepalive`) are sent every 15 seconds so
+//     proxies don't close an idle stream. Ignore them.
+//
+// Problems that exist before the stream starts (an invalid filter,
+// a missing site) are ordinary Problem Details responses with the
+// usual status. A site that has no runtime yet returns `409`.
+//
+// Corresponds with GET /api/v1/sites/{site_id}/logs/stream (the `StreamSiteLogs` operationId).
+func (c *Client) StreamSiteLogs(ctx context.Context, siteID SiteID, params *StreamSiteLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStreamSiteLogsRequest(c.Server, siteID, params)
 	if err != nil {
 		return nil, err
 	}
@@ -8108,6 +8578,324 @@ func NewGoLiveSiteRequestWithBody(server string, siteID SiteID, contentType stri
 	return req, nil
 }
 
+// NewListSiteJobLogsRequest constructs an http.Request for the ListSiteJobLogs method
+func NewListSiteJobLogsRequest(server string, siteID SiteID, params *ListSiteJobLogsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/job-logs", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListSiteLogsRequest constructs an http.Request for the ListSiteLogs method
+func NewListSiteLogsRequest(server string, siteID SiteID, params *ListSiteLogsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/logs", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Source != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "source", *params.Source, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Level != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "level", *params.Level, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Q != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Since != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "since", *params.Since, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Until != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "until", *params.Until, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStreamSiteLogsRequest constructs an http.Request for the StreamSiteLogs method
+func NewStreamSiteLogsRequest(server string, siteID SiteID, params *StreamSiteLogsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/logs/stream", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Source != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "source", *params.Source, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Level != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "level", *params.Level, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Q != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Tail != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "tail", *params.Tail, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.LastEventID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Last-Event-ID", *params.LastEventID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Last-Event-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewSetSiteMaintenanceRequest calls the generic SetSiteMaintenance builder with application/json body
 func NewSetSiteMaintenanceRequest(server string, siteID SiteID, body SetSiteMaintenanceJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -10205,6 +10993,102 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/go-live (the `GoLiveSite` operationId).
 	GoLiveSiteWithResponse(ctx context.Context, siteID SiteID, body GoLiveSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*GoLiveSiteResponse, error)
+
+	// ListSiteJobLogsWithResponse Read the log lines of a site's jobs
+	//
+	// The log lines that jobs for this site wrote (creating, updating,
+	// backing up, restoring, deploying, and so on; design doc §7.4),
+	// across all of the site's jobs, newest first, so the dashboard can
+	// show what the platform did to a site without opening each job. Each
+	// line names its job and step. Use `GET /api/v1/jobs/{job_id}` for
+	// one job's steps and complete log, and `GET /api/v1/jobs` with
+	// `target_type=site&target_id=<site_id>` to list the jobs.
+	//
+	// Pass `next_cursor` as `cursor` for the next, older page. A site
+	// that has no jobs, or whose jobs wrote no log, returns an empty page.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/job-logs (the `ListSiteJobLogs` operationId).
+	ListSiteJobLogsWithResponse(ctx context.Context, siteID SiteID, params *ListSiteJobLogsParams, reqEditors ...RequestEditorFn) (*ListSiteJobLogsResponse, error)
+
+	// ListSiteLogsWithResponse Read a site's runtime logs
+	//
+	// The site's nginx access and error logs, PHP-FPM slow log, and PHP
+	// output (design doc §7.4), read from the site's containers through
+	// the orchestrator driver. A stopped site's logs can be read. Logs
+	// are kept only as long as the container log rotation allows (a few
+	// tens of megabytes per container), so old entries disappear.
+	//
+	// Every entry has a `source`: `access` (one request, as the JSON
+	// object nginx writes), `error` (nginx), `slow` (PHP-FPM slow log;
+	// one entry per line of a stack trace, which starts at the line that
+	// names the pool and pid), and `php` (PHP errors and warnings,
+	// PHP-FPM messages, and anything a plugin prints). Sources are told
+	// apart by their content, so they work the same on every
+	// orchestrator. `level` is derived the same way: access entries are
+	// `info`, `warn` for 4xx, `error` for 5xx; the other sources use the
+	// level the line names, and slow log entries are `warn`.
+	//
+	// **Pagination.** This endpoint pages backwards through time, the way
+	// a log viewer scrolls. Without a `cursor` it returns the newest
+	// `limit` entries that match the filters. Each page lists its
+	// entries oldest first, and `next_cursor` is set when there are
+	// older matches: pass it as `cursor` for the next, older page.
+	// Entries with the same timestamp are never split across pages, so a
+	// page can hold a few more than `limit`. `since` and `until` bound
+	// the window the pages cover (`until` is exclusive); a cursor
+	// continues below its page, but never past `since`. To load only
+	// what is new, call again with `since` set to the time of the newest
+	// entry you have plus a nanosecond, or use
+	// `GET /api/v1/sites/{site_id}/logs/stream`.
+	//
+	// All filters combine. A site that has no runtime yet (still being
+	// created) has no logs and returns an empty page.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/logs (the `ListSiteLogs` operationId).
+	ListSiteLogsWithResponse(ctx context.Context, siteID SiteID, params *ListSiteLogsParams, reqEditors ...RequestEditorFn) (*ListSiteLogsResponse, error)
+
+	// StreamSiteLogsWithResponse Follow a site's runtime logs
+	//
+	// Streams the site's logs as server-sent events (`text/event-stream`)
+	// until the client disconnects: first the newest `tail` entries that
+	// match the filters, then new entries as the site writes them. The
+	// entries are the ones `GET /api/v1/sites/{site_id}/logs` returns;
+	// the filters mean the same, and the stream follows the same sources.
+	//
+	// Server-sent events fit because the stream only flows one way, they
+	// run over the same HTTP connection and cookie session as the rest of
+	// the API (a browser's `EventSource` reconnects by itself and needs
+	// no extra client library), and they work through reverse proxies
+	// that buffer nothing. Clients that authenticate with a bearer token
+	// read the response as a stream with `fetch`. The generated client
+	// doesn't wrap this operation; use `EventSource` or `fetch`.
+	//
+	// Event types:
+	//
+	// * `log`: `data` is one `SiteLogEntry` as JSON, and `id` is the
+	//   entry's timestamp in nanoseconds since the Unix epoch. A client
+	//   that reconnects sends it back as `Last-Event-ID` (a browser does
+	//   so on its own), and the stream continues after that entry
+	//   instead of repeating the tail.
+	// * `error`: `data` is a Problem Details document, sent once before
+	//   the stream ends because of a failure on the server (for
+	//   example, the site was deleted). Clients should not reconnect
+	//   immediately.
+	// * Comment lines (`: keepalive`) are sent every 15 seconds so
+	//   proxies don't close an idle stream. Ignore them.
+	//
+	// Problems that exist before the stream starts (an invalid filter,
+	// a missing site) are ordinary Problem Details responses with the
+	// usual status. A site that has no runtime yet returns `409`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/logs/stream (the `StreamSiteLogs` operationId).
+	StreamSiteLogsWithResponse(ctx context.Context, siteID SiteID, params *StreamSiteLogsParams, reqEditors ...RequestEditorFn) (*StreamSiteLogsResponse, error)
 
 	// SetSiteMaintenanceWithBodyWithResponse Turn maintenance mode on or off
 	//
@@ -14063,6 +14947,241 @@ func (r GoLiveSiteResponse) ContentType() string {
 	return ""
 }
 
+type ListSiteJobLogsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SiteJobLogList
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListSiteJobLogsResponse) GetJSON200() *SiteJobLogList {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListSiteJobLogsResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListSiteJobLogsResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListSiteJobLogsResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ListSiteJobLogsResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListSiteJobLogsResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListSiteJobLogsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSiteJobLogsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSiteJobLogsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListSiteJobLogsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListSiteLogsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SiteLogList
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListSiteLogsResponse) GetJSON200() *SiteLogList {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListSiteLogsResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListSiteLogsResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListSiteLogsResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ListSiteLogsResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListSiteLogsResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListSiteLogsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSiteLogsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSiteLogsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListSiteLogsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// StreamSiteLogsResponse200Headers the declared response headers of an HTTP 200 response for StreamSiteLogs
+type StreamSiteLogsResponse200Headers struct {
+	CacheControl *string
+}
+
+type StreamSiteLogsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *StreamSiteLogsResponse200Headers
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r StreamSiteLogsResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r StreamSiteLogsResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r StreamSiteLogsResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r StreamSiteLogsResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r StreamSiteLogsResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r StreamSiteLogsResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r StreamSiteLogsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StreamSiteLogsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StreamSiteLogsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StreamSiteLogsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // SetSiteMaintenanceResponse202Headers the declared response headers of an HTTP 202 response for SetSiteMaintenance
 type SetSiteMaintenanceResponse202Headers struct {
 	Location *string
@@ -17255,6 +18374,120 @@ func (c *ClientWithResponses) GoLiveSiteWithResponse(ctx context.Context, siteID
 		return nil, err
 	}
 	return ParseGoLiveSiteResponse(rsp)
+}
+
+// ListSiteJobLogsWithResponse Read the log lines of a site's jobs
+//
+// The log lines that jobs for this site wrote (creating, updating,
+// backing up, restoring, deploying, and so on; design doc §7.4),
+// across all of the site's jobs, newest first, so the dashboard can
+// show what the platform did to a site without opening each job. Each
+// line names its job and step. Use `GET /api/v1/jobs/{job_id}` for
+// one job's steps and complete log, and `GET /api/v1/jobs` with
+// `target_type=site&target_id=<site_id>` to list the jobs.
+//
+// Pass `next_cursor` as `cursor` for the next, older page. A site
+// that has no jobs, or whose jobs wrote no log, returns an empty page.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/sites/{site_id}/job-logs (the `ListSiteJobLogs` operationId).
+func (c *ClientWithResponses) ListSiteJobLogsWithResponse(ctx context.Context, siteID SiteID, params *ListSiteJobLogsParams, reqEditors ...RequestEditorFn) (*ListSiteJobLogsResponse, error) {
+	rsp, err := c.ListSiteJobLogs(ctx, siteID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSiteJobLogsResponse(rsp)
+}
+
+// ListSiteLogsWithResponse Read a site's runtime logs
+//
+// The site's nginx access and error logs, PHP-FPM slow log, and PHP
+// output (design doc §7.4), read from the site's containers through
+// the orchestrator driver. A stopped site's logs can be read. Logs
+// are kept only as long as the container log rotation allows (a few
+// tens of megabytes per container), so old entries disappear.
+//
+// Every entry has a `source`: `access` (one request, as the JSON
+// object nginx writes), `error` (nginx), `slow` (PHP-FPM slow log;
+// one entry per line of a stack trace, which starts at the line that
+// names the pool and pid), and `php` (PHP errors and warnings,
+// PHP-FPM messages, and anything a plugin prints). Sources are told
+// apart by their content, so they work the same on every
+// orchestrator. `level` is derived the same way: access entries are
+// `info`, `warn` for 4xx, `error` for 5xx; the other sources use the
+// level the line names, and slow log entries are `warn`.
+//
+// **Pagination.** This endpoint pages backwards through time, the way
+// a log viewer scrolls. Without a `cursor` it returns the newest
+// `limit` entries that match the filters. Each page lists its
+// entries oldest first, and `next_cursor` is set when there are
+// older matches: pass it as `cursor` for the next, older page.
+// Entries with the same timestamp are never split across pages, so a
+// page can hold a few more than `limit`. `since` and `until` bound
+// the window the pages cover (`until` is exclusive); a cursor
+// continues below its page, but never past `since`. To load only
+// what is new, call again with `since` set to the time of the newest
+// entry you have plus a nanosecond, or use
+// `GET /api/v1/sites/{site_id}/logs/stream`.
+//
+// All filters combine. A site that has no runtime yet (still being
+// created) has no logs and returns an empty page.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/sites/{site_id}/logs (the `ListSiteLogs` operationId).
+func (c *ClientWithResponses) ListSiteLogsWithResponse(ctx context.Context, siteID SiteID, params *ListSiteLogsParams, reqEditors ...RequestEditorFn) (*ListSiteLogsResponse, error) {
+	rsp, err := c.ListSiteLogs(ctx, siteID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSiteLogsResponse(rsp)
+}
+
+// StreamSiteLogsWithResponse Follow a site's runtime logs
+//
+// Streams the site's logs as server-sent events (`text/event-stream`)
+// until the client disconnects: first the newest `tail` entries that
+// match the filters, then new entries as the site writes them. The
+// entries are the ones `GET /api/v1/sites/{site_id}/logs` returns;
+// the filters mean the same, and the stream follows the same sources.
+//
+// Server-sent events fit because the stream only flows one way, they
+// run over the same HTTP connection and cookie session as the rest of
+// the API (a browser's `EventSource` reconnects by itself and needs
+// no extra client library), and they work through reverse proxies
+// that buffer nothing. Clients that authenticate with a bearer token
+// read the response as a stream with `fetch`. The generated client
+// doesn't wrap this operation; use `EventSource` or `fetch`.
+//
+// Event types:
+//
+//   - `log`: `data` is one `SiteLogEntry` as JSON, and `id` is the
+//     entry's timestamp in nanoseconds since the Unix epoch. A client
+//     that reconnects sends it back as `Last-Event-ID` (a browser does
+//     so on its own), and the stream continues after that entry
+//     instead of repeating the tail.
+//   - `error`: `data` is a Problem Details document, sent once before
+//     the stream ends because of a failure on the server (for
+//     example, the site was deleted). Clients should not reconnect
+//     immediately.
+//   - Comment lines (`: keepalive`) are sent every 15 seconds so
+//     proxies don't close an idle stream. Ignore them.
+//
+// Problems that exist before the stream starts (an invalid filter,
+// a missing site) are ordinary Problem Details responses with the
+// usual status. A site that has no runtime yet returns `409`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/sites/{site_id}/logs/stream (the `StreamSiteLogs` operationId).
+func (c *ClientWithResponses) StreamSiteLogsWithResponse(ctx context.Context, siteID SiteID, params *StreamSiteLogsParams, reqEditors ...RequestEditorFn) (*StreamSiteLogsResponse, error) {
+	rsp, err := c.StreamSiteLogs(ctx, siteID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStreamSiteLogsResponse(rsp)
 }
 
 // SetSiteMaintenanceWithBodyWithResponse Turn maintenance mode on or off
@@ -20760,6 +21993,202 @@ func ParseGoLiveSiteResponse(rsp *http.Response) (*GoLiveSiteResponse, error) {
 			headers.Location = &value
 		}
 		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListSiteJobLogsResponse parses an HTTP response from a ListSiteJobLogsWithResponse call
+func ParseListSiteJobLogsResponse(rsp *http.Response) (*ListSiteJobLogsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSiteJobLogsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SiteJobLogList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListSiteLogsResponse parses an HTTP response from a ListSiteLogsWithResponse call
+func ParseListSiteLogsResponse(rsp *http.Response) (*ListSiteLogsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSiteLogsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SiteLogList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStreamSiteLogsResponse parses an HTTP response from a StreamSiteLogsWithResponse call
+func ParseStreamSiteLogsResponse(rsp *http.Response) (*StreamSiteLogsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StreamSiteLogsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers StreamSiteLogsResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers200 = &headers
 	}
 
 	return response, nil

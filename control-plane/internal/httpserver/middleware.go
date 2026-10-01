@@ -193,6 +193,14 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 // Unwrap lets http.ResponseController reach the underlying writer.
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
+// Flush lets streaming responses reach the client as they are written.
+func (s *statusRecorder) Flush() {
+	if !s.wroteHeader {
+		s.code, s.wroteHeader = http.StatusOK, true
+	}
+	_ = http.NewResponseController(s.ResponseWriter).Flush()
+}
+
 func (s *statusRecorder) status() int {
 	if !s.wroteHeader {
 		// Nothing written: net/http sends 200 when the handler returns.
