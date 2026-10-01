@@ -74,7 +74,7 @@ type Config struct {
 	Redis RedisConfig `yaml:"redis"`
 	// Audit configures the audit log (§4.6).
 	Audit AuditConfig `yaml:"audit"`
-	// Metrics configures metrics storage (§7).
+	// Metrics configures metrics storage and collection (§7).
 	Metrics MetricsConfig `yaml:"metrics"`
 	// PlatformProject is the Compose project name of the platform services,
 	// which names their containers: the provisioner connects the
@@ -430,20 +430,6 @@ func (a AuditConfig) Retention() time.Duration {
 // MaxAuditRetentionDays bounds audit.retention_days at about ten years.
 const MaxAuditRetentionDays = 3660
 
-// MetricsConfig configures metrics storage in VictoriaMetrics.
-type MetricsConfig struct {
-	// RetentionDays is how long metrics are kept (decision #65). The host
-	// CLI renders it into the platform project, so a change applies the next
-	// time the project is rendered (pressfleet upgrade).
-	RetentionDays int `yaml:"retention_days"`
-}
-
-// DefaultMetricsRetentionDays is metrics.retention_days unless configured.
-const DefaultMetricsRetentionDays = 90
-
-// MaxMetricsRetentionDays bounds metrics.retention_days at about ten years.
-const MaxMetricsRetentionDays = 3660
-
 // DatabaseExportConfig configures database exports (§5.8).
 type DatabaseExportConfig struct {
 	// TTLSeconds is how long an export can be downloaded once it is ready;
@@ -567,7 +553,6 @@ func Default() Config {
 		Database: DatabaseConfig{Driver: DriverSQLite},
 		Jobs:     JobsConfig{Concurrency: 4},
 		Audit:    AuditConfig{RetentionDays: 365},
-		Metrics:  MetricsConfig{RetentionDays: DefaultMetricsRetentionDays},
 		// platform.ProjectName; config can't import package platform.
 		PlatformProject: "pressfleet",
 		MariaDB: MariaDBConfig{ //nolint:gosec // G101: the path of the password file, not a credential
@@ -591,6 +576,7 @@ func Default() Config {
 		DatabaseExport:    DatabaseExportConfig{TTLSeconds: 3600},
 		SFTP:              DefaultSFTP(),
 		Updates:           DefaultUpdates(),
+		Metrics:           DefaultMetrics(),
 	}
 }
 
@@ -620,6 +606,7 @@ var intEnvVars = []struct {
 	{"PRESSFLEET_UPDATES_CORE_MAJOR_AUTO_APPROVE_DAYS", func(c *Config) *int { return &c.Updates.Core.MajorAutoApproveDays }},
 	{"PRESSFLEET_UPDATES_CORE_HOLD_WARNING_DAYS", func(c *Config) *int { return &c.Updates.Core.HoldWarningDays }},
 	{"PRESSFLEET_UPDATES_IMAGES_CHECK_HOURS", func(c *Config) *int { return &c.Updates.Images.CheckHours }},
+	{"PRESSFLEET_METRICS_INTERVAL_SECONDS", func(c *Config) *int { return &c.Metrics.IntervalSeconds }},
 }
 
 // envVars maps environment variables to the fields they set.
@@ -670,6 +657,7 @@ var envVars = []struct {
 	{"PRESSFLEET_SFTP_LISTEN", func(c *Config) *string { return &c.SFTP.Listen }},
 	{"PRESSFLEET_SFTP_HOST_KEY_FILE", func(c *Config) *string { return &c.SFTP.HostKeyFile }},
 	{"PRESSFLEET_UPDATES_WINDOW_START", func(c *Config) *string { return &c.Updates.WindowStart }},
+	{"PRESSFLEET_METRICS_URL", func(c *Config) *string { return &c.Metrics.URL }},
 	{"PRESSFLEET_IMAGE_MANIFEST_FILE", func(c *Config) *string { return &c.ImageManifestFile }},
 }
 
@@ -770,6 +758,13 @@ func ApplyEnv(cfg *Config, env LookupEnv) error {
 		}
 		cfg.ACME.Staging = b
 	}
+	if val, ok := env("PRESSFLEET_METRICS_ENABLED"); ok {
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("PRESSFLEET_METRICS_ENABLED must be true or false, got %q", val)
+		}
+		cfg.Metrics.Enabled = b
+	}
 	if val, ok := env("PRESSFLEET_ACME_DNS_RESOLVERS"); ok {
 		cfg.ACME.DNSResolvers = splitList(val)
 	}
@@ -856,9 +851,6 @@ func (c Config) Validate() error {
 	if c.Audit.RetentionDays < 1 || c.Audit.RetentionDays > MaxAuditRetentionDays {
 		errs = append(errs, fmt.Errorf("audit.retention_days must be between 1 and %d, got %d", MaxAuditRetentionDays, c.Audit.RetentionDays))
 	}
-	if c.Metrics.RetentionDays < 1 || c.Metrics.RetentionDays > MaxMetricsRetentionDays {
-		errs = append(errs, fmt.Errorf("metrics.retention_days must be between 1 and %d, got %d", MaxMetricsRetentionDays, c.Metrics.RetentionDays))
-	}
 	if t := c.DatabaseExport.TTLSeconds; t < MinDatabaseExportTTLSeconds || t > MaxDatabaseExportTTLSeconds {
 		errs = append(errs, fmt.Errorf("database_export.ttl_seconds must be between %d and %d, got %d",
 			MinDatabaseExportTTLSeconds, MaxDatabaseExportTTLSeconds, t))
@@ -918,6 +910,9 @@ func (c Config) Validate() error {
 		errs = append(errs, err)
 	}
 	if err := c.Updates.Validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.Metrics.Validate(); err != nil {
 		errs = append(errs, err)
 	}
 	if c.ImageManifestFile != "" && !filepath.IsAbs(c.ImageManifestFile) {

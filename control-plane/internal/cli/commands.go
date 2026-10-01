@@ -32,6 +32,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/domains"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
+	"github.com/rchouinard/pressfleet/control-plane/internal/metrics"
 	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache/redis"
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
@@ -114,6 +115,27 @@ func (a *app) databaseSessions(db *store.DB, siteDBs *mariadb.Manager, hostKey s
 	return dbsession.New(dbsession.Options{
 		DB: db, Users: siteDBs, Tunnel: tunnel, Logger: a.log.With("component", "database_session"),
 	})
+}
+
+// metricsService returns the metrics collector service (§7), writing to
+// the configured VictoriaMetrics, with the built-in collectors registered.
+func (a *app) metricsService(db *store.DB) (*metrics.Service, error) {
+	log := a.log.With("component", "metrics")
+	client, err := metrics.NewClient(metrics.Options{URL: a.cfg.Metrics.URL, Logger: log})
+	if err != nil {
+		return nil, err
+	}
+	svc, err := metrics.NewService(metrics.ServiceOptions{
+		Writer: client, Targets: metrics.NewSiteTargets(db),
+		DefaultInterval: a.cfg.Metrics.Interval(), Logger: log,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := svc.Register(metrics.InventoryCollector{}); err != nil {
+		return nil, err
+	}
+	return svc, nil
 }
 
 // sftpGateway returns the SFTP gateway (§5.8), or nil when it is off (a nil
@@ -410,6 +432,16 @@ func (a *app) serveCommand() *cobra.Command {
 			var workers sync.WaitGroup
 			workers.Go(func() { _ = pool.Run(workersCtx) })
 			workers.Go(func() { _ = scheduler.Run(workersCtx) })
+			// The collectors write to VictoriaMetrics, which may still be
+			// starting or down: write failures are logged and counted, and
+			// the next run tries again.
+			if a.cfg.Metrics.Enabled {
+				collector, err := a.metricsService(db)
+				if err != nil {
+					return err
+				}
+				workers.Go(func() { _ = collector.Run(workersCtx) })
+			}
 			// Best effort and in the background: a platform upgrade may have
 			// recreated MariaDB or the object cache, disconnecting them from
 			// every site network.

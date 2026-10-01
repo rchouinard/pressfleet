@@ -72,7 +72,6 @@ func TestLoadPrecedence(t *testing.T) {
 		MariaDB:  config.Default().MariaDB,                         // default
 		Redis:    config.Default().Redis,                           // default
 		Audit:    config.AuditConfig{RetentionDays: 365},           // default
-		Metrics:  config.MetricsConfig{RetentionDays: 90},          // default
 		SMTP:     config.Default().SMTP,                            // default
 		Backup:   config.Default().Backup,                          // default
 		SFTP:     config.DefaultSFTP(),                             // default
@@ -82,6 +81,7 @@ func TestLoadPrecedence(t *testing.T) {
 		Uploads:           config.DefaultUploads(),                       // default
 		DatabaseExport:    config.DatabaseExportConfig{TTLSeconds: 3600}, // default
 		Updates:           config.DefaultUpdates(),                       // default
+		Metrics:           config.DefaultMetrics(),                       // default
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("Load() = %+v, want %+v", cfg, want)
