@@ -34,7 +34,7 @@ export const navSections: Record<NavItem['section'], string> = {
  */
 export const navRegistry: readonly NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: 'i-lucide-layout-dashboard', route: '/', minRole: 'viewer', section: 'main' },
-  { id: 'sites', label: 'Sites', icon: 'i-lucide-globe', minRole: 'viewer', section: 'main' },
+  { id: 'sites', label: 'Sites', icon: 'i-lucide-globe', route: '/sites', minRole: 'viewer', section: 'main' },
   { id: 'client-groups', label: 'Client groups', icon: 'i-lucide-users-round', route: '/client-groups', minRole: 'viewer', section: 'main' },
   { id: 'backups', label: 'Backups', icon: 'i-lucide-archive', minRole: 'viewer', section: 'main' },
   { id: 'jobs', label: 'Jobs', icon: 'i-lucide-list-checks', route: '/jobs', minRole: 'viewer', section: 'main' },

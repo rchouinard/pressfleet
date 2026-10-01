@@ -19,7 +19,8 @@ describe('navigation registry', () => {
     const live = ids(navRegistry.filter(isLive))
     expect(live).toContain('dashboard')
     expect(live).toContain('jobs')
-    expect(live).not.toContain('sites')
+    expect(live).toContain('sites')
+    expect(live).not.toContain('backups')
   })
 })
 
@@ -47,7 +48,7 @@ describe('navFor', () => {
 describe('isActive', () => {
   const jobs = navRegistry.find(i => i.id === 'jobs')!
   const dashboard = navRegistry.find(i => i.id === 'dashboard')!
-  const sites = navRegistry.find(i => i.id === 'sites')!
+  const backups = navRegistry.find(i => i.id === 'backups')!
 
   it('matches the page and what is below it, not siblings with a shared prefix', () => {
     expect(isActive(jobs, '/jobs')).toBe(true)
@@ -62,7 +63,7 @@ describe('isActive', () => {
   })
 
   it('never marks a not-yet-built entry active', () => {
-    expect(isActive(sites, '/sites')).toBe(false)
+    expect(isActive(backups, '/backups')).toBe(false)
   })
 })
 

@@ -159,6 +159,15 @@ The server sends `script-src 'self'` plus the hashes of the few inline scripts N
 
 Tests: pure logic in `utils/<x>.ts` (payloads, validation, gating via `can()`), the table with `mount` and a stubbed `UButton`, and `paged-list` with a fake `fetchPage`.
 
+## Sites
+
+`/sites` (list) and `/sites/<id>` (detail); `/sites/<id>/logs` is the logs viewer below. Rules for the pieces in `components/site/` and `utils/site.ts`:
+
+- **List**: `createPagedList` with a client group filter (`useClientGroupLookup()`, first 200 groups) and a status filter; both reload the first page. The table is read-only for every role; its name links to the detail page. "New site" shows with `<IfCan action="site.create">`.
+- **Provisioning**: `SiteFormModal` (client-side checks in `validateSite`, 422 field errors next to the fields). On `202` the page toasts, then goes to the new site's page, where the job is followed live. Blank optional fields (admin username, PHP version) are omitted so the server's defaults apply.
+- **Detail**: status, domains, settings, and "Recent jobs" (`GET /jobs?target_type=site&target_id=`). The newest unfinished job is shown with `<JobProgress>` and stays on screen after it ends until dismissed; when it ends the page reloads the site and jobs, and a successful `site.delete` returns to the list. Start (stopped sites) and Stop (running sites) need `site.start`/`site.stop`; neither is offered for sites that are busy or failed, where the API answers `409`. Delete (`site.delete`, admin) goes through `<ConfirmDialog>`; the site then shows as "Deleting" with its job.
+- **Admin password, once**: the API generates it at creation and returns it only from `POST /sites/{id}/admin-credentials` (`410` afterwards). The detail page offers "Reveal admin credentials" (`site.credentials.retrieve`, operator) only while `admin_credentials_available` and the site is settled (`showCredentialsAction`). The response is held in one component ref while a non-dismissible dialog is open (`SiteCredentials`: copy buttons, selectable fields, a clear "only once" note) and dropped when the user confirms; it is never stored, put in the URL, or logged.
+
 ## Logs viewer
 
 `/logs` picks a site (the sites list API), `/sites/<id>/logs` shows it: a "Runtime" tab (`SiteLogViewer`, takes a site id) and a "Jobs" tab (`SiteJobLogs`, `GET /sites/{id}/job-logs`, newest first, "Load older").
