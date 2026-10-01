@@ -5,6 +5,12 @@
 !control-plane/
 !templates/
 !api/
+# The dashboard: built in the Dockerfile's ui stage, and embedded by package ui.
+!ui/
+ui/node_modules
+ui/.nuxt
+ui/.output
+ui/dist
 # The site image manifest, embedded for package catalog, and the plugins the
 # site-php image bundles, embedded for package sites' tests.
 !images/images.go

@@ -1,9 +1,0 @@
-# Keep host build output and dependencies out of the build context; the image
-# build runs its own pnpm install and nuxt generate.
-.git
-.claude
-bin
-dist
-ui/node_modules
-ui/.nuxt
-ui/.output
