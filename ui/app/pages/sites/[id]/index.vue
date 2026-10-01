@@ -180,6 +180,7 @@ function when(iso: string): string {
           </IfCan>
           <UButton :to="`/sites/${site.id}/logs`" icon="i-lucide-scroll-text" color="neutral" variant="outline">Logs</UButton>
           <UButton :to="`/sites/${site.id}/backups`" icon="i-lucide-archive" color="neutral" variant="outline">Backups</UButton>
+          <UButton :to="`/sites/${site.id}/metrics`" icon="i-lucide-chart-line" color="neutral" variant="outline">Metrics</UButton>
           <IfCan action="site.delete">
             <UButton v-if="canDeleteSite(site)" icon="i-lucide-trash-2" color="error" variant="outline" @click="askDelete()">Delete</UButton>
           </IfCan>

@@ -35,6 +35,7 @@ Each dependency has a reason (CLAUDE.md). Versions are in `package.json` and `pn
 | `@nuxt/ui` | The component layer. It builds on Reka UI primitives (keyboard and ARIA behaviour for dialogs, menus, tables, comboboxes, toasts), is built for Tailwind 4, and ships dark mode and form components. Writing those accessibly ourselves would cost far more than the bundle it adds: components are tree-shaken, and the whole app (landing page included) is about 160 KB gzipped. Fonts are off (`ui.fonts: false`), so builds need no network and the dashboard uses the system font stack. |
 | `tailwindcss` | Required by Nuxt UI (v4, CSS-first config in `app/assets/css/main.css`). |
 | `@iconify-json/lucide` | Lucide icons bundled into the app. Without it the icon module fetches icons from the public Iconify API at runtime, which self-hosted installs may not reach and the CSP forbids. |
+| `uplot` | The chart library for the metrics pages (below). |
 | `openapi-fetch` | A ~6 KB typed `fetch` wrapper that takes its types from the generated schema. |
 | `openapi-typescript` (dev) | Generates `app/api/schema.gen.ts` from `api/openapi.yaml`. |
 | `typescript`, `vue-tsc` (dev) | Strict type checking. TypeScript is held on 5.9 because the Vue tooling doesn't support 7 yet. |
@@ -196,6 +197,15 @@ The site page's "Domains" section is one mount, `<SiteDomains :site @changed>`. 
 - **Restore** (`backup.restore`, running sites only): `BackupRestoreDialog` states that the site's database and `wp-content` are overwritten, that a pre-restore backup is taken and the site goes into maintenance mode, and requires typing the site's name before the button enables. The page runs the request; failures (`409`, `422`) show in the dialog.
 - **Jobs**: backup and restore return a job, followed with `<JobProgress>` on the page (an unfinished job of the site is picked up on load). When it ends the site, history and schedule reload. Restore and "Back up now" are disabled meanwhile.
 - Restoring another site's snapshot (`source_site_id`) is not offered; the API supports it but the MVP UI restores the site's own backups.
+
+## Metrics charts
+
+`/metrics` (platform, §7.2) and `/sites/<id>/metrics` (site, §7.1, linked from the site page) are one component, `<MetricsDashboard scope="platform|site">`, over `GET /api/v1/metrics/catalog` and the two range-query endpoints. Logic lives in `utils/metrics.ts` (tested in `tests/metrics.test.ts`).
+
+- **Library: uPlot** (~50 KB minified, no dependencies, canvas). ECharts and Chart.js are several times larger for features we don't use (pie, maps, animation); a hand-written SVG chart would have to redo axes, cursor and resize. uPlot only runs in the browser, which suits `ssr: false`, uses no `eval` or inline scripts (the CSP allows it), and handles hundreds of points per chart without effort. It's imported lazily inside `MetricsChart` and its CSS ships with that component. The catalog groups metrics, so a page makes one request per group: a failing group shows its own error and Retry and the rest still draw.
+- **Range and step**: presets (1 h to 30 d) end at now; "Custom" takes local from/until (blank until means now, and the future isn't requested). `chooseStep` aims for about 300 points, rounds up to a round step (15 s, 1 min, 5 min, 1 h, ...), never goes below the catalog's `min_step_seconds`, and raises the step if the catalog's `max_points` would be exceeded. Ranges beyond `max_range_seconds` are rejected in the form.
+- **States**: loading skeletons per group, `ProblemAlert` per failed group (a `503` when the metrics store is down), and "No data" per metric. Collectors (#68 to #74) may not exist, so empty is normal: when nothing in the range has data, the page says so once instead of showing a wall of empty charts, and metrics without data are listed in one muted line per group. Timestamp-unit metrics (TLS expiry, last backup) are shown as dates, not lines.
+- **Accessibility and themes**: the canvas is `role="img"` with a generated text summary; each card has a table of latest/min/avg/max per series, which also serves as the legend. Series differ by dash pattern as well as colour. Colours are re-picked and the chart rebuilt on a colour-mode change. Cards stack on one column at 360 px and the tables scroll horizontally.
 
 ## Embedding in the Go binary
 
