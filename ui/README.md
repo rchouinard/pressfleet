@@ -145,6 +145,18 @@ The server sends `script-src 'self'` plus the hashes of the few inline scripts N
 - The API has no job stream, so `useJob(id)` polls `GET /api/v1/jobs/{id}` through `utils/job-poller.ts`: 1 s while running or rolling back, 2 s queued, x1.5 per quiet poll after three (cap 5 s); stops at `succeeded`/`failed`/`rollback_failed`, on unmount, and on 401/403/404; retries network errors, 5xx and 429 at 2 s doubling to 30 s while the last state stays visible; pauses while the tab is hidden and polls again on show or `online`; aborts the request in flight on stop.
 - Steps show state, attempts, duration and a collapsible log (monospace, whitespace kept, text only, never `v-html`; follows new lines unless the user scrolled up). Failed jobs show the error and the roll-back outcome. Pages: `/jobs` (state and target filters, "Load more") and `/jobs/[id]`.
 
+## Resource pages
+
+`pages/client-groups/index.vue` is the reference for list/create/edit/delete pages (sites, users, alert rules and so on copy it). The pieces:
+
+- **List**: `createPagedList(fetchPage)` (`utils/paged-list.ts`) holds `items`, `cursor`, `loading`, `loadingMore` and `error`. The page loads the first page inside `useAsyncData`, shows a first-page failure in place with `<ProblemAlert>`, and offers "Load more" while `cursor` is set (a failed later page is a toast, and the rows stay). Reload with `list.load()` after a mutation.
+- **Table**: a domain component in a folder (`components/client-group/ClientGroupTable.vue`) that takes `canUpdate`/`canDelete` booleans and emits `edit`/`delete`; the page computes them with `useCan()`. That keeps the component Nuxt-free and testable, and the role matrix lives in `utils/permissions.ts` only. Hide the "New" button with `<IfCan>`; set `definePageMeta({ requires: '<x>.view' })`.
+- **Form**: a modal (`ClientGroupFormModal.vue`) that takes the existing record to edit and a `submit(values)` callback. It validates client-side first (rules in `utils/<x>.ts` mirror the spec), then shows 422 `fieldError('/name')` next to the field and any other failure in `<ProblemAlert>`, keeps the modal open while saving, and closes it on success. PATCH sends only changed fields (`updatePayload`).
+- **Delete**: `<ConfirmDialog v-model:open :busy :error @confirm>` is generic. The page runs the request; on failure it passes the `ApiError` back (a `409` for a group with sites shows the server's wording and request ID in the dialog), on success it closes the dialog, toasts and reloads.
+- **Nav**: the page's PR sets `route:` on its registry entry and nothing else.
+
+Tests: pure logic in `utils/<x>.ts` (payloads, validation, gating via `can()`), the table with `mount` and a stubbed `UButton`, and `paged-list` with a fake `fetchPage`.
+
 ## Embedding in the Go binary
 
 `go:embed` can't reach outside a package directory, and the Nuxt output lives in `ui/.output/public`, so `ui/` is also the Go package `github.com/rchouinard/pressfleet/ui`, which exposes the files as an `fs.FS`:
