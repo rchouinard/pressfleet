@@ -157,6 +157,44 @@ services:
       start_interval: 1s
     logging: *logging
 
+  # Metrics storage (design doc §3, §7): single-node VictoriaMetrics. It
+  # answers Prometheus-compatible queries and accepts writes on the platform
+  # network only: no ports are published and it has no Traefik route, so the
+  # control plane's collector is its only client. Retention is
+  # metrics.retention_days.
+  victoria-metrics:
+    image: "docker.io/victoriametrics/victoria-metrics:v1.153.0@sha256:8d4ccd756bdb0d0fc3f1e7d3664ff188ec49cdf0ef0d685d0d557674f49702c8"
+    command:
+      - "-storageDataPath=/victoria-metrics-data"
+      - "-retentionPeriod=90d"
+      - "-httpListenAddr=:8428"
+    restart: unless-stopped
+    # Root, as the image runs, owns the data volume; without capabilities it
+    # can do no more than write there.
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - type: volume
+        source: victoria-metrics-data
+        target: /victoria-metrics-data
+    networks:
+      - platform
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    # Time to flush in-memory data to disk on shutdown.
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8428/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
+    logging: *logging
+
   # The edge router for all web traffic (design doc §3). It learns routes
   # from container labels through the socket proxy and never mounts the
   # Docker socket itself (§6).
@@ -300,6 +338,7 @@ networks:
 
 volumes:
   mariadb-data: {}
+  victoria-metrics-data: {}
   traefik-acme: {}
 
 secrets:

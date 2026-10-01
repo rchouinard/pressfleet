@@ -40,6 +40,8 @@ func testConfig() platform.Config {
 			Redis:        "docker.io/valkey/valkey:9.1.2@sha256:ac9c858b86dc81f3482d53a9d854547379a5f41e012500f839ab257c399063e0",
 			Traefik:      "docker.io/library/traefik:v3.7.13@sha256:3429c14149401de2ac82fc72ddc6a92642332b90deb3012301ff211b9d2d0f18",
 			SocketProxy:  "docker.io/wollomatic/socket-proxy:1.13.1@sha256:14b0afd0939218e02736794447868b7d5e1d5b231207b727a935845236f08507",
+
+			VictoriaMetrics: "docker.io/victoriametrics/victoria-metrics:v1.153.0@sha256:8d4ccd756bdb0d0fc3f1e7d3664ff188ec49cdf0ef0d685d0d557674f49702c8",
 		},
 		MariaDBRootPassword: testPassword,
 		RedisAdminPassword:  testRedisPassword,
@@ -230,8 +232,8 @@ func TestRenderedCompose(t *testing.T) {
 	if file.Name != "pftest" {
 		t.Errorf("name = %q", file.Name)
 	}
-	if len(file.Services) != 6 {
-		t.Errorf("services = %d, want 6", len(file.Services))
+	if len(file.Services) != 7 {
+		t.Errorf("services = %d, want 7", len(file.Services))
 	}
 	// Every service is on the platform network except the socket proxy,
 	// which only Traefik can reach. The control plane is on the backup
@@ -243,6 +245,8 @@ func TestRenderedCompose(t *testing.T) {
 		"traefik":       {"platform", "socket-proxy"},
 		"socket-proxy":  {"socket-proxy"},
 		"maintenance":   {"platform"},
+		// Platform network only: no published ports, no route.
+		"victoria-metrics": {"platform"},
 	}
 	for _, n := range []string{"socket-proxy", "backup"} {
 		if !file.Networks[n].Internal {
@@ -290,7 +294,7 @@ func TestRenderedCompose(t *testing.T) {
 	if want := map[string]bool{"control-plane": false, "socket-proxy": true}; !maps.Equal(socketMounts, want) {
 		t.Errorf("docker socket mounts (service: read-only) = %v, want %v", socketMounts, want)
 	}
-	for _, name := range []string{"traefik", "socket-proxy", "maintenance"} {
+	for _, name := range []string{"traefik", "socket-proxy", "maintenance", "victoria-metrics"} {
 		svc := file.Services[name]
 		if !svc.ReadOnly || !slices.Equal(svc.CapDrop, []string{"ALL"}) {
 			t.Errorf("%s: read_only = %v, cap_drop = %v", name, svc.ReadOnly, svc.CapDrop)
@@ -394,27 +398,31 @@ func TestRenderedCompose(t *testing.T) {
 
 func TestRenderInvalidConfig(t *testing.T) {
 	tests := map[string]func(*platform.Config){
-		"relative data dir": func(c *platform.Config) { c.DataDir = "var/lib/pressfleet" },
-		"unclean data dir":  func(c *platform.Config) { c.DataDir = "/var/lib/pressfleet/" },
-		"no images":         func(c *platform.Config) { c.Images = platform.Images{} },
-		"no password":       func(c *platform.Config) { c.MariaDBRootPassword = "" },
-		"no redis password": func(c *platform.Config) { c.RedisAdminPassword = "" },
-		"multiline redis":   func(c *platform.Config) { c.RedisAdminPassword = "a\nb" },
-		"tiny redis":        func(c *platform.Config) { c.RedisMaxMemoryMB = 16 },
-		"no redis image":    func(c *platform.Config) { c.Images.Redis = "" },
-		"multiline pw":      func(c *platform.Config) { c.MariaDBRootPassword = "a\nb" },
-		"tiny mariadb":      func(c *platform.Config) { c.MariaDBMemoryMB = 128 },
-		"tiny cp":           func(c *platform.Config) { c.ControlPlaneMemoryMB = 16 },
-		"no master key":     func(c *platform.Config) { c.MasterKeyFile = "" },
-		"relative key file": func(c *platform.Config) { c.MasterKeyFile = "master.key" },
-		"key in data dir":   func(c *platform.Config) { c.MasterKeyFile = "/var/lib/pressfleet/master.key" },
-		"bad preview base":  func(c *platform.Config) { c.PreviewBaseDomain = "*.preview.example" },
-		"bad dashboard":     func(c *platform.Config) { c.DashboardDomain = "https://fleet.example" },
-		"bad public ip":     func(c *platform.Config) { c.PublicIP = "fleet.example" },
-		"bad listen":        func(c *platform.Config) { c.Listen = "8080" },
-		"tiny traefik":      func(c *platform.Config) { c.TraefikMemoryMB = 16 },
-		"bad acme email":    func(c *platform.Config) { c.ACME.Email = "ops" },
-		"http acme server":  func(c *platform.Config) { c.ACME.CAServer = "http://pebble:14000/dir" },
+		"relative data dir":  func(c *platform.Config) { c.DataDir = "var/lib/pressfleet" },
+		"unclean data dir":   func(c *platform.Config) { c.DataDir = "/var/lib/pressfleet/" },
+		"no images":          func(c *platform.Config) { c.Images = platform.Images{} },
+		"no password":        func(c *platform.Config) { c.MariaDBRootPassword = "" },
+		"no redis password":  func(c *platform.Config) { c.RedisAdminPassword = "" },
+		"multiline redis":    func(c *platform.Config) { c.RedisAdminPassword = "a\nb" },
+		"tiny redis":         func(c *platform.Config) { c.RedisMaxMemoryMB = 16 },
+		"no metrics image":   func(c *platform.Config) { c.Images.VictoriaMetrics = "" },
+		"tiny metrics":       func(c *platform.Config) { c.VictoriaMetricsMemoryMB = 32 },
+		"negative retention": func(c *platform.Config) { c.MetricsRetentionDays = -1 },
+		"huge retention":     func(c *platform.Config) { c.MetricsRetentionDays = config.MaxMetricsRetentionDays + 1 },
+		"no redis image":     func(c *platform.Config) { c.Images.Redis = "" },
+		"multiline pw":       func(c *platform.Config) { c.MariaDBRootPassword = "a\nb" },
+		"tiny mariadb":       func(c *platform.Config) { c.MariaDBMemoryMB = 128 },
+		"tiny cp":            func(c *platform.Config) { c.ControlPlaneMemoryMB = 16 },
+		"no master key":      func(c *platform.Config) { c.MasterKeyFile = "" },
+		"relative key file":  func(c *platform.Config) { c.MasterKeyFile = "master.key" },
+		"key in data dir":    func(c *platform.Config) { c.MasterKeyFile = "/var/lib/pressfleet/master.key" },
+		"bad preview base":   func(c *platform.Config) { c.PreviewBaseDomain = "*.preview.example" },
+		"bad dashboard":      func(c *platform.Config) { c.DashboardDomain = "https://fleet.example" },
+		"bad public ip":      func(c *platform.Config) { c.PublicIP = "fleet.example" },
+		"bad listen":         func(c *platform.Config) { c.Listen = "8080" },
+		"tiny traefik":       func(c *platform.Config) { c.TraefikMemoryMB = 16 },
+		"bad acme email":     func(c *platform.Config) { c.ACME.Email = "ops" },
+		"http acme server":   func(c *platform.Config) { c.ACME.CAServer = "http://pebble:14000/dir" },
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -447,6 +455,7 @@ func TestDefaultImages(t *testing.T) {
 	pinned := regexp.MustCompile(`^[a-z0-9./-]+:[0-9A-Za-z._-]+@sha256:[0-9a-f]{64}$`)
 	for name, img := range map[string]string{
 		"mariadb": images.MariaDB, "redis": images.Redis, "traefik": images.Traefik, "socket-proxy": images.SocketProxy,
+		"victoria-metrics": images.VictoriaMetrics,
 	} {
 		if !pinned.MatchString(img) {
 			t.Errorf("%s image not pinned by digest: %q", name, img)
@@ -745,5 +754,115 @@ func TestDefaultRedisSettings(t *testing.T) {
 	}
 	if r.AdminPasswordFile != "/run/secrets/redis_admin_password" || r.Address != "redis:6379" {
 		t.Errorf("config default redis = %+v", r)
+	}
+}
+
+// renderedVictoriaMetrics returns the victoria-metrics service of a platform
+// project rendered from cfg, and the project's top-level volumes.
+func renderedVictoriaMetrics(t *testing.T, cfg platform.Config) (svc struct {
+	Image       string
+	Command     []string
+	Ports       []string
+	Labels      map[string]string
+	Volumes     []struct{ Type, Source, Target string }
+	Networks    []string
+	StopGrace   string `yaml:"stop_grace_period"`
+	Healthcheck struct{ Test []string }
+	Deploy      struct {
+		Resources struct {
+			Limits struct{ Memory string }
+		}
+	}
+}, volumes map[string]any) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(render(t, cfg), platform.ComposeFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file struct {
+		Services map[string]yaml.Node
+		Volumes  map[string]any
+	}
+	if err := yaml.Unmarshal(raw, &file); err != nil {
+		t.Fatal(err)
+	}
+	node, ok := file.Services[platform.VictoriaMetricsService]
+	if !ok {
+		t.Fatalf("no %s service", platform.VictoriaMetricsService)
+	}
+	if err := node.Decode(&svc); err != nil {
+		t.Fatal(err)
+	}
+	return svc, file.Volumes
+}
+
+func TestRenderedVictoriaMetrics(t *testing.T) {
+	tests := []struct {
+		name          string
+		days, memory  int
+		wantRetention string
+		wantMemory    string
+	}{
+		{name: "defaults", wantRetention: "-retentionPeriod=90d", wantMemory: "256M"},
+		{name: "custom", days: 400, memory: 512, wantRetention: "-retentionPeriod=400d", wantMemory: "512M"},
+		{name: "one day", days: 1, wantRetention: "-retentionPeriod=1d", wantMemory: "256M"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := testConfig()
+			cfg.MetricsRetentionDays = tc.days
+			cfg.VictoriaMetricsMemoryMB = tc.memory
+			svc, volumes := renderedVictoriaMetrics(t, cfg)
+
+			if svc.Image != cfg.Images.VictoriaMetrics {
+				t.Errorf("image = %q", svc.Image)
+			}
+			if !slices.Contains(svc.Command, tc.wantRetention) {
+				t.Errorf("command = %v, want %s", svc.Command, tc.wantRetention)
+			}
+			if !slices.Contains(svc.Command, "-storageDataPath=/victoria-metrics-data") ||
+				!slices.Contains(svc.Command, "-httpListenAddr=:8428") {
+				t.Errorf("command = %v", svc.Command)
+			}
+			if svc.Deploy.Resources.Limits.Memory != tc.wantMemory {
+				t.Errorf("memory = %q, want %s", svc.Deploy.Resources.Limits.Memory, tc.wantMemory)
+			}
+			// Data survives container replacement and image upgrades.
+			if len(svc.Volumes) != 1 || svc.Volumes[0].Type != "volume" ||
+				svc.Volumes[0].Source != "victoria-metrics-data" || svc.Volumes[0].Target != "/victoria-metrics-data" {
+				t.Errorf("volumes = %+v", svc.Volumes)
+			}
+			if _, ok := volumes["victoria-metrics-data"]; !ok {
+				t.Errorf("volume victoria-metrics-data not declared: %v", volumes)
+			}
+			// Not publicly exposed: no ports and no Traefik route.
+			if len(svc.Ports) != 0 {
+				t.Errorf("publishes ports %v", svc.Ports)
+			}
+			for k := range svc.Labels {
+				if strings.HasPrefix(k, "traefik.") {
+					t.Errorf("has Traefik label %s", k)
+				}
+			}
+			if !slices.Equal(svc.Networks, []string{"platform"}) {
+				t.Errorf("networks = %v", svc.Networks)
+			}
+			if svc.StopGrace == "" || len(svc.Healthcheck.Test) == 0 {
+				t.Errorf("stop grace %q, healthcheck %v", svc.StopGrace, svc.Healthcheck.Test)
+			}
+		})
+	}
+}
+
+func TestDefaultVictoriaMetricsSettings(t *testing.T) {
+	if config.DefaultMetricsRetentionDays != 90 {
+		t.Errorf("default retention = %d days, want 90 (decision #65)", config.DefaultMetricsRetentionDays)
+	}
+	if platform.DefaultVictoriaMetricsMemoryMB != 256 {
+		t.Errorf("default memory = %d MiB, want the 256 MiB of the §4.1 budget", platform.DefaultVictoriaMetricsMemoryMB)
+	}
+	images, err := platform.DefaultImages("v1.2.3")
+	if err != nil || images.VictoriaMetrics == "" {
+		t.Errorf("DefaultImages: %q, %v", images.VictoriaMetrics, err)
 	}
 }

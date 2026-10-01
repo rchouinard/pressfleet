@@ -6,8 +6,6 @@
 # e.g. with:
 #
 #   docker buildx imagetools inspect mariadb:<tag>   # use the linux/amd64 "Name"
-#
-# VictoriaMetrics joins this list in a later milestone.
 mariadb: docker.io/library/mariadb:12.3.3@sha256:2f4f46f80e7251990bfdc601ae3f7f2964ddb4dc1868f7deca699fc1ece8c35e
 traefik: docker.io/library/traefik:v3.7.13@sha256:3429c14149401de2ac82fc72ddc6a92642332b90deb3012301ff211b9d2d0f18
 # Gives Traefik read-only, allowlisted access to the Docker API (design doc §6).
@@ -17,6 +15,9 @@ socket-proxy: docker.io/wollomatic/socket-proxy:1.13.1@sha256:14b0afd0939218e027
 # BSD-licensed fork of Redis. 9.0 or later is required: per-site isolation
 # relies on its per-database ACL rules (db=<n>), which Redis doesn't have.
 redis: docker.io/valkey/valkey:9.1.2@sha256:ac9c858b86dc81f3482d53a9d854547379a5f41e012500f839ab257c399063e0
+
+# Metrics storage (design doc §3, §7): single-node VictoriaMetrics.
+victoria-metrics: docker.io/victoriametrics/victoria-metrics:v1.153.0@sha256:8d4ccd756bdb0d0fc3f1e7d3664ff188ec49cdf0ef0d685d0d557674f49702c8
 
 # The control plane image is published by the same release as the host CLI,
 # so its digest can't be known when the CLI is built. It is referenced as

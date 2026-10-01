@@ -1,7 +1,8 @@
 // Package platform renders the platform services Compose project: the
 // control plane, MariaDB, the object cache (Redis protocol, served by
-// Valkey), and Traefik with its Docker socket proxy now, VictoriaMetrics in
-// a later milestone (design doc §4.1).
+// Valkey), VictoriaMetrics, and Traefik with its Docker socket proxy (design
+// doc §4.1). VictoriaMetrics is reachable on the platform network only and
+// keeps its data for Config.MetricsRetentionDays (config.MetricsConfig).
 //
 // The host CLI renders the project from templates embedded in its binary
 // (package templates) into <data_dir>/platform/. Rendered files are never
@@ -52,6 +53,17 @@ const (
 	MaintenanceMemoryMB         = 24
 )
 
+// VictoriaMetrics sizing and address. The §4.1 budget line is its container
+// limit; it sizes its caches from the cgroup limit itself.
+const (
+	DefaultVictoriaMetricsMemoryMB = 256
+	// VictoriaMetricsService is the Compose service name, which is also its
+	// host name on the platform network. The collector writes to, and the
+	// dashboard queries, http://victoria-metrics:8428.
+	VictoriaMetricsService = "victoria-metrics"
+	VictoriaMetricsPort    = 8428
+)
+
 // Object cache sizing. The §4.1 budget line is the cache's maxmemory; the
 // container limit adds headroom for the server itself, client buffers, and
 // allocator fragmentation, which maxmemory doesn't count.
@@ -96,6 +108,8 @@ type Images struct {
 	Redis        string
 	Traefik      string
 	SocketProxy  string
+	// VictoriaMetrics is the metrics storage image.
+	VictoriaMetrics string
 }
 
 // DefaultImages returns the images pinned for this release: third-party
@@ -112,6 +126,8 @@ func DefaultImages(version string) (Images, error) {
 		Redis        string `yaml:"redis"`
 		Traefik      string `yaml:"traefik"`
 		SocketProxy  string `yaml:"socket-proxy"`
+
+		VictoriaMetrics string `yaml:"victoria-metrics"`
 	}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
@@ -127,6 +143,8 @@ func DefaultImages(version string) (Images, error) {
 		Redis:        list.Redis,
 		Traefik:      list.Traefik,
 		SocketProxy:  list.SocketProxy,
+
+		VictoriaMetrics: list.VictoriaMetrics,
 	}, nil
 }
 
@@ -147,6 +165,13 @@ type Config struct {
 	MariaDBMemoryMB      int
 	TraefikMemoryMB      int
 	SocketProxyMemoryMB  int
+	// VictoriaMetricsMemoryMB is VictoriaMetrics' memory limit; zero means
+	// DefaultVictoriaMetricsMemoryMB.
+	VictoriaMetricsMemoryMB int
+	// MetricsRetentionDays is how long metrics are kept
+	// (config.MetricsConfig.RetentionDays); zero means
+	// config.DefaultMetricsRetentionDays.
+	MetricsRetentionDays int
 	// MariaDBRootPassword is written to secrets/mariadb_root_password.
 	MariaDBRootPassword redact.Secret
 	// RedisMaxMemoryMB is the object cache's maxmemory; zero means
@@ -248,6 +273,12 @@ func (c Config) withDefaults() (Config, error) {
 	if c.SocketProxyMemoryMB == 0 {
 		c.SocketProxyMemoryMB = DefaultSocketProxyMemoryMB
 	}
+	if c.VictoriaMetricsMemoryMB == 0 {
+		c.VictoriaMetricsMemoryMB = DefaultVictoriaMetricsMemoryMB
+	}
+	if c.MetricsRetentionDays == 0 {
+		c.MetricsRetentionDays = config.DefaultMetricsRetentionDays
+	}
 	if c.ACME.CAServer == "" {
 		c.ACME.CAServer = LetsEncryptCAServer
 	}
@@ -260,8 +291,8 @@ func (c Config) withDefaults() (Config, error) {
 		errs = append(errs, fmt.Errorf("data dir must be a clean absolute path, got %q", c.DataDir))
 	}
 	if c.Images.ControlPlane == "" || c.Images.MariaDB == "" || c.Images.Redis == "" ||
-		c.Images.Traefik == "" || c.Images.SocketProxy == "" {
-		errs = append(errs, errors.New("control plane, MariaDB, Redis, Traefik, and socket proxy images are required"))
+		c.Images.Traefik == "" || c.Images.SocketProxy == "" || c.Images.VictoriaMetrics == "" {
+		errs = append(errs, errors.New("control plane, MariaDB, Redis, Traefik, socket proxy, and VictoriaMetrics images are required"))
 	}
 	if _, err := listenPort(c.Listen); err != nil {
 		errs = append(errs, err)
@@ -280,6 +311,12 @@ func (c Config) withDefaults() (Config, error) {
 	}
 	if c.SocketProxyMemoryMB < 8 {
 		errs = append(errs, fmt.Errorf("socket proxy memory must be at least 8 MiB, got %d", c.SocketProxyMemoryMB))
+	}
+	if c.VictoriaMetricsMemoryMB < 64 {
+		errs = append(errs, fmt.Errorf("VictoriaMetrics memory must be at least 64 MiB, got %d", c.VictoriaMetricsMemoryMB))
+	}
+	if c.MetricsRetentionDays < 1 || c.MetricsRetentionDays > config.MaxMetricsRetentionDays {
+		errs = append(errs, fmt.Errorf("metrics retention must be between 1 and %d days, got %d", config.MaxMetricsRetentionDays, c.MetricsRetentionDays))
 	}
 	if !filepath.IsAbs(c.MasterKeyFile) || filepath.Clean(c.MasterKeyFile) != c.MasterKeyFile {
 		errs = append(errs, fmt.Errorf("master key file must be a clean absolute path, got %q", c.MasterKeyFile))
@@ -354,33 +391,37 @@ func (c Config) withDefaults() (Config, error) {
 // hash is not a secret: it can't be used to authenticate, and the password
 // is 130 random bits, so the hash can't be reversed.
 type templateData struct {
-	ProjectName            string
-	DataDir                string
-	Listen                 string
-	Images                 Images
-	ControlPlaneMemoryMB   int
-	MariaDBMemoryMB        int
-	MariaDBBufferPoolMB    int
-	RedisMaxMemoryMB       int
-	RedisMemoryMB          int
-	RedisDatabases         int
-	RedisAdminUser         string
-	RedisAdminPasswordHash string
-	SFTPPort               int
-	SFTPContainerPort      int
-	MasterKeyFile          string
-	MasterKeySecretPath    string
-	SkipPreflight          bool
-	PreviewBaseDomain      string
-	PublicIP               string
-	SMTP                   *config.SMTPConfig     // nil when outbound email is off
-	BackupS3               *config.BackupS3Config // nil for local backups
-	ListenPort             int
-	TraefikMemoryMB        int
-	TraefikGoMemLimitMB    int
-	SocketProxyMemoryMB    int
-	DashboardDomain        string
-	ACME                   ACMEConfig
+	ProjectName             string
+	DataDir                 string
+	Listen                  string
+	Images                  Images
+	ControlPlaneMemoryMB    int
+	MariaDBMemoryMB         int
+	MariaDBBufferPoolMB     int
+	RedisMaxMemoryMB        int
+	RedisMemoryMB           int
+	RedisDatabases          int
+	RedisAdminUser          string
+	RedisAdminPasswordHash  string
+	SFTPPort                int
+	SFTPContainerPort       int
+	MasterKeyFile           string
+	MasterKeySecretPath     string
+	SkipPreflight           bool
+	PreviewBaseDomain       string
+	PublicIP                string
+	SMTP                    *config.SMTPConfig     // nil when outbound email is off
+	BackupS3                *config.BackupS3Config // nil for local backups
+	ListenPort              int
+	TraefikMemoryMB         int
+	TraefikGoMemLimitMB     int
+	SocketProxyMemoryMB     int
+	VictoriaMetricsMemoryMB int
+	VictoriaMetricsPort     int
+	VictoriaMetricsService  string
+	MetricsRetentionDays    int
+	DashboardDomain         string
+	ACME                    ACMEConfig
 
 	// Traefik names shared with site routes (package ingress).
 	PlatformLabel      string
@@ -471,27 +512,31 @@ func Render(dir string, cfg Config) error {
 		RedisDatabases:       RedisDatabases,
 		RedisAdminUser:       RedisAdminUser,
 		// ACL passwords are hashed over the exact bytes a client sends.
-		RedisAdminPasswordHash: sha256Hex(cfg.RedisAdminPassword),
-		SFTPPort:               cfg.SFTPPort,
-		SFTPContainerPort:      SFTPContainerPort,
-		MasterKeyFile:          cfg.MasterKeyFile,
-		MasterKeySecretPath:    MasterKeySecretPath,
-		SkipPreflight:          cfg.SkipPreflight,
-		PreviewBaseDomain:      cfg.PreviewBaseDomain,
-		PublicIP:               cfg.PublicIP,
-		TraefikMemoryMB:        cfg.TraefikMemoryMB,
-		TraefikGoMemLimitMB:    cfg.TraefikMemoryMB * 3 / 4,
-		SocketProxyMemoryMB:    cfg.SocketProxyMemoryMB,
-		DashboardDomain:        cfg.DashboardDomain,
-		ACME:                   cfg.ACME,
-		PlatformLabel:          ingress.PlatformLabel,
-		Constraint:             fmt.Sprintf("Label(`%s`, `%s`)", ingress.PlatformLabel, cfg.ProjectName),
-		TraefikService:         ingress.TraefikService,
-		EntryPointHTTP:         ingress.EntryPointHTTP,
-		EntryPointHTTPS:        ingress.EntryPointHTTPS,
-		EntryPointInternal:     ingress.EntryPointInternal,
-		InternalPort:           ingress.InternalPort,
-		CertResolverHTTP:       ingress.CertResolverHTTP,
+		RedisAdminPasswordHash:  sha256Hex(cfg.RedisAdminPassword),
+		SFTPPort:                cfg.SFTPPort,
+		SFTPContainerPort:       SFTPContainerPort,
+		MasterKeyFile:           cfg.MasterKeyFile,
+		MasterKeySecretPath:     MasterKeySecretPath,
+		SkipPreflight:           cfg.SkipPreflight,
+		PreviewBaseDomain:       cfg.PreviewBaseDomain,
+		PublicIP:                cfg.PublicIP,
+		TraefikMemoryMB:         cfg.TraefikMemoryMB,
+		TraefikGoMemLimitMB:     cfg.TraefikMemoryMB * 3 / 4,
+		SocketProxyMemoryMB:     cfg.SocketProxyMemoryMB,
+		VictoriaMetricsMemoryMB: cfg.VictoriaMetricsMemoryMB,
+		VictoriaMetricsPort:     VictoriaMetricsPort,
+		VictoriaMetricsService:  VictoriaMetricsService,
+		MetricsRetentionDays:    cfg.MetricsRetentionDays,
+		DashboardDomain:         cfg.DashboardDomain,
+		ACME:                    cfg.ACME,
+		PlatformLabel:           ingress.PlatformLabel,
+		Constraint:              fmt.Sprintf("Label(`%s`, `%s`)", ingress.PlatformLabel, cfg.ProjectName),
+		TraefikService:          ingress.TraefikService,
+		EntryPointHTTP:          ingress.EntryPointHTTP,
+		EntryPointHTTPS:         ingress.EntryPointHTTPS,
+		EntryPointInternal:      ingress.EntryPointInternal,
+		InternalPort:            ingress.InternalPort,
+		CertResolverHTTP:        ingress.CertResolverHTTP,
 
 		DynamicConfigDir:        traefikDynamicConfigDir,
 		DynamicConfigSource:     TraefikDynamicDir,

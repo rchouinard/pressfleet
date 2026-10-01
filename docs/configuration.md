@@ -48,6 +48,8 @@ redis:
   admin_password_file: /run/secrets/redis_admin_password
 audit:
   retention_days: 365
+metrics:
+  retention_days: 90
 platform_project: pressfleet
 smtp:                    # optional; without a host, sites send no email
   host: smtp.mailgun.org
@@ -129,6 +131,7 @@ database_export:
 | `mariadb.admin_user` | `PRESSFLEET_MARIADB_ADMIN_USER` | | `root` | MariaDB account that creates and drops site databases and users. |
 | `mariadb.admin_password_file` | `PRESSFLEET_MARIADB_ADMIN_PASSWORD_FILE` | | `/run/secrets/mariadb_root_password` | File holding the admin password; a trailing newline is ignored. Must be an absolute path. The default is where the platform Compose project mounts the MariaDB root password secret. |
 | `audit.retention_days` | `PRESSFLEET_AUDIT_RETENTION_DAYS` | | `365` | How many days audit log events are kept, from 1 to 3660. A daily job deletes older events. See [Audit log](#audit-log). |
+| `metrics.retention_days` | `PRESSFLEET_METRICS_RETENTION_DAYS` | | `90` | How many days VictoriaMetrics keeps metrics, from 1 to 3660. Longer retention needs more disk. It is rendered into the platform project, so a change applies the next time the project is rendered (`pressfleet upgrade`). See [Metrics storage](#metrics-storage). |
 | `redis.address` | `PRESSFLEET_REDIS_ADDRESS` | | `redis:6379` | `host:port` of the shared object cache server (Valkey), as seen from the control plane. See [Object cache](#object-cache). |
 | `redis.admin_user` | `PRESSFLEET_REDIS_ADMIN_USER` | | `pressfleet` | Object cache ACL user that creates and deletes site users. |
 | `redis.admin_password_file` | `PRESSFLEET_REDIS_ADMIN_PASSWORD_FILE` | | `/run/secrets/redis_admin_password` | File holding the admin password; a trailing newline is ignored. Must be an absolute path. The default is where the platform Compose project mounts the password `pressfleet init` generates. |
@@ -333,6 +336,10 @@ Downloads of database exports are the one kind of read that is recorded, whateve
 Admins can list and filter the log with `GET /api/v1/audit-events`. A daily job deletes events older than `audit.retention_days`; a changed retention applies from the next run after the control plane restarts. Events outlive the users and tokens they name, so an event can refer to a user who has since been deleted.
 
 Some events carry `details`, such as the SFTP gateway's sessions (see below).
+
+## Metrics storage
+
+Metrics are stored in a single-node VictoriaMetrics service of the platform project, limited to 256 MiB of memory, with its data on the `victoria-metrics-data` volume. It is reachable only on the platform network, as `http://victoria-metrics:8428`: it publishes no host port and has no Traefik route, so it isn't exposed to the internet. Data older than `metrics.retention_days` is deleted by VictoriaMetrics itself.
 
 ## SFTP gateway
 

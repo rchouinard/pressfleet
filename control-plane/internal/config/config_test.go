@@ -72,6 +72,7 @@ func TestLoadPrecedence(t *testing.T) {
 		MariaDB:  config.Default().MariaDB,                         // default
 		Redis:    config.Default().Redis,                           // default
 		Audit:    config.AuditConfig{RetentionDays: 365},           // default
+		Metrics:  config.MetricsConfig{RetentionDays: 90},          // default
 		SMTP:     config.Default().SMTP,                            // default
 		Backup:   config.Default().Backup,                          // default
 		SFTP:     config.DefaultSFTP(),                             // default
@@ -251,6 +252,31 @@ func TestJobsSettings(t *testing.T) {
 		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "jobs.concurrency") {
 			t.Errorf("concurrency %d: Validate() = %v", n, err)
 		}
+	}
+}
+
+func TestMetricsSettings(t *testing.T) {
+	if got := config.Default().Metrics; got.RetentionDays != 90 {
+		t.Errorf("default metrics config = %+v", got)
+	}
+	path := writeFile(t, "metrics:\n  retention_days: 30\n")
+	cfg, err := config.Load(path, env(nil))
+	if err != nil || cfg.Metrics.RetentionDays != 30 {
+		t.Fatalf("from file: %d, %v", cfg.Metrics.RetentionDays, err)
+	}
+	cfg, err = config.Load(path, env(map[string]string{"PRESSFLEET_METRICS_RETENTION_DAYS": "365"}))
+	if err != nil || cfg.Metrics.RetentionDays != 365 {
+		t.Fatalf("from env: %d, %v", cfg.Metrics.RetentionDays, err)
+	}
+	for _, n := range []int{0, -1, config.MaxMetricsRetentionDays + 1} {
+		cfg := config.Default()
+		cfg.Metrics.RetentionDays = n
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "metrics.retention_days") {
+			t.Errorf("retention %d: Validate() = %v", n, err)
+		}
+	}
+	if _, err := config.Load("", env(map[string]string{"PRESSFLEET_METRICS_RETENTION_DAYS": "soon"})); err == nil {
+		t.Error("non-numeric retention accepted")
 	}
 }
 

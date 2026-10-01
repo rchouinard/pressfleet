@@ -74,6 +74,8 @@ type Config struct {
 	Redis RedisConfig `yaml:"redis"`
 	// Audit configures the audit log (§4.6).
 	Audit AuditConfig `yaml:"audit"`
+	// Metrics configures metrics storage (§7).
+	Metrics MetricsConfig `yaml:"metrics"`
 	// PlatformProject is the Compose project name of the platform services,
 	// which names their containers: the provisioner connects the
 	// platform's MariaDB and object cache containers to each site network.
@@ -428,6 +430,20 @@ func (a AuditConfig) Retention() time.Duration {
 // MaxAuditRetentionDays bounds audit.retention_days at about ten years.
 const MaxAuditRetentionDays = 3660
 
+// MetricsConfig configures metrics storage in VictoriaMetrics.
+type MetricsConfig struct {
+	// RetentionDays is how long metrics are kept (decision #65). The host
+	// CLI renders it into the platform project, so a change applies the next
+	// time the project is rendered (pressfleet upgrade).
+	RetentionDays int `yaml:"retention_days"`
+}
+
+// DefaultMetricsRetentionDays is metrics.retention_days unless configured.
+const DefaultMetricsRetentionDays = 90
+
+// MaxMetricsRetentionDays bounds metrics.retention_days at about ten years.
+const MaxMetricsRetentionDays = 3660
+
 // DatabaseExportConfig configures database exports (§5.8).
 type DatabaseExportConfig struct {
 	// TTLSeconds is how long an export can be downloaded once it is ready;
@@ -551,6 +567,7 @@ func Default() Config {
 		Database: DatabaseConfig{Driver: DriverSQLite},
 		Jobs:     JobsConfig{Concurrency: 4},
 		Audit:    AuditConfig{RetentionDays: 365},
+		Metrics:  MetricsConfig{RetentionDays: DefaultMetricsRetentionDays},
 		// platform.ProjectName; config can't import package platform.
 		PlatformProject: "pressfleet",
 		MariaDB: MariaDBConfig{ //nolint:gosec // G101: the path of the password file, not a credential
@@ -720,6 +737,13 @@ func ApplyEnv(cfg *Config, env LookupEnv) error {
 		}
 		cfg.Audit.RetentionDays = n
 	}
+	if val, ok := env("PRESSFLEET_METRICS_RETENTION_DAYS"); ok {
+		n, err := strconv.Atoi(val)
+		if err != nil {
+			return fmt.Errorf("PRESSFLEET_METRICS_RETENTION_DAYS must be a whole number, got %q", val)
+		}
+		cfg.Metrics.RetentionDays = n
+	}
 	for _, v := range intEnvVars {
 		if val, ok := env(v.name); ok {
 			n, err := strconv.Atoi(val)
@@ -831,6 +855,9 @@ func (c Config) Validate() error {
 	}
 	if c.Audit.RetentionDays < 1 || c.Audit.RetentionDays > MaxAuditRetentionDays {
 		errs = append(errs, fmt.Errorf("audit.retention_days must be between 1 and %d, got %d", MaxAuditRetentionDays, c.Audit.RetentionDays))
+	}
+	if c.Metrics.RetentionDays < 1 || c.Metrics.RetentionDays > MaxMetricsRetentionDays {
+		errs = append(errs, fmt.Errorf("metrics.retention_days must be between 1 and %d, got %d", MaxMetricsRetentionDays, c.Metrics.RetentionDays))
 	}
 	if t := c.DatabaseExport.TTLSeconds; t < MinDatabaseExportTTLSeconds || t > MaxDatabaseExportTTLSeconds {
 		errs = append(errs, fmt.Errorf("database_export.ttl_seconds must be between %d and %d, got %d",

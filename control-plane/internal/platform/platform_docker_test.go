@@ -121,7 +121,8 @@ func TestPlatformUp(t *testing.T) {
 			t.Fatalf("Redis container is %s, want %s", redis.Name, platform.RedisContainer(cfg.ProjectName))
 		}
 		if db.Health == "healthy" && redis.Health == "healthy" && cp.State == "running" &&
-			tr.Health == "healthy" && state["socket-proxy"].Health == "healthy" && state["maintenance"].Health == "healthy" {
+			tr.Health == "healthy" && state["socket-proxy"].Health == "healthy" && state["maintenance"].Health == "healthy" &&
+			state[platform.VictoriaMetricsService].Health == "healthy" {
 			cpHealth = cp.Health
 			break
 		}
@@ -143,16 +144,29 @@ func TestPlatformUp(t *testing.T) {
 
 	// Memory limits match the §4.1 budget.
 	for service, mb := range map[string]int{
-		"mariadb":       platform.DefaultMariaDBMemoryMB,
-		"control-plane": platform.DefaultControlPlaneMemoryMB,
-		"redis":         platform.DefaultRedisMaxMemoryMB + platform.RedisOverheadMB,
-		"traefik":       platform.DefaultTraefikMemoryMB,
-		"maintenance":   platform.MaintenanceMemoryMB,
+		"mariadb":                       platform.DefaultMariaDBMemoryMB,
+		"control-plane":                 platform.DefaultControlPlaneMemoryMB,
+		"redis":                         platform.DefaultRedisMaxMemoryMB + platform.RedisOverheadMB,
+		"traefik":                       platform.DefaultTraefikMemoryMB,
+		"maintenance":                   platform.MaintenanceMemoryMB,
+		platform.VictoriaMetricsService: platform.DefaultVictoriaMetricsMemoryMB,
 	} {
 		got := exec(service, "cat", "/sys/fs/cgroup/memory.max")
 		if want := strconv.Itoa(mb * 1024 * 1024); got != want {
 			t.Errorf("%s memory.max = %s, want %s", service, got, want)
 		}
+	}
+
+	// Metrics can be written and queried (#66). The sample is a few minutes
+	// old because queries leave out the newest 30 seconds by default.
+	vm := "http://127.0.0.1:" + strconv.Itoa(platform.VictoriaMetricsPort)
+	sampled := time.Now().Add(-5 * time.Minute)
+	exec(platform.VictoriaMetricsService, "wget", "-q", "-O", "/dev/null",
+		fmt.Sprintf("--post-data=pf_test value=42 %d", sampled.UnixNano()), vm+"/write")
+	exec(platform.VictoriaMetricsService, "wget", "-q", "-O", "/dev/null", vm+"/internal/force_flush")
+	if got := exec(platform.VictoriaMetricsService, "wget", "-q", "-O", "-",
+		fmt.Sprintf("%s/api/v1/query?query=pf_test_value&time=%d", vm, sampled.Unix()+1)); !strings.Contains(got, `"42"`) {
+		t.Errorf("metrics query = %s, want the written sample", got)
 	}
 
 	// MariaDB loaded the rendered tuning and accepts the root password from
@@ -224,7 +238,7 @@ func TestPlatformUp(t *testing.T) {
 		t.Errorf("control plane's Redis admin password = %q", got)
 	}
 	exec("control-plane", "test", "-f", platform.MasterKeySecretPath)
-	if got := exec("control-plane", "docker", "compose", "--project-name", cfg.ProjectName, "ps", "--quiet"); len(strings.Fields(got)) != 6 {
+	if got := exec("control-plane", "docker", "compose", "--project-name", cfg.ProjectName, "ps", "--quiet"); len(strings.Fields(got)) != 7 {
 		t.Errorf("docker compose ps inside the control plane listed %q", got)
 	}
 
