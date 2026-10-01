@@ -349,6 +349,62 @@ Some events carry `details`, such as the SFTP gateway's sessions (see below).
 
 Metrics are stored in a single-node VictoriaMetrics service of the platform project, limited to 256 MiB of memory, with its data on the `victoria-metrics-data` volume. It is reachable only on the platform network, as `http://victoria-metrics:8428`: it publishes no host port and has no Traefik route, so it isn't exposed to the internet. Data older than `metrics.retention_days` is deleted by VictoriaMetrics itself.
 
+## Metrics API
+
+The dashboard reads metrics through curated, read-only endpoints (design doc §7.1, §7.2, tag `metrics` in `api/openapi.yaml`); it never sends queries. Every role can use them. They read VictoriaMetrics (`metrics.url`), and answer `503` while it can't be reached or when `metrics.enabled` is false.
+
+| Endpoint | Returns |
+| --- | --- |
+| `GET /api/v1/metrics/catalog` | Every metric: id, title, unit, kind, group, scope, series labels, and the request limits. |
+| `GET /api/v1/sites/{site_id}/metrics` | Time series of a site's metrics, for charts. `404` for an unknown site. |
+| `GET /api/v1/sites/{site_id}/metrics/summary` | The current value of a site's metrics (instant queries), cheap enough for the site list. |
+| `GET /api/v1/metrics/platform` | Time series of platform metrics and per-client-group metrics; `client_group_id` narrows the latter. |
+| `GET /api/v1/metrics/platform/summary` | Current values of platform metrics, for the overview. |
+
+Select metrics with repeatable `metric` (ids from the catalog) and `group` parameters; a range request needs at least one, and a summary without any returns a small default set. A range request takes `start`, `end`, and `step` (seconds): by default the last hour with a step chosen to give about 300 points. `start` and `end` are aligned down to the step, `end` is capped at now, and the response reports what was queried. A request may select at most 20 metrics; ranges are limited to 366 days, steps to at least 15 seconds and at most 1500 points per series. Violations are `400` problems. A metric that has no data yet is returned with an empty `series` (or `values`) list, not an error. Every query of a site endpoint selects on the `site_id` in the path.
+
+Each series has `labels` that tell it apart (such as `status_class`, `domain`, or `percentile`), its `points`, and the `latest` one. Values are in base units: seconds, bytes, and ratios from 0 to 1 (never percentages).
+
+The catalog is defined once, in package `metricsapi`; each entry's PromQL template is parameterized only by the validated site or client group ID and a rate window derived from the step. The stored metrics each entry reads, which the collectors write, are listed in that package's documentation and here:
+
+| Id | Scope | Group | Unit | Kind | Stored metrics |
+| --- | --- | --- | --- | --- | --- |
+| `uptime` | site | availability | ratio | ratio | `pressfleet_site_up` |
+| `http_check_status` | site | availability | code | gauge | `pressfleet_site_http_check_status_code` |
+| `response_time` | site | availability | seconds | gauge | `pressfleet_site_http_check_duration_seconds` |
+| `request_rate` | site | traffic | per_second | rate | `pressfleet_site_http_requests_total` |
+| `status_codes` | site | traffic | per_second | rate | `pressfleet_site_http_requests_total` |
+| `latency` | site | traffic | seconds | percentile | `pressfleet_site_http_request_duration_seconds_bucket` |
+| `page_cache_ratio` | site | page_cache | ratio | ratio | `pressfleet_site_page_cache_requests_total` |
+| `php_workers` | site | php | count | gauge | `pressfleet_site_php_fpm_active_processes`, `pressfleet_site_php_fpm_idle_processes`, `pressfleet_site_php_fpm_max_children` |
+| `php_max_children_reached` | site | php | count | rate | `pressfleet_site_php_fpm_max_children_reached_total` |
+| `php_slow_requests` | site | php | count | rate | `pressfleet_site_php_fpm_slow_requests_total` |
+| `cpu` | site | resources | cores | rate | `pressfleet_container_cpu_usage_seconds_total` |
+| `memory` | site | resources | bytes | gauge | `pressfleet_container_memory_usage_bytes` |
+| `restarts` | site | resources | count | rate | `pressfleet_container_restarts_total` |
+| `wp_content_size` | site | storage | bytes | gauge | `pressfleet_site_wp_content_size_bytes` |
+| `database_size` | site | storage | bytes | gauge | `pressfleet_site_database_size_bytes` |
+| `object_cache_keys` | site | object_cache | count | gauge | `pressfleet_site_object_cache_keys` |
+| `object_cache_memory` | site | object_cache | bytes | gauge | `pressfleet_site_object_cache_memory_bytes` |
+| `object_cache_hit_ratio` | site | object_cache | ratio | ratio | `pressfleet_site_object_cache_hits_total`, `pressfleet_site_object_cache_misses_total` |
+| `tls_expiry` | site | tls | timestamp | gauge | `pressfleet_site_tls_certificate_expiry_timestamp_seconds` |
+| `backup_last_success` | site | backups | timestamp | gauge | `pressfleet_site_backup_last_success_timestamp_seconds` |
+| `backup_size` | site | backups | bytes | gauge | `pressfleet_site_backup_size_bytes` |
+| `backup_duration` | site | backups | seconds | gauge | `pressfleet_site_backup_duration_seconds` |
+| `host_cpu` | platform | host | ratio | ratio | `pressfleet_host_cpu_seconds_total` |
+| `host_memory` | platform | host | bytes | gauge | `pressfleet_host_memory_available_bytes`, `pressfleet_host_memory_total_bytes` |
+| `host_disk_usage` | platform | host | ratio | ratio | `pressfleet_host_filesystem_avail_bytes`, `pressfleet_host_filesystem_size_bytes` |
+| `host_disk_io` | platform | host | bytes_per_second | rate | `pressfleet_host_disk_read_bytes_total`, `pressfleet_host_disk_written_bytes_total` |
+| `mariadb_connections` | platform | mariadb | count | gauge | `pressfleet_mariadb_max_connections`, `pressfleet_mariadb_threads_connected` |
+| `mariadb_slow_queries` | platform | mariadb | per_second | rate | `pressfleet_mariadb_slow_queries_total` |
+| `mariadb_buffer_pool` | platform | mariadb | bytes | gauge | `pressfleet_mariadb_innodb_buffer_pool_size_bytes`, `pressfleet_mariadb_innodb_buffer_pool_used_bytes` |
+| `redis_memory` | platform | redis | bytes | gauge | `pressfleet_redis_memory_used_bytes` |
+| `redis_hit_ratio` | platform | redis | ratio | ratio | `pressfleet_redis_keyspace_hits_total`, `pressfleet_redis_keyspace_misses_total` |
+| `redis_evictions` | platform | redis | per_second | rate | `pressfleet_redis_evicted_keys_total` |
+| `job_queue_depth` | platform | jobs | count | gauge | `pressfleet_jobs_queue_depth` |
+| `job_failure_rate` | platform | jobs | ratio | ratio | `pressfleet_jobs_finished_total` |
+| `restic_repository_size` | client_group | backups | bytes | gauge | `pressfleet_restic_repository_size_bytes` |
+
 ## Alerts
 
 Alert rules (design doc §7.3) watch the metrics in VictoriaMetrics and raise alerts. A rule is a PromQL expression plus what makes its result a condition: a **threshold** rule compares the value of each series the expression returns with its `operator` and `threshold`, and an **expression** rule treats every series the expression returns as true (the expression filters, as in `pressfleet_site_up == 0`). A rule's `scope` is `site` (every series carries a `site_id` label, an alert is raised per site, and the rule can be limited to one client group) or `platform`. `for_seconds` is how long the condition must hold before the alert fires, so one failed check doesn't page anyone. `labels` are added to every alert the rule raises, and the `summary` and `description` annotations are [Go templates](https://pkg.go.dev/text/template) over `.Labels`, `.Value`, `.Threshold`, and `.Rule`, with the functions `humanizePercentage` (a ratio as a percentage) and `humanizeDuration` (seconds as days, hours, and minutes).

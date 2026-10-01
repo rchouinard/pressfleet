@@ -338,6 +338,10 @@ func (a *app) serveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			metricsSvc, err := a.metricsQueries()
+			if err != nil {
+				return err
+			}
 			handler, err := api.NewHandler(api.Options{
 				Logger:           a.log,
 				Readiness:        readiness,
@@ -351,6 +355,7 @@ func (a *app) serveCommand() *cobra.Command {
 				DatabaseSessions: dbSessions,
 				Deployments:      deploys,
 				Logs:             prov,
+				Metrics:          metricsSvc,
 				TrustedProxies:   proxies,
 				SecureCookies:    a.cfg.HTTP.SecureCookies == config.SecureCookiesAlways,
 			})

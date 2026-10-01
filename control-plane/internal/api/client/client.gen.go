@@ -426,6 +426,90 @@ func (e JobTargetType) Valid() bool {
 	}
 }
 
+// Defines values for MetricDescriptorScope.
+const (
+	MetricDescriptorScopeClientGroup MetricDescriptorScope = "client_group"
+	MetricDescriptorScopePlatform    MetricDescriptorScope = "platform"
+	MetricDescriptorScopeSite        MetricDescriptorScope = "site"
+)
+
+// Valid indicates whether the value is a known member of the MetricDescriptorScope enum.
+func (e MetricDescriptorScope) Valid() bool {
+	switch e {
+	case MetricDescriptorScopeClientGroup:
+		return true
+	case MetricDescriptorScopePlatform:
+		return true
+	case MetricDescriptorScopeSite:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MetricKind.
+const (
+	MetricKindGauge      MetricKind = "gauge"
+	MetricKindPercentile MetricKind = "percentile"
+	MetricKindRate       MetricKind = "rate"
+	MetricKindRatio      MetricKind = "ratio"
+)
+
+// Valid indicates whether the value is a known member of the MetricKind enum.
+func (e MetricKind) Valid() bool {
+	switch e {
+	case MetricKindGauge:
+		return true
+	case MetricKindPercentile:
+		return true
+	case MetricKindRate:
+		return true
+	case MetricKindRatio:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MetricUnit.
+const (
+	MetricUnitBytes          MetricUnit = "bytes"
+	MetricUnitBytesPerSecond MetricUnit = "bytes_per_second"
+	MetricUnitCode           MetricUnit = "code"
+	MetricUnitCores          MetricUnit = "cores"
+	MetricUnitCount          MetricUnit = "count"
+	MetricUnitPerSecond      MetricUnit = "per_second"
+	MetricUnitRatio          MetricUnit = "ratio"
+	MetricUnitSeconds        MetricUnit = "seconds"
+	MetricUnitTimestamp      MetricUnit = "timestamp"
+)
+
+// Valid indicates whether the value is a known member of the MetricUnit enum.
+func (e MetricUnit) Valid() bool {
+	switch e {
+	case MetricUnitBytes:
+		return true
+	case MetricUnitBytesPerSecond:
+		return true
+	case MetricUnitCode:
+		return true
+	case MetricUnitCores:
+		return true
+	case MetricUnitCount:
+		return true
+	case MetricUnitPerSecond:
+		return true
+	case MetricUnitRatio:
+		return true
+	case MetricUnitSeconds:
+		return true
+	case MetricUnitTimestamp:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReadinessStatus.
 const (
 	ReadinessStatusOk          ReadinessStatus = "ok"
@@ -1810,6 +1894,157 @@ type LoginRequest struct {
 	Password *string `json:"password,omitempty"`
 }
 
+// MetricCatalog defines model for MetricCatalog.
+type MetricCatalog struct {
+	Items  []MetricDescriptor `json:"items"`
+	Limits MetricLimits       `json:"limits"`
+}
+
+// MetricDescriptor defines model for MetricDescriptor.
+type MetricDescriptor struct {
+	// DefaultSummary Whether a summary request that names no metrics includes it.
+	DefaultSummary bool   `json:"default_summary"`
+	Description    string `json:"description"`
+
+	// Group Pass as `group` to select every metric of the group.
+	//
+	// Examples: traffic
+	Group string `json:"group"`
+
+	// ID Stable; pass as `metric`.
+	//
+	// Examples: status_codes
+	ID string `json:"id"`
+
+	// Kind How a value is derived: `gauge` is sampled as is, `rate` comes from a
+	// counter (per second, or an increase over the step), `ratio` is a
+	// fraction from 0 to 1, and `percentile` is a latency quantile (its
+	// series have a `percentile` label).
+	Kind MetricKind `json:"kind"`
+
+	// Labels Labels that tell the metric's series apart, such as `status_class`. Empty if it has one series.
+	Labels []string `json:"labels"`
+
+	// Scope `site` metrics are served by the site endpoints; `platform` and
+	// `client_group` ones by the platform endpoints.
+	Scope MetricDescriptorScope `json:"scope"`
+	Title string                `json:"title"`
+
+	// Unit What a value counts, in base units. `timestamp` is Unix seconds and
+	// `code` an HTTP status code.
+	Unit MetricUnit `json:"unit"`
+}
+
+// MetricDescriptorScope `site` metrics are served by the site endpoints; `platform` and
+// `client_group` ones by the platform endpoints.
+type MetricDescriptorScope string
+
+// MetricKind How a value is derived: `gauge` is sampled as is, `rate` comes from a
+// counter (per second, or an increase over the step), `ratio` is a
+// fraction from 0 to 1, and `percentile` is a latency quantile (its
+// series have a `percentile` label).
+type MetricKind string
+
+// MetricLimits defines model for MetricLimits.
+type MetricLimits struct {
+	DefaultRangeSeconds int `json:"default_range_seconds"`
+
+	// MaxMetrics Most metrics in one request, after groups are expanded.
+	MaxMetrics int `json:"max_metrics"`
+
+	// MaxPoints Most points per series.
+	MaxPoints       int `json:"max_points"`
+	MaxRangeSeconds int `json:"max_range_seconds"`
+	MinStepSeconds  int `json:"min_step_seconds"`
+}
+
+// MetricPoint defines model for MetricPoint.
+type MetricPoint struct {
+	// Time Examples: 2026-09-26T17:25:00Z
+	Time  Timestamp `json:"time"`
+	Value float64   `json:"value"`
+}
+
+// MetricResult defines model for MetricResult.
+type MetricResult struct {
+	ID string `json:"id"`
+
+	// Kind How a value is derived: `gauge` is sampled as is, `rate` comes from a
+	// counter (per second, or an increase over the step), `ratio` is a
+	// fraction from 0 to 1, and `percentile` is a latency quantile (its
+	// series have a `percentile` label).
+	Kind MetricKind `json:"kind"`
+
+	// Series Empty while the metric has no data.
+	Series []MetricSeries `json:"series"`
+
+	// Unit What a value counts, in base units. `timestamp` is Unix seconds and
+	// `code` an HTTP status code.
+	Unit MetricUnit `json:"unit"`
+}
+
+// MetricSeries defines model for MetricSeries.
+type MetricSeries struct {
+	// Labels Labels of the series, such as `status_class` or `domain`. Empty for a metric with one series.
+	Labels map[string]string `json:"labels"`
+	Latest MetricPoint       `json:"latest"`
+
+	// Points Oldest first. A step without a value has no point.
+	Points []MetricPoint `json:"points"`
+}
+
+// MetricSummaryResult defines model for MetricSummaryResult.
+type MetricSummaryResult struct {
+	ID string `json:"id"`
+
+	// Kind How a value is derived: `gauge` is sampled as is, `rate` comes from a
+	// counter (per second, or an increase over the step), `ratio` is a
+	// fraction from 0 to 1, and `percentile` is a latency quantile (its
+	// series have a `percentile` label).
+	Kind MetricKind `json:"kind"`
+
+	// Unit What a value counts, in base units. `timestamp` is Unix seconds and
+	// `code` an HTTP status code.
+	Unit MetricUnit `json:"unit"`
+
+	// Values Empty while the metric has no data.
+	Values []MetricValue `json:"values"`
+}
+
+// MetricUnit What a value counts, in base units. `timestamp` is Unix seconds and
+// `code` an HTTP status code.
+type MetricUnit string
+
+// MetricValue defines model for MetricValue.
+type MetricValue struct {
+	Labels map[string]string `json:"labels"`
+
+	// Time Examples: 2026-09-26T17:25:00Z
+	Time  Timestamp `json:"time"`
+	Value float64   `json:"value"`
+}
+
+// MetricsRange defines model for MetricsRange.
+type MetricsRange struct {
+	// End Examples: 2026-09-26T17:25:00Z
+	End Timestamp `json:"end"`
+
+	// Metrics One result per selected metric, in catalog order.
+	Metrics []MetricResult `json:"metrics"`
+
+	// Start Examples: 2026-09-26T17:25:00Z
+	Start       Timestamp `json:"start"`
+	StepSeconds int       `json:"step_seconds"`
+}
+
+// MetricsSummary defines model for MetricsSummary.
+type MetricsSummary struct {
+	Metrics []MetricSummaryResult `json:"metrics"`
+
+	// Time Examples: 2026-09-26T17:25:00Z
+	Time Timestamp `json:"time"`
+}
+
 // NextCursor Pass as `cursor` to get the next page. Null on the last page.
 type NextCursor = string
 
@@ -2627,6 +2862,21 @@ type LogQuery = string
 // LogSource defines model for LogSource.
 type LogSource = []SiteLogSource
 
+// MetricEnd Examples: 2026-09-26T17:25:00Z
+type MetricEnd = Timestamp
+
+// MetricGroups defines model for MetricGroups.
+type MetricGroups = []string
+
+// MetricIDs defines model for MetricIDs.
+type MetricIDs = []string
+
+// MetricStart Examples: 2026-09-26T17:25:00Z
+type MetricStart = Timestamp
+
+// MetricStep defines model for MetricStep.
+type MetricStep = int
+
 // SSHKeyID Opaque, server-assigned identifier.
 //
 // Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
@@ -2669,6 +2919,9 @@ type Forbidden = Problem
 
 // Gone RFC 9457 Problem Details. Additional members may be added.
 type Gone = Problem
+
+// MetricsUnavailable RFC 9457 Problem Details. Additional members may be added.
+type MetricsUnavailable = Problem
 
 // NotFound RFC 9457 Problem Details. Additional members may be added.
 type NotFound = Problem
@@ -2796,6 +3049,45 @@ type ListJobsParams struct {
 	TargetID *ID `form:"target_id,omitempty" json:"target_id,omitempty"`
 }
 
+// QueryPlatformMetricsParams defines parameters for QueryPlatformMetrics.
+type QueryPlatformMetricsParams struct {
+	// Metric Metric ids from the catalog; repeat the parameter to select several
+	// (`metric=uptime&metric=latency`). With `group`, the metrics of both
+	// are returned, at most 20 in all.
+	Metric *MetricIDs `form:"metric,omitempty" json:"metric,omitempty"`
+
+	// Group Metric groups from the catalog (such as `traffic`); repeat to select several.
+	Group *MetricGroups `form:"group,omitempty" json:"group,omitempty"`
+
+	// ClientGroupID Only return per-client-group metrics of this client group.
+	ClientGroupID *ID `form:"client_group_id,omitempty" json:"client_group_id,omitempty"`
+
+	// Start Start of the range. Default is an hour before `end`.
+	Start *MetricStart `form:"start,omitempty" json:"start,omitempty"`
+
+	// End End of the range. Default and maximum is now.
+	End *MetricEnd `form:"end,omitempty" json:"end,omitempty"`
+
+	// Step Seconds between points, at least 15. Default is the smallest step
+	// that keeps the range at about 300 points. The range divided by the
+	// step may give at most 1500 points.
+	Step *MetricStep `form:"step,omitempty" json:"step,omitempty"`
+}
+
+// GetPlatformMetricsSummaryParams defines parameters for GetPlatformMetricsSummary.
+type GetPlatformMetricsSummaryParams struct {
+	// Metric Metric ids from the catalog; repeat the parameter to select several
+	// (`metric=uptime&metric=latency`). With `group`, the metrics of both
+	// are returned, at most 20 in all.
+	Metric *MetricIDs `form:"metric,omitempty" json:"metric,omitempty"`
+
+	// Group Metric groups from the catalog (such as `traffic`); repeat to select several.
+	Group *MetricGroups `form:"group,omitempty" json:"group,omitempty"`
+
+	// ClientGroupID Only return per-client-group metrics of this client group.
+	ClientGroupID *ID `form:"client_group_id,omitempty" json:"client_group_id,omitempty"`
+}
+
 // ListSitesParams defines parameters for ListSites.
 type ListSitesParams struct {
 	// Limit Maximum number of items to return.
@@ -2879,6 +3171,39 @@ type StreamSiteLogsParams struct {
 	// `EventSource` when it reconnects. When present, the stream
 	// sends the entries after it instead of the tail.
 	LastEventID *string `json:"Last-Event-ID,omitempty"`
+}
+
+// QuerySiteMetricsParams defines parameters for QuerySiteMetrics.
+type QuerySiteMetricsParams struct {
+	// Metric Metric ids from the catalog; repeat the parameter to select several
+	// (`metric=uptime&metric=latency`). With `group`, the metrics of both
+	// are returned, at most 20 in all.
+	Metric *MetricIDs `form:"metric,omitempty" json:"metric,omitempty"`
+
+	// Group Metric groups from the catalog (such as `traffic`); repeat to select several.
+	Group *MetricGroups `form:"group,omitempty" json:"group,omitempty"`
+
+	// Start Start of the range. Default is an hour before `end`.
+	Start *MetricStart `form:"start,omitempty" json:"start,omitempty"`
+
+	// End End of the range. Default and maximum is now.
+	End *MetricEnd `form:"end,omitempty" json:"end,omitempty"`
+
+	// Step Seconds between points, at least 15. Default is the smallest step
+	// that keeps the range at about 300 points. The range divided by the
+	// step may give at most 1500 points.
+	Step *MetricStep `form:"step,omitempty" json:"step,omitempty"`
+}
+
+// GetSiteMetricsSummaryParams defines parameters for GetSiteMetricsSummary.
+type GetSiteMetricsSummaryParams struct {
+	// Metric Metric ids from the catalog; repeat the parameter to select several
+	// (`metric=uptime&metric=latency`). With `group`, the metrics of both
+	// are returned, at most 20 in all.
+	Metric *MetricIDs `form:"metric,omitempty" json:"metric,omitempty"`
+
+	// Group Metric groups from the catalog (such as `traffic`); repeat to select several.
+	Group *MetricGroups `form:"group,omitempty" json:"group,omitempty"`
 }
 
 // AppendUploadChunkParams defines parameters for AppendUploadChunk.
@@ -3404,6 +3729,43 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v1/jobs/{job_id} (the `GetJob` operationId).
 	GetJob(ctx context.Context, jobID JobID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetMetricCatalog List the metrics that can be queried
+	//
+	// Every metric of design doc §7.1 (per site) and §7.2 (platform) that
+	// the metrics endpoints serve, with its title, unit, and scope, and the
+	// limits that apply to a query. The catalog is the same whether or not
+	// a collector feeds a metric yet: a metric without data returns no
+	// series.
+	//
+	// Corresponds with GET /api/v1/metrics/catalog (the `GetMetricCatalog` operationId).
+	GetMetricCatalog(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// QueryPlatformMetrics Query platform metrics over time
+	//
+	// Time series of platform metrics (host, MariaDB, Redis, jobs) and
+	// per-client-group metrics (backup repository size), for charts.
+	// Select metrics with `metric` and `group` (see the catalog); the
+	// request needs at least one. Without `start`, `end`, and `step` the
+	// last hour is returned with a step chosen to keep the chart light.
+	// `start` and `end` are aligned down to `step`, and `end` is capped at
+	// the current time; the response says what was queried.
+	//
+	// A metric that has no data (no collector feeds it yet, or the
+	// client group has none) is returned with an empty `series` list. If
+	// the metrics store is unavailable the response is `503`.
+	//
+	// Corresponds with GET /api/v1/metrics/platform (the `QueryPlatformMetrics` operationId).
+	QueryPlatformMetrics(ctx context.Context, params *QueryPlatformMetricsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPlatformMetricsSummary Current values of platform metrics
+	//
+	// The latest value of platform metrics, from instant queries, for the
+	// overview. Without `metric` and `group`, a small default set is
+	// returned. Rates and ratios cover the last five minutes.
+	//
+	// Corresponds with GET /api/v1/metrics/platform/summary (the `GetPlatformMetricsSummary` operationId).
+	GetPlatformMetricsSummary(ctx context.Context, params *GetPlatformMetricsSummaryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSites List sites
 	//
@@ -4288,6 +4650,28 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /api/v1/sites/{site_id}/maintenance (the `SetSiteMaintenance` operationId).
 	SetSiteMaintenance(ctx context.Context, siteID SiteID, body SetSiteMaintenanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// QuerySiteMetrics Query a site's metrics over time
+	//
+	// Time series of the site's metrics (design doc §7.1) for charts.
+	// Every query is scoped to the site in the path. Select metrics with
+	// `metric` and `group` (see the catalog); the request needs at least
+	// one. Time handling and the empty and unavailable cases are those of
+	// `GET /api/v1/metrics/platform`.
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/metrics (the `QuerySiteMetrics` operationId).
+	QuerySiteMetrics(ctx context.Context, siteID SiteID, params *QuerySiteMetricsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSiteMetricsSummary Current values of a site's metrics
+	//
+	// The latest value of the site's metrics, from instant queries, cheap
+	// enough for a site list. Without `metric` and `group`, a small
+	// default set is returned (uptime, HTTP check status, response time,
+	// request rate, storage, certificate expiry, last backup). Rates and
+	// ratios cover the last five minutes.
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/metrics/summary (the `GetSiteMetricsSummary` operationId).
+	GetSiteMetricsSummary(ctx context.Context, siteID SiteID, params *GetSiteMetricsSummaryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RegenerateSitePreviewPassword Generate a new preview password (shown once)
 	//
@@ -5405,6 +5789,73 @@ func (c *Client) ListJobs(ctx context.Context, params *ListJobsParams, reqEditor
 // Corresponds with GET /api/v1/jobs/{job_id} (the `GetJob` operationId).
 func (c *Client) GetJob(ctx context.Context, jobID JobID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetJobRequest(c.Server, jobID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetMetricCatalog List the metrics that can be queried
+//
+// Every metric of design doc §7.1 (per site) and §7.2 (platform) that
+// the metrics endpoints serve, with its title, unit, and scope, and the
+// limits that apply to a query. The catalog is the same whether or not
+// a collector feeds a metric yet: a metric without data returns no
+// series.
+//
+// Corresponds with GET /api/v1/metrics/catalog (the `GetMetricCatalog` operationId).
+func (c *Client) GetMetricCatalog(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetMetricCatalogRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// QueryPlatformMetrics Query platform metrics over time
+//
+// Time series of platform metrics (host, MariaDB, Redis, jobs) and
+// per-client-group metrics (backup repository size), for charts.
+// Select metrics with `metric` and `group` (see the catalog); the
+// request needs at least one. Without `start`, `end`, and `step` the
+// last hour is returned with a step chosen to keep the chart light.
+// `start` and `end` are aligned down to `step`, and `end` is capped at
+// the current time; the response says what was queried.
+//
+// A metric that has no data (no collector feeds it yet, or the
+// client group has none) is returned with an empty `series` list. If
+// the metrics store is unavailable the response is `503`.
+//
+// Corresponds with GET /api/v1/metrics/platform (the `QueryPlatformMetrics` operationId).
+func (c *Client) QueryPlatformMetrics(ctx context.Context, params *QueryPlatformMetricsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewQueryPlatformMetricsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPlatformMetricsSummary Current values of platform metrics
+//
+// The latest value of platform metrics, from instant queries, for the
+// overview. Without `metric` and `group`, a small default set is
+// returned. Rates and ratios cover the last five minutes.
+//
+// Corresponds with GET /api/v1/metrics/platform/summary (the `GetPlatformMetricsSummary` operationId).
+func (c *Client) GetPlatformMetricsSummary(ctx context.Context, params *GetPlatformMetricsSummaryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPlatformMetricsSummaryRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -6659,6 +7110,48 @@ func (c *Client) SetSiteMaintenanceWithBody(ctx context.Context, siteID SiteID, 
 // Corresponds with PUT /api/v1/sites/{site_id}/maintenance (the `SetSiteMaintenance` operationId).
 func (c *Client) SetSiteMaintenance(ctx context.Context, siteID SiteID, body SetSiteMaintenanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetSiteMaintenanceRequest(c.Server, siteID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// QuerySiteMetrics Query a site's metrics over time
+//
+// Time series of the site's metrics (design doc §7.1) for charts.
+// Every query is scoped to the site in the path. Select metrics with
+// `metric` and `group` (see the catalog); the request needs at least
+// one. Time handling and the empty and unavailable cases are those of
+// `GET /api/v1/metrics/platform`.
+//
+// Corresponds with GET /api/v1/sites/{site_id}/metrics (the `QuerySiteMetrics` operationId).
+func (c *Client) QuerySiteMetrics(ctx context.Context, siteID SiteID, params *QuerySiteMetricsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewQuerySiteMetricsRequest(c.Server, siteID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetSiteMetricsSummary Current values of a site's metrics
+//
+// The latest value of the site's metrics, from instant queries, cheap
+// enough for a site list. Without `metric` and `group`, a small
+// default set is returned (uptime, HTTP check status, response time,
+// request rate, storage, certificate expiry, last backup). Rates and
+// ratios cover the last five minutes.
+//
+// Corresponds with GET /api/v1/sites/{site_id}/metrics/summary (the `GetSiteMetricsSummary` operationId).
+func (c *Client) GetSiteMetricsSummary(ctx context.Context, siteID SiteID, params *GetSiteMetricsSummaryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSiteMetricsSummaryRequest(c.Server, siteID, params)
 	if err != nil {
 		return nil, err
 	}
@@ -8820,6 +9313,225 @@ func NewGetJobRequest(server string, jobID JobID) (*http.Request, error) {
 	return req, nil
 }
 
+// NewGetMetricCatalogRequest constructs an http.Request for the GetMetricCatalog method
+func NewGetMetricCatalogRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/metrics/catalog")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewQueryPlatformMetricsRequest constructs an http.Request for the QueryPlatformMetrics method
+func NewQueryPlatformMetricsRequest(server string, params *QueryPlatformMetricsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/metrics/platform")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Metric != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "metric", *params.Metric, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Group != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "group", *params.Group, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ClientGroupID != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "client_group_id", *params.ClientGroupID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Start != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "start", *params.Start, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.End != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "end", *params.End, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Step != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "step", *params.Step, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetPlatformMetricsSummaryRequest constructs an http.Request for the GetPlatformMetricsSummary method
+func NewGetPlatformMetricsSummaryRequest(server string, params *GetPlatformMetricsSummaryParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/metrics/platform/summary")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Metric != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "metric", *params.Metric, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Group != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "group", *params.Group, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ClientGroupID != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "client_group_id", *params.ClientGroupID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListSitesRequest constructs an http.Request for the ListSites method
 func NewListSitesRequest(server string, params *ListSitesParams) (*http.Request, error) {
 	var err error
@@ -10187,6 +10899,188 @@ func NewSetSiteMaintenanceRequestWithBody(server string, siteID SiteID, contentT
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewQuerySiteMetricsRequest constructs an http.Request for the QuerySiteMetrics method
+func NewQuerySiteMetricsRequest(server string, siteID SiteID, params *QuerySiteMetricsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/metrics", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Metric != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "metric", *params.Metric, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Group != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "group", *params.Group, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Start != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "start", *params.Start, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.End != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "end", *params.End, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Step != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "step", *params.Step, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetSiteMetricsSummaryRequest constructs an http.Request for the GetSiteMetricsSummary method
+func NewGetSiteMetricsSummaryRequest(server string, siteID SiteID, params *GetSiteMetricsSummaryParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/metrics/summary", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Metric != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "metric", *params.Metric, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Group != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "group", *params.Group, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -11569,6 +12463,49 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/v1/jobs/{job_id} (the `GetJob` operationId).
 	GetJobWithResponse(ctx context.Context, jobID JobID, reqEditors ...RequestEditorFn) (*GetJobResponse, error)
 
+	// GetMetricCatalogWithResponse List the metrics that can be queried
+	//
+	// Every metric of design doc §7.1 (per site) and §7.2 (platform) that
+	// the metrics endpoints serve, with its title, unit, and scope, and the
+	// limits that apply to a query. The catalog is the same whether or not
+	// a collector feeds a metric yet: a metric without data returns no
+	// series.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/metrics/catalog (the `GetMetricCatalog` operationId).
+	GetMetricCatalogWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMetricCatalogResponse, error)
+
+	// QueryPlatformMetricsWithResponse Query platform metrics over time
+	//
+	// Time series of platform metrics (host, MariaDB, Redis, jobs) and
+	// per-client-group metrics (backup repository size), for charts.
+	// Select metrics with `metric` and `group` (see the catalog); the
+	// request needs at least one. Without `start`, `end`, and `step` the
+	// last hour is returned with a step chosen to keep the chart light.
+	// `start` and `end` are aligned down to `step`, and `end` is capped at
+	// the current time; the response says what was queried.
+	//
+	// A metric that has no data (no collector feeds it yet, or the
+	// client group has none) is returned with an empty `series` list. If
+	// the metrics store is unavailable the response is `503`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/metrics/platform (the `QueryPlatformMetrics` operationId).
+	QueryPlatformMetricsWithResponse(ctx context.Context, params *QueryPlatformMetricsParams, reqEditors ...RequestEditorFn) (*QueryPlatformMetricsResponse, error)
+
+	// GetPlatformMetricsSummaryWithResponse Current values of platform metrics
+	//
+	// The latest value of platform metrics, from instant queries, for the
+	// overview. Without `metric` and `group`, a small default set is
+	// returned. Rates and ratios cover the last five minutes.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/metrics/platform/summary (the `GetPlatformMetricsSummary` operationId).
+	GetPlatformMetricsSummaryWithResponse(ctx context.Context, params *GetPlatformMetricsSummaryParams, reqEditors ...RequestEditorFn) (*GetPlatformMetricsSummaryResponse, error)
+
 	// ListSitesWithResponse List sites
 	//
 	// Newest first. Listings come from the recorded state alone, so they
@@ -12486,6 +13423,32 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /api/v1/sites/{site_id}/maintenance (the `SetSiteMaintenance` operationId).
 	SetSiteMaintenanceWithResponse(ctx context.Context, siteID SiteID, body SetSiteMaintenanceJSONRequestBody, reqEditors ...RequestEditorFn) (*SetSiteMaintenanceResponse, error)
+
+	// QuerySiteMetricsWithResponse Query a site's metrics over time
+	//
+	// Time series of the site's metrics (design doc §7.1) for charts.
+	// Every query is scoped to the site in the path. Select metrics with
+	// `metric` and `group` (see the catalog); the request needs at least
+	// one. Time handling and the empty and unavailable cases are those of
+	// `GET /api/v1/metrics/platform`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/metrics (the `QuerySiteMetrics` operationId).
+	QuerySiteMetricsWithResponse(ctx context.Context, siteID SiteID, params *QuerySiteMetricsParams, reqEditors ...RequestEditorFn) (*QuerySiteMetricsResponse, error)
+
+	// GetSiteMetricsSummaryWithResponse Current values of a site's metrics
+	//
+	// The latest value of the site's metrics, from instant queries, cheap
+	// enough for a site list. Without `metric` and `group`, a small
+	// default set is returned (uptime, HTTP check status, response time,
+	// request rate, storage, certificate expiry, last backup). Rates and
+	// ratios cover the last five minutes.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/metrics/summary (the `GetSiteMetricsSummary` operationId).
+	GetSiteMetricsSummaryWithResponse(ctx context.Context, siteID SiteID, params *GetSiteMetricsSummaryParams, reqEditors ...RequestEditorFn) (*GetSiteMetricsSummaryResponse, error)
 
 	// RegenerateSitePreviewPasswordWithResponse Generate a new preview password (shown once)
 	//
@@ -15097,6 +16060,220 @@ func (r GetJobResponse) ContentType() string {
 	return ""
 }
 
+type GetMetricCatalogResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *MetricCatalog
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetMetricCatalogResponse) GetJSON200() *MetricCatalog {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetMetricCatalogResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetMetricCatalogResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetMetricCatalogResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetMetricCatalogResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetMetricCatalogResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetMetricCatalogResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetMetricCatalogResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type QueryPlatformMetricsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *MetricsRange
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationProblemJSON503 *MetricsUnavailable
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r QueryPlatformMetricsResponse) GetJSON200() *MetricsRange {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r QueryPlatformMetricsResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r QueryPlatformMetricsResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r QueryPlatformMetricsResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r QueryPlatformMetricsResponse) GetApplicationProblemJSON503() *MetricsUnavailable {
+	return r.ApplicationProblemJSON503
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r QueryPlatformMetricsResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r QueryPlatformMetricsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r QueryPlatformMetricsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r QueryPlatformMetricsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r QueryPlatformMetricsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPlatformMetricsSummaryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *MetricsSummary
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationProblemJSON503 *MetricsUnavailable
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPlatformMetricsSummaryResponse) GetJSON200() *MetricsSummary {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetPlatformMetricsSummaryResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetPlatformMetricsSummaryResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetPlatformMetricsSummaryResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetPlatformMetricsSummaryResponse) GetApplicationProblemJSON503() *MetricsUnavailable {
+	return r.ApplicationProblemJSON503
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetPlatformMetricsSummaryResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPlatformMetricsSummaryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPlatformMetricsSummaryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPlatformMetricsSummaryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPlatformMetricsSummaryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListSitesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -17297,6 +18474,172 @@ func (r SetSiteMaintenanceResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r SetSiteMaintenanceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type QuerySiteMetricsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *MetricsRange
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationProblemJSON503 *MetricsUnavailable
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r QuerySiteMetricsResponse) GetJSON200() *MetricsRange {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r QuerySiteMetricsResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r QuerySiteMetricsResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r QuerySiteMetricsResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r QuerySiteMetricsResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r QuerySiteMetricsResponse) GetApplicationProblemJSON503() *MetricsUnavailable {
+	return r.ApplicationProblemJSON503
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r QuerySiteMetricsResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r QuerySiteMetricsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r QuerySiteMetricsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r QuerySiteMetricsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r QuerySiteMetricsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetSiteMetricsSummaryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *MetricsSummary
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationProblemJSON503 *MetricsUnavailable
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetSiteMetricsSummaryResponse) GetJSON200() *MetricsSummary {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetSiteMetricsSummaryResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetSiteMetricsSummaryResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetSiteMetricsSummaryResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetSiteMetricsSummaryResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetSiteMetricsSummaryResponse) GetApplicationProblemJSON503() *MetricsUnavailable {
+	return r.ApplicationProblemJSON503
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetSiteMetricsSummaryResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetSiteMetricsSummaryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetSiteMetricsSummaryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetSiteMetricsSummaryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetSiteMetricsSummaryResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -19601,6 +20944,67 @@ func (c *ClientWithResponses) GetJobWithResponse(ctx context.Context, jobID JobI
 	return ParseGetJobResponse(rsp)
 }
 
+// GetMetricCatalogWithResponse List the metrics that can be queried
+//
+// Every metric of design doc §7.1 (per site) and §7.2 (platform) that
+// the metrics endpoints serve, with its title, unit, and scope, and the
+// limits that apply to a query. The catalog is the same whether or not
+// a collector feeds a metric yet: a metric without data returns no
+// series.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/metrics/catalog (the `GetMetricCatalog` operationId).
+func (c *ClientWithResponses) GetMetricCatalogWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMetricCatalogResponse, error) {
+	rsp, err := c.GetMetricCatalog(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetMetricCatalogResponse(rsp)
+}
+
+// QueryPlatformMetricsWithResponse Query platform metrics over time
+//
+// Time series of platform metrics (host, MariaDB, Redis, jobs) and
+// per-client-group metrics (backup repository size), for charts.
+// Select metrics with `metric` and `group` (see the catalog); the
+// request needs at least one. Without `start`, `end`, and `step` the
+// last hour is returned with a step chosen to keep the chart light.
+// `start` and `end` are aligned down to `step`, and `end` is capped at
+// the current time; the response says what was queried.
+//
+// A metric that has no data (no collector feeds it yet, or the
+// client group has none) is returned with an empty `series` list. If
+// the metrics store is unavailable the response is `503`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/metrics/platform (the `QueryPlatformMetrics` operationId).
+func (c *ClientWithResponses) QueryPlatformMetricsWithResponse(ctx context.Context, params *QueryPlatformMetricsParams, reqEditors ...RequestEditorFn) (*QueryPlatformMetricsResponse, error) {
+	rsp, err := c.QueryPlatformMetrics(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseQueryPlatformMetricsResponse(rsp)
+}
+
+// GetPlatformMetricsSummaryWithResponse Current values of platform metrics
+//
+// The latest value of platform metrics, from instant queries, for the
+// overview. Without `metric` and `group`, a small default set is
+// returned. Rates and ratios cover the last five minutes.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/metrics/platform/summary (the `GetPlatformMetricsSummary` operationId).
+func (c *ClientWithResponses) GetPlatformMetricsSummaryWithResponse(ctx context.Context, params *GetPlatformMetricsSummaryParams, reqEditors ...RequestEditorFn) (*GetPlatformMetricsSummaryResponse, error) {
+	rsp, err := c.GetPlatformMetricsSummary(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPlatformMetricsSummaryResponse(rsp)
+}
+
 // ListSitesWithResponse List sites
 //
 // Newest first. Listings come from the recorded state alone, so they
@@ -20739,6 +22143,44 @@ func (c *ClientWithResponses) SetSiteMaintenanceWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseSetSiteMaintenanceResponse(rsp)
+}
+
+// QuerySiteMetricsWithResponse Query a site's metrics over time
+//
+// Time series of the site's metrics (design doc §7.1) for charts.
+// Every query is scoped to the site in the path. Select metrics with
+// `metric` and `group` (see the catalog); the request needs at least
+// one. Time handling and the empty and unavailable cases are those of
+// `GET /api/v1/metrics/platform`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/sites/{site_id}/metrics (the `QuerySiteMetrics` operationId).
+func (c *ClientWithResponses) QuerySiteMetricsWithResponse(ctx context.Context, siteID SiteID, params *QuerySiteMetricsParams, reqEditors ...RequestEditorFn) (*QuerySiteMetricsResponse, error) {
+	rsp, err := c.QuerySiteMetrics(ctx, siteID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseQuerySiteMetricsResponse(rsp)
+}
+
+// GetSiteMetricsSummaryWithResponse Current values of a site's metrics
+//
+// The latest value of the site's metrics, from instant queries, cheap
+// enough for a site list. Without `metric` and `group`, a small
+// default set is returned (uptime, HTTP check status, response time,
+// request rate, storage, certificate expiry, last backup). Rates and
+// ratios cover the last five minutes.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/sites/{site_id}/metrics/summary (the `GetSiteMetricsSummary` operationId).
+func (c *ClientWithResponses) GetSiteMetricsSummaryWithResponse(ctx context.Context, siteID SiteID, params *GetSiteMetricsSummaryParams, reqEditors ...RequestEditorFn) (*GetSiteMetricsSummaryResponse, error) {
+	rsp, err := c.GetSiteMetricsSummary(ctx, siteID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSiteMetricsSummaryResponse(rsp)
 }
 
 // RegenerateSitePreviewPasswordWithResponse Generate a new preview password (shown once)
@@ -23128,6 +24570,175 @@ func ParseGetJobResponse(rsp *http.Response) (*GetJobResponse, error) {
 	return response, nil
 }
 
+// ParseGetMetricCatalogResponse parses an HTTP response from a GetMetricCatalogWithResponse call
+func ParseGetMetricCatalogResponse(rsp *http.Response) (*GetMetricCatalogResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetMetricCatalogResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MetricCatalog
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseQueryPlatformMetricsResponse parses an HTTP response from a QueryPlatformMetricsWithResponse call
+func ParseQueryPlatformMetricsResponse(rsp *http.Response) (*QueryPlatformMetricsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &QueryPlatformMetricsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MetricsRange
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest MetricsUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPlatformMetricsSummaryResponse parses an HTTP response from a GetPlatformMetricsSummaryWithResponse call
+func ParseGetPlatformMetricsSummaryResponse(rsp *http.Response) (*GetPlatformMetricsSummaryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPlatformMetricsSummaryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MetricsSummary
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest MetricsUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListSitesResponse parses an HTTP response from a ListSitesWithResponse call
 func ParseListSitesResponse(rsp *http.Response) (*ListSitesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -25017,6 +26628,142 @@ func ParseSetSiteMaintenanceResponse(rsp *http.Response) (*SetSiteMaintenanceRes
 			headers.Location = &value
 		}
 		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseQuerySiteMetricsResponse parses an HTTP response from a QuerySiteMetricsWithResponse call
+func ParseQuerySiteMetricsResponse(rsp *http.Response) (*QuerySiteMetricsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &QuerySiteMetricsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MetricsRange
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest MetricsUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetSiteMetricsSummaryResponse parses an HTTP response from a GetSiteMetricsSummaryWithResponse call
+func ParseGetSiteMetricsSummaryResponse(rsp *http.Response) (*GetSiteMetricsSummaryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetSiteMetricsSummaryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MetricsSummary
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest MetricsUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
 	}
 
 	return response, nil

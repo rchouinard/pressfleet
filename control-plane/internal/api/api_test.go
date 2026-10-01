@@ -260,6 +260,12 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 				if w.Code != http.StatusNotFound {
 					t.Errorf("status = %d, want 404; body: %s", w.Code, w.Body)
 				}
+			case strings.HasPrefix(op.Path, "/api/v1/metrics/") || strings.HasSuffix(op.Path, "/metrics") || strings.HasSuffix(op.Path, "/metrics/summary"):
+				// The sample request names no metric, or a site that doesn't
+				// exist: anything but 401 or 501 shows the handler ran.
+				if w.Code == http.StatusUnauthorized || w.Code == http.StatusNotImplemented {
+					t.Errorf("status = %d; body: %s", w.Code, w.Body)
+				}
 			case op.ID == "login":
 				// The sample credentials are wrong.
 				if w.Code != http.StatusUnauthorized {

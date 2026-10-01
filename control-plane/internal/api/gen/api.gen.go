@@ -427,6 +427,90 @@ func (e JobTargetType) Valid() bool {
 	}
 }
 
+// Defines values for MetricDescriptorScope.
+const (
+	MetricDescriptorScopeClientGroup MetricDescriptorScope = "client_group"
+	MetricDescriptorScopePlatform    MetricDescriptorScope = "platform"
+	MetricDescriptorScopeSite        MetricDescriptorScope = "site"
+)
+
+// Valid indicates whether the value is a known member of the MetricDescriptorScope enum.
+func (e MetricDescriptorScope) Valid() bool {
+	switch e {
+	case MetricDescriptorScopeClientGroup:
+		return true
+	case MetricDescriptorScopePlatform:
+		return true
+	case MetricDescriptorScopeSite:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MetricKind.
+const (
+	MetricKindGauge      MetricKind = "gauge"
+	MetricKindPercentile MetricKind = "percentile"
+	MetricKindRate       MetricKind = "rate"
+	MetricKindRatio      MetricKind = "ratio"
+)
+
+// Valid indicates whether the value is a known member of the MetricKind enum.
+func (e MetricKind) Valid() bool {
+	switch e {
+	case MetricKindGauge:
+		return true
+	case MetricKindPercentile:
+		return true
+	case MetricKindRate:
+		return true
+	case MetricKindRatio:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for MetricUnit.
+const (
+	MetricUnitBytes          MetricUnit = "bytes"
+	MetricUnitBytesPerSecond MetricUnit = "bytes_per_second"
+	MetricUnitCode           MetricUnit = "code"
+	MetricUnitCores          MetricUnit = "cores"
+	MetricUnitCount          MetricUnit = "count"
+	MetricUnitPerSecond      MetricUnit = "per_second"
+	MetricUnitRatio          MetricUnit = "ratio"
+	MetricUnitSeconds        MetricUnit = "seconds"
+	MetricUnitTimestamp      MetricUnit = "timestamp"
+)
+
+// Valid indicates whether the value is a known member of the MetricUnit enum.
+func (e MetricUnit) Valid() bool {
+	switch e {
+	case MetricUnitBytes:
+		return true
+	case MetricUnitBytesPerSecond:
+		return true
+	case MetricUnitCode:
+		return true
+	case MetricUnitCores:
+		return true
+	case MetricUnitCount:
+		return true
+	case MetricUnitPerSecond:
+		return true
+	case MetricUnitRatio:
+		return true
+	case MetricUnitSeconds:
+		return true
+	case MetricUnitTimestamp:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReadinessStatus.
 const (
 	ReadinessStatusOk          ReadinessStatus = "ok"
@@ -1811,6 +1895,157 @@ type LoginRequest struct {
 	Password *string `json:"password,omitempty"`
 }
 
+// MetricCatalog defines model for MetricCatalog.
+type MetricCatalog struct {
+	Items  []MetricDescriptor `json:"items"`
+	Limits MetricLimits       `json:"limits"`
+}
+
+// MetricDescriptor defines model for MetricDescriptor.
+type MetricDescriptor struct {
+	// DefaultSummary Whether a summary request that names no metrics includes it.
+	DefaultSummary bool   `json:"default_summary"`
+	Description    string `json:"description"`
+
+	// Group Pass as `group` to select every metric of the group.
+	//
+	// Examples: traffic
+	Group string `json:"group"`
+
+	// ID Stable; pass as `metric`.
+	//
+	// Examples: status_codes
+	ID string `json:"id"`
+
+	// Kind How a value is derived: `gauge` is sampled as is, `rate` comes from a
+	// counter (per second, or an increase over the step), `ratio` is a
+	// fraction from 0 to 1, and `percentile` is a latency quantile (its
+	// series have a `percentile` label).
+	Kind MetricKind `json:"kind"`
+
+	// Labels Labels that tell the metric's series apart, such as `status_class`. Empty if it has one series.
+	Labels []string `json:"labels"`
+
+	// Scope `site` metrics are served by the site endpoints; `platform` and
+	// `client_group` ones by the platform endpoints.
+	Scope MetricDescriptorScope `json:"scope"`
+	Title string                `json:"title"`
+
+	// Unit What a value counts, in base units. `timestamp` is Unix seconds and
+	// `code` an HTTP status code.
+	Unit MetricUnit `json:"unit"`
+}
+
+// MetricDescriptorScope `site` metrics are served by the site endpoints; `platform` and
+// `client_group` ones by the platform endpoints.
+type MetricDescriptorScope string
+
+// MetricKind How a value is derived: `gauge` is sampled as is, `rate` comes from a
+// counter (per second, or an increase over the step), `ratio` is a
+// fraction from 0 to 1, and `percentile` is a latency quantile (its
+// series have a `percentile` label).
+type MetricKind string
+
+// MetricLimits defines model for MetricLimits.
+type MetricLimits struct {
+	DefaultRangeSeconds int `json:"default_range_seconds"`
+
+	// MaxMetrics Most metrics in one request, after groups are expanded.
+	MaxMetrics int `json:"max_metrics"`
+
+	// MaxPoints Most points per series.
+	MaxPoints       int `json:"max_points"`
+	MaxRangeSeconds int `json:"max_range_seconds"`
+	MinStepSeconds  int `json:"min_step_seconds"`
+}
+
+// MetricPoint defines model for MetricPoint.
+type MetricPoint struct {
+	// Time Examples: 2026-09-26T17:25:00Z
+	Time  Timestamp `json:"time"`
+	Value float64   `json:"value"`
+}
+
+// MetricResult defines model for MetricResult.
+type MetricResult struct {
+	ID string `json:"id"`
+
+	// Kind How a value is derived: `gauge` is sampled as is, `rate` comes from a
+	// counter (per second, or an increase over the step), `ratio` is a
+	// fraction from 0 to 1, and `percentile` is a latency quantile (its
+	// series have a `percentile` label).
+	Kind MetricKind `json:"kind"`
+
+	// Series Empty while the metric has no data.
+	Series []MetricSeries `json:"series"`
+
+	// Unit What a value counts, in base units. `timestamp` is Unix seconds and
+	// `code` an HTTP status code.
+	Unit MetricUnit `json:"unit"`
+}
+
+// MetricSeries defines model for MetricSeries.
+type MetricSeries struct {
+	// Labels Labels of the series, such as `status_class` or `domain`. Empty for a metric with one series.
+	Labels map[string]string `json:"labels"`
+	Latest MetricPoint       `json:"latest"`
+
+	// Points Oldest first. A step without a value has no point.
+	Points []MetricPoint `json:"points"`
+}
+
+// MetricSummaryResult defines model for MetricSummaryResult.
+type MetricSummaryResult struct {
+	ID string `json:"id"`
+
+	// Kind How a value is derived: `gauge` is sampled as is, `rate` comes from a
+	// counter (per second, or an increase over the step), `ratio` is a
+	// fraction from 0 to 1, and `percentile` is a latency quantile (its
+	// series have a `percentile` label).
+	Kind MetricKind `json:"kind"`
+
+	// Unit What a value counts, in base units. `timestamp` is Unix seconds and
+	// `code` an HTTP status code.
+	Unit MetricUnit `json:"unit"`
+
+	// Values Empty while the metric has no data.
+	Values []MetricValue `json:"values"`
+}
+
+// MetricUnit What a value counts, in base units. `timestamp` is Unix seconds and
+// `code` an HTTP status code.
+type MetricUnit string
+
+// MetricValue defines model for MetricValue.
+type MetricValue struct {
+	Labels map[string]string `json:"labels"`
+
+	// Time Examples: 2026-09-26T17:25:00Z
+	Time  Timestamp `json:"time"`
+	Value float64   `json:"value"`
+}
+
+// MetricsRange defines model for MetricsRange.
+type MetricsRange struct {
+	// End Examples: 2026-09-26T17:25:00Z
+	End Timestamp `json:"end"`
+
+	// Metrics One result per selected metric, in catalog order.
+	Metrics []MetricResult `json:"metrics"`
+
+	// Start Examples: 2026-09-26T17:25:00Z
+	Start       Timestamp `json:"start"`
+	StepSeconds int       `json:"step_seconds"`
+}
+
+// MetricsSummary defines model for MetricsSummary.
+type MetricsSummary struct {
+	Metrics []MetricSummaryResult `json:"metrics"`
+
+	// Time Examples: 2026-09-26T17:25:00Z
+	Time Timestamp `json:"time"`
+}
+
 // NextCursor Pass as `cursor` to get the next page. Null on the last page.
 type NextCursor = string
 
@@ -2628,6 +2863,21 @@ type LogQuery = string
 // LogSource defines model for LogSource.
 type LogSource = []SiteLogSource
 
+// MetricEnd Examples: 2026-09-26T17:25:00Z
+type MetricEnd = Timestamp
+
+// MetricGroups defines model for MetricGroups.
+type MetricGroups = []string
+
+// MetricIDs defines model for MetricIDs.
+type MetricIDs = []string
+
+// MetricStart Examples: 2026-09-26T17:25:00Z
+type MetricStart = Timestamp
+
+// MetricStep defines model for MetricStep.
+type MetricStep = int
+
 // SSHKeyID Opaque, server-assigned identifier.
 //
 // Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
@@ -2670,6 +2920,9 @@ type Forbidden = Problem
 
 // Gone RFC 9457 Problem Details. Additional members may be added.
 type Gone = Problem
+
+// MetricsUnavailable RFC 9457 Problem Details. Additional members may be added.
+type MetricsUnavailable = Problem
 
 // NotFound RFC 9457 Problem Details. Additional members may be added.
 type NotFound = Problem
@@ -2797,6 +3050,45 @@ type ListJobsParams struct {
 	TargetID *ID `form:"target_id,omitempty" json:"target_id,omitempty"`
 }
 
+// QueryPlatformMetricsParams defines parameters for QueryPlatformMetrics.
+type QueryPlatformMetricsParams struct {
+	// Metric Metric ids from the catalog; repeat the parameter to select several
+	// (`metric=uptime&metric=latency`). With `group`, the metrics of both
+	// are returned, at most 20 in all.
+	Metric *MetricIDs `form:"metric,omitempty" json:"metric,omitempty"`
+
+	// Group Metric groups from the catalog (such as `traffic`); repeat to select several.
+	Group *MetricGroups `form:"group,omitempty" json:"group,omitempty"`
+
+	// ClientGroupID Only return per-client-group metrics of this client group.
+	ClientGroupID *ID `form:"client_group_id,omitempty" json:"client_group_id,omitempty"`
+
+	// Start Start of the range. Default is an hour before `end`.
+	Start *MetricStart `form:"start,omitempty" json:"start,omitempty"`
+
+	// End End of the range. Default and maximum is now.
+	End *MetricEnd `form:"end,omitempty" json:"end,omitempty"`
+
+	// Step Seconds between points, at least 15. Default is the smallest step
+	// that keeps the range at about 300 points. The range divided by the
+	// step may give at most 1500 points.
+	Step *MetricStep `form:"step,omitempty" json:"step,omitempty"`
+}
+
+// GetPlatformMetricsSummaryParams defines parameters for GetPlatformMetricsSummary.
+type GetPlatformMetricsSummaryParams struct {
+	// Metric Metric ids from the catalog; repeat the parameter to select several
+	// (`metric=uptime&metric=latency`). With `group`, the metrics of both
+	// are returned, at most 20 in all.
+	Metric *MetricIDs `form:"metric,omitempty" json:"metric,omitempty"`
+
+	// Group Metric groups from the catalog (such as `traffic`); repeat to select several.
+	Group *MetricGroups `form:"group,omitempty" json:"group,omitempty"`
+
+	// ClientGroupID Only return per-client-group metrics of this client group.
+	ClientGroupID *ID `form:"client_group_id,omitempty" json:"client_group_id,omitempty"`
+}
+
 // ListSitesParams defines parameters for ListSites.
 type ListSitesParams struct {
 	// Limit Maximum number of items to return.
@@ -2880,6 +3172,39 @@ type StreamSiteLogsParams struct {
 	// `EventSource` when it reconnects. When present, the stream
 	// sends the entries after it instead of the tail.
 	LastEventID *string `json:"Last-Event-ID,omitempty"`
+}
+
+// QuerySiteMetricsParams defines parameters for QuerySiteMetrics.
+type QuerySiteMetricsParams struct {
+	// Metric Metric ids from the catalog; repeat the parameter to select several
+	// (`metric=uptime&metric=latency`). With `group`, the metrics of both
+	// are returned, at most 20 in all.
+	Metric *MetricIDs `form:"metric,omitempty" json:"metric,omitempty"`
+
+	// Group Metric groups from the catalog (such as `traffic`); repeat to select several.
+	Group *MetricGroups `form:"group,omitempty" json:"group,omitempty"`
+
+	// Start Start of the range. Default is an hour before `end`.
+	Start *MetricStart `form:"start,omitempty" json:"start,omitempty"`
+
+	// End End of the range. Default and maximum is now.
+	End *MetricEnd `form:"end,omitempty" json:"end,omitempty"`
+
+	// Step Seconds between points, at least 15. Default is the smallest step
+	// that keeps the range at about 300 points. The range divided by the
+	// step may give at most 1500 points.
+	Step *MetricStep `form:"step,omitempty" json:"step,omitempty"`
+}
+
+// GetSiteMetricsSummaryParams defines parameters for GetSiteMetricsSummary.
+type GetSiteMetricsSummaryParams struct {
+	// Metric Metric ids from the catalog; repeat the parameter to select several
+	// (`metric=uptime&metric=latency`). With `group`, the metrics of both
+	// are returned, at most 20 in all.
+	Metric *MetricIDs `form:"metric,omitempty" json:"metric,omitempty"`
+
+	// Group Metric groups from the catalog (such as `traffic`); repeat to select several.
+	Group *MetricGroups `form:"group,omitempty" json:"group,omitempty"`
 }
 
 // AppendUploadChunkParams defines parameters for AppendUploadChunk.
@@ -3085,6 +3410,15 @@ type ServerInterface interface {
 	// GetJob Get a job, including its steps and step log
 	// (GET /api/v1/jobs/{job_id})
 	GetJob(w http.ResponseWriter, r *http.Request, jobID JobID)
+	// GetMetricCatalog List the metrics that can be queried
+	// (GET /api/v1/metrics/catalog)
+	GetMetricCatalog(w http.ResponseWriter, r *http.Request)
+	// QueryPlatformMetrics Query platform metrics over time
+	// (GET /api/v1/metrics/platform)
+	QueryPlatformMetrics(w http.ResponseWriter, r *http.Request, params QueryPlatformMetricsParams)
+	// GetPlatformMetricsSummary Current values of platform metrics
+	// (GET /api/v1/metrics/platform/summary)
+	GetPlatformMetricsSummary(w http.ResponseWriter, r *http.Request, params GetPlatformMetricsSummaryParams)
 	// ListSites List sites
 	// (GET /api/v1/sites)
 	ListSites(w http.ResponseWriter, r *http.Request, params ListSitesParams)
@@ -3166,6 +3500,12 @@ type ServerInterface interface {
 	// SetSiteMaintenance Turn maintenance mode on or off
 	// (PUT /api/v1/sites/{site_id}/maintenance)
 	SetSiteMaintenance(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// QuerySiteMetrics Query a site's metrics over time
+	// (GET /api/v1/sites/{site_id}/metrics)
+	QuerySiteMetrics(w http.ResponseWriter, r *http.Request, siteID SiteID, params QuerySiteMetricsParams)
+	// GetSiteMetricsSummary Current values of a site's metrics
+	// (GET /api/v1/sites/{site_id}/metrics/summary)
+	GetSiteMetricsSummary(w http.ResponseWriter, r *http.Request, siteID SiteID, params GetSiteMetricsSummaryParams)
 	// RegenerateSitePreviewPassword Generate a new preview password (shown once)
 	// (POST /api/v1/sites/{site_id}/preview-password)
 	RegenerateSitePreviewPassword(w http.ResponseWriter, r *http.Request, siteID SiteID)
@@ -4245,6 +4585,177 @@ func (siw *ServerInterfaceWrapper) GetJob(w http.ResponseWriter, r *http.Request
 	handler.ServeHTTP(w, r)
 }
 
+// GetMetricCatalog operation middleware
+func (siw *ServerInterfaceWrapper) GetMetricCatalog(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMetricCatalog(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// QueryPlatformMetrics operation middleware
+func (siw *ServerInterfaceWrapper) QueryPlatformMetrics(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params QueryPlatformMetricsParams
+
+	// ------------- Optional query parameter "metric" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "metric", r.URL.Query(), &params.Metric, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "metric"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "metric", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "group" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "group", r.URL.Query(), &params.Group, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "group"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "client_group_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "client_group_id", r.URL.Query(), &params.ClientGroupID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "client_group_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "client_group_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "start" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "start", r.URL.Query(), &params.Start, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "start"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "start", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "end" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "end", r.URL.Query(), &params.End, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "end"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "end", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "step" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "step", r.URL.Query(), &params.Step, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "step"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "step", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.QueryPlatformMetrics(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPlatformMetricsSummary operation middleware
+func (siw *ServerInterfaceWrapper) GetPlatformMetricsSummary(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPlatformMetricsSummaryParams
+
+	// ------------- Optional query parameter "metric" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "metric", r.URL.Query(), &params.Metric, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "metric"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "metric", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "group" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "group", r.URL.Query(), &params.Group, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "group"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "client_group_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "client_group_id", r.URL.Query(), &params.ClientGroupID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "client_group_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "client_group_id", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPlatformMetricsSummary(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListSites operation middleware
 func (siw *ServerInterfaceWrapper) ListSites(w http.ResponseWriter, r *http.Request) {
 
@@ -5228,6 +5739,155 @@ func (siw *ServerInterfaceWrapper) SetSiteMaintenance(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// QuerySiteMetrics operation middleware
+func (siw *ServerInterfaceWrapper) QuerySiteMetrics(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params QuerySiteMetricsParams
+
+	// ------------- Optional query parameter "metric" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "metric", r.URL.Query(), &params.Metric, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "metric"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "metric", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "group" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "group", r.URL.Query(), &params.Group, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "group"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "start" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "start", r.URL.Query(), &params.Start, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "start"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "start", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "end" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "end", r.URL.Query(), &params.End, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "end"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "end", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "step" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "step", r.URL.Query(), &params.Step, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "step"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "step", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.QuerySiteMetrics(w, r, siteID, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSiteMetricsSummary operation middleware
+func (siw *ServerInterfaceWrapper) GetSiteMetricsSummary(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetSiteMetricsSummaryParams
+
+	// ------------- Optional query parameter "metric" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "metric", r.URL.Query(), &params.Metric, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "metric"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "metric", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "group" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "group", r.URL.Query(), &params.Group, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "group"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSiteMetricsSummary(w, r, siteID, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RegenerateSitePreviewPassword operation middleware
 func (siw *ServerInterfaceWrapper) RegenerateSitePreviewPassword(w http.ResponseWriter, r *http.Request) {
 
@@ -6009,6 +6669,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/logs", wrapper.ListSiteLogs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/logs/stream", wrapper.StreamSiteLogs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/job-logs", wrapper.ListSiteJobLogs)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/metrics/catalog", wrapper.GetMetricCatalog)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/metrics/platform", wrapper.QueryPlatformMetrics)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/metrics/platform/summary", wrapper.GetPlatformMetricsSummary)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/metrics", wrapper.QuerySiteMetrics)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/metrics/summary", wrapper.GetSiteMetricsSummary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/backups", wrapper.ListSiteBackups)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/backups", wrapper.CreateSiteBackup)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/backup-schedule", wrapper.GetSiteBackupSchedule)
@@ -6061,6 +6726,8 @@ type ErrorApplicationProblemPlusJSONResponse Problem
 type ForbiddenApplicationProblemPlusJSONResponse Problem
 
 type GoneApplicationProblemPlusJSONResponse Problem
+
+type MetricsUnavailableApplicationProblemPlusJSONResponse Problem
 
 type NotFoundApplicationProblemPlusJSONResponse Problem
 
@@ -8909,6 +9576,282 @@ type GetJobdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetJobdefaultApplicationProblemPlusJSONResponse) VisitGetJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMetricCatalogRequestObject struct {
+}
+
+type GetMetricCatalogResponseObject interface {
+	VisitGetMetricCatalogResponse(w http.ResponseWriter) error
+}
+
+type GetMetricCatalog200JSONResponse MetricCatalog
+
+func (response GetMetricCatalog200JSONResponse) VisitGetMetricCatalogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMetricCatalog401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetMetricCatalog401ApplicationProblemPlusJSONResponse) VisitGetMetricCatalogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMetricCatalog403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetMetricCatalog403ApplicationProblemPlusJSONResponse) VisitGetMetricCatalogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMetricCatalogdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetMetricCatalogdefaultApplicationProblemPlusJSONResponse) VisitGetMetricCatalogResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type QueryPlatformMetricsRequestObject struct {
+	Params QueryPlatformMetricsParams
+}
+
+type QueryPlatformMetricsResponseObject interface {
+	VisitQueryPlatformMetricsResponse(w http.ResponseWriter) error
+}
+
+type QueryPlatformMetrics200JSONResponse MetricsRange
+
+func (response QueryPlatformMetrics200JSONResponse) VisitQueryPlatformMetricsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type QueryPlatformMetrics400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response QueryPlatformMetrics400ApplicationProblemPlusJSONResponse) VisitQueryPlatformMetricsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type QueryPlatformMetrics401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response QueryPlatformMetrics401ApplicationProblemPlusJSONResponse) VisitQueryPlatformMetricsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type QueryPlatformMetrics403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response QueryPlatformMetrics403ApplicationProblemPlusJSONResponse) VisitQueryPlatformMetricsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type QueryPlatformMetrics503ApplicationProblemPlusJSONResponse struct {
+	MetricsUnavailableApplicationProblemPlusJSONResponse
+}
+
+func (response QueryPlatformMetrics503ApplicationProblemPlusJSONResponse) VisitQueryPlatformMetricsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type QueryPlatformMetricsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response QueryPlatformMetricsdefaultApplicationProblemPlusJSONResponse) VisitQueryPlatformMetricsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformMetricsSummaryRequestObject struct {
+	Params GetPlatformMetricsSummaryParams
+}
+
+type GetPlatformMetricsSummaryResponseObject interface {
+	VisitGetPlatformMetricsSummaryResponse(w http.ResponseWriter) error
+}
+
+type GetPlatformMetricsSummary200JSONResponse MetricsSummary
+
+func (response GetPlatformMetricsSummary200JSONResponse) VisitGetPlatformMetricsSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformMetricsSummary400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlatformMetricsSummary400ApplicationProblemPlusJSONResponse) VisitGetPlatformMetricsSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformMetricsSummary401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlatformMetricsSummary401ApplicationProblemPlusJSONResponse) VisitGetPlatformMetricsSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformMetricsSummary403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlatformMetricsSummary403ApplicationProblemPlusJSONResponse) VisitGetPlatformMetricsSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformMetricsSummary503ApplicationProblemPlusJSONResponse struct {
+	MetricsUnavailableApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlatformMetricsSummary503ApplicationProblemPlusJSONResponse) VisitGetPlatformMetricsSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformMetricsSummarydefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetPlatformMetricsSummarydefaultApplicationProblemPlusJSONResponse) VisitGetPlatformMetricsSummaryResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -12050,6 +12993,246 @@ func (response SetSiteMaintenancedefaultApplicationProblemPlusJSONResponse) Visi
 	return err
 }
 
+type QuerySiteMetricsRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+	Params QuerySiteMetricsParams
+}
+
+type QuerySiteMetricsResponseObject interface {
+	VisitQuerySiteMetricsResponse(w http.ResponseWriter) error
+}
+
+type QuerySiteMetrics200JSONResponse MetricsRange
+
+func (response QuerySiteMetrics200JSONResponse) VisitQuerySiteMetricsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type QuerySiteMetrics400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response QuerySiteMetrics400ApplicationProblemPlusJSONResponse) VisitQuerySiteMetricsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type QuerySiteMetrics401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response QuerySiteMetrics401ApplicationProblemPlusJSONResponse) VisitQuerySiteMetricsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type QuerySiteMetrics403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response QuerySiteMetrics403ApplicationProblemPlusJSONResponse) VisitQuerySiteMetricsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type QuerySiteMetrics404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response QuerySiteMetrics404ApplicationProblemPlusJSONResponse) VisitQuerySiteMetricsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type QuerySiteMetrics503ApplicationProblemPlusJSONResponse struct {
+	MetricsUnavailableApplicationProblemPlusJSONResponse
+}
+
+func (response QuerySiteMetrics503ApplicationProblemPlusJSONResponse) VisitQuerySiteMetricsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type QuerySiteMetricsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response QuerySiteMetricsdefaultApplicationProblemPlusJSONResponse) VisitQuerySiteMetricsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteMetricsSummaryRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+	Params GetSiteMetricsSummaryParams
+}
+
+type GetSiteMetricsSummaryResponseObject interface {
+	VisitGetSiteMetricsSummaryResponse(w http.ResponseWriter) error
+}
+
+type GetSiteMetricsSummary200JSONResponse MetricsSummary
+
+func (response GetSiteMetricsSummary200JSONResponse) VisitGetSiteMetricsSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteMetricsSummary400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response GetSiteMetricsSummary400ApplicationProblemPlusJSONResponse) VisitGetSiteMetricsSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteMetricsSummary401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetSiteMetricsSummary401ApplicationProblemPlusJSONResponse) VisitGetSiteMetricsSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteMetricsSummary403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetSiteMetricsSummary403ApplicationProblemPlusJSONResponse) VisitGetSiteMetricsSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteMetricsSummary404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response GetSiteMetricsSummary404ApplicationProblemPlusJSONResponse) VisitGetSiteMetricsSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteMetricsSummary503ApplicationProblemPlusJSONResponse struct {
+	MetricsUnavailableApplicationProblemPlusJSONResponse
+}
+
+func (response GetSiteMetricsSummary503ApplicationProblemPlusJSONResponse) VisitGetSiteMetricsSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteMetricsSummarydefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetSiteMetricsSummarydefaultApplicationProblemPlusJSONResponse) VisitGetSiteMetricsSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type RegenerateSitePreviewPasswordRequestObject struct {
 	SiteID SiteID `json:"site_id"`
 }
@@ -14438,6 +15621,15 @@ type StrictServerInterface interface {
 	// GetJob Get a job, including its steps and step log
 	// (GET /api/v1/jobs/{job_id})
 	GetJob(ctx context.Context, request GetJobRequestObject) (GetJobResponseObject, error)
+	// GetMetricCatalog List the metrics that can be queried
+	// (GET /api/v1/metrics/catalog)
+	GetMetricCatalog(ctx context.Context, request GetMetricCatalogRequestObject) (GetMetricCatalogResponseObject, error)
+	// QueryPlatformMetrics Query platform metrics over time
+	// (GET /api/v1/metrics/platform)
+	QueryPlatformMetrics(ctx context.Context, request QueryPlatformMetricsRequestObject) (QueryPlatformMetricsResponseObject, error)
+	// GetPlatformMetricsSummary Current values of platform metrics
+	// (GET /api/v1/metrics/platform/summary)
+	GetPlatformMetricsSummary(ctx context.Context, request GetPlatformMetricsSummaryRequestObject) (GetPlatformMetricsSummaryResponseObject, error)
 	// ListSites List sites
 	// (GET /api/v1/sites)
 	ListSites(ctx context.Context, request ListSitesRequestObject) (ListSitesResponseObject, error)
@@ -14519,6 +15711,12 @@ type StrictServerInterface interface {
 	// SetSiteMaintenance Turn maintenance mode on or off
 	// (PUT /api/v1/sites/{site_id}/maintenance)
 	SetSiteMaintenance(ctx context.Context, request SetSiteMaintenanceRequestObject) (SetSiteMaintenanceResponseObject, error)
+	// QuerySiteMetrics Query a site's metrics over time
+	// (GET /api/v1/sites/{site_id}/metrics)
+	QuerySiteMetrics(ctx context.Context, request QuerySiteMetricsRequestObject) (QuerySiteMetricsResponseObject, error)
+	// GetSiteMetricsSummary Current values of a site's metrics
+	// (GET /api/v1/sites/{site_id}/metrics/summary)
+	GetSiteMetricsSummary(ctx context.Context, request GetSiteMetricsSummaryRequestObject) (GetSiteMetricsSummaryResponseObject, error)
 	// RegenerateSitePreviewPassword Generate a new preview password (shown once)
 	// (POST /api/v1/sites/{site_id}/preview-password)
 	RegenerateSitePreviewPassword(ctx context.Context, request RegenerateSitePreviewPasswordRequestObject) (RegenerateSitePreviewPasswordResponseObject, error)
@@ -15440,6 +16638,82 @@ func (sh *strictHandler) GetJob(w http.ResponseWriter, r *http.Request, jobID Jo
 	}
 }
 
+// GetMetricCatalog operation middleware
+func (sh *strictHandler) GetMetricCatalog(w http.ResponseWriter, r *http.Request) {
+	var request GetMetricCatalogRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetMetricCatalog(ctx, request.(GetMetricCatalogRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetMetricCatalog")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetMetricCatalogResponseObject); ok {
+		if err := validResponse.VisitGetMetricCatalogResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// QueryPlatformMetrics operation middleware
+func (sh *strictHandler) QueryPlatformMetrics(w http.ResponseWriter, r *http.Request, params QueryPlatformMetricsParams) {
+	var request QueryPlatformMetricsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.QueryPlatformMetrics(ctx, request.(QueryPlatformMetricsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "QueryPlatformMetrics")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(QueryPlatformMetricsResponseObject); ok {
+		if err := validResponse.VisitQueryPlatformMetricsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPlatformMetricsSummary operation middleware
+func (sh *strictHandler) GetPlatformMetricsSummary(w http.ResponseWriter, r *http.Request, params GetPlatformMetricsSummaryParams) {
+	var request GetPlatformMetricsSummaryRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPlatformMetricsSummary(ctx, request.(GetPlatformMetricsSummaryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPlatformMetricsSummary")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPlatformMetricsSummaryResponseObject); ok {
+		if err := validResponse.VisitGetPlatformMetricsSummaryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListSites operation middleware
 func (sh *strictHandler) ListSites(w http.ResponseWriter, r *http.Request, params ListSitesParams) {
 	var request ListSitesRequestObject
@@ -16210,6 +17484,60 @@ func (sh *strictHandler) SetSiteMaintenance(w http.ResponseWriter, r *http.Reque
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(SetSiteMaintenanceResponseObject); ok {
 		if err := validResponse.VisitSetSiteMaintenanceResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// QuerySiteMetrics operation middleware
+func (sh *strictHandler) QuerySiteMetrics(w http.ResponseWriter, r *http.Request, siteID SiteID, params QuerySiteMetricsParams) {
+	var request QuerySiteMetricsRequestObject
+
+	request.SiteID = siteID
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.QuerySiteMetrics(ctx, request.(QuerySiteMetricsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "QuerySiteMetrics")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(QuerySiteMetricsResponseObject); ok {
+		if err := validResponse.VisitQuerySiteMetricsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetSiteMetricsSummary operation middleware
+func (sh *strictHandler) GetSiteMetricsSummary(w http.ResponseWriter, r *http.Request, siteID SiteID, params GetSiteMetricsSummaryParams) {
+	var request GetSiteMetricsSummaryRequestObject
+
+	request.SiteID = siteID
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSiteMetricsSummary(ctx, request.(GetSiteMetricsSummaryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSiteMetricsSummary")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetSiteMetricsSummaryResponseObject); ok {
+		if err := validResponse.VisitGetSiteMetricsSummaryResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

@@ -92,6 +92,13 @@ var operationActions = map[string]authz.Action{
 	"streamSiteLogs":  authz.ViewMonitoring,
 	"listSiteJobLogs": authz.ViewJobs,
 
+	// Metrics, like logs, are monitoring data.
+	"getMetricCatalog":          authz.ViewMonitoring,
+	"queryPlatformMetrics":      authz.ViewMonitoring,
+	"getPlatformMetricsSummary": authz.ViewMonitoring,
+	"querySiteMetrics":          authz.ViewMonitoring,
+	"getSiteMetricsSummary":     authz.ViewMonitoring,
+
 	"listAuditEvents": authz.ViewAuditLog,
 
 	// Alert rules are managed by Operators and Admins (design doc §4.6);

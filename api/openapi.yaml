@@ -111,6 +111,12 @@ tags:
     description: Long-running operations.
   - name: logs
     description: A site's runtime logs (nginx access and error, PHP-FPM slow log, PHP output) and the log lines of its jobs.
+  - name: metrics
+    description: |
+      Curated, read-only metric queries for the dashboard's charts and
+      overview (design doc §7.1, §7.2), backed by VictoriaMetrics. Clients
+      name metrics from a catalog; they never send queries. Every role can
+      read.
   - name: audit
     description: The audit log (Admin only).
   - name: alerts
@@ -1669,6 +1675,187 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/metrics/catalog:
+    get:
+      operationId: getMetricCatalog
+      tags: [metrics]
+      summary: List the metrics that can be queried
+      description: |
+        Every metric of design doc §7.1 (per site) and §7.2 (platform) that
+        the metrics endpoints serve, with its title, unit, and scope, and the
+        limits that apply to a query. The catalog is the same whether or not
+        a collector feeds a metric yet: a metric without data returns no
+        series.
+      responses:
+        "200":
+          description: The catalog.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetricCatalog"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/metrics/platform:
+    get:
+      operationId: queryPlatformMetrics
+      tags: [metrics]
+      summary: Query platform metrics over time
+      description: |
+        Time series of platform metrics (host, MariaDB, Redis, jobs) and
+        per-client-group metrics (backup repository size), for charts.
+        Select metrics with `metric` and `group` (see the catalog); the
+        request needs at least one. Without `start`, `end`, and `step` the
+        last hour is returned with a step chosen to keep the chart light.
+        `start` and `end` are aligned down to `step`, and `end` is capped at
+        the current time; the response says what was queried.
+
+        A metric that has no data (no collector feeds it yet, or the
+        client group has none) is returned with an empty `series` list. If
+        the metrics store is unavailable the response is `503`.
+      parameters:
+        - $ref: "#/components/parameters/MetricIDs"
+        - $ref: "#/components/parameters/MetricGroups"
+        - name: client_group_id
+          in: query
+          description: Only return per-client-group metrics of this client group.
+          schema:
+            $ref: "#/components/schemas/ID"
+        - $ref: "#/components/parameters/MetricStart"
+        - $ref: "#/components/parameters/MetricEnd"
+        - $ref: "#/components/parameters/MetricStep"
+      responses:
+        "200":
+          description: The time series.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetricsRange"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/MetricsUnavailable"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/metrics/platform/summary:
+    get:
+      operationId: getPlatformMetricsSummary
+      tags: [metrics]
+      summary: Current values of platform metrics
+      description: |
+        The latest value of platform metrics, from instant queries, for the
+        overview. Without `metric` and `group`, a small default set is
+        returned. Rates and ratios cover the last five minutes.
+      parameters:
+        - $ref: "#/components/parameters/MetricIDs"
+        - $ref: "#/components/parameters/MetricGroups"
+        - name: client_group_id
+          in: query
+          description: Only return per-client-group metrics of this client group.
+          schema:
+            $ref: "#/components/schemas/ID"
+      responses:
+        "200":
+          description: The current values.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetricsSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/MetricsUnavailable"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/sites/{site_id}/metrics:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    get:
+      operationId: querySiteMetrics
+      tags: [metrics]
+      summary: Query a site's metrics over time
+      description: |
+        Time series of the site's metrics (design doc §7.1) for charts.
+        Every query is scoped to the site in the path. Select metrics with
+        `metric` and `group` (see the catalog); the request needs at least
+        one. Time handling and the empty and unavailable cases are those of
+        `GET /api/v1/metrics/platform`.
+      parameters:
+        - $ref: "#/components/parameters/MetricIDs"
+        - $ref: "#/components/parameters/MetricGroups"
+        - $ref: "#/components/parameters/MetricStart"
+        - $ref: "#/components/parameters/MetricEnd"
+        - $ref: "#/components/parameters/MetricStep"
+      responses:
+        "200":
+          description: The time series.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetricsRange"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/MetricsUnavailable"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/sites/{site_id}/metrics/summary:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    get:
+      operationId: getSiteMetricsSummary
+      tags: [metrics]
+      summary: Current values of a site's metrics
+      description: |
+        The latest value of the site's metrics, from instant queries, cheap
+        enough for a site list. Without `metric` and `group`, a small
+        default set is returned (uptime, HTTP check status, response time,
+        request rate, storage, certificate expiry, last backup). Rates and
+        ratios cover the last five minutes.
+      parameters:
+        - $ref: "#/components/parameters/MetricIDs"
+        - $ref: "#/components/parameters/MetricGroups"
+      responses:
+        "200":
+          description: The current values.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetricsSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/MetricsUnavailable"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/sites/{site_id}/backups:
     parameters:
       - $ref: "#/components/parameters/SiteID"
@@ -3122,6 +3309,53 @@ components:
         type: string
         minLength: 1
         maxLength: 200
+    MetricIDs:
+      name: metric
+      in: query
+      description: |
+        Metric ids from the catalog; repeat the parameter to select several
+        (`metric=uptime&metric=latency`). With `group`, the metrics of both
+        are returned, at most 20 in all.
+      schema:
+        type: array
+        maxItems: 20
+        items:
+          type: string
+          minLength: 1
+          maxLength: 64
+    MetricGroups:
+      name: group
+      in: query
+      description: Metric groups from the catalog (such as `traffic`); repeat to select several.
+      schema:
+        type: array
+        maxItems: 20
+        items:
+          type: string
+          minLength: 1
+          maxLength: 64
+    MetricStart:
+      name: start
+      in: query
+      description: Start of the range. Default is an hour before `end`.
+      schema:
+        $ref: "#/components/schemas/Timestamp"
+    MetricEnd:
+      name: end
+      in: query
+      description: End of the range. Default and maximum is now.
+      schema:
+        $ref: "#/components/schemas/Timestamp"
+    MetricStep:
+      name: step
+      in: query
+      description: |
+        Seconds between points, at least 15. Default is the smallest step
+        that keeps the range at about 300 points. The range divided by the
+        step may give at most 1500 points.
+      schema:
+        type: integer
+        minimum: 1
     TokenID:
       name: token_id
       in: path
@@ -3252,6 +3486,12 @@ components:
           description: Seconds until another attempt is allowed.
           schema:
             type: integer
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    MetricsUnavailable:
+      description: The metrics store (VictoriaMetrics) can't be reached, or metrics are turned off.
       content:
         application/problem+json:
           schema:
@@ -3800,6 +4040,185 @@ components:
         next_cursor:
           description: Pass as `cursor` to get the next, older page. Null when there are no older entries.
           $ref: "#/components/schemas/NextCursor"
+
+    MetricUnit:
+      type: string
+      description: |
+        What a value counts, in base units. `timestamp` is Unix seconds and
+        `code` an HTTP status code.
+      enum: [seconds, bytes, ratio, count, per_second, bytes_per_second, cores, timestamp, code]
+
+    MetricKind:
+      type: string
+      description: |
+        How a value is derived: `gauge` is sampled as is, `rate` comes from a
+        counter (per second, or an increase over the step), `ratio` is a
+        fraction from 0 to 1, and `percentile` is a latency quantile (its
+        series have a `percentile` label).
+      enum: [gauge, rate, ratio, percentile]
+
+    MetricDescriptor:
+      type: object
+      required: [id, title, description, unit, kind, group, scope, labels, default_summary]
+      properties:
+        id:
+          type: string
+          description: Stable; pass as `metric`.
+          examples: ["status_codes"]
+        title:
+          type: string
+        description:
+          type: string
+        unit:
+          $ref: "#/components/schemas/MetricUnit"
+        kind:
+          $ref: "#/components/schemas/MetricKind"
+        group:
+          type: string
+          description: Pass as `group` to select every metric of the group.
+          examples: ["traffic"]
+        scope:
+          type: string
+          description: |
+            `site` metrics are served by the site endpoints; `platform` and
+            `client_group` ones by the platform endpoints.
+          enum: [site, platform, client_group]
+        labels:
+          type: array
+          description: Labels that tell the metric's series apart, such as `status_class`. Empty if it has one series.
+          items:
+            type: string
+        default_summary:
+          type: boolean
+          description: Whether a summary request that names no metrics includes it.
+
+    MetricLimits:
+      type: object
+      required: [default_range_seconds, max_range_seconds, min_step_seconds, max_points, max_metrics]
+      properties:
+        default_range_seconds:
+          type: integer
+        max_range_seconds:
+          type: integer
+        min_step_seconds:
+          type: integer
+        max_points:
+          type: integer
+          description: Most points per series.
+        max_metrics:
+          type: integer
+          description: Most metrics in one request, after groups are expanded.
+
+    MetricCatalog:
+      type: object
+      required: [items, limits]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetricDescriptor"
+        limits:
+          $ref: "#/components/schemas/MetricLimits"
+
+    MetricPoint:
+      type: object
+      required: [time, value]
+      properties:
+        time:
+          $ref: "#/components/schemas/Timestamp"
+        value:
+          type: number
+          format: double
+
+    MetricSeries:
+      type: object
+      required: [labels, points, latest]
+      properties:
+        labels:
+          type: object
+          description: Labels of the series, such as `status_class` or `domain`. Empty for a metric with one series.
+          additionalProperties:
+            type: string
+        points:
+          type: array
+          description: Oldest first. A step without a value has no point.
+          items:
+            $ref: "#/components/schemas/MetricPoint"
+        latest:
+          $ref: "#/components/schemas/MetricPoint"
+
+    MetricResult:
+      type: object
+      required: [id, unit, kind, series]
+      properties:
+        id:
+          type: string
+        unit:
+          $ref: "#/components/schemas/MetricUnit"
+        kind:
+          $ref: "#/components/schemas/MetricKind"
+        series:
+          type: array
+          description: Empty while the metric has no data.
+          items:
+            $ref: "#/components/schemas/MetricSeries"
+
+    MetricsRange:
+      type: object
+      required: [start, end, step_seconds, metrics]
+      properties:
+        start:
+          $ref: "#/components/schemas/Timestamp"
+        end:
+          $ref: "#/components/schemas/Timestamp"
+        step_seconds:
+          type: integer
+        metrics:
+          type: array
+          description: One result per selected metric, in catalog order.
+          items:
+            $ref: "#/components/schemas/MetricResult"
+
+    MetricValue:
+      type: object
+      required: [labels, time, value]
+      properties:
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        time:
+          $ref: "#/components/schemas/Timestamp"
+        value:
+          type: number
+          format: double
+
+    MetricSummaryResult:
+      type: object
+      required: [id, unit, kind, values]
+      properties:
+        id:
+          type: string
+        unit:
+          $ref: "#/components/schemas/MetricUnit"
+        kind:
+          $ref: "#/components/schemas/MetricKind"
+        values:
+          type: array
+          description: Empty while the metric has no data.
+          items:
+            $ref: "#/components/schemas/MetricValue"
+
+    MetricsSummary:
+      type: object
+      required: [time, metrics]
+      properties:
+        time:
+          $ref: "#/components/schemas/Timestamp"
+        metrics:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetricSummaryResult"
 
     SiteJobLogEntry:
       type: object
