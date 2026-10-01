@@ -138,7 +138,7 @@ func TestServeStartsAndStops(t *testing.T) {
 		t.Errorf("data directory layout not created: %v", err)
 	}
 
-	for path, want := range map[string]int{"/healthz": http.StatusOK, "/readyz": http.StatusOK, "/nope": http.StatusNotFound} {
+	for path, want := range map[string]int{"/healthz": http.StatusOK, "/readyz": http.StatusOK, "/api/v1/nope": http.StatusNotFound, "/nope": http.StatusOK} {
 		resp, err := http.Get("http://" + addr + path)
 		if err != nil {
 			t.Fatal(err)
@@ -149,6 +149,11 @@ func TestServeStartsAndStops(t *testing.T) {
 		}
 		if want == http.StatusNotFound && resp.Header.Get("Content-Type") != "application/problem+json" {
 			t.Errorf("GET %s Content-Type = %q", path, resp.Header.Get("Content-Type"))
+		}
+		// Anything that isn't the API is the dashboard (its router handles
+		// /nope); an unknown API path is never answered with the dashboard.
+		if path == "/nope" && !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
+			t.Errorf("GET %s Content-Type = %q, want the dashboard's index.html", path, resp.Header.Get("Content-Type"))
 		}
 	}
 	cancel()

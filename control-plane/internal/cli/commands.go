@@ -45,6 +45,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 	"github.com/rchouinard/pressfleet/control-plane/internal/uploads"
+	"github.com/rchouinard/pressfleet/ui"
 )
 
 // reattachTimeout bounds reconnecting the platform services to site
@@ -367,6 +368,15 @@ func (a *app) serveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			dashboard, err := httpserver.NewUI(ui.Files())
+			if err != nil {
+				return err
+			}
+			if !ui.Embedded() {
+				a.log.Warn("this binary was built without the dashboard; serving a placeholder page (build with Node.js available to embed it)")
+			}
+			handler = httpserver.WithUI(handler, dashboard)
 
 			gateway, err := a.sftpGateway(db, authn, prov, hostKey, dbSessions.Forwarding(authn))
 			if err != nil {

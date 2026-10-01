@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 #
 # Control plane image: ghcr.io/rchouinard/pressfleet/control-plane:<version>.
-# Build from the repository root (the binary embeds ../templates):
+# Build from the repository root (the binary embeds ../templates and the
+# dashboard built from ../ui):
 #
 #   docker build -f control-plane/Dockerfile --build-arg VERSION=v1.2.3 .
 #
@@ -10,6 +11,8 @@
 ARG GO_IMAGE=golang:1.27.1-trixie@sha256:7bffdb405cd12940d2980daa49a86ef575ed4525a17ee7d0c9562547357ab46a
 # Source of the docker CLI and Compose v2 plugin. Both are static binaries.
 ARG DOCKER_CLI_IMAGE=docker:29.8.1-cli@sha256:6602978e2be3c20e530e33773b8cadcef5fe998a71a534ee24516f1176973cdf
+# Builds the dashboard (ui/), which the binary embeds. Only used at build time.
+ARG NODE_IMAGE=node:24-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6
 # Debian rather than distroless: the MariaDB client for backups comes from
 # Debian packages.
 ARG BASE_IMAGE=debian:13.7-slim@sha256:7792b1f7702a86946cd518db72b6a407302c3e9bc1635634368b878189e8221c
@@ -20,16 +23,27 @@ ARG RESTIC_VERSION=0.19.1
 ARG RESTIC_SHA256=f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c
 ARG MARIADB_CLIENT_VERSION=1:11.8.6-0+deb13u1
 
+FROM ${NODE_IMAGE} AS ui
+# Keep in step with the pnpm version in mise.toml and ui/package.json.
+RUN npm install --global pnpm@10.34.6
+WORKDIR /src/ui
+COPY ui/package.json ui/pnpm-lock.yaml ./
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile --ignore-scripts
+COPY ui/ ./
+RUN pnpm generate
+
 FROM ${GO_IMAGE} AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
+COPY --from=ui /src/ui/.output/public ui/.output/public
 ARG VERSION=dev
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -buildvcs=false -ldflags "-s -w -X main.version=${VERSION}" \
+    go build -trimpath -buildvcs=false -tags webui -ldflags "-s -w -X main.version=${VERSION}" \
       -o /out/pressfleet ./control-plane/cmd/pressfleet
 
 FROM ${DOCKER_CLI_IMAGE} AS docker-cli

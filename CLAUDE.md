@@ -13,10 +13,11 @@ mise exec -- make test    # prefix Go/lint commands with `mise exec --`
 
 | Command | Purpose |
 | --- | --- |
-| `make build` | Static linux/amd64 binary in `bin/pressfleet` |
+| `make build` | Static linux/amd64 binary in `bin/pressfleet`, with the dashboard embedded when pnpm is available (`UI=yes\|prebuilt\|no\|auto`) |
 | `make test` | `go test -race ./...` |
 | `make lint` | golangci-lint (config in `.golangci.yml`) |
-| `make generate` | Code generators |
+| `make generate` | Code generators, including the TypeScript API client (needs Node) |
+| `make ui` / `make ui-check` | Build the dashboard / lint, typecheck, and test it |
 | `make fmt` | Format |
 
 CI (`.github/workflows/ci.yml`) runs lint, a `go mod tidy` check, tests, and the build. Keep all of them passing.
@@ -28,7 +29,7 @@ CI (`.github/workflows/ci.yml`) runs lint, a `go mod tidy` check, tests, and the
 - `api/openapi.yaml`: API source of truth; generated code is never hand-edited
 - `templates/`: Compose templates. `go:embed` can't reach outside a package directory, so templates are embedded through Go files in `templates/` itself (package `github.com/rchouinard/pressfleet/templates`)
 - `images/<name>/`: container images (`site-php`, `site-nginx`)
-- `ui/`: Nuxt dashboard (M5)
+- `ui/`: Nuxt dashboard (M5), also the Go package that embeds its build (see `ui/README.md` for conventions)
 
 ## Architecture rules
 

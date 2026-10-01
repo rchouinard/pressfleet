@@ -1,6 +1,9 @@
 [tools]
 go = "1.27"
 golangci-lint = "2"
+# The dashboard (ui/) is built with Node and pnpm; production needs neither.
+node = "24"
+pnpm = "10"
 # Restic backs up client group repositories (package internal/backup/repository);
 # its tests run the real binary.
 "aqua:restic/restic" = "0.19.1"

@@ -1,0 +1,16 @@
+name: pnpm cache
+description: Cache the pnpm package store. Run after pnpm is installed (jdx/mise-action).
+
+runs:
+  using: composite
+  steps:
+    - name: Locate the pnpm store
+      id: paths
+      shell: bash
+      run: echo "store=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@v6
+      with:
+        path: ${{ steps.paths.outputs.store }}
+        key: pnpm-${{ runner.os }}-${{ hashFiles('ui/pnpm-lock.yaml') }}
+        restore-keys: |
+          pnpm-${{ runner.os }}-

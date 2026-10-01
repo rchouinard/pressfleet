@@ -13,9 +13,44 @@ GOARCH ?= amd64
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
+# The dashboard (ui/) is embedded into the binary when it has been built; see
+# ui/README.md. UI selects what `make build` does:
+#   auto (default)  build the dashboard if pnpm is on the PATH, else embed a
+#                   placeholder page, so the Go build works without Node.js
+#   yes             build the dashboard; fail if Node.js is missing (releases)
+#   prebuilt        embed ui/.output/public as it is, without building it (CI,
+#                   which builds the dashboard once in its own job)
+#   no              embed the placeholder
+UI ?= auto
+UI_EMBED := $(if $(filter yes prebuilt,$(UI)),1,$(if $(filter auto,$(UI)),$(if $(shell command -v pnpm 2>/dev/null),1)))
+UI_BUILD := $(if $(filter prebuilt,$(UI)),,$(UI_EMBED))
+UI_DIST  := ui/.output/public/index.html
+UI_SRC   := $(shell find ui/app ui/public -type f 2>/dev/null) ui/nuxt.config.ts ui/package.json ui/pnpm-lock.yaml
+GO_TAGS  := $(if $(UI_EMBED),-tags webui)
+
 .PHONY: build
-build: ## Build the pressfleet binary into bin/
-	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./control-plane/cmd/pressfleet
+build: $(if $(UI_BUILD),$(UI_DIST)) ## Build the pressfleet binary into bin/ (UI=yes|prebuilt|no|auto controls embedding the dashboard)
+	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -trimpath $(GO_TAGS) -ldflags "$(LDFLAGS)" -o $(BIN) ./control-plane/cmd/pressfleet
+
+.PHONY: ui
+ui: $(UI_DIST) ## Build the dashboard (needs Node.js and pnpm) into ui/.output/public
+
+$(UI_DIST): $(UI_SRC) ui/node_modules/.modules.yaml
+	pnpm -C ui generate
+	@touch $@
+
+ui/node_modules/.modules.yaml: ui/package.json ui/pnpm-lock.yaml
+	pnpm -C ui install --frozen-lockfile
+
+.PHONY: ui-client
+ui-client: ui/node_modules/.modules.yaml ## Regenerate the TypeScript API client from api/openapi.yaml
+	pnpm -C ui generate:api
+
+.PHONY: ui-check
+ui-check: ui/node_modules/.modules.yaml ## Lint, typecheck, and unit-test the dashboard
+	pnpm -C ui lint
+	pnpm -C ui typecheck
+	pnpm -C ui test
 
 .PHONY: test
 test: ## Run tests with the race detector
@@ -44,8 +79,9 @@ lint: ## Run golangci-lint
 	golangci-lint run ./...
 
 .PHONY: generate
-generate: ## Run code generators (OpenAPI, etc.)
+generate: ## Run code generators (OpenAPI server and clients, TypeScript client; needs Node.js)
 	go generate ./...
+	$(MAKE) ui-client
 
 .PHONY: fmt
 fmt: ## Format Go code
@@ -78,4 +114,4 @@ images-test: ## Build the site images and run their smoke test (needs Docker)
 
 .PHONY: clean
 clean: ## Remove build artifacts
-	rm -rf bin/ dist/ coverage.out
+	rm -rf bin/ dist/ coverage.out ui/.output ui/.nuxt
