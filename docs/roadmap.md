@@ -184,8 +184,8 @@ Done when: every metric in §7.1–7.2 is collected and queryable via the API, a
 
 | # | Issue | Priority | Size | Depends on |
 | --- | --- | --- | --- | --- |
-| [#64](https://github.com/rchouinard/pressfleet/issues/64) | Decision: confirm VictoriaMetrics + built-in collector | P0 | S | — |
-| [#65](https://github.com/rchouinard/pressfleet/issues/65) | Decision: metrics retention period | P1 | S | — |
+| [#64](https://github.com/rchouinard/pressfleet/issues/64) | ~~Decision: confirm VictoriaMetrics + built-in collector~~ **Resolved:** confirmed | P0 | S | — |
+| [#65](https://github.com/rchouinard/pressfleet/issues/65) | ~~Decision: metrics retention period~~ **Resolved:** configurable, default 90 days | P1 | S | — |
 | [#66](https://github.com/rchouinard/pressfleet/issues/66) | VictoriaMetrics platform service | P0 | S | #7, #64, #65 |
 | [#67](https://github.com/rchouinard/pressfleet/issues/67) | Metrics collector framework | P0 | M | #66, #22 |
 | [#68](https://github.com/rchouinard/pressfleet/issues/68) | Collector: container resource metrics | P0 | S | #67 |
@@ -273,8 +273,8 @@ These must be resolved before the work they block.
 | [#59](https://github.com/rchouinard/pressfleet/issues/59) | ~~importing existing sites in MVP?~~ **Resolved:** yes, from a `wp-content` archive and SQL dump; other sources after MVP (design doc §5.7) | M3: Backup Engine & File Management | P1 |
 | [#60](https://github.com/rchouinard/pressfleet/issues/60) | ~~developer code deployment~~ **Resolved:** SFTP gateway with platform users' SSH keys, plus a deploy API for CI (design doc §5.8) | M3: Backup Engine & File Management | P1 |
 | [#61](https://github.com/rchouinard/pressfleet/issues/61) | ~~database access for agencies~~ **Resolved:** database exports and temporary, read-only-by-default sessions through the SFTP gateway; no web UI (design doc §5.8) | M3: Backup Engine & File Management | P2 |
-| [#64](https://github.com/rchouinard/pressfleet/issues/64) | confirm VictoriaMetrics + built-in collector | M4: Monitoring & Alerting | P0 |
-| [#65](https://github.com/rchouinard/pressfleet/issues/65) | metrics retention period | M4: Monitoring & Alerting | P1 |
+| [#64](https://github.com/rchouinard/pressfleet/issues/64) | ~~confirm VictoriaMetrics + built-in collector~~ **Resolved:** confirmed (design doc §3, §7) | M4: Monitoring & Alerting | P0 |
+| [#65](https://github.com/rchouinard/pressfleet/issues/65) | ~~metrics retention period~~ **Resolved:** configurable, default 90 days (design doc §7) | M4: Monitoring & Alerting | P1 |
 | [#92](https://github.com/rchouinard/pressfleet/issues/92) | plugin/theme update visibility | M5: Dashboard | P2 |
 | [#94](https://github.com/rchouinard/pressfleet/issues/94) | ~~platform upgrade process~~ **Resolved:** forward-only migrations, CLI upgrades control plane to its own version, kubectl-style version skew (design doc §4.7) | MVP Release Gate | P0 |
 

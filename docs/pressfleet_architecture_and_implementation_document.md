@@ -104,8 +104,8 @@ PressFleet aims to simplify WordPress management for agencies by delivering:
 | **WP Web Server** | **Nginx + PHP-FPM** | OpenLiteSpeed | Web server tuned with `fastcgi_cache` pre-configured for WordPress page caching. |
 | **Site Database** | **MariaDB LTS (11.4+)** | MySQL 8.4 LTS | Shared database server with per-site databases and users. |
 | **Object Cache** | **Valkey** (Redis-compatible; shared, platform-managed) | Redis, Memcached, per-site Redis | A single server keeps memory usage low; per-site isolation is enforced with ACL users, per-site logical databases, and key prefixes (§6). Valkey is BSD-licensed (Redis 8 is AGPLv3/RSALv2/SSPLv1), publishes an official image, and speaks the Redis protocol, so the Redis Object Cache plugin works unchanged. Its per-database ACL rules (Valkey 9+), which Redis lacks, are what keep one site from listing another's keys (§6). "Redis" in PressFleet names the protocol and role, not the server. |
-| **Metrics Storage** | **VictoriaMetrics (single-node)** *(proposed)* | Prometheus | Prometheus-compatible, markedly lower memory and disk usage, single binary. |
-| **Metrics Collection** | **Built-in Go collector** *(proposed)* | cAdvisor, per-site exporter sidecars | The control plane scrapes Docker stats, Traefik, PHP-FPM, Nginx, MariaDB, and Redis directly, avoiding a sidecar per site. |
+| **Metrics Storage** | **VictoriaMetrics (single-node)** | Prometheus | Prometheus-compatible, markedly lower memory and disk usage, single binary. |
+| **Metrics Collection** | **Built-in Go collector** | cAdvisor, per-site exporter sidecars | The control plane scrapes Docker stats, Traefik, PHP-FPM, Nginx, MariaDB, and Redis directly, avoiding a sidecar per site. |
 | **Backup Engine** | **Restic** | Borg, Duplicity | Encrypted, deduplicated snapshots of `wp-content` and DB dumps pushed to local disk or S3/MinIO. |
 
 ### 3.1. Project Conventions
@@ -566,7 +566,7 @@ All-in-one security suites (Wordfence and similar) are deliberately excluded: th
 
 ## 7. Monitoring, Metrics & Alerting
 
-Monitoring is a core feature, surfaced natively in the dashboard rather than requiring a separate tool. Metrics are stored in VictoriaMetrics and exposed in Prometheus format, so agencies can optionally connect Grafana or other tooling.
+Monitoring is a core feature, surfaced natively in the dashboard rather than requiring a separate tool. Metrics are stored in VictoriaMetrics and exposed in Prometheus format, so agencies can optionally connect Grafana or other tooling. Retention is configurable and defaults to 90 days.
 
 ### 7.1. Per-Site Metrics
 
@@ -660,8 +660,8 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
 3. ~~**Core rollout policy:** Confirm the proposed default in §5.5 (security/minor releases rolled out automatically, major releases approved per site or client group).~~ **Resolved (2026-09-28):** the proposal, with holds per major branch that keep receiving minor and security releases, and an optional delay after which majors are approved automatically. See §5.5.
 4. ~~**User roles:** Do agency staff need roles beyond full access (e.g. read-only, or access limited to certain client groups)?~~ **Resolved (2026-09-26):** fixed platform-wide Admin, Operator, and Viewer roles, only Admins can delete sites, and an audit log ships in the MVP. Client-group scoping is deferred. See §4.6.
 5. ~~**Preview domain protection:** Is `noindex` sufficient, or should preview domains optionally require HTTP basic auth?~~ **Resolved (2026-09-27):** optional per-site basic auth on the preview domain via Traefik, off by default, with a platform-generated password stored encrypted. See §5.1.
-6. **Monitoring stack:** Confirm the proposed VictoriaMetrics + built-in collector approach (§3, §7).
-7. **Metrics retention:** How long should metrics be retained (e.g. 30 or 90 days)?
+6. ~~**Monitoring stack:** Confirm the proposed VictoriaMetrics + built-in collector approach (§3, §7).~~ **Resolved (2026-10-01):** confirmed: single-node VictoriaMetrics with a built-in Go collector, no Prometheus, cAdvisor, or per-site exporters. See §3 and §7.
+7. ~~**Metrics retention:** How long should metrics be retained (e.g. 30 or 90 days)?~~ **Resolved (2026-10-01):** configurable, defaulting to 90 days. See §7.
 8. ~~**Developer code deployment:** How do agency developers get custom themes/plugins onto a site: SFTP, git push, a CI deploy API endpoint, WP-CLI/SSH access? Currently only an optional SFTP/file browser is planned (Phase 3).~~ **Resolved (2026-09-28):** an SFTP gateway authenticated with platform users' SSH keys, plus a deploy API for CI. No git push or shell access. See §5.8.
 9. ~~**Importing existing sites:** Is an import workflow (upload an archive + DB dump, or pull from a remote host) part of the MVP?~~ **Resolved (2026-09-28):** yes, from a `wp-content` archive and SQL dump; other sources may follow after MVP. See §5.7.
 10. ~~**Database access:** Should agencies get a database UI (e.g. Adminer started on demand), WP-CLI only, or neither?~~ **Resolved (2026-09-28):** database exports through the platform, and temporary, read-only-by-default database sessions tunneled through the SFTP gateway. No web database UI in the MVP. See §5.8.
