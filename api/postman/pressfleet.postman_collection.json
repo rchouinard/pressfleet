@@ -3161,6 +3161,413 @@
       ]
     },
     {
+      "id": "fded4678-fa02-5bae-800e-4f88d50a7e72",
+      "name": "Alerts",
+      "description": "Alert rules and the alerts they raise. Everyone reads; Operators and Admins manage rules.",
+      "item": [
+        {
+          "id": "4620053e-d163-5f36-b519-ddb7e5743ff8",
+          "name": "List alert rules",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alert-rules",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alert-rules"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Maximum number of items to return (1-200).",
+                  "disabled": true
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "description": "The next_cursor from the previous page.",
+                  "disabled": true
+                },
+                {
+                  "key": "scope",
+                  "value": "site",
+                  "description": "Only rules with this scope (platform or site).",
+                  "disabled": true
+                },
+                {
+                  "key": "client_group_id",
+                  "value": "{{client_group_id}}",
+                  "description": "Only rules limited to this client group.",
+                  "disabled": true
+                },
+                {
+                  "key": "enabled",
+                  "value": "true",
+                  "description": "Only enabled (true) or disabled (false) rules.",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "By name. The default rules are built in: they can be edited and disabled, not deleted."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "07a699d7-03b9-529c-ae0b-67e683f5fd90",
+          "name": "Create alert rule",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alert-rules",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alert-rules"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Busy sites\",\n  \"scope\": \"site\",\n  \"kind\": \"threshold\",\n  \"expr\": \"pressfleet_site_php_fpm_active_processes / pressfleet_site_php_fpm_max_children\",\n  \"operator\": \"gt\",\n  \"threshold\": 0.8,\n  \"for_seconds\": 300,\n  \"severity\": \"warning\",\n  \"annotations\": {\n    \"summary\": \"{{ .Labels.site_id }}: {{ humanizePercentage .Value }} of PHP-FPM workers are busy\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Saves the new rule's ID to `alert_rule_id`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "if (pm.response.code === 201) {",
+                  "    pm.environment.set(\"alert_rule_id\", pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "946458dc-aa85-55a6-ba04-f03e3f328cf3",
+          "name": "Get alert rule",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alert-rules/{{alert_rule_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alert-rules",
+                "{{alert_rule_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "64870d08-bce4-58e8-a7cb-f5a1a0ae047f",
+          "name": "Update alert rule",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alert-rules/{{alert_rule_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alert-rules",
+                "{{alert_rule_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"threshold\": 0.9\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Only the fields present change."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "c3fbf630-bb96-558c-bd27-8f9a0abebcee",
+          "name": "Disable alert rule",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alert-rules/{{alert_rule_id}}/disable",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alert-rules",
+                "{{alert_rule_id}}",
+                "disable"
+              ]
+            },
+            "description": "Its firing alerts resolve at the next evaluation."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "e2fc5a25-5e01-531c-9115-4293924587b1",
+          "name": "Enable alert rule",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alert-rules/{{alert_rule_id}}/enable",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alert-rules",
+                "{{alert_rule_id}}",
+                "enable"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "74d76260-2142-5172-8048-32078ce107ab",
+          "name": "Delete alert rule",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alert-rules/{{alert_rule_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alert-rules",
+                "{{alert_rule_id}}"
+              ]
+            },
+            "description": "Built-in rules can't be deleted (409)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "a45de288-c45c-5cd3-ba12-8c348b90aba1",
+          "name": "List alerts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "description": "Maximum number of items to return (1-200).",
+                  "disabled": true
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "description": "The next_cursor from the previous page.",
+                  "disabled": true
+                },
+                {
+                  "key": "state",
+                  "value": "firing",
+                  "description": "Only alerts in this state (pending, firing, or resolved).",
+                  "disabled": true
+                },
+                {
+                  "key": "rule_id",
+                  "value": "{{alert_rule_id}}",
+                  "description": "Only alerts of this rule.",
+                  "disabled": true
+                },
+                {
+                  "key": "site_id",
+                  "value": "{{site_id}}",
+                  "description": "Only alerts for this site.",
+                  "disabled": true
+                },
+                {
+                  "key": "client_group_id",
+                  "value": "{{client_group_id}}",
+                  "description": "Only alerts for sites in this client group.",
+                  "disabled": true
+                },
+                {
+                  "key": "since",
+                  "value": "2026-01-01T00:00:00Z",
+                  "description": "Started at or after this time (RFC 3339).",
+                  "disabled": true
+                },
+                {
+                  "key": "until",
+                  "value": "2026-12-31T00:00:00Z",
+                  "description": "Started before this time (RFC 3339).",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Newest first."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "if (pm.response.code === 200 && pm.response.json().items.length > 0) {",
+                  "    pm.environment.set(\"alert_id\", pm.response.json().items[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "b4945099-248e-5f25-a110-7ba8c4162195",
+          "name": "Get alert",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts/{{alert_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts",
+                "{{alert_id}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "ce0bcabe-e697-5d45-80d3-c48349106625",
       "name": "Smoke test",
       "description": "Run this folder in the Collection Runner (or with newman) to exercise a whole site lifecycle: log in, create a client group and a site, wait for provisioning, retrieve the admin credentials, then delete both. It overwrites `client_group_id`, `site_id`, and `job_id`.",

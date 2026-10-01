@@ -297,6 +297,8 @@ const (
 	TargetAPIToken    TargetType = "api_token"
 	TargetUpload      TargetType = "upload"
 	TargetSSHKey      TargetType = "ssh_key"
+	TargetAlertRule   TargetType = "alert_rule"
+	TargetAlert       TargetType = "alert"
 )
 
 // Target is what an action applies to.
@@ -339,6 +341,14 @@ func Upload(id string) Target { return Target{Type: TargetUpload, ID: id} }
 
 // SSHKey returns the target for an SSH key.
 func SSHKey(id string) Target { return Target{Type: TargetSSHKey, ID: id} }
+
+// AlertRule returns the target for an alert rule, which belongs to the
+// client group it is limited to, if any.
+func AlertRule(id string) Target { return Target{Type: TargetAlertRule, ID: id} }
+
+// Alert returns the target for an alert, which belongs to the client group
+// of its site.
+func Alert(id string) Target { return Target{Type: TargetAlert, ID: id} }
 
 // Check is the single authorization decision: it returns nil if p may take
 // action on t, and an error wrapping ErrDenied otherwise. t should have been

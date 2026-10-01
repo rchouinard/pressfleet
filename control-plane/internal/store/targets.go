@@ -9,7 +9,8 @@ import (
 // TargetClientGroup returns the ID of the client group a target belongs to,
 // for authorization (design doc §4.6): a client group is its own group, a
 // site belongs to its group, an upload to the group of the import or deploy
-// it is for, and a job belongs to its target's group.
+// it is for, a job belongs to its target's group, an alert rule to the group
+// it is limited to, and an alert to the group of its site.
 // Other target types (users, API tokens, the platform) belong to no group,
 // and neither do targets that don't exist; both return "".
 func TargetClientGroup(ctx context.Context, q Querier, targetType, targetID string) (string, error) {
@@ -28,6 +29,19 @@ func TargetClientGroup(ctx context.Context, q Querier, targetType, targetID stri
 			return "", fmt.Errorf("client group of site %s: %w", targetID, err)
 		}
 		return group, nil
+	case "alert_rule", "alert":
+		table := "alert_rules"
+		if targetType == "alert" {
+			table = "alerts"
+		}
+		var group *string
+		err := q.QueryRowContext(ctx, "SELECT client_group_id FROM "+table+" WHERE id = ?", targetID).Scan(&group)
+		if errors.Is(err, ErrNotFound) || (err == nil && group == nil) {
+			return "", nil
+		} else if err != nil {
+			return "", fmt.Errorf("client group of %s %s: %w", targetType, targetID, err)
+		}
+		return *group, nil
 	case "upload":
 		// An upload belongs to the group its import or deploy is for.
 		var group string

@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/alerts"
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/audit"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
@@ -426,6 +427,15 @@ func (a *app) serveCommand() *cobra.Command {
 			if err := dbsession.EnsureSweepSchedule(cmd.Context(), db); err != nil && cmd.Context().Err() == nil {
 				return err
 			}
+			// The default alert rules exist whether or not evaluation is on,
+			// so the API lists them. Seeding never overwrites a user's edits.
+			if _, err := alerts.SeedDefaults(cmd.Context(), db, a.log.With("component", "alerts")); err != nil && cmd.Context().Err() == nil {
+				return err
+			}
+			alertEngine, err := a.alertEngine(db)
+			if err != nil {
+				return err
+			}
 			scheduler := jobs.NewScheduler(db, jobs.SchedulerOptions{Logger: a.log.With("component", "scheduler")})
 			workersCtx, stopWorkers := context.WithCancel(cmd.Context())
 			defer stopWorkers()
@@ -441,6 +451,9 @@ func (a *app) serveCommand() *cobra.Command {
 					return err
 				}
 				workers.Go(func() { _ = collector.Run(workersCtx) })
+			}
+			if alertEngine != nil {
+				workers.Go(func() { _ = alertEngine.Run(workersCtx) })
 			}
 			// Best effort and in the background: a platform upgrade may have
 			// recreated MariaDB or the object cache, disconnecting them from

@@ -94,6 +94,18 @@ var operationActions = map[string]authz.Action{
 
 	"listAuditEvents": authz.ViewAuditLog,
 
+	// Alert rules are managed by Operators and Admins (design doc §4.6);
+	// every role reads them and the alerts they raise.
+	"listAlertRules":   authz.ViewMonitoring,
+	"getAlertRule":     authz.ViewMonitoring,
+	"createAlertRule":  authz.ManageAlertRules,
+	"updateAlertRule":  authz.ManageAlertRules,
+	"deleteAlertRule":  authz.ManageAlertRules,
+	"enableAlertRule":  authz.ManageAlertRules,
+	"disableAlertRule": authz.ManageAlertRules,
+	"listAlerts":       authz.ViewMonitoring,
+	"getAlert":         authz.ViewMonitoring,
+
 	// An upload needs the permission of the job it is for (#111): these
 	// check UploadForDeploy instead for deployments (operationAltActions).
 	// Requests for uploads that don't exist are checked as imports.

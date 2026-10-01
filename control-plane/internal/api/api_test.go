@@ -115,7 +115,7 @@ func decodeProblem(t *testing.T, w *httptest.ResponseRecorder) problem {
 
 // samplePath fills in path parameters with a valid ID.
 func samplePath(path string) string {
-	for _, p := range []string{"{token_id}", "{user_id}", "{client_group_id}", "{site_id}", "{job_id}", "{upload_id}", "{export_id}", "{ssh_key_id}", "{session_id}"} {
+	for _, p := range []string{"{token_id}", "{user_id}", "{client_group_id}", "{site_id}", "{job_id}", "{upload_id}", "{export_id}", "{ssh_key_id}", "{session_id}", "{alert_rule_id}", "{alert_id}"} {
 		path = strings.ReplaceAll(path, p, "abc123")
 	}
 	return path
@@ -146,6 +146,8 @@ var sampleBodies = map[string]string{
 	"completeUpload":           `{}`,
 	"addOwnSshKey":             `{"public_key":"ssh-ed25519 AAAA"}`,
 	"addUserSshKey":            `{"public_key":"ssh-ed25519 AAAA"}`,
+	"createAlertRule":          `{"name":"Down","scope":"site","kind":"expression","expr":"up == 0","severity":"critical"}`,
+	"updateAlertRule":          `{"description":"hello"}`,
 }
 
 // sampleQueries are the required query parameters of operations that have
@@ -264,7 +266,8 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 					t.Errorf("status = %d, want 401; body: %s", w.Code, w.Body)
 				}
 			case strings.HasPrefix(op.Path, "/api/v1/auth/") || strings.HasPrefix(op.Path, "/api/v1/users") ||
-				strings.HasPrefix(op.Path, "/api/v1/client-groups") || strings.HasPrefix(op.Path, "/api/v1/uploads") || implementedSiteOps[op.ID]:
+				strings.HasPrefix(op.Path, "/api/v1/client-groups") || strings.HasPrefix(op.Path, "/api/v1/uploads") ||
+				strings.HasPrefix(op.Path, "/api/v1/alert") || implementedSiteOps[op.ID]:
 				if w.Code == http.StatusUnauthorized || w.Code >= 500 {
 					t.Errorf("status = %d; body: %s", w.Code, w.Body)
 				}

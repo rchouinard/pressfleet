@@ -97,6 +97,8 @@ type Config struct {
 	Backup BackupConfig `yaml:"backup"`
 	// Uploads configures the resumable upload API for large files (#111).
 	Uploads UploadsConfig `yaml:"uploads"`
+	// Alerts configures alert rule evaluation (§7.3).
+	Alerts AlertsConfig `yaml:"alerts"`
 	// DatabaseExport configures database exports (§5.8).
 	DatabaseExport DatabaseExportConfig `yaml:"database_export"`
 	// SFTP configures the SFTP gateway (§5.8).
@@ -573,6 +575,7 @@ func Default() Config {
 		},
 		WordPressSecurity: DefaultWordPressSecurity(),
 		Uploads:           DefaultUploads(),
+		Alerts:            DefaultAlerts(),
 		DatabaseExport:    DatabaseExportConfig{TTLSeconds: 3600},
 		SFTP:              DefaultSFTP(),
 		Updates:           DefaultUpdates(),
@@ -597,6 +600,7 @@ var intEnvVars = []struct {
 	{"PRESSFLEET_BACKUP_CHECK_READ_DATA_PERCENT", func(c *Config) *int { return &c.Backup.Check.ReadDataPercent }},
 	{"PRESSFLEET_UPLOADS_MAX_SIZE_MB", func(c *Config) *int { return &c.Uploads.MaxSizeMB }},
 	{"PRESSFLEET_UPLOADS_EXPIRY_HOURS", func(c *Config) *int { return &c.Uploads.ExpiryHours }},
+	{"PRESSFLEET_ALERTS_EVALUATION_INTERVAL_SECONDS", func(c *Config) *int { return &c.Alerts.EvaluationIntervalSeconds }},
 	{"PRESSFLEET_DATABASE_EXPORT_TTL_SECONDS", func(c *Config) *int { return &c.DatabaseExport.TTLSeconds }},
 	{"PRESSFLEET_SFTP_PORT", func(c *Config) *int { return &c.SFTP.Port }},
 	{"PRESSFLEET_SFTP_IDLE_TIMEOUT_MINUTES", func(c *Config) *int { return &c.SFTP.IdleTimeoutMinutes }},
@@ -765,6 +769,13 @@ func ApplyEnv(cfg *Config, env LookupEnv) error {
 		}
 		cfg.Metrics.Enabled = b
 	}
+	if val, ok := env("PRESSFLEET_ALERTS_ENABLED"); ok {
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("PRESSFLEET_ALERTS_ENABLED must be true or false, got %q", val)
+		}
+		cfg.Alerts.Enabled = b
+	}
 	if val, ok := env("PRESSFLEET_ACME_DNS_RESOLVERS"); ok {
 		cfg.ACME.DNSResolvers = splitList(val)
 	}
@@ -904,6 +915,9 @@ func (c Config) Validate() error {
 		errs = append(errs, err)
 	}
 	if err := c.Uploads.Validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.Alerts.Validate(); err != nil {
 		errs = append(errs, err)
 	}
 	if err := c.SFTP.Validate(); err != nil {

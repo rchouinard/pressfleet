@@ -19,6 +19,114 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for AlertOperator.
+const (
+	Eq  AlertOperator = "eq"
+	Gt  AlertOperator = "gt"
+	Gte AlertOperator = "gte"
+	Lt  AlertOperator = "lt"
+	Lte AlertOperator = "lte"
+	Ne  AlertOperator = "ne"
+)
+
+// Valid indicates whether the value is a known member of the AlertOperator enum.
+func (e AlertOperator) Valid() bool {
+	switch e {
+	case Eq:
+		return true
+	case Gt:
+		return true
+	case Gte:
+		return true
+	case Lt:
+		return true
+	case Lte:
+		return true
+	case Ne:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AlertRuleKind.
+const (
+	Expression AlertRuleKind = "expression"
+	Threshold  AlertRuleKind = "threshold"
+)
+
+// Valid indicates whether the value is a known member of the AlertRuleKind enum.
+func (e AlertRuleKind) Valid() bool {
+	switch e {
+	case Expression:
+		return true
+	case Threshold:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AlertScope.
+const (
+	AlertScopePlatform AlertScope = "platform"
+	AlertScopeSite     AlertScope = "site"
+)
+
+// Valid indicates whether the value is a known member of the AlertScope enum.
+func (e AlertScope) Valid() bool {
+	switch e {
+	case AlertScopePlatform:
+		return true
+	case AlertScopeSite:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AlertSeverity.
+const (
+	AlertSeverityCritical AlertSeverity = "critical"
+	AlertSeverityInfo     AlertSeverity = "info"
+	AlertSeverityWarning  AlertSeverity = "warning"
+)
+
+// Valid indicates whether the value is a known member of the AlertSeverity enum.
+func (e AlertSeverity) Valid() bool {
+	switch e {
+	case AlertSeverityCritical:
+		return true
+	case AlertSeverityInfo:
+		return true
+	case AlertSeverityWarning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AlertState.
+const (
+	AlertStateFiring   AlertState = "firing"
+	AlertStatePending  AlertState = "pending"
+	AlertStateResolved AlertState = "resolved"
+)
+
+// Valid indicates whether the value is a known member of the AlertState enum.
+func (e AlertState) Valid() bool {
+	switch e {
+	case AlertStateFiring:
+		return true
+	case AlertStatePending:
+		return true
+	case AlertStateResolved:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AuditResult.
 const (
 	Denied  AuditResult = "denied"
@@ -642,6 +750,290 @@ func (e UploadStatus) Valid() bool {
 		return false
 	}
 }
+
+// Alert One incident of one rule for one series. A condition that keeps
+// holding updates its alert rather than creating another, and each
+// alert emits one firing event and, once it stops, one resolved event.
+type Alert struct {
+	// ClientGroupID The client group of that site, or null.
+	ClientGroupID *ID    `json:"client_group_id"`
+	Description   string `json:"description"`
+
+	// FiredAt When the alert started firing. Null while pending.
+	FiredAt *Timestamp `json:"fired_at"`
+
+	// ID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ID ID `json:"id"`
+
+	// Labels The series' labels plus the rule's.
+	//
+	// Examples: {"client_group_id":"01J9ZQ3V6T8K4M2N5P7R9S1X4Z","site_id":"01J9ZQ3V6T8K4M2N5P7R9S1X3Y"}
+	Labels map[string]string `json:"labels"`
+
+	// ResolvedAt When the alert resolved. Null until then.
+	ResolvedAt *Timestamp `json:"resolved_at"`
+
+	// RuleID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	RuleID   ID            `json:"rule_id"`
+	RuleName string        `json:"rule_name"`
+	Severity AlertSeverity `json:"severity"`
+
+	// SiteID The site the alert is about, or null.
+	SiteID *ID `json:"site_id"`
+
+	// StartedAt When the condition first held.
+	//
+	// Examples: 2026-09-26T17:25:00Z
+	StartedAt Timestamp `json:"started_at"`
+
+	// State `pending`: the condition holds but hasn't for the rule's duration
+	// yet; nothing has been sent. `firing`: it has held for the duration
+	// and still does; one firing event was emitted. `resolved`: it stopped
+	// holding; one resolved event was emitted.
+	State   AlertState `json:"state"`
+	Summary string     `json:"summary"`
+
+	// UpdatedAt When the alert last changed, whether its value, text, or state.
+	//
+	// Examples: 2026-09-26T17:25:00Z
+	UpdatedAt Timestamp `json:"updated_at"`
+
+	// Value The series' latest value.
+	Value float64 `json:"value"`
+}
+
+// AlertAnnotations Text for the alerts a rule raises. `summary` is one line and
+// `description` the details. Both are Go templates (`text/template`)
+// rendered for each alert with `.Labels` (the series' labels plus the
+// rule's), `.Value` (the series' value), `.Threshold`, and `.Rule` (the
+// rule's name), and the functions `humanizePercentage` (a ratio as a
+// percentage) and `humanizeDuration` (seconds as days, hours, and
+// minutes).
+//
+// Examples: {"summary":"{{ .Labels.mountpoint }} is {{ humanizePercentage .Value }} full"}
+type AlertAnnotations map[string]string
+
+// AlertList defines model for AlertList.
+type AlertList struct {
+	Items []Alert `json:"items"`
+
+	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
+	NextCursor *NextCursor `json:"next_cursor"`
+}
+
+// AlertOperator Compares a series' value with the rule's threshold, as `value <operator> threshold`:
+// greater than (`gt`), greater than or equal (`gte`), less than
+// (`lt`), less than or equal (`lte`), equal (`eq`), or not equal
+// (`ne`).
+type AlertOperator string
+
+// AlertRule defines model for AlertRule.
+type AlertRule struct {
+	// Annotations Text for the alerts a rule raises. `summary` is one line and
+	// `description` the details. Both are Go templates (`text/template`)
+	// rendered for each alert with `.Labels` (the series' labels plus the
+	// rule's), `.Value` (the series' value), `.Threshold`, and `.Rule` (the
+	// rule's name), and the functions `humanizePercentage` (a ratio as a
+	// percentage) and `humanizeDuration` (seconds as days, hours, and
+	// minutes).
+	//
+	//
+	// Examples: {"summary":"{{ .Labels.mountpoint }} is {{ humanizePercentage .Value }} full"}
+	Annotations AlertAnnotations `json:"annotations"`
+
+	// Builtin True for the default rules, which are created when the control
+	// plane starts. They can be edited and disabled, but not deleted,
+	// and a restart never reverts an edit.
+	Builtin bool `json:"builtin"`
+
+	// ClientGroupID The client group a site rule is limited to, or null for every site.
+	ClientGroupID *ID `json:"client_group_id"`
+
+	// CreatedAt Examples: 2026-09-26T17:25:00Z
+	CreatedAt   Timestamp `json:"created_at"`
+	Description string    `json:"description"`
+	Enabled     bool      `json:"enabled"`
+
+	// Expr The PromQL expression VictoriaMetrics evaluates. Metrics follow
+	// the `pressfleet_` naming convention; series of a site carry the
+	// labels `site_id` and `client_group_id`.
+	//
+	//
+	// Examples: 1 - (pressfleet_host_filesystem_avail_bytes / pressfleet_host_filesystem_size_bytes)
+	Expr string `json:"expr"`
+
+	// ForSeconds How long the condition must hold before the alert fires. 0 fires at once.
+	//
+	// Examples: 600
+	ForSeconds int `json:"for_seconds"`
+
+	// ID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ID ID `json:"id"`
+
+	// Kind How the expression's result becomes a condition. `threshold`
+	// compares the value of every series with `operator` and `threshold`.
+	// `expression` treats every series the expression returns as true; the
+	// expression itself filters, as in `pressfleet_site_up == 0`.
+	Kind AlertRuleKind `json:"kind"`
+
+	// Labels Labels added to every alert the rule raises.
+	Labels map[string]string `json:"labels"`
+
+	// Name Examples: Disk nearly full
+	Name string `json:"name"`
+
+	// Operator Null for `expression` rules.
+	Operator *AlertOperator `json:"operator"`
+
+	// Scope What a rule watches. `site` rules raise one alert per site: every
+	// series the expression returns must carry a `site_id` label (series
+	// without one are ignored), and the rule can be limited to the sites of
+	// one client group. `platform` rules watch the host and the shared
+	// services; their series may or may not name a site.
+	Scope    AlertScope    `json:"scope"`
+	Severity AlertSeverity `json:"severity"`
+
+	// Threshold Null for `expression` rules.
+	//
+	// Examples: 0.9
+	Threshold *float64 `json:"threshold"`
+
+	// UpdatedAt Examples: 2026-09-26T17:25:00Z
+	UpdatedAt Timestamp `json:"updated_at"`
+}
+
+// AlertRuleCreate defines model for AlertRuleCreate.
+type AlertRuleCreate struct {
+	// Annotations Text for the alerts a rule raises. `summary` is one line and
+	// `description` the details. Both are Go templates (`text/template`)
+	// rendered for each alert with `.Labels` (the series' labels plus the
+	// rule's), `.Value` (the series' value), `.Threshold`, and `.Rule` (the
+	// rule's name), and the functions `humanizePercentage` (a ratio as a
+	// percentage) and `humanizeDuration` (seconds as days, hours, and
+	// minutes).
+	//
+	//
+	// Examples: {"summary":"{{ .Labels.mountpoint }} is {{ humanizePercentage .Value }} full"}
+	Annotations *AlertAnnotations `json:"annotations,omitempty"`
+
+	// ClientGroupID Limits a `site` rule to the sites of one client group.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ClientGroupID *ID     `json:"client_group_id,omitempty"`
+	Description   *string `json:"description,omitempty"`
+	Enabled       *bool   `json:"enabled,omitempty"`
+	Expr          string  `json:"expr"`
+	ForSeconds    *int    `json:"for_seconds,omitempty"`
+
+	// Kind How the expression's result becomes a condition. `threshold`
+	// compares the value of every series with `operator` and `threshold`.
+	// `expression` treats every series the expression returns as true; the
+	// expression itself filters, as in `pressfleet_site_up == 0`.
+	Kind AlertRuleKind `json:"kind"`
+
+	// Labels Labels to add to every alert. `site_id`, `client_group_id`,
+	// `alertname`, and `severity` are set by the platform and can't be
+	// used.
+	Labels *map[string]string `json:"labels,omitempty"`
+	Name   string             `json:"name"`
+
+	// Operator Compares a series' value with the rule's threshold, as `value <operator> threshold`:
+	// greater than (`gt`), greater than or equal (`gte`), less than
+	// (`lt`), less than or equal (`lte`), equal (`eq`), or not equal
+	// (`ne`).
+	Operator *AlertOperator `json:"operator,omitempty"`
+
+	// Scope What a rule watches. `site` rules raise one alert per site: every
+	// series the expression returns must carry a `site_id` label (series
+	// without one are ignored), and the rule can be limited to the sites of
+	// one client group. `platform` rules watch the host and the shared
+	// services; their series may or may not name a site.
+	Scope     AlertScope    `json:"scope"`
+	Severity  AlertSeverity `json:"severity"`
+	Threshold *float64      `json:"threshold,omitempty"`
+}
+
+// AlertRuleKind How the expression's result becomes a condition. `threshold`
+// compares the value of every series with `operator` and `threshold`.
+// `expression` treats every series the expression returns as true; the
+// expression itself filters, as in `pressfleet_site_up == 0`.
+type AlertRuleKind string
+
+// AlertRuleList defines model for AlertRuleList.
+type AlertRuleList struct {
+	Items []AlertRule `json:"items"`
+
+	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
+	NextCursor *NextCursor `json:"next_cursor"`
+}
+
+// AlertRuleUpdate Only the fields present are changed; `labels` and `annotations`
+// replace the whole object. The rule's scope, kind, and expression
+// must still make sense together.
+type AlertRuleUpdate struct {
+	// Annotations Text for the alerts a rule raises. `summary` is one line and
+	// `description` the details. Both are Go templates (`text/template`)
+	// rendered for each alert with `.Labels` (the series' labels plus the
+	// rule's), `.Value` (the series' value), `.Threshold`, and `.Rule` (the
+	// rule's name), and the functions `humanizePercentage` (a ratio as a
+	// percentage) and `humanizeDuration` (seconds as days, hours, and
+	// minutes).
+	//
+	//
+	// Examples: {"summary":"{{ .Labels.mountpoint }} is {{ humanizePercentage .Value }} full"}
+	Annotations *AlertAnnotations `json:"annotations,omitempty"`
+
+	// ClientGroupID The client group to limit a `site` rule to. An empty string removes the limit.
+	ClientGroupID *string `json:"client_group_id,omitempty"`
+	Description   *string `json:"description,omitempty"`
+	Expr          *string `json:"expr,omitempty"`
+	ForSeconds    *int    `json:"for_seconds,omitempty"`
+
+	// Kind How the expression's result becomes a condition. `threshold`
+	// compares the value of every series with `operator` and `threshold`.
+	// `expression` treats every series the expression returns as true; the
+	// expression itself filters, as in `pressfleet_site_up == 0`.
+	Kind   *AlertRuleKind     `json:"kind,omitempty"`
+	Labels *map[string]string `json:"labels,omitempty"`
+	Name   *string            `json:"name,omitempty"`
+
+	// Operator Compares a series' value with the rule's threshold, as `value <operator> threshold`:
+	// greater than (`gt`), greater than or equal (`gte`), less than
+	// (`lt`), less than or equal (`lte`), equal (`eq`), or not equal
+	// (`ne`).
+	Operator *AlertOperator `json:"operator,omitempty"`
+
+	// Scope What a rule watches. `site` rules raise one alert per site: every
+	// series the expression returns must carry a `site_id` label (series
+	// without one are ignored), and the rule can be limited to the sites of
+	// one client group. `platform` rules watch the host and the shared
+	// services; their series may or may not name a site.
+	Scope     *AlertScope    `json:"scope,omitempty"`
+	Severity  *AlertSeverity `json:"severity,omitempty"`
+	Threshold *float64       `json:"threshold,omitempty"`
+}
+
+// AlertScope What a rule watches. `site` rules raise one alert per site: every
+// series the expression returns must carry a `site_id` label (series
+// without one are ignored), and the rule can be limited to the sites of
+// one client group. `platform` rules watch the host and the shared
+// services; their series may or may not name a site.
+type AlertScope string
+
+// AlertSeverity defines model for AlertSeverity.
+type AlertSeverity string
+
+// AlertState `pending`: the condition holds but hasn't for the rule's duration
+// yet; nothing has been sent. `firing`: it has held for the duration
+// and still does; one firing event was emitted. `resolved`: it stopped
+// holding; one resolved event was emitted.
+type AlertState string
 
 // APIToken defines model for ApiToken.
 type APIToken struct {
@@ -2297,6 +2689,51 @@ type UnprocessableDomains = Problem
 // UnsupportedMediaType RFC 9457 Problem Details. Additional members may be added.
 type UnsupportedMediaType = Problem
 
+// ListAlertRulesParams defines parameters for ListAlertRules.
+type ListAlertRulesParams struct {
+	// Limit Maximum number of items to return.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Scope Only return rules with this scope.
+	Scope *AlertScope `form:"scope,omitempty" json:"scope,omitempty"`
+
+	// ClientGroupID Only return rules limited to this client group.
+	ClientGroupID *ID `form:"client_group_id,omitempty" json:"client_group_id,omitempty"`
+
+	// Enabled Only return rules that are enabled (`true`) or disabled (`false`).
+	Enabled *bool `form:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// ListAlertsParams defines parameters for ListAlerts.
+type ListAlertsParams struct {
+	// Limit Maximum number of items to return.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// State Only return alerts in this state.
+	State *AlertState `form:"state,omitempty" json:"state,omitempty"`
+
+	// RuleID Only return alerts of this rule.
+	RuleID *ID `form:"rule_id,omitempty" json:"rule_id,omitempty"`
+
+	// SiteID Only return alerts for this site.
+	SiteID *ID `form:"site_id,omitempty" json:"site_id,omitempty"`
+
+	// ClientGroupID Only return alerts for sites in this client group.
+	ClientGroupID *ID `form:"client_group_id,omitempty" json:"client_group_id,omitempty"`
+
+	// Since Only return alerts that started at or after this time.
+	Since *Timestamp `form:"since,omitempty" json:"since,omitempty"`
+
+	// Until Only return alerts that started before this time.
+	Until *Timestamp `form:"until,omitempty" json:"until,omitempty"`
+}
+
 // ListAuditEventsParams defines parameters for ListAuditEvents.
 type ListAuditEventsParams struct {
 	// Limit Maximum number of items to return.
@@ -2481,6 +2918,12 @@ type ListUserSSHKeysParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// CreateAlertRuleJSONRequestBody defines body for CreateAlertRule for application/json ContentType.
+type CreateAlertRuleJSONRequestBody = AlertRuleCreate
+
+// UpdateAlertRuleJSONRequestBody defines body for UpdateAlertRule for application/json ContentType.
+type UpdateAlertRuleJSONRequestBody = AlertRuleUpdate
+
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
 
@@ -2552,6 +2995,33 @@ type AddUserSSHKeyJSONRequestBody = SSHKeyCreate
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// ListAlertRules List alert rules
+	// (GET /api/v1/alert-rules)
+	ListAlertRules(w http.ResponseWriter, r *http.Request, params ListAlertRulesParams)
+	// CreateAlertRule Create an alert rule (Operator or Admin)
+	// (POST /api/v1/alert-rules)
+	CreateAlertRule(w http.ResponseWriter, r *http.Request)
+	// DeleteAlertRule Delete an alert rule (Operator or Admin)
+	// (DELETE /api/v1/alert-rules/{alert_rule_id})
+	DeleteAlertRule(w http.ResponseWriter, r *http.Request, alertRuleID ID)
+	// GetAlertRule Get an alert rule
+	// (GET /api/v1/alert-rules/{alert_rule_id})
+	GetAlertRule(w http.ResponseWriter, r *http.Request, alertRuleID ID)
+	// UpdateAlertRule Update an alert rule (Operator or Admin)
+	// (PATCH /api/v1/alert-rules/{alert_rule_id})
+	UpdateAlertRule(w http.ResponseWriter, r *http.Request, alertRuleID ID)
+	// DisableAlertRule Disable an alert rule (Operator or Admin)
+	// (POST /api/v1/alert-rules/{alert_rule_id}/disable)
+	DisableAlertRule(w http.ResponseWriter, r *http.Request, alertRuleID ID)
+	// EnableAlertRule Enable an alert rule (Operator or Admin)
+	// (POST /api/v1/alert-rules/{alert_rule_id}/enable)
+	EnableAlertRule(w http.ResponseWriter, r *http.Request, alertRuleID ID)
+	// ListAlerts List alerts
+	// (GET /api/v1/alerts)
+	ListAlerts(w http.ResponseWriter, r *http.Request, params ListAlertsParams)
+	// GetAlert Get an alert
+	// (GET /api/v1/alerts/{alert_id})
+	GetAlert(w http.ResponseWriter, r *http.Request, alertID ID)
 	// ListAuditEvents List audit events (Admin only)
 	// (GET /api/v1/audit-events)
 	ListAuditEvents(w http.ResponseWriter, r *http.Request, params ListAuditEventsParams)
@@ -2772,6 +3242,385 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// ListAlertRules operation middleware
+func (siw *ServerInterfaceWrapper) ListAlertRules(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAlertRulesParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "scope" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "scope", r.URL.Query(), &params.Scope, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "scope"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "scope", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "client_group_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "client_group_id", r.URL.Query(), &params.ClientGroupID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "client_group_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "client_group_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "enabled" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "enabled", r.URL.Query(), &params.Enabled, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "enabled"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "enabled", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAlertRules(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateAlertRule operation middleware
+func (siw *ServerInterfaceWrapper) CreateAlertRule(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateAlertRule(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteAlertRule operation middleware
+func (siw *ServerInterfaceWrapper) DeleteAlertRule(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "alert_rule_id" -------------
+	var alertRuleID ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "alert_rule_id", r.PathValue("alert_rule_id"), &alertRuleID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "alert_rule_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteAlertRule(w, r, alertRuleID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAlertRule operation middleware
+func (siw *ServerInterfaceWrapper) GetAlertRule(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "alert_rule_id" -------------
+	var alertRuleID ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "alert_rule_id", r.PathValue("alert_rule_id"), &alertRuleID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "alert_rule_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAlertRule(w, r, alertRuleID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateAlertRule operation middleware
+func (siw *ServerInterfaceWrapper) UpdateAlertRule(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "alert_rule_id" -------------
+	var alertRuleID ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "alert_rule_id", r.PathValue("alert_rule_id"), &alertRuleID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "alert_rule_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateAlertRule(w, r, alertRuleID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DisableAlertRule operation middleware
+func (siw *ServerInterfaceWrapper) DisableAlertRule(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "alert_rule_id" -------------
+	var alertRuleID ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "alert_rule_id", r.PathValue("alert_rule_id"), &alertRuleID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "alert_rule_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DisableAlertRule(w, r, alertRuleID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// EnableAlertRule operation middleware
+func (siw *ServerInterfaceWrapper) EnableAlertRule(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "alert_rule_id" -------------
+	var alertRuleID ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "alert_rule_id", r.PathValue("alert_rule_id"), &alertRuleID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "alert_rule_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.EnableAlertRule(w, r, alertRuleID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAlerts operation middleware
+func (siw *ServerInterfaceWrapper) ListAlerts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAlertsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "state" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "state", r.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "state"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "state", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "rule_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "rule_id", r.URL.Query(), &params.RuleID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "rule_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "rule_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "site_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "site_id", r.URL.Query(), &params.SiteID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "site_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "client_group_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "client_group_id", r.URL.Query(), &params.ClientGroupID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "client_group_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "client_group_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "since" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "since", r.URL.Query(), &params.Since, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "since"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "since", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "until" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "until", r.URL.Query(), &params.Until, runtime.BindQueryParameterOptions{Type: "string", Format: "date-time"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "until"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "until", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAlerts(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAlert operation middleware
+func (siw *ServerInterfaceWrapper) GetAlert(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "alert_id" -------------
+	var alertID ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "alert_id", r.PathValue("alert_id"), &alertID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "alert_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAlert(w, r, alertID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // ListAuditEvents operation middleware
 func (siw *ServerInterfaceWrapper) ListAuditEvents(w http.ResponseWriter, r *http.Request) {
@@ -5188,6 +6037,15 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs", wrapper.ListJobs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs/{job_id}", wrapper.GetJob)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit-events", wrapper.ListAuditEvents)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/alert-rules", wrapper.ListAlertRules)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/alert-rules", wrapper.CreateAlertRule)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/alert-rules/{alert_rule_id}", wrapper.DeleteAlertRule)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/alert-rules/{alert_rule_id}", wrapper.GetAlertRule)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/v1/alert-rules/{alert_rule_id}", wrapper.UpdateAlertRule)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/alert-rules/{alert_rule_id}/enable", wrapper.EnableAlertRule)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/alert-rules/{alert_rule_id}/disable", wrapper.DisableAlertRule)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/alerts", wrapper.ListAlerts)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/alerts/{alert_id}", wrapper.GetAlert)
 
 	return m
 }
@@ -5222,6 +6080,890 @@ type UnprocessableContentApplicationProblemPlusJSONResponse Problem
 type UnprocessableDomainsApplicationProblemPlusJSONResponse Problem
 
 type UnsupportedMediaTypeApplicationProblemPlusJSONResponse Problem
+
+type ListAlertRulesRequestObject struct {
+	Params ListAlertRulesParams
+}
+
+type ListAlertRulesResponseObject interface {
+	VisitListAlertRulesResponse(w http.ResponseWriter) error
+}
+
+type ListAlertRules200JSONResponse AlertRuleList
+
+func (response ListAlertRules200JSONResponse) VisitListAlertRulesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAlertRules400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response ListAlertRules400ApplicationProblemPlusJSONResponse) VisitListAlertRulesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAlertRules401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ListAlertRules401ApplicationProblemPlusJSONResponse) VisitListAlertRulesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAlertRules403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ListAlertRules403ApplicationProblemPlusJSONResponse) VisitListAlertRulesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAlertRulesdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ListAlertRulesdefaultApplicationProblemPlusJSONResponse) VisitListAlertRulesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAlertRuleRequestObject struct {
+	Body *CreateAlertRuleJSONRequestBody
+}
+
+type CreateAlertRuleResponseObject interface {
+	VisitCreateAlertRuleResponse(w http.ResponseWriter) error
+}
+
+type CreateAlertRule201ResponseHeaders struct {
+	Location *string
+}
+
+type CreateAlertRule201JSONResponse struct {
+	Body    AlertRule
+	Headers CreateAlertRule201ResponseHeaders
+}
+
+func (response CreateAlertRule201JSONResponse) VisitCreateAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAlertRule400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response CreateAlertRule400ApplicationProblemPlusJSONResponse) VisitCreateAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAlertRule401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response CreateAlertRule401ApplicationProblemPlusJSONResponse) VisitCreateAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAlertRule403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response CreateAlertRule403ApplicationProblemPlusJSONResponse) VisitCreateAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAlertRule409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response CreateAlertRule409ApplicationProblemPlusJSONResponse) VisitCreateAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAlertRule422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response CreateAlertRule422ApplicationProblemPlusJSONResponse) VisitCreateAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAlertRuledefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response CreateAlertRuledefaultApplicationProblemPlusJSONResponse) VisitCreateAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAlertRuleRequestObject struct {
+	AlertRuleID ID `json:"alert_rule_id"`
+}
+
+type DeleteAlertRuleResponseObject interface {
+	VisitDeleteAlertRuleResponse(w http.ResponseWriter) error
+}
+
+type DeleteAlertRule204Response struct {
+}
+
+func (response DeleteAlertRule204Response) VisitDeleteAlertRuleResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteAlertRule401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteAlertRule401ApplicationProblemPlusJSONResponse) VisitDeleteAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAlertRule403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteAlertRule403ApplicationProblemPlusJSONResponse) VisitDeleteAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAlertRule404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteAlertRule404ApplicationProblemPlusJSONResponse) VisitDeleteAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAlertRule409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteAlertRule409ApplicationProblemPlusJSONResponse) VisitDeleteAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAlertRuledefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response DeleteAlertRuledefaultApplicationProblemPlusJSONResponse) VisitDeleteAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAlertRuleRequestObject struct {
+	AlertRuleID ID `json:"alert_rule_id"`
+}
+
+type GetAlertRuleResponseObject interface {
+	VisitGetAlertRuleResponse(w http.ResponseWriter) error
+}
+
+type GetAlertRule200JSONResponse AlertRule
+
+func (response GetAlertRule200JSONResponse) VisitGetAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAlertRule401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetAlertRule401ApplicationProblemPlusJSONResponse) VisitGetAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAlertRule403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetAlertRule403ApplicationProblemPlusJSONResponse) VisitGetAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAlertRule404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response GetAlertRule404ApplicationProblemPlusJSONResponse) VisitGetAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAlertRuledefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetAlertRuledefaultApplicationProblemPlusJSONResponse) VisitGetAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAlertRuleRequestObject struct {
+	AlertRuleID ID `json:"alert_rule_id"`
+	Body        *UpdateAlertRuleJSONRequestBody
+}
+
+type UpdateAlertRuleResponseObject interface {
+	VisitUpdateAlertRuleResponse(w http.ResponseWriter) error
+}
+
+type UpdateAlertRule200JSONResponse AlertRule
+
+func (response UpdateAlertRule200JSONResponse) VisitUpdateAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAlertRule400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateAlertRule400ApplicationProblemPlusJSONResponse) VisitUpdateAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAlertRule401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateAlertRule401ApplicationProblemPlusJSONResponse) VisitUpdateAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAlertRule403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateAlertRule403ApplicationProblemPlusJSONResponse) VisitUpdateAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAlertRule404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateAlertRule404ApplicationProblemPlusJSONResponse) VisitUpdateAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAlertRule409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateAlertRule409ApplicationProblemPlusJSONResponse) VisitUpdateAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAlertRule422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateAlertRule422ApplicationProblemPlusJSONResponse) VisitUpdateAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAlertRuledefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response UpdateAlertRuledefaultApplicationProblemPlusJSONResponse) VisitUpdateAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DisableAlertRuleRequestObject struct {
+	AlertRuleID ID `json:"alert_rule_id"`
+}
+
+type DisableAlertRuleResponseObject interface {
+	VisitDisableAlertRuleResponse(w http.ResponseWriter) error
+}
+
+type DisableAlertRule200JSONResponse AlertRule
+
+func (response DisableAlertRule200JSONResponse) VisitDisableAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DisableAlertRule401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response DisableAlertRule401ApplicationProblemPlusJSONResponse) VisitDisableAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DisableAlertRule403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response DisableAlertRule403ApplicationProblemPlusJSONResponse) VisitDisableAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DisableAlertRule404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response DisableAlertRule404ApplicationProblemPlusJSONResponse) VisitDisableAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DisableAlertRuledefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response DisableAlertRuledefaultApplicationProblemPlusJSONResponse) VisitDisableAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EnableAlertRuleRequestObject struct {
+	AlertRuleID ID `json:"alert_rule_id"`
+}
+
+type EnableAlertRuleResponseObject interface {
+	VisitEnableAlertRuleResponse(w http.ResponseWriter) error
+}
+
+type EnableAlertRule200JSONResponse AlertRule
+
+func (response EnableAlertRule200JSONResponse) VisitEnableAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EnableAlertRule401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response EnableAlertRule401ApplicationProblemPlusJSONResponse) VisitEnableAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EnableAlertRule403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response EnableAlertRule403ApplicationProblemPlusJSONResponse) VisitEnableAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EnableAlertRule404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response EnableAlertRule404ApplicationProblemPlusJSONResponse) VisitEnableAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EnableAlertRuledefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response EnableAlertRuledefaultApplicationProblemPlusJSONResponse) VisitEnableAlertRuleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAlertsRequestObject struct {
+	Params ListAlertsParams
+}
+
+type ListAlertsResponseObject interface {
+	VisitListAlertsResponse(w http.ResponseWriter) error
+}
+
+type ListAlerts200JSONResponse AlertList
+
+func (response ListAlerts200JSONResponse) VisitListAlertsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAlerts400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response ListAlerts400ApplicationProblemPlusJSONResponse) VisitListAlertsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAlerts401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ListAlerts401ApplicationProblemPlusJSONResponse) VisitListAlertsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAlerts403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ListAlerts403ApplicationProblemPlusJSONResponse) VisitListAlertsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAlertsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ListAlertsdefaultApplicationProblemPlusJSONResponse) VisitListAlertsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAlertRequestObject struct {
+	AlertID ID `json:"alert_id"`
+}
+
+type GetAlertResponseObject interface {
+	VisitGetAlertResponse(w http.ResponseWriter) error
+}
+
+type GetAlert200JSONResponse Alert
+
+func (response GetAlert200JSONResponse) VisitGetAlertResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAlert401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetAlert401ApplicationProblemPlusJSONResponse) VisitGetAlertResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAlert403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetAlert403ApplicationProblemPlusJSONResponse) VisitGetAlertResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAlert404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response GetAlert404ApplicationProblemPlusJSONResponse) VisitGetAlertResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAlertdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetAlertdefaultApplicationProblemPlusJSONResponse) VisitGetAlertResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
 
 type ListAuditEventsRequestObject struct {
 	Params ListAuditEventsParams
@@ -12606,6 +14348,33 @@ func (response GetReadiness503JSONResponse) VisitGetReadinessResponse(w http.Res
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// ListAlertRules List alert rules
+	// (GET /api/v1/alert-rules)
+	ListAlertRules(ctx context.Context, request ListAlertRulesRequestObject) (ListAlertRulesResponseObject, error)
+	// CreateAlertRule Create an alert rule (Operator or Admin)
+	// (POST /api/v1/alert-rules)
+	CreateAlertRule(ctx context.Context, request CreateAlertRuleRequestObject) (CreateAlertRuleResponseObject, error)
+	// DeleteAlertRule Delete an alert rule (Operator or Admin)
+	// (DELETE /api/v1/alert-rules/{alert_rule_id})
+	DeleteAlertRule(ctx context.Context, request DeleteAlertRuleRequestObject) (DeleteAlertRuleResponseObject, error)
+	// GetAlertRule Get an alert rule
+	// (GET /api/v1/alert-rules/{alert_rule_id})
+	GetAlertRule(ctx context.Context, request GetAlertRuleRequestObject) (GetAlertRuleResponseObject, error)
+	// UpdateAlertRule Update an alert rule (Operator or Admin)
+	// (PATCH /api/v1/alert-rules/{alert_rule_id})
+	UpdateAlertRule(ctx context.Context, request UpdateAlertRuleRequestObject) (UpdateAlertRuleResponseObject, error)
+	// DisableAlertRule Disable an alert rule (Operator or Admin)
+	// (POST /api/v1/alert-rules/{alert_rule_id}/disable)
+	DisableAlertRule(ctx context.Context, request DisableAlertRuleRequestObject) (DisableAlertRuleResponseObject, error)
+	// EnableAlertRule Enable an alert rule (Operator or Admin)
+	// (POST /api/v1/alert-rules/{alert_rule_id}/enable)
+	EnableAlertRule(ctx context.Context, request EnableAlertRuleRequestObject) (EnableAlertRuleResponseObject, error)
+	// ListAlerts List alerts
+	// (GET /api/v1/alerts)
+	ListAlerts(ctx context.Context, request ListAlertsRequestObject) (ListAlertsResponseObject, error)
+	// GetAlert Get an alert
+	// (GET /api/v1/alerts/{alert_id})
+	GetAlert(ctx context.Context, request GetAlertRequestObject) (GetAlertResponseObject, error)
 	// ListAuditEvents List audit events (Admin only)
 	// (GET /api/v1/audit-events)
 	ListAuditEvents(ctx context.Context, request ListAuditEventsRequestObject) (ListAuditEventsResponseObject, error)
@@ -12855,6 +14624,252 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// ListAlertRules operation middleware
+func (sh *strictHandler) ListAlertRules(w http.ResponseWriter, r *http.Request, params ListAlertRulesParams) {
+	var request ListAlertRulesRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListAlertRules(ctx, request.(ListAlertRulesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListAlertRules")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListAlertRulesResponseObject); ok {
+		if err := validResponse.VisitListAlertRulesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateAlertRule operation middleware
+func (sh *strictHandler) CreateAlertRule(w http.ResponseWriter, r *http.Request) {
+	var request CreateAlertRuleRequestObject
+
+	var body CreateAlertRuleJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateAlertRule(ctx, request.(CreateAlertRuleRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateAlertRule")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateAlertRuleResponseObject); ok {
+		if err := validResponse.VisitCreateAlertRuleResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteAlertRule operation middleware
+func (sh *strictHandler) DeleteAlertRule(w http.ResponseWriter, r *http.Request, alertRuleID ID) {
+	var request DeleteAlertRuleRequestObject
+
+	request.AlertRuleID = alertRuleID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteAlertRule(ctx, request.(DeleteAlertRuleRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteAlertRule")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteAlertRuleResponseObject); ok {
+		if err := validResponse.VisitDeleteAlertRuleResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAlertRule operation middleware
+func (sh *strictHandler) GetAlertRule(w http.ResponseWriter, r *http.Request, alertRuleID ID) {
+	var request GetAlertRuleRequestObject
+
+	request.AlertRuleID = alertRuleID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAlertRule(ctx, request.(GetAlertRuleRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAlertRule")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAlertRuleResponseObject); ok {
+		if err := validResponse.VisitGetAlertRuleResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateAlertRule operation middleware
+func (sh *strictHandler) UpdateAlertRule(w http.ResponseWriter, r *http.Request, alertRuleID ID) {
+	var request UpdateAlertRuleRequestObject
+
+	request.AlertRuleID = alertRuleID
+
+	var body UpdateAlertRuleJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateAlertRule(ctx, request.(UpdateAlertRuleRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateAlertRule")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateAlertRuleResponseObject); ok {
+		if err := validResponse.VisitUpdateAlertRuleResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DisableAlertRule operation middleware
+func (sh *strictHandler) DisableAlertRule(w http.ResponseWriter, r *http.Request, alertRuleID ID) {
+	var request DisableAlertRuleRequestObject
+
+	request.AlertRuleID = alertRuleID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DisableAlertRule(ctx, request.(DisableAlertRuleRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DisableAlertRule")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DisableAlertRuleResponseObject); ok {
+		if err := validResponse.VisitDisableAlertRuleResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// EnableAlertRule operation middleware
+func (sh *strictHandler) EnableAlertRule(w http.ResponseWriter, r *http.Request, alertRuleID ID) {
+	var request EnableAlertRuleRequestObject
+
+	request.AlertRuleID = alertRuleID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.EnableAlertRule(ctx, request.(EnableAlertRuleRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "EnableAlertRule")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(EnableAlertRuleResponseObject); ok {
+		if err := validResponse.VisitEnableAlertRuleResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListAlerts operation middleware
+func (sh *strictHandler) ListAlerts(w http.ResponseWriter, r *http.Request, params ListAlertsParams) {
+	var request ListAlertsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListAlerts(ctx, request.(ListAlertsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListAlerts")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListAlertsResponseObject); ok {
+		if err := validResponse.VisitListAlertsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAlert operation middleware
+func (sh *strictHandler) GetAlert(w http.ResponseWriter, r *http.Request, alertID ID) {
+	var request GetAlertRequestObject
+
+	request.AlertID = alertID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAlert(ctx, request.(GetAlertRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAlert")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAlertResponseObject); ok {
+		if err := validResponse.VisitGetAlertResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // ListAuditEvents operation middleware

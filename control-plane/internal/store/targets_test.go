@@ -35,9 +35,31 @@ func TestTargetClientGroup(t *testing.T) {
 			}
 		}
 
+		rules := store.NewAlertRules(db)
+		limited := store.AlertRule{Name: "Limited", Scope: store.AlertScopeSite, Kind: store.AlertKindExpression, Expr: "x", Severity: store.SeverityInfo, ClientGroupID: group.ID}
+		global := store.AlertRule{Name: "Global", Scope: store.AlertScopeSite, Kind: store.AlertKindExpression, Expr: "x", Severity: store.SeverityInfo}
+		for _, r := range []*store.AlertRule{&limited, &global} {
+			if err := rules.Create(ctx, r); err != nil {
+				t.Fatal(err)
+			}
+		}
+		inGroup := store.Alert{RuleID: global.ID, Fingerprint: "a", State: store.AlertPending, StartedAt: now, ClientGroupID: group.ID}
+		noGroup := store.Alert{RuleID: global.ID, Fingerprint: "b", State: store.AlertPending, StartedAt: now}
+		for _, a := range []*store.Alert{&inGroup, &noGroup} {
+			if err := store.NewAlerts(db).Insert(ctx, a); err != nil {
+				t.Fatal(err)
+			}
+		}
+
 		tests := []struct {
 			typ, id, want string
 		}{
+			{"alert_rule", limited.ID, group.ID},
+			{"alert_rule", global.ID, ""},
+			{"alert_rule", id.New(), ""},
+			{"alert", inGroup.ID, group.ID},
+			{"alert", noGroup.ID, ""},
+			{"alert", id.New(), ""},
 			{"client_group", group.ID, group.ID},
 			{"site", site, group.ID},
 			{"site", id.New(), ""},

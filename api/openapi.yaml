@@ -113,6 +113,11 @@ tags:
     description: A site's runtime logs (nginx access and error, PHP-FPM slow log, PHP output) and the log lines of its jobs.
   - name: audit
     description: The audit log (Admin only).
+  - name: alerts
+    description: |
+      Alert rules, evaluated against the metrics in VictoriaMetrics, and the
+      alerts they raise (design doc §7.3). Every role can read; Operators and
+      Admins manage rules.
 
 paths:
   /healthz:
@@ -2750,6 +2755,315 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  # ---- alerts (#75) -------------------------------------------------------
+
+  /api/v1/alert-rules:
+    get:
+      operationId: listAlertRules
+      tags: [alerts]
+      summary: List alert rules
+      description: Ordered by name.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: scope
+          in: query
+          description: Only return rules with this scope.
+          schema:
+            $ref: "#/components/schemas/AlertScope"
+        - name: client_group_id
+          in: query
+          description: Only return rules limited to this client group.
+          schema:
+            $ref: "#/components/schemas/ID"
+        - name: enabled
+          in: query
+          description: Only return rules that are enabled (`true`) or disabled (`false`).
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: A page of alert rules.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertRuleList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createAlertRule
+      tags: [alerts]
+      summary: Create an alert rule (Operator or Admin)
+      description: |
+        The expression's brackets and quotes are checked, but its PromQL is
+        only checked when VictoriaMetrics evaluates it. A `threshold` rule
+        needs an `operator` and a `threshold`; an `expression` rule ignores
+        both.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertRuleCreate"
+      responses:
+        "201":
+          description: Alert rule created.
+          headers:
+            Location:
+              $ref: "#/components/headers/Location"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertRule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/alert-rules/{alert_rule_id}:
+    parameters:
+      - name: alert_rule_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getAlertRule
+      tags: [alerts]
+      summary: Get an alert rule
+      responses:
+        "200":
+          description: The alert rule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertRule"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateAlertRule
+      tags: [alerts]
+      summary: Update an alert rule (Operator or Admin)
+      description: |
+        Built-in rules can be edited too, for example to change a threshold.
+        Alerts that are firing follow the edit at the next evaluation: they
+        resolve if the new condition no longer holds. Use the `enable` and
+        `disable` operations to turn a rule on or off.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertRuleUpdate"
+      responses:
+        "200":
+          description: The updated alert rule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertRule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteAlertRule
+      tags: [alerts]
+      summary: Delete an alert rule (Operator or Admin)
+      description: |
+        Deletes the rule and the alerts it raised. Built-in rules can't be
+        deleted (`409`); disable them instead.
+      responses:
+        "204":
+          description: Alert rule deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/alert-rules/{alert_rule_id}/enable:
+    parameters:
+      - name: alert_rule_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: enableAlertRule
+      tags: [alerts]
+      summary: Enable an alert rule (Operator or Admin)
+      description: Enabling a rule that is already enabled changes nothing.
+      responses:
+        "200":
+          description: The enabled alert rule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertRule"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/alert-rules/{alert_rule_id}/disable:
+    parameters:
+      - name: alert_rule_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: disableAlertRule
+      tags: [alerts]
+      summary: Disable an alert rule (Operator or Admin)
+      description: |
+        A disabled rule isn't evaluated. Its firing alerts resolve at the
+        next evaluation, and their resolved events are sent. Idempotent.
+      responses:
+        "200":
+          description: The disabled alert rule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertRule"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/alerts:
+    get:
+      operationId: listAlerts
+      tags: [alerts]
+      summary: List alerts
+      description: |
+        Newest first. An alert is one incident of one rule for one series,
+        for example one site being down; it is `firing` until its condition
+        stops, then `resolved`. Resolved alerts are kept for 90 days.
+        Alerts that are still `pending` are included, so a dashboard can
+        show what is about to fire.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: state
+          in: query
+          description: Only return alerts in this state.
+          schema:
+            $ref: "#/components/schemas/AlertState"
+        - name: rule_id
+          in: query
+          description: Only return alerts of this rule.
+          schema:
+            $ref: "#/components/schemas/ID"
+        - name: site_id
+          in: query
+          description: Only return alerts for this site.
+          schema:
+            $ref: "#/components/schemas/ID"
+        - name: client_group_id
+          in: query
+          description: Only return alerts for sites in this client group.
+          schema:
+            $ref: "#/components/schemas/ID"
+        - name: since
+          in: query
+          description: Only return alerts that started at or after this time.
+          schema:
+            $ref: "#/components/schemas/Timestamp"
+        - name: until
+          in: query
+          description: Only return alerts that started before this time.
+          schema:
+            $ref: "#/components/schemas/Timestamp"
+      responses:
+        "200":
+          description: A page of alerts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/alerts/{alert_id}:
+    parameters:
+      - name: alert_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getAlert
+      tags: [alerts]
+      summary: Get an alert
+      responses:
+        "200":
+          description: The alert.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alert"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  # ---- end of alerts ------------------------------------------------------
+
 components:
   securitySchemes:
     sessionCookie:
@@ -4738,3 +5052,337 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/DatabaseSession"
+
+    # ---- alerts (#75) -----------------------------------------------------
+
+    AlertScope:
+      type: string
+      description: |
+        What a rule watches. `site` rules raise one alert per site: every
+        series the expression returns must carry a `site_id` label (series
+        without one are ignored), and the rule can be limited to the sites of
+        one client group. `platform` rules watch the host and the shared
+        services; their series may or may not name a site.
+      enum: [platform, site]
+
+    AlertRuleKind:
+      type: string
+      description: |
+        How the expression's result becomes a condition. `threshold`
+        compares the value of every series with `operator` and `threshold`.
+        `expression` treats every series the expression returns as true; the
+        expression itself filters, as in `pressfleet_site_up == 0`.
+      enum: [threshold, expression]
+
+    AlertOperator:
+      type: string
+      description: |
+        Compares a series' value with the rule's threshold, as `value <operator> threshold`:
+        greater than (`gt`), greater than or equal (`gte`), less than
+        (`lt`), less than or equal (`lte`), equal (`eq`), or not equal
+        (`ne`).
+      enum: [gt, gte, lt, lte, eq, ne]
+
+    AlertSeverity:
+      type: string
+      enum: [info, warning, critical]
+
+    AlertState:
+      type: string
+      description: |
+        `pending`: the condition holds but hasn't for the rule's duration
+        yet; nothing has been sent. `firing`: it has held for the duration
+        and still does; one firing event was emitted. `resolved`: it stopped
+        holding; one resolved event was emitted.
+      enum: [pending, firing, resolved]
+
+    AlertRule:
+      type: object
+      required:
+        - id
+        - name
+        - description
+        - scope
+        - client_group_id
+        - kind
+        - expr
+        - operator
+        - threshold
+        - for_seconds
+        - severity
+        - enabled
+        - labels
+        - annotations
+        - builtin
+        - created_at
+        - updated_at
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        name:
+          type: string
+          examples: ["Disk nearly full"]
+        description:
+          type: string
+        scope:
+          $ref: "#/components/schemas/AlertScope"
+        client_group_id:
+          description: The client group a site rule is limited to, or null for every site.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        kind:
+          $ref: "#/components/schemas/AlertRuleKind"
+        expr:
+          type: string
+          description: |
+            The PromQL expression VictoriaMetrics evaluates. Metrics follow
+            the `pressfleet_` naming convention; series of a site carry the
+            labels `site_id` and `client_group_id`.
+          examples: ["1 - (pressfleet_host_filesystem_avail_bytes / pressfleet_host_filesystem_size_bytes)"]
+        operator:
+          description: Null for `expression` rules.
+          oneOf:
+            - $ref: "#/components/schemas/AlertOperator"
+            - type: "null"
+        threshold:
+          description: Null for `expression` rules.
+          oneOf:
+            - type: number
+              format: double
+            - type: "null"
+          examples: [0.9]
+        for_seconds:
+          type: integer
+          description: How long the condition must hold before the alert fires. 0 fires at once.
+          examples: [600]
+        severity:
+          $ref: "#/components/schemas/AlertSeverity"
+        enabled:
+          type: boolean
+        labels:
+          type: object
+          description: Labels added to every alert the rule raises.
+          additionalProperties:
+            type: string
+        annotations:
+          $ref: "#/components/schemas/AlertAnnotations"
+        builtin:
+          type: boolean
+          description: |
+            True for the default rules, which are created when the control
+            plane starts. They can be edited and disabled, but not deleted,
+            and a restart never reverts an edit.
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    AlertAnnotations:
+      type: object
+      description: |
+        Text for the alerts a rule raises. `summary` is one line and
+        `description` the details. Both are Go templates (`text/template`)
+        rendered for each alert with `.Labels` (the series' labels plus the
+        rule's), `.Value` (the series' value), `.Threshold`, and `.Rule` (the
+        rule's name), and the functions `humanizePercentage` (a ratio as a
+        percentage) and `humanizeDuration` (seconds as days, hours, and
+        minutes).
+      additionalProperties:
+        type: string
+        maxLength: 1000
+      examples:
+        - summary: "{{ .Labels.mountpoint }} is {{ humanizePercentage .Value }} full"
+
+    AlertRuleCreate:
+      type: object
+      required: [name, scope, kind, expr, severity]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 1000
+        scope:
+          $ref: "#/components/schemas/AlertScope"
+        client_group_id:
+          description: Limits a `site` rule to the sites of one client group.
+          $ref: "#/components/schemas/ID"
+        kind:
+          $ref: "#/components/schemas/AlertRuleKind"
+        expr:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        operator:
+          $ref: "#/components/schemas/AlertOperator"
+        threshold:
+          type: number
+          format: double
+        for_seconds:
+          type: integer
+          minimum: 0
+          maximum: 604800
+          default: 0
+        severity:
+          $ref: "#/components/schemas/AlertSeverity"
+        enabled:
+          type: boolean
+          default: true
+        labels:
+          type: object
+          description: |
+            Labels to add to every alert. `site_id`, `client_group_id`,
+            `alertname`, and `severity` are set by the platform and can't be
+            used.
+          additionalProperties:
+            type: string
+            maxLength: 200
+        annotations:
+          $ref: "#/components/schemas/AlertAnnotations"
+
+    AlertRuleUpdate:
+      type: object
+      description: |
+        Only the fields present are changed; `labels` and `annotations`
+        replace the whole object. The rule's scope, kind, and expression
+        must still make sense together.
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 1000
+        scope:
+          $ref: "#/components/schemas/AlertScope"
+        client_group_id:
+          type: string
+          maxLength: 64
+          description: The client group to limit a `site` rule to. An empty string removes the limit.
+        kind:
+          $ref: "#/components/schemas/AlertRuleKind"
+        expr:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        operator:
+          $ref: "#/components/schemas/AlertOperator"
+        threshold:
+          type: number
+          format: double
+        for_seconds:
+          type: integer
+          minimum: 0
+          maximum: 604800
+        severity:
+          $ref: "#/components/schemas/AlertSeverity"
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+            maxLength: 200
+        annotations:
+          $ref: "#/components/schemas/AlertAnnotations"
+
+    AlertRuleList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AlertRule"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+
+    Alert:
+      type: object
+      description: |
+        One incident of one rule for one series. A condition that keeps
+        holding updates its alert rather than creating another, and each
+        alert emits one firing event and, once it stops, one resolved event.
+      required:
+        - id
+        - rule_id
+        - rule_name
+        - state
+        - severity
+        - labels
+        - site_id
+        - client_group_id
+        - summary
+        - description
+        - value
+        - started_at
+        - fired_at
+        - resolved_at
+        - updated_at
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        rule_id:
+          $ref: "#/components/schemas/ID"
+        rule_name:
+          type: string
+        state:
+          $ref: "#/components/schemas/AlertState"
+        severity:
+          $ref: "#/components/schemas/AlertSeverity"
+        labels:
+          type: object
+          description: The series' labels plus the rule's.
+          additionalProperties:
+            type: string
+          examples: [{site_id: "01J9ZQ3V6T8K4M2N5P7R9S1X3Y", client_group_id: "01J9ZQ3V6T8K4M2N5P7R9S1X4Z"}]
+        site_id:
+          description: The site the alert is about, or null.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        client_group_id:
+          description: The client group of that site, or null.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        summary:
+          type: string
+        description:
+          type: string
+        value:
+          type: number
+          format: double
+          description: The series' latest value.
+        started_at:
+          description: When the condition first held.
+          $ref: "#/components/schemas/Timestamp"
+        fired_at:
+          description: When the alert started firing. Null while pending.
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        resolved_at:
+          description: When the alert resolved. Null until then.
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        updated_at:
+          description: When the alert last changed, whether its value, text, or state.
+          $ref: "#/components/schemas/Timestamp"
+
+    AlertList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Alert"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"

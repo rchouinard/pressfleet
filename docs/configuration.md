@@ -104,6 +104,9 @@ backup:
 uploads:                         # see "Uploads"
   max_size_mb: 10240
   expiry_hours: 24
+alerts:                          # see "Alerts"
+  enabled: true
+  evaluation_interval_seconds: 30
 database_export:
   ttl_seconds: 3600              # see "Database exports"
 ```
@@ -170,6 +173,8 @@ database_export:
 | `backup.check.read_data_percent` | `PRESSFLEET_BACKUP_CHECK_READ_DATA_PERCENT` | | `10` | Share of a repository's data, from 0 to 100, that each check downloads and verifies, chosen at random each time. `0` checks only the repository's structure. On S3, each check downloads this share of the repository. |
 | `uploads.max_size_mb` | `PRESSFLEET_UPLOADS_MAX_SIZE_MB` | | `10240` | Largest file, in MiB, that can be sent through the upload API for a site import or a code deployment, from 1 to 1048576. Uploads are stored under `<data_dir>/uploads/`, so leave room there. See [Uploads](#uploads). |
 | `uploads.expiry_hours` | `PRESSFLEET_UPLOADS_EXPIRY_HOURS` | | `24` | How long an upload that no import or deployment has taken may go without a new chunk before it is removed as abandoned, from 1 to 720. |
+| `alerts.enabled` | `PRESSFLEET_ALERTS_ENABLED` | | `true` | Whether the control plane evaluates alert rules. The rules and alerts API works either way; with `false`, nothing fires. See [Alerts](#alerts). |
+| `alerts.evaluation_interval_seconds` | `PRESSFLEET_ALERTS_EVALUATION_INTERVAL_SECONDS` | | `30` | Seconds between evaluations of every alert rule, from 5 to 900. |
 | `database_export.ttl_seconds` | `PRESSFLEET_DATABASE_EXPORT_TTL_SECONDS` | | `3600` | How long a database export can be downloaded once it is ready, from 10 seconds to a day (86400); then its file is deleted. See [Database exports](#database-exports). |
 | `sftp.port` | `PRESSFLEET_SFTP_PORT` | | `2222` | Host port of the SFTP gateway, which `pressfleet init` publishes and `pressfleet doctor` checks is free. Not 80 or 443. See [SFTP gateway](#sftp-gateway). |
 | `sftp.listen` | `PRESSFLEET_SFTP_LISTEN` | | `:2222` | The gateway's listen address inside the control plane container. Empty turns the gateway off. |
@@ -343,6 +348,31 @@ Some events carry `details`, such as the SFTP gateway's sessions (see below).
 ## Metrics storage
 
 Metrics are stored in a single-node VictoriaMetrics service of the platform project, limited to 256 MiB of memory, with its data on the `victoria-metrics-data` volume. It is reachable only on the platform network, as `http://victoria-metrics:8428`: it publishes no host port and has no Traefik route, so it isn't exposed to the internet. Data older than `metrics.retention_days` is deleted by VictoriaMetrics itself.
+
+## Alerts
+
+Alert rules (design doc §7.3) watch the metrics in VictoriaMetrics and raise alerts. A rule is a PromQL expression plus what makes its result a condition: a **threshold** rule compares the value of each series the expression returns with its `operator` and `threshold`, and an **expression** rule treats every series the expression returns as true (the expression filters, as in `pressfleet_site_up == 0`). A rule's `scope` is `site` (every series carries a `site_id` label, an alert is raised per site, and the rule can be limited to one client group) or `platform`. `for_seconds` is how long the condition must hold before the alert fires, so one failed check doesn't page anyone. `labels` are added to every alert the rule raises, and the `summary` and `description` annotations are [Go templates](https://pkg.go.dev/text/template) over `.Labels`, `.Value`, `.Threshold`, and `.Rule`, with the functions `humanizePercentage` (a ratio as a percentage) and `humanizeDuration` (seconds as days, hours, and minutes).
+
+The control plane evaluates every enabled rule every `alerts.evaluation_interval_seconds` while `alerts.enabled` is true. Each series a condition holds for becomes an alert that is `pending` until the rule's duration has passed, then `firing`, then `resolved` when the condition stops or the series disappears. Each alert emits two events at most, one when it fires and one when it resolves; a condition that keeps holding emits nothing more, and a pending alert that stops holding before it fires is dropped without a trace. Disabling a rule resolves its alerts. If VictoriaMetrics can't be queried, alerts are left exactly as they are: an outage of the metrics store neither fires nor resolves anything. The state is kept in the database, so a restart keeps firing alerts firing without announcing them again, and events that weren't delivered before it are delivered after it. Resolved alerts are kept for 90 days.
+
+Events go to the alert channels (email and webhook, #76). Until channels exist, events are only written to the control plane's log.
+
+These default rules are created at the first start with the version that has them, and enabled. They can be edited (thresholds, durations, severity, text) and disabled, but not deleted, and later starts never change them back. The metrics they use, which the collectors emit, are listed in the documentation of package `alerts`.
+
+| Rule | Scope | Condition | For | Severity |
+| --- | --- | --- | --- | --- |
+| Site down | site | the HTTP check fails | 2 minutes | critical |
+| Elevated 5xx error rate | site | more than 5% of responses are 5xx (sites with almost no traffic are ignored) | 5 minutes | warning |
+| TLS certificate expiring | site | less than 14 days (1209600 seconds) until a certificate expires | 15 minutes | warning |
+| TLS certificate renewal failing | site | less than 3 days (259200 seconds) until a certificate expires, so renewal has been failing for weeks | 15 minutes | critical |
+| Backup failed | site | the latest backup failed | none | critical |
+| Backup stale | site | no successful backup for 36 hours (129600 seconds) | 15 minutes | warning |
+| Disk nearly full | platform | a filesystem is more than 90% full | 10 minutes | warning |
+| Container restart loop | platform | a container restarted more than 3 times in 15 minutes | none | critical |
+| PHP-FPM worker saturation | site | more than 90% of a site's PHP-FPM workers are busy | 5 minutes | warning |
+| Redis eviction spike | platform | the object cache evicts more than 1 key per second | 5 minutes | warning |
+
+Operators and Admins manage rules with `/api/v1/alert-rules` (list, create, get, update, delete, `enable`, and `disable`); every role can read rules and the alerts they raised with `GET /api/v1/alerts`, filtered by `state`, `rule_id`, `site_id`, `client_group_id`, and the time they started. Changes to rules are recorded in the [audit log](#audit-log) as `alert_rule.manage`. The expression's brackets and quotes are checked when a rule is saved, but its PromQL is only checked when VictoriaMetrics evaluates it, which is logged. One control plane process evaluates the rules.
 
 ## SFTP gateway
 
