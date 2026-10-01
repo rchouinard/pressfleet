@@ -32,6 +32,7 @@ const items = computed<DropdownMenuItem[][]>(() => [
     theme('dark', 'Dark', 'i-lucide-moon'),
   ],
   [
+    { label: 'Account & tokens', icon: 'i-lucide-key-round', to: '/account' },
     {
       label: 'Sign out',
       icon: 'i-lucide-log-out',

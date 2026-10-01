@@ -1,8 +1,9 @@
 <script setup lang="ts">
-// A deliberately minimal sign-in form (#81): email and password against
-// POST /api/v1/auth/login. #82 extends it (account recovery hints, password
-// change, polish). Signed-in visitors never see it: the route middleware
-// sends them on to `redirect` (or the dashboard).
+// Sign-in: email and password against POST /api/v1/auth/login. Failures show
+// as Problem Details (wrong credentials, a disabled account, throttling) and
+// the password field is cleared after any failure. Signed-in visitors never
+// see this page: the route middleware sends them on to `redirect` (or the
+// dashboard).
 import { toApiError, type ApiError } from '../utils/api-error'
 import { safeRedirect } from '../utils/redirect'
 
@@ -14,6 +15,7 @@ const { login } = useSession()
 
 const email = ref('')
 const password = ref('')
+const showPassword = ref(false)
 const submitting = ref(false)
 const error = ref<ApiError>()
 
@@ -42,7 +44,10 @@ async function submit() {
 
 <template>
   <div class="space-y-4">
-    <h1 class="text-2xl font-semibold tracking-tight">Sign in</h1>
+    <div class="space-y-1">
+      <h1 class="text-2xl font-semibold tracking-tight">Sign in</h1>
+      <p class="text-sm text-muted">Use the account an administrator created for you.</p>
+    </div>
 
     <div
       v-if="expired && !error"
@@ -69,16 +74,31 @@ async function submit() {
       <UFormField label="Password" name="password" :error="passwordError" required>
         <UInput
           v-model="password"
-          type="password"
+          :type="showPassword ? 'text' : 'password'"
           autocomplete="current-password"
           required
           class="w-full"
           :disabled="submitting"
-        />
+          :ui="{ trailing: 'pe-1' }"
+        >
+          <template #trailing>
+            <UButton
+              color="neutral"
+              variant="link"
+              size="sm"
+              :icon="showPassword ? 'i-lucide-eye-off' : 'i-lucide-eye'"
+              :aria-label="showPassword ? 'Hide password' : 'Show password'"
+              :aria-pressed="showPassword"
+              @click="showPassword = !showPassword"
+            />
+          </template>
+        </UInput>
       </UFormField>
       <UButton type="submit" block :loading="submitting" :disabled="submitting || !email || !password">
         {{ submitting ? 'Signing in...' : 'Sign in' }}
       </UButton>
     </form>
+
+    <p class="text-sm text-muted">Forgot your password? Ask an administrator to set a new one.</p>
   </div>
 </template>

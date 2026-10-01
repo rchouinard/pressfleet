@@ -44,8 +44,8 @@ export const navRegistry: readonly NavItem[] = [
   { id: 'logs', label: 'Logs', icon: 'i-lucide-scroll-text', minRole: 'viewer', section: 'monitor' },
   { id: 'alerts', label: 'Alerts', icon: 'i-lucide-bell', minRole: 'viewer', section: 'monitor' },
 
-  { id: 'account', label: 'Account & tokens', icon: 'i-lucide-key-round', minRole: 'viewer', section: 'admin' },
-  { id: 'users', label: 'Users', icon: 'i-lucide-user-cog', minRole: 'admin', section: 'admin' },
+  { id: 'account', label: 'Account & tokens', icon: 'i-lucide-key-round', route: '/account', minRole: 'viewer', section: 'admin' },
+  { id: 'users', label: 'Users', icon: 'i-lucide-user-cog', route: '/users', minRole: 'admin', section: 'admin' },
   { id: 'audit', label: 'Audit log', icon: 'i-lucide-shield-check', minRole: 'admin', section: 'admin' },
   { id: 'settings', label: 'Settings', icon: 'i-lucide-settings', minRole: 'admin', section: 'admin' },
 ]
