@@ -110,9 +110,11 @@
 //
 // The control plane seeds the default rules with [SeedDefaults] at startup
 // and runs the engine with [Engine.Run]. The engine needs a [Querier] for
-// VictoriaMetrics and a [Notifier]. Until the metrics client exists,
+// VictoriaMetrics and a [Notifier]: the control plane passes package
+// alertchannels, which delivers events by email and webhook.
 // [UnavailableQuerier] reports that metrics aren't available, and
-// [NewLogNotifier] logs events instead of delivering them.
+// [NewLogNotifier] logs events instead of delivering them, for the engine
+// without a notifier.
 package alerts
 
 import (
@@ -175,8 +177,8 @@ type Event struct {
 // key, so a notifier can drop an event it has already handled.
 func (e Event) Key() string { return e.Alert.ID + ":" + string(e.Type) }
 
-// Notifier delivers alert events: SMTP and webhook channels (#76) implement
-// it.
+// Notifier delivers alert events. Package alertchannels (#76) implements it
+// with SMTP and webhook channels.
 type Notifier interface {
 	// Notify accepts an event for delivery. Returning nil means the
 	// notifier has taken responsibility for it, and the engine won't send

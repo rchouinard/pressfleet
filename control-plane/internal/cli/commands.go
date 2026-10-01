@@ -342,7 +342,12 @@ func (a *app) serveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			channels, err := a.alertChannels(db, secretStore, keys)
+			if err != nil {
+				return err
+			}
 			handler, err := api.NewHandler(api.Options{
+				AlertChannels:    channels,
 				Logger:           a.log,
 				Readiness:        readiness,
 				DB:               db,
@@ -437,7 +442,7 @@ func (a *app) serveCommand() *cobra.Command {
 			if _, err := alerts.SeedDefaults(cmd.Context(), db, a.log.With("component", "alerts")); err != nil && cmd.Context().Err() == nil {
 				return err
 			}
-			alertEngine, err := a.alertEngine(db)
+			alertEngine, err := a.alertEngine(db, channels)
 			if err != nil {
 				return err
 			}
@@ -460,6 +465,10 @@ func (a *app) serveCommand() *cobra.Command {
 			if alertEngine != nil {
 				workers.Go(func() { _ = alertEngine.Run(workersCtx) })
 			}
+			// Delivers the alert events the channels accepted, and retries
+			// the ones that failed, whether or not rules are being
+			// evaluated.
+			workers.Go(func() { _ = channels.Run(workersCtx) })
 			// Best effort and in the background: a platform upgrade may have
 			// recreated MariaDB or the object cache, disconnecting them from
 			// every site network.

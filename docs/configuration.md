@@ -107,6 +107,8 @@ uploads:                         # see "Uploads"
 alerts:                          # see "Alerts"
   enabled: true
   evaluation_interval_seconds: 30
+  webhook_timeout_seconds: 10    # see "Alert channels"
+  webhook_allow_local_targets: false
 database_export:
   ttl_seconds: 3600              # see "Database exports"
 ```
@@ -175,6 +177,8 @@ database_export:
 | `uploads.expiry_hours` | `PRESSFLEET_UPLOADS_EXPIRY_HOURS` | | `24` | How long an upload that no import or deployment has taken may go without a new chunk before it is removed as abandoned, from 1 to 720. |
 | `alerts.enabled` | `PRESSFLEET_ALERTS_ENABLED` | | `true` | Whether the control plane evaluates alert rules. The rules and alerts API works either way; with `false`, nothing fires. See [Alerts](#alerts). |
 | `alerts.evaluation_interval_seconds` | `PRESSFLEET_ALERTS_EVALUATION_INTERVAL_SECONDS` | | `30` | Seconds between evaluations of every alert rule, from 5 to 900. |
+| `alerts.webhook_timeout_seconds` | `PRESSFLEET_ALERTS_WEBHOOK_TIMEOUT_SECONDS` | | `10` | Seconds one delivery to an [alert channel](#alert-channels) may take: a webhook request, or an SMTP conversation. From 1 to 60. |
+| `alerts.webhook_allow_local_targets` | `PRESSFLEET_ALERTS_WEBHOOK_ALLOW_LOCAL_TARGETS` | | `false` | Lets alert channels connect to loopback, link-local, and cloud metadata addresses (`127.0.0.1`, `169.254.169.254`, and the like). Off, a webhook URL or per-channel SMTP server that resolves to one is refused. Turn it on to deliver to a service on the host itself. |
 | `database_export.ttl_seconds` | `PRESSFLEET_DATABASE_EXPORT_TTL_SECONDS` | | `3600` | How long a database export can be downloaded once it is ready, from 10 seconds to a day (86400); then its file is deleted. See [Database exports](#database-exports). |
 | `sftp.port` | `PRESSFLEET_SFTP_PORT` | | `2222` | Host port of the SFTP gateway, which `pressfleet init` publishes and `pressfleet doctor` checks is free. Not 80 or 443. See [SFTP gateway](#sftp-gateway). |
 | `sftp.listen` | `PRESSFLEET_SFTP_LISTEN` | | `:2222` | The gateway's listen address inside the control plane container. Empty turns the gateway off. |
@@ -411,7 +415,7 @@ Alert rules (design doc §7.3) watch the metrics in VictoriaMetrics and raise al
 
 The control plane evaluates every enabled rule every `alerts.evaluation_interval_seconds` while `alerts.enabled` is true. Each series a condition holds for becomes an alert that is `pending` until the rule's duration has passed, then `firing`, then `resolved` when the condition stops or the series disappears. Each alert emits two events at most, one when it fires and one when it resolves; a condition that keeps holding emits nothing more, and a pending alert that stops holding before it fires is dropped without a trace. Disabling a rule resolves its alerts. If VictoriaMetrics can't be queried, alerts are left exactly as they are: an outage of the metrics store neither fires nor resolves anything. The state is kept in the database, so a restart keeps firing alerts firing without announcing them again, and events that weren't delivered before it are delivered after it. Resolved alerts are kept for 90 days.
 
-Events go to the alert channels (email and webhook, #76). Until channels exist, events are only written to the control plane's log.
+Events go to the [alert channels](#alert-channels). Every event is also written to the control plane's log as it is routed.
 
 These default rules are created at the first start with the version that has them, and enabled. They can be edited (thresholds, durations, severity, text) and disabled, but not deleted, and later starts never change them back. The metrics they use, which the collectors emit, are listed in the documentation of package `alerts`.
 
@@ -429,6 +433,53 @@ These default rules are created at the first start with the version that has the
 | Redis eviction spike | platform | the object cache evicts more than 1 key per second | 5 minutes | warning |
 
 Operators and Admins manage rules with `/api/v1/alert-rules` (list, create, get, update, delete, `enable`, and `disable`); every role can read rules and the alerts they raised with `GET /api/v1/alerts`, filtered by `state`, `rule_id`, `site_id`, `client_group_id`, and the time they started. Changes to rules are recorded in the [audit log](#audit-log) as `alert_rule.manage`. The expression's brackets and quotes are checked when a rule is saved, but its PromQL is only checked when VictoriaMetrics evaluates it, which is logged. One control plane process evaluates the rules.
+
+### Alert channels
+
+A channel is somewhere alert events go (design doc §7.3). Admins manage them with `/api/v1/alert-channels` (list, create, get, update, delete, `enable`, `disable`, and `test`); every role can read them. Changes are recorded in the [audit log](#audit-log) as `platform.settings.manage`. By default a channel receives every firing and resolved event; `min_severity` (`info`, `warning`, or `critical`), `rule_id`, and `client_group_id` narrow it (a channel limited to a client group doesn't receive platform alerts, which belong to no group).
+
+Credentials are encrypted with the [master key](#master-key) and never returned by the API: the SMTP password, a webhook's URL (Slack and Teams URLs are credentials, since they let anyone post), and the signing secret. The API shows whether each is set, and a webhook URL as its scheme and host (`https://hooks.slack.com/…`). To change a credential, send a new value; to remove one, send an empty string.
+
+**Email.** `email.to` lists the recipients. Without `email.host` the channel sends through the platform's SMTP relay (the `smtp.*` settings under [Outbound email](#outbound-email)) and uses its sender; with `email.host` it has an SMTP server of its own (`port`, `encryption` of `starttls`, `tls`, or `none`, `username`, `password`, and a required `from_email`). A message has a plain-text and an HTML part, and the subject reads `[PressFleet] [FIRING] critical: <summary>`.
+
+**Webhook.** The control plane POSTs JSON to `webhook.url` with a timeout of `alerts.webhook_timeout_seconds`. Any 2xx response is success. `webhook.format` is one of:
+
+- `generic` (the default): PressFleet's payload, below. It has a top-level `text`, so a Slack incoming webhook accepts it as it is.
+- `slack`: `{"text": "*[FIRING] critical: ...*", "attachments": [{"color", "fields", ...}]}`.
+- `teams`: a `message` with an Adaptive Card attachment, as Teams Workflows webhooks expect.
+
+The generic payload is stable: new fields may be added, and `version` changes only if one is removed or changes meaning.
+
+```json
+{
+  "version": 1,
+  "event": "firing",
+  "key": "01J9ZQ3V6T8K4M2N5P7R9S1X3Y:firing",
+  "text": "[FIRING] critical: Site example.com is down\nThe HTTP check has failed for 2 minutes.",
+  "sent_at": "2026-09-30T12:00:05Z",
+  "alert": {
+    "id": "01J9ZQ3V6T8K4M2N5P7R9S1X3Y",
+    "rule_id": "01J9ZQ3V6T8K4M2N5P7R9S1X4Z",
+    "rule_name": "Site down",
+    "state": "firing",
+    "severity": "critical",
+    "summary": "Site example.com is down",
+    "description": "The HTTP check has failed for 2 minutes.",
+    "site_id": "01J9ZQ3V6T8K4M2N5P7R9S1X5A",
+    "client_group_id": "01J9ZQ3V6T8K4M2N5P7R9S1X6B",
+    "value": 0,
+    "labels": {"site_id": "01J9ZQ3V6T8K4M2N5P7R9S1X5A"},
+    "started_at": "2026-09-30T11:58:00Z",
+    "fired_at": "2026-09-30T12:00:00Z"
+  }
+}
+```
+
+`event` is `firing`, `resolved` (the alert then has `state` `resolved` and a `resolved_at`), or `test`. `key` is the same for every retry of an event, so a receiver can deduplicate. `site_id`, `client_group_id`, `fired_at`, and `resolved_at` are left out when they don't apply. Requests carry the headers `X-PressFleet-Event`, `X-PressFleet-Delivery` (the key), and `X-PressFleet-Timestamp` (Unix seconds). If the channel has a signing secret, `X-PressFleet-Signature` is `sha256=` and the hex HMAC-SHA256, keyed with the secret, of the timestamp, a `.`, and the raw body; a receiver should check it and reject old timestamps.
+
+**Delivery and retries.** When the alert engine hands over an event, the control plane records one delivery for each enabled channel that wants it, and a worker sends them. A failed delivery is retried with exponential backoff (30 seconds, doubling, up to 15 minutes between attempts) for up to 8 attempts, then marked `failed`; failures that retrying can't fix, such as a webhook answering 404 or a blocked address, fail at once. Each channel has its own delivery, so one broken channel never makes the others send twice, and an event offered again after a restart doesn't reach a channel that already has it. `GET /api/v1/alert-deliveries` lists the history (filter by `alert_id`, `channel_id`, and `state`) with the attempts, the latest error, and when a pending delivery is tried next; errors never contain credentials. Deliveries are deleted with their alert after 90 days, or with their channel. A channel that is disabled when a queued delivery comes due fails it. `POST /api/v1/alert-channels/{id}/test` sends a synthetic notification and reports the outcome; it works on disabled channels and isn't recorded in the history.
+
+**Where channels may connect.** Webhook URLs and per-channel SMTP servers are typed in through the API, so the control plane checks the address it actually connects to, after DNS resolution: loopback, link-local (including the `169.254.169.254` cloud metadata address), unspecified, and multicast addresses are refused unless `alerts.webhook_allow_local_targets` is on. Redirects aren't followed, and proxy environment variables are ignored. Private ranges such as `10.0.0.0/8` are allowed, since an internal chat server is a common target. The platform SMTP relay is set up by an administrator and isn't restricted.
 
 ## SFTP gateway
 

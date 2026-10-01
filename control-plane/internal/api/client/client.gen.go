@@ -18,6 +18,108 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for AlertChannelEmailCreateEncryption.
+const (
+	AlertChannelEmailCreateEncryptionNone     AlertChannelEmailCreateEncryption = "none"
+	AlertChannelEmailCreateEncryptionStarttls AlertChannelEmailCreateEncryption = "starttls"
+	AlertChannelEmailCreateEncryptionTLS      AlertChannelEmailCreateEncryption = "tls"
+)
+
+// Valid indicates whether the value is a known member of the AlertChannelEmailCreateEncryption enum.
+func (e AlertChannelEmailCreateEncryption) Valid() bool {
+	switch e {
+	case AlertChannelEmailCreateEncryptionNone:
+		return true
+	case AlertChannelEmailCreateEncryptionStarttls:
+		return true
+	case AlertChannelEmailCreateEncryptionTLS:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AlertChannelEmailUpdateEncryption.
+const (
+	AlertChannelEmailUpdateEncryptionEmpty    AlertChannelEmailUpdateEncryption = ""
+	AlertChannelEmailUpdateEncryptionNone     AlertChannelEmailUpdateEncryption = "none"
+	AlertChannelEmailUpdateEncryptionStarttls AlertChannelEmailUpdateEncryption = "starttls"
+	AlertChannelEmailUpdateEncryptionTLS      AlertChannelEmailUpdateEncryption = "tls"
+)
+
+// Valid indicates whether the value is a known member of the AlertChannelEmailUpdateEncryption enum.
+func (e AlertChannelEmailUpdateEncryption) Valid() bool {
+	switch e {
+	case AlertChannelEmailUpdateEncryptionEmpty:
+		return true
+	case AlertChannelEmailUpdateEncryptionNone:
+		return true
+	case AlertChannelEmailUpdateEncryptionStarttls:
+		return true
+	case AlertChannelEmailUpdateEncryptionTLS:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AlertChannelType.
+const (
+	AlertChannelTypeEmail   AlertChannelType = "email"
+	AlertChannelTypeWebhook AlertChannelType = "webhook"
+)
+
+// Valid indicates whether the value is a known member of the AlertChannelType enum.
+func (e AlertChannelType) Valid() bool {
+	switch e {
+	case AlertChannelTypeEmail:
+		return true
+	case AlertChannelTypeWebhook:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AlertDeliveryState.
+const (
+	AlertDeliveryStateDelivered AlertDeliveryState = "delivered"
+	AlertDeliveryStateFailed    AlertDeliveryState = "failed"
+	AlertDeliveryStatePending   AlertDeliveryState = "pending"
+)
+
+// Valid indicates whether the value is a known member of the AlertDeliveryState enum.
+func (e AlertDeliveryState) Valid() bool {
+	switch e {
+	case AlertDeliveryStateDelivered:
+		return true
+	case AlertDeliveryStateFailed:
+		return true
+	case AlertDeliveryStatePending:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AlertEventType.
+const (
+	AlertEventTypeFiring   AlertEventType = "firing"
+	AlertEventTypeResolved AlertEventType = "resolved"
+)
+
+// Valid indicates whether the value is a known member of the AlertEventType enum.
+func (e AlertEventType) Valid() bool {
+	switch e {
+	case AlertEventTypeFiring:
+		return true
+	case AlertEventTypeResolved:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AlertOperator.
 const (
 	Eq  AlertOperator = "eq"
@@ -834,6 +936,27 @@ func (e UploadStatus) Valid() bool {
 	}
 }
 
+// Defines values for WebhookFormat.
+const (
+	Generic WebhookFormat = "generic"
+	Slack   WebhookFormat = "slack"
+	Teams   WebhookFormat = "teams"
+)
+
+// Valid indicates whether the value is a known member of the WebhookFormat enum.
+func (e WebhookFormat) Valid() bool {
+	switch e {
+	case Generic:
+		return true
+	case Slack:
+		return true
+	case Teams:
+		return true
+	default:
+		return false
+	}
+}
+
 // Alert One incident of one rule for one series. A condition that keeps
 // holding updates its alert rather than creating another, and each
 // alert emits one firing event and, once it stops, one resolved event.
@@ -899,6 +1022,294 @@ type Alert struct {
 //
 // Examples: {"summary":"{{ .Labels.mountpoint }} is {{ humanizePercentage .Value }} full"}
 type AlertAnnotations map[string]string
+
+// AlertChannel defines model for AlertChannel.
+type AlertChannel struct {
+	// ClientGroupID If set, the channel only receives events of alerts of this client group.
+	ClientGroupID *ID `json:"client_group_id"`
+
+	// CreatedAt Examples: 2026-09-26T17:25:00Z
+	CreatedAt Timestamp `json:"created_at"`
+
+	// Email Present for `email` channels.
+	Email   *AlertChannelEmail `json:"email"`
+	Enabled bool               `json:"enabled"`
+
+	// ID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ID ID `json:"id"`
+
+	// MinSeverity The lowest severity the channel receives.
+	MinSeverity AlertSeverity `json:"min_severity"`
+
+	// Name Examples: Ops on-call email
+	Name string `json:"name"`
+
+	// RuleID If set, the channel only receives events of this rule.
+	RuleID *ID              `json:"rule_id"`
+	Type   AlertChannelType `json:"type"`
+
+	// UpdatedAt Examples: 2026-09-26T17:25:00Z
+	UpdatedAt Timestamp `json:"updated_at"`
+
+	// Webhook Present for `webhook` channels.
+	Webhook *AlertChannelWebhook `json:"webhook"`
+}
+
+// AlertChannelCreate defines model for AlertChannelCreate.
+type AlertChannelCreate struct {
+	// ClientGroupID Only deliver events of alerts of this client group (platform alerts have none, so they aren't delivered).
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ClientGroupID *ID `json:"client_group_id,omitempty"`
+
+	// Email Required for `email` channels.
+	Email   *AlertChannelEmailCreate `json:"email,omitempty"`
+	Enabled *bool                    `json:"enabled,omitempty"`
+
+	// MinSeverity The lowest severity the channel receives. Default `info`, which is everything.
+	MinSeverity *AlertSeverity `json:"min_severity,omitempty"`
+	Name        string         `json:"name"`
+
+	// RuleID Only deliver events of this rule.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	RuleID *ID              `json:"rule_id,omitempty"`
+	Type   AlertChannelType `json:"type"`
+
+	// Webhook Required for `webhook` channels.
+	Webhook *AlertChannelWebhookCreate `json:"webhook,omitempty"`
+}
+
+// AlertChannelEmail The settings of an email channel.
+type AlertChannelEmail struct {
+	// Encryption `starttls`, `tls` (implicit TLS), or `none`. Empty with the
+	// platform relay.
+	Encryption string `json:"encryption"`
+
+	// FromEmail The sender; empty means the platform relay's.
+	FromEmail string `json:"from_email"`
+	FromName  string `json:"from_name"`
+
+	// HasPassword Whether an SMTP password is stored. It is never returned.
+	HasPassword bool `json:"has_password"`
+
+	// Host The channel's own SMTP server, or an empty string.
+	Host string `json:"host"`
+
+	// Port The server's port; 0 means the standard port for `encryption`.
+	Port int `json:"port"`
+
+	// To The recipients.
+	To       []string `json:"to"`
+	Username string   `json:"username"`
+
+	// UsesPlatformRelay True when the channel has no `host` and sends through the platform's SMTP relay.
+	UsesPlatformRelay bool `json:"uses_platform_relay"`
+}
+
+// AlertChannelEmailCreate defines model for AlertChannelEmailCreate.
+type AlertChannelEmailCreate struct {
+	// Encryption Default `starttls`. `tls` is implicit TLS ("SMTPS").
+	Encryption *AlertChannelEmailCreateEncryption `json:"encryption,omitempty"`
+
+	// FromEmail The sender. Required with `host`; otherwise defaults to the platform relay's.
+	FromEmail *string `json:"from_email,omitempty"`
+	FromName  *string `json:"from_name,omitempty"`
+
+	// Host An SMTP server of the channel's own. Leave it out to send
+	// through the platform's SMTP relay (the `smtp.*` settings), which
+	// is the usual choice.
+	Host *string `json:"host,omitempty"`
+
+	// Password Stored encrypted and never returned. Needs `username`.
+	Password *string `json:"password,omitempty"`
+
+	// Port 0 or absent means the standard port for `encryption`.
+	Port *int `json:"port,omitempty"`
+
+	// To Recipients, as plain addresses (`ops@example.com`).
+	To       []string `json:"to"`
+	Username *string  `json:"username,omitempty"`
+}
+
+// AlertChannelEmailCreateEncryption Default `starttls`. `tls` is implicit TLS ("SMTPS").
+type AlertChannelEmailCreateEncryption string
+
+// AlertChannelEmailUpdate defines model for AlertChannelEmailUpdate.
+type AlertChannelEmailUpdate struct {
+	Encryption *AlertChannelEmailUpdateEncryption `json:"encryption,omitempty"`
+	FromEmail  *string                            `json:"from_email,omitempty"`
+	FromName   *string                            `json:"from_name,omitempty"`
+
+	// Host An empty string switches to the platform's SMTP relay.
+	Host *string `json:"host,omitempty"`
+
+	// Password Replaces the stored password. An empty string removes it.
+	Password *string   `json:"password,omitempty"`
+	Port     *int      `json:"port,omitempty"`
+	To       *[]string `json:"to,omitempty"`
+	Username *string   `json:"username,omitempty"`
+}
+
+// AlertChannelEmailUpdateEncryption defines model for AlertChannelEmailUpdate.Encryption.
+type AlertChannelEmailUpdateEncryption string
+
+// AlertChannelList defines model for AlertChannelList.
+type AlertChannelList struct {
+	Items []AlertChannel `json:"items"`
+
+	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
+	NextCursor *NextCursor `json:"next_cursor"`
+}
+
+// AlertChannelTestResult defines model for AlertChannelTestResult.
+type AlertChannelTestResult struct {
+	DurationMs int64 `json:"duration_ms"`
+
+	// Error Why it didn't. Never contains credentials.
+	Error *string `json:"error"`
+
+	// Success Whether the channel accepted the test notification.
+	Success bool `json:"success"`
+}
+
+// AlertChannelType defines model for AlertChannelType.
+type AlertChannelType string
+
+// AlertChannelUpdate defines model for AlertChannelUpdate.
+type AlertChannelUpdate struct {
+	// ClientGroupID Only deliver events of this client group. An empty string removes the limit.
+	ClientGroupID *string                  `json:"client_group_id,omitempty"`
+	Email         *AlertChannelEmailUpdate `json:"email,omitempty"`
+	MinSeverity   *AlertSeverity           `json:"min_severity,omitempty"`
+	Name          *string                  `json:"name,omitempty"`
+
+	// RuleID Only deliver events of this rule. An empty string removes the limit.
+	RuleID  *string                    `json:"rule_id,omitempty"`
+	Webhook *AlertChannelWebhookUpdate `json:"webhook,omitempty"`
+}
+
+// AlertChannelWebhook The settings of a webhook channel.
+type AlertChannelWebhook struct {
+	// Format The shape of the request body. `generic` is PressFleet's own payload
+	// (documented in docs/configuration.md): it has a top-level `text`, so
+	// a Slack incoming webhook accepts it too. `slack` adds an attachment
+	// with colored fields. `teams` is a message with an Adaptive Card, as
+	// Microsoft Teams Workflows webhooks expect.
+	Format WebhookFormat `json:"format"`
+
+	// HasSigningSecret Whether requests are signed (HMAC-SHA256, generic format).
+	HasSigningSecret bool `json:"has_signing_secret"`
+
+	// URL The webhook URL reduced to its scheme and host, such as
+	// `https://hooks.slack.com/…`. The rest is a credential and is
+	// never returned.
+	//
+	//
+	// Examples: https://hooks.slack.com/…
+	URL string `json:"url"`
+}
+
+// AlertChannelWebhookCreate defines model for AlertChannelWebhookCreate.
+type AlertChannelWebhookCreate struct {
+	// Format The shape of the request body. `generic` is PressFleet's own payload
+	// (documented in docs/configuration.md): it has a top-level `text`, so
+	// a Slack incoming webhook accepts it too. `slack` adds an attachment
+	// with colored fields. `teams` is a message with an Adaptive Card, as
+	// Microsoft Teams Workflows webhooks expect.
+	Format *WebhookFormat `json:"format,omitempty"`
+
+	// SigningSecret If set, requests carry `X-PressFleet-Signature`, an HMAC-SHA256
+	// of the timestamp, a dot, and the body, so the receiver can tell
+	// the request is ours.
+	SigningSecret *string `json:"signing_secret,omitempty"`
+
+	// URL An `https` (or `http`) URL. It is a credential: it is stored
+	// encrypted and never returned. Loopback, link-local, and cloud
+	// metadata addresses are refused unless the control plane allows
+	// them (`alerts.webhook_allow_local_targets`). Redirects aren't
+	// followed.
+	URL *string `json:"url,omitempty"`
+}
+
+// AlertChannelWebhookUpdate defines model for AlertChannelWebhookUpdate.
+type AlertChannelWebhookUpdate struct {
+	// Format The shape of the request body. `generic` is PressFleet's own payload
+	// (documented in docs/configuration.md): it has a top-level `text`, so
+	// a Slack incoming webhook accepts it too. `slack` adds an attachment
+	// with colored fields. `teams` is a message with an Adaptive Card, as
+	// Microsoft Teams Workflows webhooks expect.
+	Format *WebhookFormat `json:"format,omitempty"`
+
+	// SigningSecret Replaces the stored signing secret. An empty string removes it.
+	SigningSecret *string `json:"signing_secret,omitempty"`
+
+	// URL Replaces the stored URL.
+	URL *string `json:"url,omitempty"`
+}
+
+// AlertDelivery One alert event bound for one channel.
+type AlertDelivery struct {
+	// AlertID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	AlertID ID `json:"alert_id"`
+
+	// Attempts How many times delivery was tried.
+	Attempts int `json:"attempts"`
+
+	// ChannelID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ChannelID   ID     `json:"channel_id"`
+	ChannelName string `json:"channel_name"`
+
+	// CreatedAt When the event was accepted for this channel.
+	//
+	// Examples: 2026-09-26T17:25:00Z
+	CreatedAt   Timestamp  `json:"created_at"`
+	DeliveredAt *Timestamp `json:"delivered_at"`
+
+	// Event What an alert event is. Each alert emits one `firing` event and, once it stops, one `resolved` event.
+	Event AlertEventType `json:"event"`
+
+	// ID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ID ID `json:"id"`
+
+	// LastError What went wrong with the latest attempt, or null.
+	LastError *string `json:"last_error"`
+
+	// NextAttemptAt When a `pending` delivery is tried next; null otherwise.
+	NextAttemptAt *Timestamp `json:"next_attempt_at"`
+
+	// State `pending`: not delivered yet, tried again at `next_attempt_at`.
+	// `delivered`: the channel accepted it. `failed`: out of attempts, or
+	// it can't succeed.
+	State AlertDeliveryState `json:"state"`
+
+	// UpdatedAt Examples: 2026-09-26T17:25:00Z
+	UpdatedAt Timestamp `json:"updated_at"`
+}
+
+// AlertDeliveryList defines model for AlertDeliveryList.
+type AlertDeliveryList struct {
+	Items []AlertDelivery `json:"items"`
+
+	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
+	NextCursor *NextCursor `json:"next_cursor"`
+}
+
+// AlertDeliveryState `pending`: not delivered yet, tried again at `next_attempt_at`.
+// `delivered`: the channel accepted it. `failed`: out of attempts, or
+// it can't succeed.
+type AlertDeliveryState string
+
+// AlertEventType What an alert event is. Each alert emits one `firing` event and, once it stops, one `resolved` event.
+type AlertEventType string
 
 // AlertList defines model for AlertList.
 type AlertList struct {
@@ -2832,6 +3243,13 @@ type UserUpdate struct {
 	Role *Role `json:"role,omitempty"`
 }
 
+// WebhookFormat The shape of the request body. `generic` is PressFleet's own payload
+// (documented in docs/configuration.md): it has a top-level `text`, so
+// a Slack incoming webhook accepts it too. `slack` adds an attachment
+// with colored fields. `teams` is a message with an Adaptive Card, as
+// Microsoft Teams Workflows webhooks expect.
+type WebhookFormat string
+
 // WordPressBranch A WordPress major branch (x.y).
 //
 // Examples: 7.2
@@ -2940,6 +3358,39 @@ type UnprocessableDomains = Problem
 
 // UnsupportedMediaType RFC 9457 Problem Details. Additional members may be added.
 type UnsupportedMediaType = Problem
+
+// ListAlertChannelsParams defines parameters for ListAlertChannels.
+type ListAlertChannelsParams struct {
+	// Limit Maximum number of items to return.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Type Only return channels of this type.
+	Type *AlertChannelType `form:"type,omitempty" json:"type,omitempty"`
+
+	// Enabled Only return channels that are enabled (`true`) or disabled (`false`).
+	Enabled *bool `form:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// ListAlertDeliveriesParams defines parameters for ListAlertDeliveries.
+type ListAlertDeliveriesParams struct {
+	// Limit Maximum number of items to return.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// AlertID Only return deliveries of this alert's events.
+	AlertID *ID `form:"alert_id,omitempty" json:"alert_id,omitempty"`
+
+	// ChannelID Only return deliveries to this channel.
+	ChannelID *ID `form:"channel_id,omitempty" json:"channel_id,omitempty"`
+
+	// State Only return deliveries in this state.
+	State *AlertDeliveryState `form:"state,omitempty" json:"state,omitempty"`
+}
 
 // ListAlertRulesParams defines parameters for ListAlertRules.
 type ListAlertRulesParams struct {
@@ -3242,6 +3693,12 @@ type ListUserSSHKeysParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// CreateAlertChannelJSONRequestBody defines body for CreateAlertChannel for application/json ContentType.
+type CreateAlertChannelJSONRequestBody = AlertChannelCreate
+
+// UpdateAlertChannelJSONRequestBody defines body for UpdateAlertChannel for application/json ContentType.
+type UpdateAlertChannelJSONRequestBody = AlertChannelUpdate
+
 // CreateAlertRuleJSONRequestBody defines body for CreateAlertRule for application/json ContentType.
 type CreateAlertRuleJSONRequestBody = AlertRuleCreate
 
@@ -3390,6 +3847,126 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
+
+	// ListAlertChannels List alert channels
+	//
+	// Ordered by name. Every role can list channels; credentials are never
+	// returned, only whether they are set and, for a webhook, its URL
+	// reduced to scheme and host.
+	//
+	// Corresponds with GET /api/v1/alert-channels (the `ListAlertChannels` operationId).
+	ListAlertChannels(ctx context.Context, params *ListAlertChannelsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateAlertChannelWithBody Create an alert channel (Admin)
+	//
+	// A channel delivers alert events, firing and resolved, by email or to
+	// a webhook. Creating one doesn't send anything; use the `test`
+	// operation to check it works.
+	//
+	// An `email` channel needs `email.to`. Without `email.host` it sends
+	// through the platform's SMTP relay (the `smtp.*` settings). A
+	// `webhook` channel needs `webhook.url`. Slack and Teams URLs are
+	// credentials: they are stored encrypted and never returned.
+	//
+	// By default a channel receives every alert; `min_severity`,
+	// `rule_id`, and `client_group_id` narrow that.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/alert-channels (the `CreateAlertChannel` operationId).
+	CreateAlertChannelWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateAlertChannel Create an alert channel (Admin)
+	//
+	// A channel delivers alert events, firing and resolved, by email or to
+	// a webhook. Creating one doesn't send anything; use the `test`
+	// operation to check it works.
+	//
+	// An `email` channel needs `email.to`. Without `email.host` it sends
+	// through the platform's SMTP relay (the `smtp.*` settings). A
+	// `webhook` channel needs `webhook.url`. Slack and Teams URLs are
+	// credentials: they are stored encrypted and never returned.
+	//
+	// By default a channel receives every alert; `min_severity`,
+	// `rule_id`, and `client_group_id` narrow that.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/alert-channels (the `CreateAlertChannel` operationId).
+	CreateAlertChannel(ctx context.Context, body CreateAlertChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteAlertChannel Delete an alert channel (Admin)
+	//
+	// Deletes the channel, its credentials, and its delivery history.
+	//
+	// Corresponds with DELETE /api/v1/alert-channels/{alert_channel_id} (the `DeleteAlertChannel` operationId).
+	DeleteAlertChannel(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAlertChannel Get an alert channel
+	//
+	// Corresponds with GET /api/v1/alert-channels/{alert_channel_id} (the `GetAlertChannel` operationId).
+	GetAlertChannel(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateAlertChannelWithBody Update an alert channel (Admin)
+	//
+	// Only the fields present are changed, including inside `email` and
+	// `webhook`. Credentials that are absent stay as they are; send an
+	// empty string to remove one. The type can't change. Deliveries
+	// already queued use the channel as it is when they are sent.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /api/v1/alert-channels/{alert_channel_id} (the `UpdateAlertChannel` operationId).
+	UpdateAlertChannelWithBody(ctx context.Context, alertChannelID ID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateAlertChannel Update an alert channel (Admin)
+	//
+	// Only the fields present are changed, including inside `email` and
+	// `webhook`. Credentials that are absent stay as they are; send an
+	// empty string to remove one. The type can't change. Deliveries
+	// already queued use the channel as it is when they are sent.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /api/v1/alert-channels/{alert_channel_id} (the `UpdateAlertChannel` operationId).
+	UpdateAlertChannel(ctx context.Context, alertChannelID ID, body UpdateAlertChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DisableAlertChannel Disable an alert channel (Admin)
+	//
+	// A disabled channel receives no new events. Deliveries already queued
+	// for it fail with an explanation.
+	//
+	// Corresponds with POST /api/v1/alert-channels/{alert_channel_id}/disable (the `DisableAlertChannel` operationId).
+	DisableAlertChannel(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// EnableAlertChannel Enable an alert channel (Admin)
+	//
+	// Enabling a channel that is already enabled changes nothing.
+	//
+	// Corresponds with POST /api/v1/alert-channels/{alert_channel_id}/enable (the `EnableAlertChannel` operationId).
+	EnableAlertChannel(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// TestAlertChannel Send a test notification (Admin)
+	//
+	// Sends a synthetic notification through the channel, enabled or not,
+	// and waits for the outcome. A channel that fails the test is still a
+	// `200`: read `success` and `error`. Nothing is recorded in the
+	// delivery history.
+	//
+	// Corresponds with POST /api/v1/alert-channels/{alert_channel_id}/test (the `TestAlertChannel` operationId).
+	TestAlertChannel(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListAlertDeliveries List alert deliveries
+	//
+	// The delivery history: each alert event (firing, resolved) bound for
+	// each channel that wanted it, newest first. A delivery is `pending`
+	// while it is retried, `delivered` once the channel accepted it, and
+	// `failed` when it ran out of attempts or can't succeed (the receiver
+	// refused it). `last_error` says what went wrong and never contains
+	// credentials.
+	//
+	// Corresponds with GET /api/v1/alert-deliveries (the `ListAlertDeliveries` operationId).
+	ListAlertDeliveries(ctx context.Context, params *ListAlertDeliveriesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListAlertRules List alert rules
 	//
@@ -5078,6 +5655,236 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /readyz (the `GetReadiness` operationId).
 	GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+
+// ListAlertChannels List alert channels
+//
+// Ordered by name. Every role can list channels; credentials are never
+// returned, only whether they are set and, for a webhook, its URL
+// reduced to scheme and host.
+//
+// Corresponds with GET /api/v1/alert-channels (the `ListAlertChannels` operationId).
+func (c *Client) ListAlertChannels(ctx context.Context, params *ListAlertChannelsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAlertChannelsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateAlertChannelWithBody Create an alert channel (Admin)
+//
+// A channel delivers alert events, firing and resolved, by email or to
+// a webhook. Creating one doesn't send anything; use the `test`
+// operation to check it works.
+//
+// An `email` channel needs `email.to`. Without `email.host` it sends
+// through the platform's SMTP relay (the `smtp.*` settings). A
+// `webhook` channel needs `webhook.url`. Slack and Teams URLs are
+// credentials: they are stored encrypted and never returned.
+//
+// By default a channel receives every alert; `min_severity`,
+// `rule_id`, and `client_group_id` narrow that.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/alert-channels (the `CreateAlertChannel` operationId).
+func (c *Client) CreateAlertChannelWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateAlertChannelRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateAlertChannel Create an alert channel (Admin)
+//
+// A channel delivers alert events, firing and resolved, by email or to
+// a webhook. Creating one doesn't send anything; use the `test`
+// operation to check it works.
+//
+// An `email` channel needs `email.to`. Without `email.host` it sends
+// through the platform's SMTP relay (the `smtp.*` settings). A
+// `webhook` channel needs `webhook.url`. Slack and Teams URLs are
+// credentials: they are stored encrypted and never returned.
+//
+// By default a channel receives every alert; `min_severity`,
+// `rule_id`, and `client_group_id` narrow that.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/alert-channels (the `CreateAlertChannel` operationId).
+func (c *Client) CreateAlertChannel(ctx context.Context, body CreateAlertChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateAlertChannelRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteAlertChannel Delete an alert channel (Admin)
+//
+// Deletes the channel, its credentials, and its delivery history.
+//
+// Corresponds with DELETE /api/v1/alert-channels/{alert_channel_id} (the `DeleteAlertChannel` operationId).
+func (c *Client) DeleteAlertChannel(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteAlertChannelRequest(c.Server, alertChannelID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetAlertChannel Get an alert channel
+//
+// Corresponds with GET /api/v1/alert-channels/{alert_channel_id} (the `GetAlertChannel` operationId).
+func (c *Client) GetAlertChannel(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAlertChannelRequest(c.Server, alertChannelID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateAlertChannelWithBody Update an alert channel (Admin)
+//
+// Only the fields present are changed, including inside `email` and
+// `webhook`. Credentials that are absent stay as they are; send an
+// empty string to remove one. The type can't change. Deliveries
+// already queued use the channel as it is when they are sent.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /api/v1/alert-channels/{alert_channel_id} (the `UpdateAlertChannel` operationId).
+func (c *Client) UpdateAlertChannelWithBody(ctx context.Context, alertChannelID ID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateAlertChannelRequestWithBody(c.Server, alertChannelID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateAlertChannel Update an alert channel (Admin)
+//
+// Only the fields present are changed, including inside `email` and
+// `webhook`. Credentials that are absent stay as they are; send an
+// empty string to remove one. The type can't change. Deliveries
+// already queued use the channel as it is when they are sent.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /api/v1/alert-channels/{alert_channel_id} (the `UpdateAlertChannel` operationId).
+func (c *Client) UpdateAlertChannel(ctx context.Context, alertChannelID ID, body UpdateAlertChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateAlertChannelRequest(c.Server, alertChannelID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DisableAlertChannel Disable an alert channel (Admin)
+//
+// A disabled channel receives no new events. Deliveries already queued
+// for it fail with an explanation.
+//
+// Corresponds with POST /api/v1/alert-channels/{alert_channel_id}/disable (the `DisableAlertChannel` operationId).
+func (c *Client) DisableAlertChannel(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDisableAlertChannelRequest(c.Server, alertChannelID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// EnableAlertChannel Enable an alert channel (Admin)
+//
+// Enabling a channel that is already enabled changes nothing.
+//
+// Corresponds with POST /api/v1/alert-channels/{alert_channel_id}/enable (the `EnableAlertChannel` operationId).
+func (c *Client) EnableAlertChannel(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewEnableAlertChannelRequest(c.Server, alertChannelID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// TestAlertChannel Send a test notification (Admin)
+//
+// Sends a synthetic notification through the channel, enabled or not,
+// and waits for the outcome. A channel that fails the test is still a
+// `200`: read `success` and `error`. Nothing is recorded in the
+// delivery history.
+//
+// Corresponds with POST /api/v1/alert-channels/{alert_channel_id}/test (the `TestAlertChannel` operationId).
+func (c *Client) TestAlertChannel(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTestAlertChannelRequest(c.Server, alertChannelID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListAlertDeliveries List alert deliveries
+//
+// The delivery history: each alert event (firing, resolved) bound for
+// each channel that wanted it, newest first. A delivery is `pending`
+// while it is retried, `delivered` once the channel accepted it, and
+// `failed` when it ran out of attempts or can't succeed (the receiver
+// refused it). `last_error` says what went wrong and never contains
+// credentials.
+//
+// Corresponds with GET /api/v1/alert-deliveries (the `ListAlertDeliveries` operationId).
+func (c *Client) ListAlertDeliveries(ctx context.Context, params *ListAlertDeliveriesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAlertDeliveriesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
 }
 
 // ListAlertRules List alert rules
@@ -7856,6 +8663,455 @@ func (c *Client) GetReadiness(ctx context.Context, reqEditors ...RequestEditorFn
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewListAlertChannelsRequest constructs an http.Request for the ListAlertChannels method
+func NewListAlertChannelsRequest(server string, params *ListAlertChannelsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/alert-channels")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Type != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "type", *params.Type, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Enabled != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "enabled", *params.Enabled, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateAlertChannelRequest calls the generic CreateAlertChannel builder with application/json body
+func NewCreateAlertChannelRequest(server string, body CreateAlertChannelJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateAlertChannelRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateAlertChannelRequestWithBody constructs an http.Request for the CreateAlertChannel method, with any body, and a specified content type
+func NewCreateAlertChannelRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/alert-channels")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteAlertChannelRequest constructs an http.Request for the DeleteAlertChannel method
+func NewDeleteAlertChannelRequest(server string, alertChannelID ID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "alert_channel_id", alertChannelID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/alert-channels/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetAlertChannelRequest constructs an http.Request for the GetAlertChannel method
+func NewGetAlertChannelRequest(server string, alertChannelID ID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "alert_channel_id", alertChannelID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/alert-channels/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateAlertChannelRequest calls the generic UpdateAlertChannel builder with application/json body
+func NewUpdateAlertChannelRequest(server string, alertChannelID ID, body UpdateAlertChannelJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateAlertChannelRequestWithBody(server, alertChannelID, "application/json", bodyReader)
+}
+
+// NewUpdateAlertChannelRequestWithBody constructs an http.Request for the UpdateAlertChannel method, with any body, and a specified content type
+func NewUpdateAlertChannelRequestWithBody(server string, alertChannelID ID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "alert_channel_id", alertChannelID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/alert-channels/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDisableAlertChannelRequest constructs an http.Request for the DisableAlertChannel method
+func NewDisableAlertChannelRequest(server string, alertChannelID ID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "alert_channel_id", alertChannelID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/alert-channels/%s/disable", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewEnableAlertChannelRequest constructs an http.Request for the EnableAlertChannel method
+func NewEnableAlertChannelRequest(server string, alertChannelID ID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "alert_channel_id", alertChannelID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/alert-channels/%s/enable", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewTestAlertChannelRequest constructs an http.Request for the TestAlertChannel method
+func NewTestAlertChannelRequest(server string, alertChannelID ID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "alert_channel_id", alertChannelID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/alert-channels/%s/test", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListAlertDeliveriesRequest constructs an http.Request for the ListAlertDeliveries method
+func NewListAlertDeliveriesRequest(server string, params *ListAlertDeliveriesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/alert-deliveries")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.AlertID != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "alert_id", *params.AlertID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ChannelID != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "channel_id", *params.ChannelID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.State != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
 }
 
 // NewListAlertRulesRequest constructs an http.Request for the ListAlertRules method
@@ -12080,6 +13336,140 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// ListAlertChannelsWithResponse List alert channels
+	//
+	// Ordered by name. Every role can list channels; credentials are never
+	// returned, only whether they are set and, for a webhook, its URL
+	// reduced to scheme and host.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/alert-channels (the `ListAlertChannels` operationId).
+	ListAlertChannelsWithResponse(ctx context.Context, params *ListAlertChannelsParams, reqEditors ...RequestEditorFn) (*ListAlertChannelsResponse, error)
+
+	// CreateAlertChannelWithBodyWithResponse Create an alert channel (Admin)
+	//
+	// A channel delivers alert events, firing and resolved, by email or to
+	// a webhook. Creating one doesn't send anything; use the `test`
+	// operation to check it works.
+	//
+	// An `email` channel needs `email.to`. Without `email.host` it sends
+	// through the platform's SMTP relay (the `smtp.*` settings). A
+	// `webhook` channel needs `webhook.url`. Slack and Teams URLs are
+	// credentials: they are stored encrypted and never returned.
+	//
+	// By default a channel receives every alert; `min_severity`,
+	// `rule_id`, and `client_group_id` narrow that.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/alert-channels (the `CreateAlertChannel` operationId).
+	CreateAlertChannelWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateAlertChannelResponse, error)
+
+	// CreateAlertChannelWithResponse Create an alert channel (Admin)
+	//
+	// A channel delivers alert events, firing and resolved, by email or to
+	// a webhook. Creating one doesn't send anything; use the `test`
+	// operation to check it works.
+	//
+	// An `email` channel needs `email.to`. Without `email.host` it sends
+	// through the platform's SMTP relay (the `smtp.*` settings). A
+	// `webhook` channel needs `webhook.url`. Slack and Teams URLs are
+	// credentials: they are stored encrypted and never returned.
+	//
+	// By default a channel receives every alert; `min_severity`,
+	// `rule_id`, and `client_group_id` narrow that.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/alert-channels (the `CreateAlertChannel` operationId).
+	CreateAlertChannelWithResponse(ctx context.Context, body CreateAlertChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateAlertChannelResponse, error)
+
+	// DeleteAlertChannelWithResponse Delete an alert channel (Admin)
+	//
+	// Deletes the channel, its credentials, and its delivery history.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v1/alert-channels/{alert_channel_id} (the `DeleteAlertChannel` operationId).
+	DeleteAlertChannelWithResponse(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*DeleteAlertChannelResponse, error)
+
+	// GetAlertChannelWithResponse Get an alert channel
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/alert-channels/{alert_channel_id} (the `GetAlertChannel` operationId).
+	GetAlertChannelWithResponse(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*GetAlertChannelResponse, error)
+
+	// UpdateAlertChannelWithBodyWithResponse Update an alert channel (Admin)
+	//
+	// Only the fields present are changed, including inside `email` and
+	// `webhook`. Credentials that are absent stay as they are; send an
+	// empty string to remove one. The type can't change. Deliveries
+	// already queued use the channel as it is when they are sent.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v1/alert-channels/{alert_channel_id} (the `UpdateAlertChannel` operationId).
+	UpdateAlertChannelWithBodyWithResponse(ctx context.Context, alertChannelID ID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAlertChannelResponse, error)
+
+	// UpdateAlertChannelWithResponse Update an alert channel (Admin)
+	//
+	// Only the fields present are changed, including inside `email` and
+	// `webhook`. Credentials that are absent stay as they are; send an
+	// empty string to remove one. The type can't change. Deliveries
+	// already queued use the channel as it is when they are sent.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v1/alert-channels/{alert_channel_id} (the `UpdateAlertChannel` operationId).
+	UpdateAlertChannelWithResponse(ctx context.Context, alertChannelID ID, body UpdateAlertChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAlertChannelResponse, error)
+
+	// DisableAlertChannelWithResponse Disable an alert channel (Admin)
+	//
+	// A disabled channel receives no new events. Deliveries already queued
+	// for it fail with an explanation.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/alert-channels/{alert_channel_id}/disable (the `DisableAlertChannel` operationId).
+	DisableAlertChannelWithResponse(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*DisableAlertChannelResponse, error)
+
+	// EnableAlertChannelWithResponse Enable an alert channel (Admin)
+	//
+	// Enabling a channel that is already enabled changes nothing.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/alert-channels/{alert_channel_id}/enable (the `EnableAlertChannel` operationId).
+	EnableAlertChannelWithResponse(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*EnableAlertChannelResponse, error)
+
+	// TestAlertChannelWithResponse Send a test notification (Admin)
+	//
+	// Sends a synthetic notification through the channel, enabled or not,
+	// and waits for the outcome. A channel that fails the test is still a
+	// `200`: read `success` and `error`. Nothing is recorded in the
+	// delivery history.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/alert-channels/{alert_channel_id}/test (the `TestAlertChannel` operationId).
+	TestAlertChannelWithResponse(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*TestAlertChannelResponse, error)
+
+	// ListAlertDeliveriesWithResponse List alert deliveries
+	//
+	// The delivery history: each alert event (firing, resolved) bound for
+	// each channel that wanted it, newest first. A delivery is `pending`
+	// while it is retried, `delivered` once the channel accepted it, and
+	// `failed` when it ran out of attempts or can't succeed (the receiver
+	// refused it). `last_error` says what went wrong and never contains
+	// credentials.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/alert-deliveries (the `ListAlertDeliveries` operationId).
+	ListAlertDeliveriesWithResponse(ctx context.Context, params *ListAlertDeliveriesParams, reqEditors ...RequestEditorFn) (*ListAlertDeliveriesResponse, error)
+
 	// ListAlertRulesWithResponse List alert rules
 	//
 	// Ordered by name.
@@ -13883,6 +15273,662 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /readyz (the `GetReadiness` operationId).
 	GetReadinessWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadinessResponse, error)
+}
+
+type ListAlertChannelsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AlertChannelList
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAlertChannelsResponse) GetJSON200() *AlertChannelList {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListAlertChannelsResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListAlertChannelsResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListAlertChannelsResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAlertChannelsResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAlertChannelsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAlertChannelsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAlertChannelsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAlertChannelsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CreateAlertChannelResponse201Headers the declared response headers of an HTTP 201 response for CreateAlertChannel
+type CreateAlertChannelResponse201Headers struct {
+	Location *string
+}
+
+type CreateAlertChannelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *AlertChannel
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers201 the parsed response headers for an HTTP 201 response
+	Headers201 *CreateAlertChannelResponse201Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateAlertChannelResponse) GetJSON201() *AlertChannel {
+	return r.JSON201
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CreateAlertChannelResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CreateAlertChannelResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CreateAlertChannelResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CreateAlertChannelResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r CreateAlertChannelResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateAlertChannelResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateAlertChannelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateAlertChannelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateAlertChannelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateAlertChannelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteAlertChannelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DeleteAlertChannelResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DeleteAlertChannelResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DeleteAlertChannelResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteAlertChannelResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteAlertChannelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteAlertChannelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteAlertChannelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteAlertChannelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetAlertChannelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AlertChannel
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAlertChannelResponse) GetJSON200() *AlertChannel {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetAlertChannelResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetAlertChannelResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetAlertChannelResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetAlertChannelResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAlertChannelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAlertChannelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAlertChannelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAlertChannelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateAlertChannelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AlertChannel
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateAlertChannelResponse) GetJSON200() *AlertChannel {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r UpdateAlertChannelResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r UpdateAlertChannelResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r UpdateAlertChannelResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r UpdateAlertChannelResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r UpdateAlertChannelResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r UpdateAlertChannelResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateAlertChannelResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateAlertChannelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateAlertChannelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateAlertChannelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateAlertChannelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DisableAlertChannelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AlertChannel
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DisableAlertChannelResponse) GetJSON200() *AlertChannel {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DisableAlertChannelResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DisableAlertChannelResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DisableAlertChannelResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DisableAlertChannelResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DisableAlertChannelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DisableAlertChannelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DisableAlertChannelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DisableAlertChannelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type EnableAlertChannelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AlertChannel
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r EnableAlertChannelResponse) GetJSON200() *AlertChannel {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r EnableAlertChannelResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r EnableAlertChannelResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r EnableAlertChannelResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r EnableAlertChannelResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r EnableAlertChannelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r EnableAlertChannelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r EnableAlertChannelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r EnableAlertChannelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type TestAlertChannelResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AlertChannelTestResult
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r TestAlertChannelResponse) GetJSON200() *AlertChannelTestResult {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r TestAlertChannelResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r TestAlertChannelResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r TestAlertChannelResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r TestAlertChannelResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r TestAlertChannelResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r TestAlertChannelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r TestAlertChannelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r TestAlertChannelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListAlertDeliveriesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AlertDeliveryList
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAlertDeliveriesResponse) GetJSON200() *AlertDeliveryList {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListAlertDeliveriesResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListAlertDeliveriesResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListAlertDeliveriesResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListAlertDeliveriesResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAlertDeliveriesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAlertDeliveriesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAlertDeliveriesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAlertDeliveriesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 type ListAlertRulesResponse struct {
@@ -20333,6 +22379,206 @@ func (r GetReadinessResponse) ContentType() string {
 	return ""
 }
 
+// ListAlertChannelsWithResponse List alert channels
+//
+// Ordered by name. Every role can list channels; credentials are never
+// returned, only whether they are set and, for a webhook, its URL
+// reduced to scheme and host.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/alert-channels (the `ListAlertChannels` operationId).
+func (c *ClientWithResponses) ListAlertChannelsWithResponse(ctx context.Context, params *ListAlertChannelsParams, reqEditors ...RequestEditorFn) (*ListAlertChannelsResponse, error) {
+	rsp, err := c.ListAlertChannels(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAlertChannelsResponse(rsp)
+}
+
+// CreateAlertChannelWithBodyWithResponse Create an alert channel (Admin)
+//
+// A channel delivers alert events, firing and resolved, by email or to
+// a webhook. Creating one doesn't send anything; use the `test`
+// operation to check it works.
+//
+// An `email` channel needs `email.to`. Without `email.host` it sends
+// through the platform's SMTP relay (the `smtp.*` settings). A
+// `webhook` channel needs `webhook.url`. Slack and Teams URLs are
+// credentials: they are stored encrypted and never returned.
+//
+// By default a channel receives every alert; `min_severity`,
+// `rule_id`, and `client_group_id` narrow that.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/alert-channels (the `CreateAlertChannel` operationId).
+func (c *ClientWithResponses) CreateAlertChannelWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateAlertChannelResponse, error) {
+	rsp, err := c.CreateAlertChannelWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateAlertChannelResponse(rsp)
+}
+
+// CreateAlertChannelWithResponse Create an alert channel (Admin)
+//
+// A channel delivers alert events, firing and resolved, by email or to
+// a webhook. Creating one doesn't send anything; use the `test`
+// operation to check it works.
+//
+// An `email` channel needs `email.to`. Without `email.host` it sends
+// through the platform's SMTP relay (the `smtp.*` settings). A
+// `webhook` channel needs `webhook.url`. Slack and Teams URLs are
+// credentials: they are stored encrypted and never returned.
+//
+// By default a channel receives every alert; `min_severity`,
+// `rule_id`, and `client_group_id` narrow that.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/alert-channels (the `CreateAlertChannel` operationId).
+func (c *ClientWithResponses) CreateAlertChannelWithResponse(ctx context.Context, body CreateAlertChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateAlertChannelResponse, error) {
+	rsp, err := c.CreateAlertChannel(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateAlertChannelResponse(rsp)
+}
+
+// DeleteAlertChannelWithResponse Delete an alert channel (Admin)
+//
+// Deletes the channel, its credentials, and its delivery history.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v1/alert-channels/{alert_channel_id} (the `DeleteAlertChannel` operationId).
+func (c *ClientWithResponses) DeleteAlertChannelWithResponse(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*DeleteAlertChannelResponse, error) {
+	rsp, err := c.DeleteAlertChannel(ctx, alertChannelID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteAlertChannelResponse(rsp)
+}
+
+// GetAlertChannelWithResponse Get an alert channel
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/alert-channels/{alert_channel_id} (the `GetAlertChannel` operationId).
+func (c *ClientWithResponses) GetAlertChannelWithResponse(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*GetAlertChannelResponse, error) {
+	rsp, err := c.GetAlertChannel(ctx, alertChannelID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAlertChannelResponse(rsp)
+}
+
+// UpdateAlertChannelWithBodyWithResponse Update an alert channel (Admin)
+//
+// Only the fields present are changed, including inside `email` and
+// `webhook`. Credentials that are absent stay as they are; send an
+// empty string to remove one. The type can't change. Deliveries
+// already queued use the channel as it is when they are sent.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v1/alert-channels/{alert_channel_id} (the `UpdateAlertChannel` operationId).
+func (c *ClientWithResponses) UpdateAlertChannelWithBodyWithResponse(ctx context.Context, alertChannelID ID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateAlertChannelResponse, error) {
+	rsp, err := c.UpdateAlertChannelWithBody(ctx, alertChannelID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateAlertChannelResponse(rsp)
+}
+
+// UpdateAlertChannelWithResponse Update an alert channel (Admin)
+//
+// Only the fields present are changed, including inside `email` and
+// `webhook`. Credentials that are absent stay as they are; send an
+// empty string to remove one. The type can't change. Deliveries
+// already queued use the channel as it is when they are sent.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v1/alert-channels/{alert_channel_id} (the `UpdateAlertChannel` operationId).
+func (c *ClientWithResponses) UpdateAlertChannelWithResponse(ctx context.Context, alertChannelID ID, body UpdateAlertChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateAlertChannelResponse, error) {
+	rsp, err := c.UpdateAlertChannel(ctx, alertChannelID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateAlertChannelResponse(rsp)
+}
+
+// DisableAlertChannelWithResponse Disable an alert channel (Admin)
+//
+// A disabled channel receives no new events. Deliveries already queued
+// for it fail with an explanation.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/alert-channels/{alert_channel_id}/disable (the `DisableAlertChannel` operationId).
+func (c *ClientWithResponses) DisableAlertChannelWithResponse(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*DisableAlertChannelResponse, error) {
+	rsp, err := c.DisableAlertChannel(ctx, alertChannelID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDisableAlertChannelResponse(rsp)
+}
+
+// EnableAlertChannelWithResponse Enable an alert channel (Admin)
+//
+// Enabling a channel that is already enabled changes nothing.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/alert-channels/{alert_channel_id}/enable (the `EnableAlertChannel` operationId).
+func (c *ClientWithResponses) EnableAlertChannelWithResponse(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*EnableAlertChannelResponse, error) {
+	rsp, err := c.EnableAlertChannel(ctx, alertChannelID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseEnableAlertChannelResponse(rsp)
+}
+
+// TestAlertChannelWithResponse Send a test notification (Admin)
+//
+// Sends a synthetic notification through the channel, enabled or not,
+// and waits for the outcome. A channel that fails the test is still a
+// `200`: read `success` and `error`. Nothing is recorded in the
+// delivery history.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/alert-channels/{alert_channel_id}/test (the `TestAlertChannel` operationId).
+func (c *ClientWithResponses) TestAlertChannelWithResponse(ctx context.Context, alertChannelID ID, reqEditors ...RequestEditorFn) (*TestAlertChannelResponse, error) {
+	rsp, err := c.TestAlertChannel(ctx, alertChannelID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTestAlertChannelResponse(rsp)
+}
+
+// ListAlertDeliveriesWithResponse List alert deliveries
+//
+// The delivery history: each alert event (firing, resolved) bound for
+// each channel that wanted it, newest first. A delivery is `pending`
+// while it is retried, `delivered` once the channel accepted it, and
+// `failed` when it ran out of attempts or can't succeed (the receiver
+// refused it). `last_error` says what went wrong and never contains
+// credentials.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/alert-deliveries (the `ListAlertDeliveries` operationId).
+func (c *ClientWithResponses) ListAlertDeliveriesWithResponse(ctx context.Context, params *ListAlertDeliveriesParams, reqEditors ...RequestEditorFn) (*ListAlertDeliveriesResponse, error) {
+	rsp, err := c.ListAlertDeliveries(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAlertDeliveriesResponse(rsp)
+}
+
 // ListAlertRulesWithResponse List alert rules
 //
 // Ordered by name.
@@ -22789,6 +25035,536 @@ func (c *ClientWithResponses) GetReadinessWithResponse(ctx context.Context, reqE
 		return nil, err
 	}
 	return ParseGetReadinessResponse(rsp)
+}
+
+// ParseListAlertChannelsResponse parses an HTTP response from a ListAlertChannelsWithResponse call
+func ParseListAlertChannelsResponse(rsp *http.Response) (*ListAlertChannelsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAlertChannelsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AlertChannelList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateAlertChannelResponse parses an HTTP response from a CreateAlertChannelWithResponse call
+func ParseCreateAlertChannelResponse(rsp *http.Response) (*CreateAlertChannelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateAlertChannelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest AlertChannel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 201:
+		var headers CreateAlertChannelResponse201Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers201 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteAlertChannelResponse parses an HTTP response from a DeleteAlertChannelWithResponse call
+func ParseDeleteAlertChannelResponse(rsp *http.Response) (*DeleteAlertChannelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteAlertChannelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetAlertChannelResponse parses an HTTP response from a GetAlertChannelWithResponse call
+func ParseGetAlertChannelResponse(rsp *http.Response) (*GetAlertChannelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAlertChannelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AlertChannel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateAlertChannelResponse parses an HTTP response from a UpdateAlertChannelWithResponse call
+func ParseUpdateAlertChannelResponse(rsp *http.Response) (*UpdateAlertChannelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateAlertChannelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AlertChannel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDisableAlertChannelResponse parses an HTTP response from a DisableAlertChannelWithResponse call
+func ParseDisableAlertChannelResponse(rsp *http.Response) (*DisableAlertChannelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DisableAlertChannelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AlertChannel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseEnableAlertChannelResponse parses an HTTP response from a EnableAlertChannelWithResponse call
+func ParseEnableAlertChannelResponse(rsp *http.Response) (*EnableAlertChannelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &EnableAlertChannelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AlertChannel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseTestAlertChannelResponse parses an HTTP response from a TestAlertChannelWithResponse call
+func ParseTestAlertChannelResponse(rsp *http.Response) (*TestAlertChannelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &TestAlertChannelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AlertChannelTestResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListAlertDeliveriesResponse parses an HTTP response from a ListAlertDeliveriesWithResponse call
+func ParseListAlertDeliveriesResponse(rsp *http.Response) (*ListAlertDeliveriesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAlertDeliveriesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AlertDeliveryList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
 }
 
 // ParseListAlertRulesResponse parses an HTTP response from a ListAlertRulesWithResponse call

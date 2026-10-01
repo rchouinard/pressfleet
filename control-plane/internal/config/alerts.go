@@ -14,6 +14,13 @@ type AlertsConfig struct {
 	// EvaluationIntervalSeconds is the time between evaluations of every
 	// rule.
 	EvaluationIntervalSeconds int `yaml:"evaluation_interval_seconds"`
+	// WebhookTimeoutSeconds bounds one delivery to an alert channel: a
+	// webhook request or an SMTP conversation (#76).
+	WebhookTimeoutSeconds int `yaml:"webhook_timeout_seconds"`
+	// WebhookAllowLocalTargets lets alert channels connect to loopback,
+	// link-local, and cloud metadata addresses. Off by default, so a channel
+	// can't be used to probe services beside the control plane.
+	WebhookAllowLocalTargets bool `yaml:"webhook_allow_local_targets"`
 }
 
 // Alert evaluation limits.
@@ -27,11 +34,26 @@ const (
 	// MaxAlertEvaluationIntervalSeconds bounds the delay before an alert
 	// can fire at 15 minutes.
 	MaxAlertEvaluationIntervalSeconds = 900
+
+	// DefaultWebhookTimeoutSeconds is how long a webhook may take.
+	DefaultWebhookTimeoutSeconds = 10
+	// MaxWebhookTimeoutSeconds keeps one slow receiver from holding the
+	// delivery worker for long.
+	MaxWebhookTimeoutSeconds = 60
 )
 
 // DefaultAlerts returns the default alert settings.
 func DefaultAlerts() AlertsConfig {
-	return AlertsConfig{Enabled: true, EvaluationIntervalSeconds: DefaultAlertEvaluationIntervalSeconds}
+	return AlertsConfig{
+		Enabled:                   true,
+		EvaluationIntervalSeconds: DefaultAlertEvaluationIntervalSeconds,
+		WebhookTimeoutSeconds:     DefaultWebhookTimeoutSeconds,
+	}
+}
+
+// WebhookTimeout returns WebhookTimeoutSeconds as a duration.
+func (a AlertsConfig) WebhookTimeout() time.Duration {
+	return time.Duration(a.WebhookTimeoutSeconds) * time.Second
 }
 
 // EvaluationInterval returns EvaluationIntervalSeconds as a duration.
@@ -44,6 +66,9 @@ func (a AlertsConfig) Validate() error {
 	if s := a.EvaluationIntervalSeconds; s < MinAlertEvaluationIntervalSeconds || s > MaxAlertEvaluationIntervalSeconds {
 		return fmt.Errorf("alerts.evaluation_interval_seconds must be between %d and %d, got %d",
 			MinAlertEvaluationIntervalSeconds, MaxAlertEvaluationIntervalSeconds, s)
+	}
+	if s := a.WebhookTimeoutSeconds; s < 1 || s > MaxWebhookTimeoutSeconds {
+		return fmt.Errorf("alerts.webhook_timeout_seconds must be between 1 and %d, got %d", MaxWebhookTimeoutSeconds, s)
 	}
 	return nil
 }

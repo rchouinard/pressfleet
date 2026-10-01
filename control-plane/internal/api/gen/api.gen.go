@@ -19,6 +19,108 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for AlertChannelEmailCreateEncryption.
+const (
+	AlertChannelEmailCreateEncryptionNone     AlertChannelEmailCreateEncryption = "none"
+	AlertChannelEmailCreateEncryptionStarttls AlertChannelEmailCreateEncryption = "starttls"
+	AlertChannelEmailCreateEncryptionTLS      AlertChannelEmailCreateEncryption = "tls"
+)
+
+// Valid indicates whether the value is a known member of the AlertChannelEmailCreateEncryption enum.
+func (e AlertChannelEmailCreateEncryption) Valid() bool {
+	switch e {
+	case AlertChannelEmailCreateEncryptionNone:
+		return true
+	case AlertChannelEmailCreateEncryptionStarttls:
+		return true
+	case AlertChannelEmailCreateEncryptionTLS:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AlertChannelEmailUpdateEncryption.
+const (
+	AlertChannelEmailUpdateEncryptionEmpty    AlertChannelEmailUpdateEncryption = ""
+	AlertChannelEmailUpdateEncryptionNone     AlertChannelEmailUpdateEncryption = "none"
+	AlertChannelEmailUpdateEncryptionStarttls AlertChannelEmailUpdateEncryption = "starttls"
+	AlertChannelEmailUpdateEncryptionTLS      AlertChannelEmailUpdateEncryption = "tls"
+)
+
+// Valid indicates whether the value is a known member of the AlertChannelEmailUpdateEncryption enum.
+func (e AlertChannelEmailUpdateEncryption) Valid() bool {
+	switch e {
+	case AlertChannelEmailUpdateEncryptionEmpty:
+		return true
+	case AlertChannelEmailUpdateEncryptionNone:
+		return true
+	case AlertChannelEmailUpdateEncryptionStarttls:
+		return true
+	case AlertChannelEmailUpdateEncryptionTLS:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AlertChannelType.
+const (
+	AlertChannelTypeEmail   AlertChannelType = "email"
+	AlertChannelTypeWebhook AlertChannelType = "webhook"
+)
+
+// Valid indicates whether the value is a known member of the AlertChannelType enum.
+func (e AlertChannelType) Valid() bool {
+	switch e {
+	case AlertChannelTypeEmail:
+		return true
+	case AlertChannelTypeWebhook:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AlertDeliveryState.
+const (
+	AlertDeliveryStateDelivered AlertDeliveryState = "delivered"
+	AlertDeliveryStateFailed    AlertDeliveryState = "failed"
+	AlertDeliveryStatePending   AlertDeliveryState = "pending"
+)
+
+// Valid indicates whether the value is a known member of the AlertDeliveryState enum.
+func (e AlertDeliveryState) Valid() bool {
+	switch e {
+	case AlertDeliveryStateDelivered:
+		return true
+	case AlertDeliveryStateFailed:
+		return true
+	case AlertDeliveryStatePending:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AlertEventType.
+const (
+	AlertEventTypeFiring   AlertEventType = "firing"
+	AlertEventTypeResolved AlertEventType = "resolved"
+)
+
+// Valid indicates whether the value is a known member of the AlertEventType enum.
+func (e AlertEventType) Valid() bool {
+	switch e {
+	case AlertEventTypeFiring:
+		return true
+	case AlertEventTypeResolved:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AlertOperator.
 const (
 	Eq  AlertOperator = "eq"
@@ -835,6 +937,27 @@ func (e UploadStatus) Valid() bool {
 	}
 }
 
+// Defines values for WebhookFormat.
+const (
+	Generic WebhookFormat = "generic"
+	Slack   WebhookFormat = "slack"
+	Teams   WebhookFormat = "teams"
+)
+
+// Valid indicates whether the value is a known member of the WebhookFormat enum.
+func (e WebhookFormat) Valid() bool {
+	switch e {
+	case Generic:
+		return true
+	case Slack:
+		return true
+	case Teams:
+		return true
+	default:
+		return false
+	}
+}
+
 // Alert One incident of one rule for one series. A condition that keeps
 // holding updates its alert rather than creating another, and each
 // alert emits one firing event and, once it stops, one resolved event.
@@ -900,6 +1023,294 @@ type Alert struct {
 //
 // Examples: {"summary":"{{ .Labels.mountpoint }} is {{ humanizePercentage .Value }} full"}
 type AlertAnnotations map[string]string
+
+// AlertChannel defines model for AlertChannel.
+type AlertChannel struct {
+	// ClientGroupID If set, the channel only receives events of alerts of this client group.
+	ClientGroupID *ID `json:"client_group_id"`
+
+	// CreatedAt Examples: 2026-09-26T17:25:00Z
+	CreatedAt Timestamp `json:"created_at"`
+
+	// Email Present for `email` channels.
+	Email   *AlertChannelEmail `json:"email"`
+	Enabled bool               `json:"enabled"`
+
+	// ID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ID ID `json:"id"`
+
+	// MinSeverity The lowest severity the channel receives.
+	MinSeverity AlertSeverity `json:"min_severity"`
+
+	// Name Examples: Ops on-call email
+	Name string `json:"name"`
+
+	// RuleID If set, the channel only receives events of this rule.
+	RuleID *ID              `json:"rule_id"`
+	Type   AlertChannelType `json:"type"`
+
+	// UpdatedAt Examples: 2026-09-26T17:25:00Z
+	UpdatedAt Timestamp `json:"updated_at"`
+
+	// Webhook Present for `webhook` channels.
+	Webhook *AlertChannelWebhook `json:"webhook"`
+}
+
+// AlertChannelCreate defines model for AlertChannelCreate.
+type AlertChannelCreate struct {
+	// ClientGroupID Only deliver events of alerts of this client group (platform alerts have none, so they aren't delivered).
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ClientGroupID *ID `json:"client_group_id,omitempty"`
+
+	// Email Required for `email` channels.
+	Email   *AlertChannelEmailCreate `json:"email,omitempty"`
+	Enabled *bool                    `json:"enabled,omitempty"`
+
+	// MinSeverity The lowest severity the channel receives. Default `info`, which is everything.
+	MinSeverity *AlertSeverity `json:"min_severity,omitempty"`
+	Name        string         `json:"name"`
+
+	// RuleID Only deliver events of this rule.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	RuleID *ID              `json:"rule_id,omitempty"`
+	Type   AlertChannelType `json:"type"`
+
+	// Webhook Required for `webhook` channels.
+	Webhook *AlertChannelWebhookCreate `json:"webhook,omitempty"`
+}
+
+// AlertChannelEmail The settings of an email channel.
+type AlertChannelEmail struct {
+	// Encryption `starttls`, `tls` (implicit TLS), or `none`. Empty with the
+	// platform relay.
+	Encryption string `json:"encryption"`
+
+	// FromEmail The sender; empty means the platform relay's.
+	FromEmail string `json:"from_email"`
+	FromName  string `json:"from_name"`
+
+	// HasPassword Whether an SMTP password is stored. It is never returned.
+	HasPassword bool `json:"has_password"`
+
+	// Host The channel's own SMTP server, or an empty string.
+	Host string `json:"host"`
+
+	// Port The server's port; 0 means the standard port for `encryption`.
+	Port int `json:"port"`
+
+	// To The recipients.
+	To       []string `json:"to"`
+	Username string   `json:"username"`
+
+	// UsesPlatformRelay True when the channel has no `host` and sends through the platform's SMTP relay.
+	UsesPlatformRelay bool `json:"uses_platform_relay"`
+}
+
+// AlertChannelEmailCreate defines model for AlertChannelEmailCreate.
+type AlertChannelEmailCreate struct {
+	// Encryption Default `starttls`. `tls` is implicit TLS ("SMTPS").
+	Encryption *AlertChannelEmailCreateEncryption `json:"encryption,omitempty"`
+
+	// FromEmail The sender. Required with `host`; otherwise defaults to the platform relay's.
+	FromEmail *string `json:"from_email,omitempty"`
+	FromName  *string `json:"from_name,omitempty"`
+
+	// Host An SMTP server of the channel's own. Leave it out to send
+	// through the platform's SMTP relay (the `smtp.*` settings), which
+	// is the usual choice.
+	Host *string `json:"host,omitempty"`
+
+	// Password Stored encrypted and never returned. Needs `username`.
+	Password *string `json:"password,omitempty"`
+
+	// Port 0 or absent means the standard port for `encryption`.
+	Port *int `json:"port,omitempty"`
+
+	// To Recipients, as plain addresses (`ops@example.com`).
+	To       []string `json:"to"`
+	Username *string  `json:"username,omitempty"`
+}
+
+// AlertChannelEmailCreateEncryption Default `starttls`. `tls` is implicit TLS ("SMTPS").
+type AlertChannelEmailCreateEncryption string
+
+// AlertChannelEmailUpdate defines model for AlertChannelEmailUpdate.
+type AlertChannelEmailUpdate struct {
+	Encryption *AlertChannelEmailUpdateEncryption `json:"encryption,omitempty"`
+	FromEmail  *string                            `json:"from_email,omitempty"`
+	FromName   *string                            `json:"from_name,omitempty"`
+
+	// Host An empty string switches to the platform's SMTP relay.
+	Host *string `json:"host,omitempty"`
+
+	// Password Replaces the stored password. An empty string removes it.
+	Password *string   `json:"password,omitempty"`
+	Port     *int      `json:"port,omitempty"`
+	To       *[]string `json:"to,omitempty"`
+	Username *string   `json:"username,omitempty"`
+}
+
+// AlertChannelEmailUpdateEncryption defines model for AlertChannelEmailUpdate.Encryption.
+type AlertChannelEmailUpdateEncryption string
+
+// AlertChannelList defines model for AlertChannelList.
+type AlertChannelList struct {
+	Items []AlertChannel `json:"items"`
+
+	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
+	NextCursor *NextCursor `json:"next_cursor"`
+}
+
+// AlertChannelTestResult defines model for AlertChannelTestResult.
+type AlertChannelTestResult struct {
+	DurationMs int64 `json:"duration_ms"`
+
+	// Error Why it didn't. Never contains credentials.
+	Error *string `json:"error"`
+
+	// Success Whether the channel accepted the test notification.
+	Success bool `json:"success"`
+}
+
+// AlertChannelType defines model for AlertChannelType.
+type AlertChannelType string
+
+// AlertChannelUpdate defines model for AlertChannelUpdate.
+type AlertChannelUpdate struct {
+	// ClientGroupID Only deliver events of this client group. An empty string removes the limit.
+	ClientGroupID *string                  `json:"client_group_id,omitempty"`
+	Email         *AlertChannelEmailUpdate `json:"email,omitempty"`
+	MinSeverity   *AlertSeverity           `json:"min_severity,omitempty"`
+	Name          *string                  `json:"name,omitempty"`
+
+	// RuleID Only deliver events of this rule. An empty string removes the limit.
+	RuleID  *string                    `json:"rule_id,omitempty"`
+	Webhook *AlertChannelWebhookUpdate `json:"webhook,omitempty"`
+}
+
+// AlertChannelWebhook The settings of a webhook channel.
+type AlertChannelWebhook struct {
+	// Format The shape of the request body. `generic` is PressFleet's own payload
+	// (documented in docs/configuration.md): it has a top-level `text`, so
+	// a Slack incoming webhook accepts it too. `slack` adds an attachment
+	// with colored fields. `teams` is a message with an Adaptive Card, as
+	// Microsoft Teams Workflows webhooks expect.
+	Format WebhookFormat `json:"format"`
+
+	// HasSigningSecret Whether requests are signed (HMAC-SHA256, generic format).
+	HasSigningSecret bool `json:"has_signing_secret"`
+
+	// URL The webhook URL reduced to its scheme and host, such as
+	// `https://hooks.slack.com/…`. The rest is a credential and is
+	// never returned.
+	//
+	//
+	// Examples: https://hooks.slack.com/…
+	URL string `json:"url"`
+}
+
+// AlertChannelWebhookCreate defines model for AlertChannelWebhookCreate.
+type AlertChannelWebhookCreate struct {
+	// Format The shape of the request body. `generic` is PressFleet's own payload
+	// (documented in docs/configuration.md): it has a top-level `text`, so
+	// a Slack incoming webhook accepts it too. `slack` adds an attachment
+	// with colored fields. `teams` is a message with an Adaptive Card, as
+	// Microsoft Teams Workflows webhooks expect.
+	Format *WebhookFormat `json:"format,omitempty"`
+
+	// SigningSecret If set, requests carry `X-PressFleet-Signature`, an HMAC-SHA256
+	// of the timestamp, a dot, and the body, so the receiver can tell
+	// the request is ours.
+	SigningSecret *string `json:"signing_secret,omitempty"`
+
+	// URL An `https` (or `http`) URL. It is a credential: it is stored
+	// encrypted and never returned. Loopback, link-local, and cloud
+	// metadata addresses are refused unless the control plane allows
+	// them (`alerts.webhook_allow_local_targets`). Redirects aren't
+	// followed.
+	URL *string `json:"url,omitempty"`
+}
+
+// AlertChannelWebhookUpdate defines model for AlertChannelWebhookUpdate.
+type AlertChannelWebhookUpdate struct {
+	// Format The shape of the request body. `generic` is PressFleet's own payload
+	// (documented in docs/configuration.md): it has a top-level `text`, so
+	// a Slack incoming webhook accepts it too. `slack` adds an attachment
+	// with colored fields. `teams` is a message with an Adaptive Card, as
+	// Microsoft Teams Workflows webhooks expect.
+	Format *WebhookFormat `json:"format,omitempty"`
+
+	// SigningSecret Replaces the stored signing secret. An empty string removes it.
+	SigningSecret *string `json:"signing_secret,omitempty"`
+
+	// URL Replaces the stored URL.
+	URL *string `json:"url,omitempty"`
+}
+
+// AlertDelivery One alert event bound for one channel.
+type AlertDelivery struct {
+	// AlertID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	AlertID ID `json:"alert_id"`
+
+	// Attempts How many times delivery was tried.
+	Attempts int `json:"attempts"`
+
+	// ChannelID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ChannelID   ID     `json:"channel_id"`
+	ChannelName string `json:"channel_name"`
+
+	// CreatedAt When the event was accepted for this channel.
+	//
+	// Examples: 2026-09-26T17:25:00Z
+	CreatedAt   Timestamp  `json:"created_at"`
+	DeliveredAt *Timestamp `json:"delivered_at"`
+
+	// Event What an alert event is. Each alert emits one `firing` event and, once it stops, one `resolved` event.
+	Event AlertEventType `json:"event"`
+
+	// ID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ID ID `json:"id"`
+
+	// LastError What went wrong with the latest attempt, or null.
+	LastError *string `json:"last_error"`
+
+	// NextAttemptAt When a `pending` delivery is tried next; null otherwise.
+	NextAttemptAt *Timestamp `json:"next_attempt_at"`
+
+	// State `pending`: not delivered yet, tried again at `next_attempt_at`.
+	// `delivered`: the channel accepted it. `failed`: out of attempts, or
+	// it can't succeed.
+	State AlertDeliveryState `json:"state"`
+
+	// UpdatedAt Examples: 2026-09-26T17:25:00Z
+	UpdatedAt Timestamp `json:"updated_at"`
+}
+
+// AlertDeliveryList defines model for AlertDeliveryList.
+type AlertDeliveryList struct {
+	Items []AlertDelivery `json:"items"`
+
+	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
+	NextCursor *NextCursor `json:"next_cursor"`
+}
+
+// AlertDeliveryState `pending`: not delivered yet, tried again at `next_attempt_at`.
+// `delivered`: the channel accepted it. `failed`: out of attempts, or
+// it can't succeed.
+type AlertDeliveryState string
+
+// AlertEventType What an alert event is. Each alert emits one `firing` event and, once it stops, one `resolved` event.
+type AlertEventType string
 
 // AlertList defines model for AlertList.
 type AlertList struct {
@@ -2833,6 +3244,13 @@ type UserUpdate struct {
 	Role *Role `json:"role,omitempty"`
 }
 
+// WebhookFormat The shape of the request body. `generic` is PressFleet's own payload
+// (documented in docs/configuration.md): it has a top-level `text`, so
+// a Slack incoming webhook accepts it too. `slack` adds an attachment
+// with colored fields. `teams` is a message with an Adaptive Card, as
+// Microsoft Teams Workflows webhooks expect.
+type WebhookFormat string
+
 // WordPressBranch A WordPress major branch (x.y).
 //
 // Examples: 7.2
@@ -2941,6 +3359,39 @@ type UnprocessableDomains = Problem
 
 // UnsupportedMediaType RFC 9457 Problem Details. Additional members may be added.
 type UnsupportedMediaType = Problem
+
+// ListAlertChannelsParams defines parameters for ListAlertChannels.
+type ListAlertChannelsParams struct {
+	// Limit Maximum number of items to return.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Type Only return channels of this type.
+	Type *AlertChannelType `form:"type,omitempty" json:"type,omitempty"`
+
+	// Enabled Only return channels that are enabled (`true`) or disabled (`false`).
+	Enabled *bool `form:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// ListAlertDeliveriesParams defines parameters for ListAlertDeliveries.
+type ListAlertDeliveriesParams struct {
+	// Limit Maximum number of items to return.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// AlertID Only return deliveries of this alert's events.
+	AlertID *ID `form:"alert_id,omitempty" json:"alert_id,omitempty"`
+
+	// ChannelID Only return deliveries to this channel.
+	ChannelID *ID `form:"channel_id,omitempty" json:"channel_id,omitempty"`
+
+	// State Only return deliveries in this state.
+	State *AlertDeliveryState `form:"state,omitempty" json:"state,omitempty"`
+}
 
 // ListAlertRulesParams defines parameters for ListAlertRules.
 type ListAlertRulesParams struct {
@@ -3243,6 +3694,12 @@ type ListUserSSHKeysParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// CreateAlertChannelJSONRequestBody defines body for CreateAlertChannel for application/json ContentType.
+type CreateAlertChannelJSONRequestBody = AlertChannelCreate
+
+// UpdateAlertChannelJSONRequestBody defines body for UpdateAlertChannel for application/json ContentType.
+type UpdateAlertChannelJSONRequestBody = AlertChannelUpdate
+
 // CreateAlertRuleJSONRequestBody defines body for CreateAlertRule for application/json ContentType.
 type CreateAlertRuleJSONRequestBody = AlertRuleCreate
 
@@ -3320,6 +3777,33 @@ type AddUserSSHKeyJSONRequestBody = SSHKeyCreate
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// ListAlertChannels List alert channels
+	// (GET /api/v1/alert-channels)
+	ListAlertChannels(w http.ResponseWriter, r *http.Request, params ListAlertChannelsParams)
+	// CreateAlertChannel Create an alert channel (Admin)
+	// (POST /api/v1/alert-channels)
+	CreateAlertChannel(w http.ResponseWriter, r *http.Request)
+	// DeleteAlertChannel Delete an alert channel (Admin)
+	// (DELETE /api/v1/alert-channels/{alert_channel_id})
+	DeleteAlertChannel(w http.ResponseWriter, r *http.Request, alertChannelID ID)
+	// GetAlertChannel Get an alert channel
+	// (GET /api/v1/alert-channels/{alert_channel_id})
+	GetAlertChannel(w http.ResponseWriter, r *http.Request, alertChannelID ID)
+	// UpdateAlertChannel Update an alert channel (Admin)
+	// (PATCH /api/v1/alert-channels/{alert_channel_id})
+	UpdateAlertChannel(w http.ResponseWriter, r *http.Request, alertChannelID ID)
+	// DisableAlertChannel Disable an alert channel (Admin)
+	// (POST /api/v1/alert-channels/{alert_channel_id}/disable)
+	DisableAlertChannel(w http.ResponseWriter, r *http.Request, alertChannelID ID)
+	// EnableAlertChannel Enable an alert channel (Admin)
+	// (POST /api/v1/alert-channels/{alert_channel_id}/enable)
+	EnableAlertChannel(w http.ResponseWriter, r *http.Request, alertChannelID ID)
+	// TestAlertChannel Send a test notification (Admin)
+	// (POST /api/v1/alert-channels/{alert_channel_id}/test)
+	TestAlertChannel(w http.ResponseWriter, r *http.Request, alertChannelID ID)
+	// ListAlertDeliveries List alert deliveries
+	// (GET /api/v1/alert-deliveries)
+	ListAlertDeliveries(w http.ResponseWriter, r *http.Request, params ListAlertDeliveriesParams)
 	// ListAlertRules List alert rules
 	// (GET /api/v1/alert-rules)
 	ListAlertRules(w http.ResponseWriter, r *http.Request, params ListAlertRulesParams)
@@ -3582,6 +4066,333 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// ListAlertChannels operation middleware
+func (siw *ServerInterfaceWrapper) ListAlertChannels(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAlertChannelsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "type" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "type", r.URL.Query(), &params.Type, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "type"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "type", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "enabled" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "enabled", r.URL.Query(), &params.Enabled, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "enabled"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "enabled", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAlertChannels(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateAlertChannel operation middleware
+func (siw *ServerInterfaceWrapper) CreateAlertChannel(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateAlertChannel(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteAlertChannel operation middleware
+func (siw *ServerInterfaceWrapper) DeleteAlertChannel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "alert_channel_id" -------------
+	var alertChannelID ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "alert_channel_id", r.PathValue("alert_channel_id"), &alertChannelID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "alert_channel_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteAlertChannel(w, r, alertChannelID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAlertChannel operation middleware
+func (siw *ServerInterfaceWrapper) GetAlertChannel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "alert_channel_id" -------------
+	var alertChannelID ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "alert_channel_id", r.PathValue("alert_channel_id"), &alertChannelID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "alert_channel_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAlertChannel(w, r, alertChannelID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateAlertChannel operation middleware
+func (siw *ServerInterfaceWrapper) UpdateAlertChannel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "alert_channel_id" -------------
+	var alertChannelID ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "alert_channel_id", r.PathValue("alert_channel_id"), &alertChannelID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "alert_channel_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateAlertChannel(w, r, alertChannelID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DisableAlertChannel operation middleware
+func (siw *ServerInterfaceWrapper) DisableAlertChannel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "alert_channel_id" -------------
+	var alertChannelID ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "alert_channel_id", r.PathValue("alert_channel_id"), &alertChannelID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "alert_channel_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DisableAlertChannel(w, r, alertChannelID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// EnableAlertChannel operation middleware
+func (siw *ServerInterfaceWrapper) EnableAlertChannel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "alert_channel_id" -------------
+	var alertChannelID ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "alert_channel_id", r.PathValue("alert_channel_id"), &alertChannelID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "alert_channel_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.EnableAlertChannel(w, r, alertChannelID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TestAlertChannel operation middleware
+func (siw *ServerInterfaceWrapper) TestAlertChannel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "alert_channel_id" -------------
+	var alertChannelID ID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "alert_channel_id", r.PathValue("alert_channel_id"), &alertChannelID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "alert_channel_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TestAlertChannel(w, r, alertChannelID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAlertDeliveries operation middleware
+func (siw *ServerInterfaceWrapper) ListAlertDeliveries(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAlertDeliveriesParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "alert_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "alert_id", r.URL.Query(), &params.AlertID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "alert_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "alert_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "channel_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "channel_id", r.URL.Query(), &params.ChannelID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "channel_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "channel_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "state" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "state", r.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "state"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "state", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAlertDeliveries(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // ListAlertRules operation middleware
 func (siw *ServerInterfaceWrapper) ListAlertRules(w http.ResponseWriter, r *http.Request) {
@@ -6711,6 +7522,15 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/alert-rules/{alert_rule_id}/disable", wrapper.DisableAlertRule)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/alerts", wrapper.ListAlerts)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/alerts/{alert_id}", wrapper.GetAlert)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/alert-channels", wrapper.ListAlertChannels)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/alert-channels", wrapper.CreateAlertChannel)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/alert-channels/{alert_channel_id}", wrapper.DeleteAlertChannel)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/alert-channels/{alert_channel_id}", wrapper.GetAlertChannel)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/v1/alert-channels/{alert_channel_id}", wrapper.UpdateAlertChannel)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/alert-channels/{alert_channel_id}/enable", wrapper.EnableAlertChannel)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/alert-channels/{alert_channel_id}/disable", wrapper.DisableAlertChannel)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/alert-channels/{alert_channel_id}/test", wrapper.TestAlertChannel)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/alert-deliveries", wrapper.ListAlertDeliveries)
 
 	return m
 }
@@ -6747,6 +7567,874 @@ type UnprocessableContentApplicationProblemPlusJSONResponse Problem
 type UnprocessableDomainsApplicationProblemPlusJSONResponse Problem
 
 type UnsupportedMediaTypeApplicationProblemPlusJSONResponse Problem
+
+type ListAlertChannelsRequestObject struct {
+	Params ListAlertChannelsParams
+}
+
+type ListAlertChannelsResponseObject interface {
+	VisitListAlertChannelsResponse(w http.ResponseWriter) error
+}
+
+type ListAlertChannels200JSONResponse AlertChannelList
+
+func (response ListAlertChannels200JSONResponse) VisitListAlertChannelsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAlertChannels400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response ListAlertChannels400ApplicationProblemPlusJSONResponse) VisitListAlertChannelsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAlertChannels401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ListAlertChannels401ApplicationProblemPlusJSONResponse) VisitListAlertChannelsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAlertChannels403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ListAlertChannels403ApplicationProblemPlusJSONResponse) VisitListAlertChannelsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAlertChannelsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ListAlertChannelsdefaultApplicationProblemPlusJSONResponse) VisitListAlertChannelsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAlertChannelRequestObject struct {
+	Body *CreateAlertChannelJSONRequestBody
+}
+
+type CreateAlertChannelResponseObject interface {
+	VisitCreateAlertChannelResponse(w http.ResponseWriter) error
+}
+
+type CreateAlertChannel201ResponseHeaders struct {
+	Location *string
+}
+
+type CreateAlertChannel201JSONResponse struct {
+	Body    AlertChannel
+	Headers CreateAlertChannel201ResponseHeaders
+}
+
+func (response CreateAlertChannel201JSONResponse) VisitCreateAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAlertChannel400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response CreateAlertChannel400ApplicationProblemPlusJSONResponse) VisitCreateAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAlertChannel401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response CreateAlertChannel401ApplicationProblemPlusJSONResponse) VisitCreateAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAlertChannel403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response CreateAlertChannel403ApplicationProblemPlusJSONResponse) VisitCreateAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAlertChannel409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response CreateAlertChannel409ApplicationProblemPlusJSONResponse) VisitCreateAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAlertChannel422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response CreateAlertChannel422ApplicationProblemPlusJSONResponse) VisitCreateAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateAlertChanneldefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response CreateAlertChanneldefaultApplicationProblemPlusJSONResponse) VisitCreateAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAlertChannelRequestObject struct {
+	AlertChannelID ID `json:"alert_channel_id"`
+}
+
+type DeleteAlertChannelResponseObject interface {
+	VisitDeleteAlertChannelResponse(w http.ResponseWriter) error
+}
+
+type DeleteAlertChannel204Response struct {
+}
+
+func (response DeleteAlertChannel204Response) VisitDeleteAlertChannelResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteAlertChannel401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteAlertChannel401ApplicationProblemPlusJSONResponse) VisitDeleteAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAlertChannel403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteAlertChannel403ApplicationProblemPlusJSONResponse) VisitDeleteAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAlertChannel404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteAlertChannel404ApplicationProblemPlusJSONResponse) VisitDeleteAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteAlertChanneldefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response DeleteAlertChanneldefaultApplicationProblemPlusJSONResponse) VisitDeleteAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAlertChannelRequestObject struct {
+	AlertChannelID ID `json:"alert_channel_id"`
+}
+
+type GetAlertChannelResponseObject interface {
+	VisitGetAlertChannelResponse(w http.ResponseWriter) error
+}
+
+type GetAlertChannel200JSONResponse AlertChannel
+
+func (response GetAlertChannel200JSONResponse) VisitGetAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAlertChannel401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetAlertChannel401ApplicationProblemPlusJSONResponse) VisitGetAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAlertChannel403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetAlertChannel403ApplicationProblemPlusJSONResponse) VisitGetAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAlertChannel404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response GetAlertChannel404ApplicationProblemPlusJSONResponse) VisitGetAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAlertChanneldefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetAlertChanneldefaultApplicationProblemPlusJSONResponse) VisitGetAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAlertChannelRequestObject struct {
+	AlertChannelID ID `json:"alert_channel_id"`
+	Body           *UpdateAlertChannelJSONRequestBody
+}
+
+type UpdateAlertChannelResponseObject interface {
+	VisitUpdateAlertChannelResponse(w http.ResponseWriter) error
+}
+
+type UpdateAlertChannel200JSONResponse AlertChannel
+
+func (response UpdateAlertChannel200JSONResponse) VisitUpdateAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAlertChannel400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateAlertChannel400ApplicationProblemPlusJSONResponse) VisitUpdateAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAlertChannel401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateAlertChannel401ApplicationProblemPlusJSONResponse) VisitUpdateAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAlertChannel403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateAlertChannel403ApplicationProblemPlusJSONResponse) VisitUpdateAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAlertChannel404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateAlertChannel404ApplicationProblemPlusJSONResponse) VisitUpdateAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAlertChannel409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateAlertChannel409ApplicationProblemPlusJSONResponse) VisitUpdateAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAlertChannel422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateAlertChannel422ApplicationProblemPlusJSONResponse) VisitUpdateAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateAlertChanneldefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response UpdateAlertChanneldefaultApplicationProblemPlusJSONResponse) VisitUpdateAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DisableAlertChannelRequestObject struct {
+	AlertChannelID ID `json:"alert_channel_id"`
+}
+
+type DisableAlertChannelResponseObject interface {
+	VisitDisableAlertChannelResponse(w http.ResponseWriter) error
+}
+
+type DisableAlertChannel200JSONResponse AlertChannel
+
+func (response DisableAlertChannel200JSONResponse) VisitDisableAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DisableAlertChannel401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response DisableAlertChannel401ApplicationProblemPlusJSONResponse) VisitDisableAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DisableAlertChannel403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response DisableAlertChannel403ApplicationProblemPlusJSONResponse) VisitDisableAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DisableAlertChannel404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response DisableAlertChannel404ApplicationProblemPlusJSONResponse) VisitDisableAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DisableAlertChanneldefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response DisableAlertChanneldefaultApplicationProblemPlusJSONResponse) VisitDisableAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EnableAlertChannelRequestObject struct {
+	AlertChannelID ID `json:"alert_channel_id"`
+}
+
+type EnableAlertChannelResponseObject interface {
+	VisitEnableAlertChannelResponse(w http.ResponseWriter) error
+}
+
+type EnableAlertChannel200JSONResponse AlertChannel
+
+func (response EnableAlertChannel200JSONResponse) VisitEnableAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EnableAlertChannel401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response EnableAlertChannel401ApplicationProblemPlusJSONResponse) VisitEnableAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EnableAlertChannel403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response EnableAlertChannel403ApplicationProblemPlusJSONResponse) VisitEnableAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EnableAlertChannel404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response EnableAlertChannel404ApplicationProblemPlusJSONResponse) VisitEnableAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EnableAlertChanneldefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response EnableAlertChanneldefaultApplicationProblemPlusJSONResponse) VisitEnableAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TestAlertChannelRequestObject struct {
+	AlertChannelID ID `json:"alert_channel_id"`
+}
+
+type TestAlertChannelResponseObject interface {
+	VisitTestAlertChannelResponse(w http.ResponseWriter) error
+}
+
+type TestAlertChannel200JSONResponse AlertChannelTestResult
+
+func (response TestAlertChannel200JSONResponse) VisitTestAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TestAlertChannel401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response TestAlertChannel401ApplicationProblemPlusJSONResponse) VisitTestAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TestAlertChannel403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response TestAlertChannel403ApplicationProblemPlusJSONResponse) VisitTestAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TestAlertChannel404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response TestAlertChannel404ApplicationProblemPlusJSONResponse) VisitTestAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TestAlertChanneldefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response TestAlertChanneldefaultApplicationProblemPlusJSONResponse) VisitTestAlertChannelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAlertDeliveriesRequestObject struct {
+	Params ListAlertDeliveriesParams
+}
+
+type ListAlertDeliveriesResponseObject interface {
+	VisitListAlertDeliveriesResponse(w http.ResponseWriter) error
+}
+
+type ListAlertDeliveries200JSONResponse AlertDeliveryList
+
+func (response ListAlertDeliveries200JSONResponse) VisitListAlertDeliveriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAlertDeliveries400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response ListAlertDeliveries400ApplicationProblemPlusJSONResponse) VisitListAlertDeliveriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAlertDeliveries401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ListAlertDeliveries401ApplicationProblemPlusJSONResponse) VisitListAlertDeliveriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAlertDeliveries403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ListAlertDeliveries403ApplicationProblemPlusJSONResponse) VisitListAlertDeliveriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListAlertDeliveriesdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ListAlertDeliveriesdefaultApplicationProblemPlusJSONResponse) VisitListAlertDeliveriesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
 
 type ListAlertRulesRequestObject struct {
 	Params ListAlertRulesParams
@@ -15531,6 +17219,33 @@ func (response GetReadiness503JSONResponse) VisitGetReadinessResponse(w http.Res
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// ListAlertChannels List alert channels
+	// (GET /api/v1/alert-channels)
+	ListAlertChannels(ctx context.Context, request ListAlertChannelsRequestObject) (ListAlertChannelsResponseObject, error)
+	// CreateAlertChannel Create an alert channel (Admin)
+	// (POST /api/v1/alert-channels)
+	CreateAlertChannel(ctx context.Context, request CreateAlertChannelRequestObject) (CreateAlertChannelResponseObject, error)
+	// DeleteAlertChannel Delete an alert channel (Admin)
+	// (DELETE /api/v1/alert-channels/{alert_channel_id})
+	DeleteAlertChannel(ctx context.Context, request DeleteAlertChannelRequestObject) (DeleteAlertChannelResponseObject, error)
+	// GetAlertChannel Get an alert channel
+	// (GET /api/v1/alert-channels/{alert_channel_id})
+	GetAlertChannel(ctx context.Context, request GetAlertChannelRequestObject) (GetAlertChannelResponseObject, error)
+	// UpdateAlertChannel Update an alert channel (Admin)
+	// (PATCH /api/v1/alert-channels/{alert_channel_id})
+	UpdateAlertChannel(ctx context.Context, request UpdateAlertChannelRequestObject) (UpdateAlertChannelResponseObject, error)
+	// DisableAlertChannel Disable an alert channel (Admin)
+	// (POST /api/v1/alert-channels/{alert_channel_id}/disable)
+	DisableAlertChannel(ctx context.Context, request DisableAlertChannelRequestObject) (DisableAlertChannelResponseObject, error)
+	// EnableAlertChannel Enable an alert channel (Admin)
+	// (POST /api/v1/alert-channels/{alert_channel_id}/enable)
+	EnableAlertChannel(ctx context.Context, request EnableAlertChannelRequestObject) (EnableAlertChannelResponseObject, error)
+	// TestAlertChannel Send a test notification (Admin)
+	// (POST /api/v1/alert-channels/{alert_channel_id}/test)
+	TestAlertChannel(ctx context.Context, request TestAlertChannelRequestObject) (TestAlertChannelResponseObject, error)
+	// ListAlertDeliveries List alert deliveries
+	// (GET /api/v1/alert-deliveries)
+	ListAlertDeliveries(ctx context.Context, request ListAlertDeliveriesRequestObject) (ListAlertDeliveriesResponseObject, error)
 	// ListAlertRules List alert rules
 	// (GET /api/v1/alert-rules)
 	ListAlertRules(ctx context.Context, request ListAlertRulesRequestObject) (ListAlertRulesResponseObject, error)
@@ -15822,6 +17537,252 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// ListAlertChannels operation middleware
+func (sh *strictHandler) ListAlertChannels(w http.ResponseWriter, r *http.Request, params ListAlertChannelsParams) {
+	var request ListAlertChannelsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListAlertChannels(ctx, request.(ListAlertChannelsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListAlertChannels")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListAlertChannelsResponseObject); ok {
+		if err := validResponse.VisitListAlertChannelsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateAlertChannel operation middleware
+func (sh *strictHandler) CreateAlertChannel(w http.ResponseWriter, r *http.Request) {
+	var request CreateAlertChannelRequestObject
+
+	var body CreateAlertChannelJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateAlertChannel(ctx, request.(CreateAlertChannelRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateAlertChannel")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateAlertChannelResponseObject); ok {
+		if err := validResponse.VisitCreateAlertChannelResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteAlertChannel operation middleware
+func (sh *strictHandler) DeleteAlertChannel(w http.ResponseWriter, r *http.Request, alertChannelID ID) {
+	var request DeleteAlertChannelRequestObject
+
+	request.AlertChannelID = alertChannelID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteAlertChannel(ctx, request.(DeleteAlertChannelRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteAlertChannel")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteAlertChannelResponseObject); ok {
+		if err := validResponse.VisitDeleteAlertChannelResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAlertChannel operation middleware
+func (sh *strictHandler) GetAlertChannel(w http.ResponseWriter, r *http.Request, alertChannelID ID) {
+	var request GetAlertChannelRequestObject
+
+	request.AlertChannelID = alertChannelID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAlertChannel(ctx, request.(GetAlertChannelRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAlertChannel")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAlertChannelResponseObject); ok {
+		if err := validResponse.VisitGetAlertChannelResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateAlertChannel operation middleware
+func (sh *strictHandler) UpdateAlertChannel(w http.ResponseWriter, r *http.Request, alertChannelID ID) {
+	var request UpdateAlertChannelRequestObject
+
+	request.AlertChannelID = alertChannelID
+
+	var body UpdateAlertChannelJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateAlertChannel(ctx, request.(UpdateAlertChannelRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateAlertChannel")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateAlertChannelResponseObject); ok {
+		if err := validResponse.VisitUpdateAlertChannelResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DisableAlertChannel operation middleware
+func (sh *strictHandler) DisableAlertChannel(w http.ResponseWriter, r *http.Request, alertChannelID ID) {
+	var request DisableAlertChannelRequestObject
+
+	request.AlertChannelID = alertChannelID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DisableAlertChannel(ctx, request.(DisableAlertChannelRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DisableAlertChannel")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DisableAlertChannelResponseObject); ok {
+		if err := validResponse.VisitDisableAlertChannelResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// EnableAlertChannel operation middleware
+func (sh *strictHandler) EnableAlertChannel(w http.ResponseWriter, r *http.Request, alertChannelID ID) {
+	var request EnableAlertChannelRequestObject
+
+	request.AlertChannelID = alertChannelID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.EnableAlertChannel(ctx, request.(EnableAlertChannelRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "EnableAlertChannel")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(EnableAlertChannelResponseObject); ok {
+		if err := validResponse.VisitEnableAlertChannelResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// TestAlertChannel operation middleware
+func (sh *strictHandler) TestAlertChannel(w http.ResponseWriter, r *http.Request, alertChannelID ID) {
+	var request TestAlertChannelRequestObject
+
+	request.AlertChannelID = alertChannelID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.TestAlertChannel(ctx, request.(TestAlertChannelRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "TestAlertChannel")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(TestAlertChannelResponseObject); ok {
+		if err := validResponse.VisitTestAlertChannelResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListAlertDeliveries operation middleware
+func (sh *strictHandler) ListAlertDeliveries(w http.ResponseWriter, r *http.Request, params ListAlertDeliveriesParams) {
+	var request ListAlertDeliveriesRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListAlertDeliveries(ctx, request.(ListAlertDeliveriesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListAlertDeliveries")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListAlertDeliveriesResponseObject); ok {
+		if err := validResponse.VisitListAlertDeliveriesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // ListAlertRules operation middleware

@@ -6,8 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/alertchannels"
 	"github.com/rchouinard/pressfleet/control-plane/internal/alerts"
+	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/metrics"
+	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
+	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
 
@@ -45,17 +49,54 @@ func (m metricsQuerier) Query(ctx context.Context, expr string, at time.Time) ([
 	return out, nil
 }
 
-// alertNotifier returns where alert events go.
-//
-// MERGE SEAM (#76): the SMTP and webhook channels implement alerts.Notifier;
-// until they exist, events are logged and delivered nowhere.
-func (a *app) alertNotifier() alerts.Notifier {
-	return alerts.NewLogNotifier(a.log.With("component", "alerts"))
+// alertChannels returns the alert channel service: it manages the channels
+// of the API and is the alerts.Notifier that delivers events to them
+// (SMTP email and webhooks, #76). Every event is logged as it is routed,
+// and every delivery as it is made or fails.
+func (a *app) alertChannels(db *store.DB, secretStore secrets.Store, keys *secrets.Keyring) (*alertchannels.Service, error) {
+	relay, err := platformRelay(a.cfg.SMTP, keys)
+	if err != nil {
+		return nil, err
+	}
+	return alertchannels.New(alertchannels.Options{
+		DB:                db,
+		Secrets:           secretStore,
+		PlatformSMTP:      relay,
+		AllowLocalTargets: a.cfg.Alerts.WebhookAllowLocalTargets,
+		WebhookTimeout:    a.cfg.Alerts.WebhookTimeout(),
+		Logger:            a.log.With("component", "alertchannels"),
+	})
+}
+
+// platformRelay returns the platform's SMTP relay (the smtp.* settings) as
+// alert email channels use it, or nil if outbound email isn't configured.
+// It decrypts the password; siteSMTP has already refused to start the
+// control plane if it can't be.
+func platformRelay(cfg config.SMTPConfig, keys *secrets.Keyring) (*alertchannels.Relay, error) {
+	if !cfg.Enabled() {
+		return nil, nil
+	}
+	var password redact.Secret
+	if cfg.Password != "" {
+		var err error
+		if password, err = keys.OpenSetting(config.SMTPPasswordSetting, cfg.Password); err != nil {
+			return nil, fmt.Errorf("decrypting the SMTP password: %w", err)
+		}
+	}
+	return &alertchannels.Relay{
+		Host:       cfg.Host,
+		Port:       cfg.EffectivePort(),
+		Encryption: cfg.Encryption,
+		Username:   cfg.Username,
+		Password:   password,
+		FromEmail:  cfg.FromEmail,
+		FromName:   cfg.FromName,
+	}, nil
 }
 
 // alertEngine returns the alert evaluation engine, or nil if alerts.enabled
-// is false.
-func (a *app) alertEngine(db *store.DB) (*alerts.Engine, error) {
+// is false. Events go to notifier.
+func (a *app) alertEngine(db *store.DB, notifier alerts.Notifier) (*alerts.Engine, error) {
 	if !a.cfg.Alerts.Enabled {
 		a.log.Info("alert rule evaluation is turned off (alerts.enabled)")
 		return nil, nil
@@ -67,7 +108,7 @@ func (a *app) alertEngine(db *store.DB) (*alerts.Engine, error) {
 	return alerts.New(alerts.Options{
 		DB:       db,
 		Querier:  querier,
-		Notifier: a.alertNotifier(),
+		Notifier: notifier,
 		Interval: a.cfg.Alerts.EvaluationInterval(),
 		Logger:   a.log.With("component", "alerts"),
 	})

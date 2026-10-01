@@ -18,12 +18,17 @@ func TestAlertsSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (config.AlertsConfig{Enabled: false, EvaluationIntervalSeconds: 60}); cfg.Alerts != want {
+	if want := (config.AlertsConfig{Enabled: false, EvaluationIntervalSeconds: 60, WebhookTimeoutSeconds: 10}); cfg.Alerts != want {
 		t.Errorf("Alerts = %+v, want %+v", cfg.Alerts, want)
+	}
+	if def.WebhookAllowLocalTargets || def.WebhookTimeout() != 10*time.Second {
+		t.Errorf("default webhook settings = %+v", def)
 	}
 	cfg, err = config.Load(path, env(map[string]string{
 		"PRESSFLEET_ALERTS_ENABLED":                     "true",
 		"PRESSFLEET_ALERTS_EVALUATION_INTERVAL_SECONDS": "15",
+		"PRESSFLEET_ALERTS_WEBHOOK_TIMEOUT_SECONDS":     "20",
+		"PRESSFLEET_ALERTS_WEBHOOK_ALLOW_LOCAL_TARGETS": "true",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +36,15 @@ func TestAlertsSettings(t *testing.T) {
 	if !cfg.Alerts.Enabled || cfg.Alerts.EvaluationInterval() != 15*time.Second {
 		t.Errorf("Alerts with the environment = %+v", cfg.Alerts)
 	}
-	for k, v := range map[string]string{"PRESSFLEET_ALERTS_ENABLED": "maybe", "PRESSFLEET_ALERTS_EVALUATION_INTERVAL_SECONDS": "soon"} {
+	if cfg.Alerts.WebhookTimeout() != 20*time.Second || !cfg.Alerts.WebhookAllowLocalTargets {
+		t.Errorf("webhook settings with the environment = %+v", cfg.Alerts)
+	}
+	for k, v := range map[string]string{
+		"PRESSFLEET_ALERTS_ENABLED":                     "maybe",
+		"PRESSFLEET_ALERTS_EVALUATION_INTERVAL_SECONDS": "soon",
+		"PRESSFLEET_ALERTS_WEBHOOK_TIMEOUT_SECONDS":     "slow",
+		"PRESSFLEET_ALERTS_WEBHOOK_ALLOW_LOCAL_TARGETS": "perhaps",
+	} {
 		if _, err := config.Load(path, env(map[string]string{k: v})); err == nil || !strings.Contains(err.Error(), k) {
 			t.Errorf("Load with %s=%s = %v", k, v, err)
 		}
@@ -57,6 +70,14 @@ func TestAlertsSettings(t *testing.T) {
 			t.Errorf("%s: Validate() = %v, want nil", tt.name, err)
 		case tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)):
 			t.Errorf("%s: Validate() = %v, want error mentioning %q", tt.name, err, tt.want)
+		}
+	}
+
+	for _, seconds := range []int{0, -1, 61} {
+		cfg := config.Default()
+		cfg.Alerts.WebhookTimeoutSeconds = seconds
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "alerts.webhook_timeout_seconds") {
+			t.Errorf("Validate() with webhook_timeout_seconds %d = %v", seconds, err)
 		}
 	}
 }

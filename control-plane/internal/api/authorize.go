@@ -113,6 +113,18 @@ var operationActions = map[string]authz.Action{
 	"listAlerts":       authz.ViewMonitoring,
 	"getAlert":         authz.ViewMonitoring,
 
+	// Alert channels are platform settings (design doc §4.6): Admins
+	// manage them, and every role reads them, without credentials.
+	"listAlertChannels":   authz.ViewMonitoring,
+	"getAlertChannel":     authz.ViewMonitoring,
+	"createAlertChannel":  authz.ManagePlatformSettings,
+	"updateAlertChannel":  authz.ManagePlatformSettings,
+	"deleteAlertChannel":  authz.ManagePlatformSettings,
+	"enableAlertChannel":  authz.ManagePlatformSettings,
+	"disableAlertChannel": authz.ManagePlatformSettings,
+	"testAlertChannel":    authz.ManagePlatformSettings,
+	"listAlertDeliveries": authz.ViewMonitoring,
+
 	// An upload needs the permission of the job it is for (#111): these
 	// check UploadForDeploy instead for deployments (operationAltActions).
 	// Requests for uploads that don't exist are checked as imports.

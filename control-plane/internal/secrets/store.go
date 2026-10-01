@@ -36,6 +36,9 @@ const (
 	// KindSitePreviewPassword is a site's generated preview domain basic
 	// auth password (§5.1), kept for the uptime checks that send it.
 	KindSitePreviewPassword Kind = "site-preview-password"
+	// KindAlertChannel is the credentials of an alert channel (#76): an
+	// SMTP password, a webhook URL, a webhook signing secret.
+	KindAlertChannel Kind = "alert-channel-credentials"
 )
 
 // Kinds are validated by shape rather than against the list above, so a new

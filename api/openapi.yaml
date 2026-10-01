@@ -122,8 +122,9 @@ tags:
   - name: alerts
     description: |
       Alert rules, evaluated against the metrics in VictoriaMetrics, and the
-      alerts they raise (design doc §7.3). Every role can read; Operators and
-      Admins manage rules.
+      alerts they raise (design doc §7.3), and the channels (email and
+      webhook) that deliver them. Every role can read; Operators and Admins
+      manage rules, and Admins manage channels.
 
 paths:
   /healthz:
@@ -3249,6 +3250,308 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  # ---- alert channels (#76) -----------------------------------------------
+
+  /api/v1/alert-channels:
+    get:
+      operationId: listAlertChannels
+      tags: [alerts]
+      summary: List alert channels
+      description: |
+        Ordered by name. Every role can list channels; credentials are never
+        returned, only whether they are set and, for a webhook, its URL
+        reduced to scheme and host.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: type
+          in: query
+          description: Only return channels of this type.
+          schema:
+            $ref: "#/components/schemas/AlertChannelType"
+        - name: enabled
+          in: query
+          description: Only return channels that are enabled (`true`) or disabled (`false`).
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: A page of alert channels.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertChannelList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createAlertChannel
+      tags: [alerts]
+      summary: Create an alert channel (Admin)
+      description: |
+        A channel delivers alert events, firing and resolved, by email or to
+        a webhook. Creating one doesn't send anything; use the `test`
+        operation to check it works.
+
+        An `email` channel needs `email.to`. Without `email.host` it sends
+        through the platform's SMTP relay (the `smtp.*` settings). A
+        `webhook` channel needs `webhook.url`. Slack and Teams URLs are
+        credentials: they are stored encrypted and never returned.
+
+        By default a channel receives every alert; `min_severity`,
+        `rule_id`, and `client_group_id` narrow that.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertChannelCreate"
+      responses:
+        "201":
+          description: Alert channel created.
+          headers:
+            Location:
+              $ref: "#/components/headers/Location"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertChannel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/alert-channels/{alert_channel_id}:
+    parameters:
+      - name: alert_channel_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    get:
+      operationId: getAlertChannel
+      tags: [alerts]
+      summary: Get an alert channel
+      responses:
+        "200":
+          description: The alert channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertChannel"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateAlertChannel
+      tags: [alerts]
+      summary: Update an alert channel (Admin)
+      description: |
+        Only the fields present are changed, including inside `email` and
+        `webhook`. Credentials that are absent stay as they are; send an
+        empty string to remove one. The type can't change. Deliveries
+        already queued use the channel as it is when they are sent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertChannelUpdate"
+      responses:
+        "200":
+          description: The updated alert channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertChannel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteAlertChannel
+      tags: [alerts]
+      summary: Delete an alert channel (Admin)
+      description: |
+        Deletes the channel, its credentials, and its delivery history.
+      responses:
+        "204":
+          description: Alert channel deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/alert-channels/{alert_channel_id}/enable:
+    parameters:
+      - name: alert_channel_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: enableAlertChannel
+      tags: [alerts]
+      summary: Enable an alert channel (Admin)
+      description: Enabling a channel that is already enabled changes nothing.
+      responses:
+        "200":
+          description: The enabled alert channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertChannel"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/alert-channels/{alert_channel_id}/disable:
+    parameters:
+      - name: alert_channel_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: disableAlertChannel
+      tags: [alerts]
+      summary: Disable an alert channel (Admin)
+      description: |
+        A disabled channel receives no new events. Deliveries already queued
+        for it fail with an explanation.
+      responses:
+        "200":
+          description: The disabled alert channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertChannel"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/alert-channels/{alert_channel_id}/test:
+    parameters:
+      - name: alert_channel_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/ID"
+    post:
+      operationId: testAlertChannel
+      tags: [alerts]
+      summary: Send a test notification (Admin)
+      description: |
+        Sends a synthetic notification through the channel, enabled or not,
+        and waits for the outcome. A channel that fails the test is still a
+        `200`: read `success` and `error`. Nothing is recorded in the
+        delivery history.
+      responses:
+        "200":
+          description: The outcome of the test.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertChannelTestResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/alert-deliveries:
+    get:
+      operationId: listAlertDeliveries
+      tags: [alerts]
+      summary: List alert deliveries
+      description: |
+        The delivery history: each alert event (firing, resolved) bound for
+        each channel that wanted it, newest first. A delivery is `pending`
+        while it is retried, `delivered` once the channel accepted it, and
+        `failed` when it ran out of attempts or can't succeed (the receiver
+        refused it). `last_error` says what went wrong and never contains
+        credentials.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: alert_id
+          in: query
+          description: Only return deliveries of this alert's events.
+          schema:
+            $ref: "#/components/schemas/ID"
+        - name: channel_id
+          in: query
+          description: Only return deliveries to this channel.
+          schema:
+            $ref: "#/components/schemas/ID"
+        - name: state
+          in: query
+          description: Only return deliveries in this state.
+          schema:
+            $ref: "#/components/schemas/AlertDeliveryState"
+      responses:
+        "200":
+          description: A page of deliveries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertDeliveryList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  # ---- end of alert channels ----------------------------------------------
+
   # ---- end of alerts ------------------------------------------------------
 
 components:
@@ -5803,5 +6106,415 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Alert"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+
+    # ---- alert channels (#76) ---------------------------------------------
+
+    AlertChannelType:
+      type: string
+      enum: [email, webhook]
+
+    WebhookFormat:
+      type: string
+      description: |
+        The shape of the request body. `generic` is PressFleet's own payload
+        (documented in docs/configuration.md): it has a top-level `text`, so
+        a Slack incoming webhook accepts it too. `slack` adds an attachment
+        with colored fields. `teams` is a message with an Adaptive Card, as
+        Microsoft Teams Workflows webhooks expect.
+      enum: [generic, slack, teams]
+      default: generic
+
+    AlertChannelEmail:
+      type: object
+      description: The settings of an email channel.
+      required: [to, uses_platform_relay, host, port, encryption, username, from_email, from_name, has_password]
+      properties:
+        to:
+          type: array
+          items:
+            type: string
+          description: The recipients.
+        uses_platform_relay:
+          type: boolean
+          description: True when the channel has no `host` and sends through the platform's SMTP relay.
+        host:
+          type: string
+          description: The channel's own SMTP server, or an empty string.
+        port:
+          type: integer
+          description: The server's port; 0 means the standard port for `encryption`.
+        encryption:
+          type: string
+          description: |
+            `starttls`, `tls` (implicit TLS), or `none`. Empty with the
+            platform relay.
+        username:
+          type: string
+        has_password:
+          type: boolean
+          description: Whether an SMTP password is stored. It is never returned.
+        from_email:
+          type: string
+          description: The sender; empty means the platform relay's.
+        from_name:
+          type: string
+
+    AlertChannelWebhook:
+      type: object
+      description: The settings of a webhook channel.
+      required: [format, url, has_signing_secret]
+      properties:
+        format:
+          $ref: "#/components/schemas/WebhookFormat"
+        url:
+          type: string
+          description: |
+            The webhook URL reduced to its scheme and host, such as
+            `https://hooks.slack.com/…`. The rest is a credential and is
+            never returned.
+          examples: ["https://hooks.slack.com/…"]
+        has_signing_secret:
+          type: boolean
+          description: Whether requests are signed (HMAC-SHA256, generic format).
+
+    AlertChannel:
+      type: object
+      required:
+        - id
+        - name
+        - type
+        - enabled
+        - min_severity
+        - rule_id
+        - client_group_id
+        - email
+        - webhook
+        - created_at
+        - updated_at
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        name:
+          type: string
+          examples: ["Ops on-call email"]
+        type:
+          $ref: "#/components/schemas/AlertChannelType"
+        enabled:
+          type: boolean
+        min_severity:
+          description: The lowest severity the channel receives.
+          $ref: "#/components/schemas/AlertSeverity"
+        rule_id:
+          description: If set, the channel only receives events of this rule.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        client_group_id:
+          description: If set, the channel only receives events of alerts of this client group.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        email:
+          description: Present for `email` channels.
+          oneOf:
+            - $ref: "#/components/schemas/AlertChannelEmail"
+            - type: "null"
+        webhook:
+          description: Present for `webhook` channels.
+          oneOf:
+            - $ref: "#/components/schemas/AlertChannelWebhook"
+            - type: "null"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    AlertChannelEmailCreate:
+      type: object
+      required: [to]
+      additionalProperties: false
+      properties:
+        to:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: string
+            maxLength: 254
+          description: Recipients, as plain addresses (`ops@example.com`).
+        host:
+          type: string
+          maxLength: 253
+          description: |
+            An SMTP server of the channel's own. Leave it out to send
+            through the platform's SMTP relay (the `smtp.*` settings), which
+            is the usual choice.
+        port:
+          type: integer
+          minimum: 0
+          maximum: 65535
+          description: 0 or absent means the standard port for `encryption`.
+        encryption:
+          type: string
+          enum: [starttls, tls, none]
+          description: Default `starttls`. `tls` is implicit TLS ("SMTPS").
+        username:
+          type: string
+          maxLength: 254
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          maxLength: 512
+          description: Stored encrypted and never returned. Needs `username`.
+        from_email:
+          type: string
+          maxLength: 254
+          description: The sender. Required with `host`; otherwise defaults to the platform relay's.
+        from_name:
+          type: string
+          maxLength: 100
+
+    AlertChannelEmailUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        to:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: string
+            maxLength: 254
+        host:
+          type: string
+          maxLength: 253
+          description: An empty string switches to the platform's SMTP relay.
+        port:
+          type: integer
+          minimum: 0
+          maximum: 65535
+        encryption:
+          type: string
+          enum: [starttls, tls, none, ""]
+        username:
+          type: string
+          maxLength: 254
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          maxLength: 512
+          description: Replaces the stored password. An empty string removes it.
+        from_email:
+          type: string
+          maxLength: 254
+        from_name:
+          type: string
+          maxLength: 100
+
+    AlertChannelWebhookCreate:
+      type: object
+      required: [url]
+      additionalProperties: false
+      properties:
+        url:
+          type: string
+          format: password
+          writeOnly: true
+          maxLength: 2048
+          description: |
+            An `https` (or `http`) URL. It is a credential: it is stored
+            encrypted and never returned. Loopback, link-local, and cloud
+            metadata addresses are refused unless the control plane allows
+            them (`alerts.webhook_allow_local_targets`). Redirects aren't
+            followed.
+        format:
+          $ref: "#/components/schemas/WebhookFormat"
+        signing_secret:
+          type: string
+          format: password
+          writeOnly: true
+          maxLength: 512
+          description: |
+            If set, requests carry `X-PressFleet-Signature`, an HMAC-SHA256
+            of the timestamp, a dot, and the body, so the receiver can tell
+            the request is ours.
+
+    AlertChannelWebhookUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        url:
+          type: string
+          format: password
+          writeOnly: true
+          maxLength: 2048
+          description: Replaces the stored URL.
+        format:
+          $ref: "#/components/schemas/WebhookFormat"
+        signing_secret:
+          type: string
+          format: password
+          writeOnly: true
+          maxLength: 512
+          description: Replaces the stored signing secret. An empty string removes it.
+
+    AlertChannelCreate:
+      type: object
+      required: [name, type]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        type:
+          $ref: "#/components/schemas/AlertChannelType"
+        enabled:
+          type: boolean
+          default: true
+        min_severity:
+          description: The lowest severity the channel receives. Default `info`, which is everything.
+          $ref: "#/components/schemas/AlertSeverity"
+        rule_id:
+          description: Only deliver events of this rule.
+          $ref: "#/components/schemas/ID"
+        client_group_id:
+          description: Only deliver events of alerts of this client group (platform alerts have none, so they aren't delivered).
+          $ref: "#/components/schemas/ID"
+        email:
+          description: Required for `email` channels.
+          $ref: "#/components/schemas/AlertChannelEmailCreate"
+        webhook:
+          description: Required for `webhook` channels.
+          $ref: "#/components/schemas/AlertChannelWebhookCreate"
+
+    AlertChannelUpdate:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        min_severity:
+          $ref: "#/components/schemas/AlertSeverity"
+        rule_id:
+          type: string
+          maxLength: 64
+          description: Only deliver events of this rule. An empty string removes the limit.
+        client_group_id:
+          type: string
+          maxLength: 64
+          description: Only deliver events of this client group. An empty string removes the limit.
+        email:
+          $ref: "#/components/schemas/AlertChannelEmailUpdate"
+        webhook:
+          $ref: "#/components/schemas/AlertChannelWebhookUpdate"
+
+    AlertChannelList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AlertChannel"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+
+    AlertChannelTestResult:
+      type: object
+      required: [success, error, duration_ms]
+      properties:
+        success:
+          type: boolean
+          description: Whether the channel accepted the test notification.
+        error:
+          description: Why it didn't. Never contains credentials.
+          oneOf:
+            - type: string
+            - type: "null"
+        duration_ms:
+          type: integer
+          format: int64
+
+    AlertEventType:
+      type: string
+      description: What an alert event is. Each alert emits one `firing` event and, once it stops, one `resolved` event.
+      enum: [firing, resolved]
+
+    AlertDeliveryState:
+      type: string
+      description: |
+        `pending`: not delivered yet, tried again at `next_attempt_at`.
+        `delivered`: the channel accepted it. `failed`: out of attempts, or
+        it can't succeed.
+      enum: [pending, delivered, failed]
+
+    AlertDelivery:
+      type: object
+      description: One alert event bound for one channel.
+      required:
+        - id
+        - alert_id
+        - event
+        - channel_id
+        - channel_name
+        - state
+        - attempts
+        - last_error
+        - next_attempt_at
+        - delivered_at
+        - created_at
+        - updated_at
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        alert_id:
+          $ref: "#/components/schemas/ID"
+        event:
+          $ref: "#/components/schemas/AlertEventType"
+        channel_id:
+          $ref: "#/components/schemas/ID"
+        channel_name:
+          type: string
+        state:
+          $ref: "#/components/schemas/AlertDeliveryState"
+        attempts:
+          type: integer
+          description: How many times delivery was tried.
+        last_error:
+          description: What went wrong with the latest attempt, or null.
+          oneOf:
+            - type: string
+            - type: "null"
+        next_attempt_at:
+          description: When a `pending` delivery is tried next; null otherwise.
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        delivered_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        created_at:
+          description: When the event was accepted for this channel.
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    AlertDeliveryList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AlertDelivery"
         next_cursor:
           $ref: "#/components/schemas/NextCursor"

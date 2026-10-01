@@ -299,6 +299,9 @@ const (
 	TargetSSHKey      TargetType = "ssh_key"
 	TargetAlertRule   TargetType = "alert_rule"
 	TargetAlert       TargetType = "alert"
+	// TargetAlertChannel is an alert channel (#76), a platform setting
+	// that belongs to no client group.
+	TargetAlertChannel TargetType = "alert_channel"
 )
 
 // Target is what an action applies to.
@@ -349,6 +352,9 @@ func AlertRule(id string) Target { return Target{Type: TargetAlertRule, ID: id} 
 // Alert returns the target for an alert, which belongs to the client group
 // of its site.
 func Alert(id string) Target { return Target{Type: TargetAlert, ID: id} }
+
+// AlertChannel returns the target for an alert channel.
+func AlertChannel(id string) Target { return Target{Type: TargetAlertChannel, ID: id} }
 
 // Check is the single authorization decision: it returns nil if p may take
 // action on t, and an error wrapping ErrDenied otherwise. t should have been

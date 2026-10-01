@@ -47,6 +47,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/alertchannels"
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
 	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
@@ -115,6 +116,9 @@ type Options struct {
 	// Metrics answers the metrics queries. If nil, they fail with 503, as
 	// when VictoriaMetrics can't be reached.
 	Metrics *metricsapi.Service
+	// AlertChannels manages alert channels and sends test notifications. If
+	// nil, the alert channel operations fail with 500.
+	AlertChannels *alertchannels.Service
 	// SecureCookies forces the Secure flag on the session cookie. Otherwise
 	// it is set when the request arrived over HTTPS, directly or through a
 	// trusted proxy, so plain-HTTP development on localhost still works.
@@ -135,6 +139,7 @@ type Handlers struct {
 	dbSessions    *dbsession.Service
 	logs          provisioner.LogReader
 	metrics       *metricsapi.Service
+	channels      *alertchannels.Service
 	resolver      authz.Resolver
 	secureCookies bool
 }
@@ -176,6 +181,7 @@ func NewHandler(opts Options) (http.Handler, error) {
 	if h.metrics = opts.Metrics; h.metrics == nil {
 		h.metrics = metricsapi.New(nil, nil)
 	}
+	h.channels = opts.AlertChannels
 	if opts.DB != nil {
 		h.resolver = authz.NewResolver(opts.DB)
 	}

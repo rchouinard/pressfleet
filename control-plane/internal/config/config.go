@@ -601,6 +601,7 @@ var intEnvVars = []struct {
 	{"PRESSFLEET_UPLOADS_MAX_SIZE_MB", func(c *Config) *int { return &c.Uploads.MaxSizeMB }},
 	{"PRESSFLEET_UPLOADS_EXPIRY_HOURS", func(c *Config) *int { return &c.Uploads.ExpiryHours }},
 	{"PRESSFLEET_ALERTS_EVALUATION_INTERVAL_SECONDS", func(c *Config) *int { return &c.Alerts.EvaluationIntervalSeconds }},
+	{"PRESSFLEET_ALERTS_WEBHOOK_TIMEOUT_SECONDS", func(c *Config) *int { return &c.Alerts.WebhookTimeoutSeconds }},
 	{"PRESSFLEET_DATABASE_EXPORT_TTL_SECONDS", func(c *Config) *int { return &c.DatabaseExport.TTLSeconds }},
 	{"PRESSFLEET_SFTP_PORT", func(c *Config) *int { return &c.SFTP.Port }},
 	{"PRESSFLEET_SFTP_IDLE_TIMEOUT_MINUTES", func(c *Config) *int { return &c.SFTP.IdleTimeoutMinutes }},
@@ -775,6 +776,13 @@ func ApplyEnv(cfg *Config, env LookupEnv) error {
 			return fmt.Errorf("PRESSFLEET_ALERTS_ENABLED must be true or false, got %q", val)
 		}
 		cfg.Alerts.Enabled = b
+	}
+	if val, ok := env("PRESSFLEET_ALERTS_WEBHOOK_ALLOW_LOCAL_TARGETS"); ok {
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			return fmt.Errorf("PRESSFLEET_ALERTS_WEBHOOK_ALLOW_LOCAL_TARGETS must be true or false, got %q", val)
+		}
+		cfg.Alerts.WebhookAllowLocalTargets = b
 	}
 	if val, ok := env("PRESSFLEET_ACME_DNS_RESOLVERS"); ok {
 		cfg.ACME.DNSResolvers = splitList(val)
