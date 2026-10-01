@@ -52,7 +52,7 @@ Each dependency has a reason (CLAUDE.md). Versions are in `package.json` and `pn
 - 2xx responses resolve as `{ data }`; every other response, and every network failure, **throws `ApiError`** (`app/utils/api-error.ts`).
 - `onUnauthorized` is the hook for 401s; `useApi()` wires it to the login redirect (see "Session and roles").
 
-**Not for streams or binary bodies.** The wrapper reads JSON. Server-sent events (the site log stream) use `new EventSource(apiUrl('/api/v1/sites/' + id + '/logs/stream'))`, which sends the cookie (same origin) and reconnects with `Last-Event-ID` by itself. Uploads and downloads (site imports, deploy packages, database exports) use a plain `fetch` or an `<a href>` against `apiUrl(...)`, with the CSRF header added by hand for unsafe methods. Keep those uses small and in one composable each.
+**Not for streams or binary bodies.** The wrapper reads JSON. Server-sent events (the site log stream) are read with `fetch` by `utils/log-stream.ts` (see "Logs viewer"), not `EventSource`: `EventSource` hides HTTP statuses and Problem Details and can't be told when to stop retrying. The session cookie is sent (same origin); a GET needs no CSRF header. Uploads and downloads (site imports, deploy packages, database exports) use a plain `fetch` or an `<a href>` against `apiUrl(...)`, with the CSRF header added by hand for unsafe methods. Keep those uses small and in one composable each.
 
 ## Conventions
 
@@ -156,6 +156,15 @@ The server sends `script-src 'self'` plus the hashes of the few inline scripts N
 - **Nav**: the page's PR sets `route:` on its registry entry and nothing else.
 
 Tests: pure logic in `utils/<x>.ts` (payloads, validation, gating via `can()`), the table with `mount` and a stubbed `UButton`, and `paged-list` with a fake `fetchPage`.
+
+## Logs viewer
+
+`/logs` picks a site (the sites list API), `/sites/<id>/logs` shows it: a "Runtime" tab (`SiteLogViewer`, takes a site id) and a "Jobs" tab (`SiteJobLogs`, `GET /sites/{id}/job-logs`, newest first, "Load older").
+
+- **Data flow** (`composables/useSiteLogs.ts`): "Live tail" follows `GET .../logs/stream`; any other time range reads `GET .../logs` newest page first. Both fill one bounded buffer (`utils/log-buffer.ts`, 5,000 lines; the oldest are dropped while following, and history never evicts the newest lines). "Load older lines" pages backwards: `until` the first line shown, then the API's `next_cursor`.
+- **Stream** (`utils/sse.ts` parser, `utils/log-stream.ts` connection, both free of Vue): reconnects with 1 s doubling to 30 s plus jitter and sends `Last-Event-ID`, so the stream continues after the last line instead of repeating the tail; gives up on 4xx other than 408/429 and on an `error` event (a "Reconnect" button restarts from the tail); treats 45 s without any bytes (the server sends a keep-alive every 15 s) as dead. Pause closes the connection and resume continues from the last line, so nothing is lost or held in memory.
+- **Safety**: lines render as text only (`SiteLogLine`; never `v-html`); a line over 2,000 characters is cut behind a "show more" button, and the SSE parser drops lines over 1 MiB. Search, source and level filters are applied by the server.
+- **Accessibility**: the log box is `role="log"` with `aria-live="off"`; the only live region is the coarse status (Live, Paused, Reconnecting, ...). Auto-scroll stops when the user scrolls up and "Jump to latest" brings it back.
 
 ## Embedding in the Go binary
 
