@@ -13,6 +13,12 @@ export interface ApiClientOptions {
   getCsrfToken?: () => string | undefined
   /** Called for every 401 before the ApiError is thrown, e.g. to go to /login. */
   onUnauthorized?: (error: ApiError) => void
+  /**
+   * Called with false when a request never got an answer (network failure)
+   * and with true when any response arrives, so the shell can show an
+   * "unreachable" banner and clear it again.
+   */
+  onReachable?: (reachable: boolean) => void
 }
 
 const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS'])
@@ -36,8 +42,12 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     credentials: 'same-origin',
     fetch: async (request) => {
       try {
-        return await baseFetch(request)
+        const response = await baseFetch(request)
+        options.onReachable?.(true)
+        return response
       } catch (e) {
+        // An aborted request (a poll cancelled on unmount) is not an outage.
+        if (!request.signal.aborted) options.onReachable?.(false)
         throw new ApiError(
           {
             type: 'urn:pressfleet:ui:network',

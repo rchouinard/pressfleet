@@ -48,9 +48,9 @@ Each dependency has a reason (CLAUDE.md). Versions are in `package.json` and `pn
 `app/utils/api-client.ts` (`createApiClient`) is the only code that calls `fetch` for the JSON API, and `useApi()` (in `app/composables/`) hands out the shared instance:
 
 - Requests go to the page's origin with `credentials: 'same-origin'`; the `pressfleet_session` cookie is HttpOnly, so the UI never sees it.
-- Unsafe methods (anything but GET/HEAD/OPTIONS) send `X-CSRF-Token` from `useCsrfToken()`. The login flow (#82) sets it from `csrf_token` in the login and `GET /api/v1/auth/me` responses.
+- Unsafe methods (anything but GET/HEAD/OPTIONS) send `X-CSRF-Token` from `useCsrfToken()`. The login flow sets it from `csrf_token` in the login and `GET /api/v1/auth/me` responses.
 - 2xx responses resolve as `{ data }`; every other response, and every network failure, **throws `ApiError`** (`app/utils/api-error.ts`).
-- `onUnauthorized` is the hook for 401s (redirect to login, #82).
+- `onUnauthorized` is the hook for 401s; `useApi()` wires it to the login redirect (see "Session and roles").
 
 **Not for streams or binary bodies.** The wrapper reads JSON. Server-sent events (the site log stream) use `new EventSource(apiUrl('/api/v1/sites/' + id + '/logs/stream'))`, which sends the cookie (same origin) and reconnects with `Last-Event-ID` by itself. Uploads and downloads (site imports, deploy packages, database exports) use a plain `fetch` or an `<a href>` against `apiUrl(...)`, with the CSRF header added by hand for unsafe methods. Keep those uses small and in one composable each.
 
@@ -67,7 +67,7 @@ ui/
     assets/css/         Tailwind entry (main.css)
     components/         UI components, PascalCase; domain components get a folder (components/site/SiteCard.vue)
     composables/        useXxx() functions that use Nuxt (state, router, data fetching)
-    layouts/            page frames; default.vue is a placeholder until the app shell (#81)
+    layouts/            page frames: default.vue (app shell), auth.vue (login)
     pages/              file-based routes; one file per screen
     utils/              pure TypeScript with no Nuxt runtime: API client, ApiError, role helpers
     app.vue, error.vue, app.config.ts
@@ -95,7 +95,7 @@ Code that should be unit tested goes in `utils/` or in components that don't nee
 
 ### Roles
 
-The three roles are `admin`, `operator` and `viewer` (design doc §4.6). `roleAtLeast(role, 'operator')` in `utils/roles.ts` is the building block. #81 adds the composable that reads the signed-in user's role (from `GET /api/v1/auth/me`) and the route middleware that guards pages; use those rather than comparing role strings in components. UI hiding is a convenience, never enforcement.
+The three roles are `admin`, `operator` and `viewer` (design doc §4.6). `roleAtLeast(role, 'operator')` in `utils/roles.ts` is the building block. See "Session and roles" below for the composable and the guard; use those rather than comparing role strings in components. UI hiding is a convenience, never enforcement.
 
 ### Accessibility, responsiveness, themes
 
@@ -113,6 +113,37 @@ The server sends `script-src 'self'` plus the hashes of the few inline scripts N
 - Unit tests: Vitest, in `tests/`, no Docker and no network. The API client is tested with an injected fake `fetch` (see `tests/api-client.test.ts`); do the same for anything that calls the API.
 - Component tests use `@vue/test-utils` `mount` for components that don't need Nuxt.
 - `make ui-check` runs lint, typecheck and tests; CI runs the same, then `nuxt generate`.
+
+## App shell
+
+### Session and roles
+
+- `useSession()` returns `user`, `role`, `csrfToken`, `loading`, `isAuthenticated`, `refresh()`, `login()` and `logout()`. `middleware/auth.global.ts` loads the session once per page load (`GET /api/v1/auth/me`; this also restores the CSRF token), sends signed-out users to `/login?redirect=<path>`, and sends signed-in users on `/login` to their `redirect`. The target goes through `safeRedirect` (`utils/redirect.ts`): same-origin absolute paths only, never `//host`, backslashes, control characters or `/login`.
+- A 401 anywhere mid-use (the API client's `onUnauthorized`, wired in `useApi()`) clears the session and goes to `/login?redirect=<current page>&expired=1`. The startup probe and the login request handle their own 401. If the control plane can't be reached at load, `error.vue` shows a retry instead of a login form.
+- `pages/login.vue` is deliberately minimal (email and password, Problem Details in `ProblemAlert`, field errors, disabled while submitting). #82 extends it and adds user management and the API token UI.
+- Permissions: `utils/permissions.ts` is the one table of UI actions to minimum role, using the server's action names (`site.delete`, `user.view`, ...). `useCan().can('site.delete')`, `<IfCan action="site.delete">...</IfCan>` (with an optional `#denied` slot) and `can(role, action)` all read it. **Rule: hide what the role can't do; the server stays authoritative and 403s are still handled.** Add an action to the table (and to `authz.go`) before gating on it; `tests/permissions.test.ts` checks the table against design doc §4.6 and against the Go source.
+- Gate a whole page with `definePageMeta({ requires: 'user.view' })`: lower roles get the 403 page.
+
+| Minimum role | Actions |
+| --- | --- |
+| viewer | view sites, client groups, jobs, backups, monitoring; own password, tokens, SSH keys |
+| operator | create/import/update sites, domains, start/stop, maintenance, cache purge, retrieve credentials; deploy code, export database, read-only DB sessions; create backups, restore, approve core updates; create/update client groups; manage alert rules |
+| admin | delete sites; read-write DB sessions; delete/offboard client groups; manage users and others' tokens, audit log; platform settings |
+
+### Navigation registry
+
+`utils/nav.ts` (`navRegistry`) is the only definition of the sidebar and drawer: `{ id, label, icon (i-lucide-*), route?, minRole, hidden?, section }`. Entries are filtered by role (`navFor`). An entry **with a `route` is a link** (active highlighting and `aria-current="page"` by path prefix); an entry without one shows dimmed with a "Soon" badge. **A page's PR adds `route:` to its entry; nothing else.** New areas append an entry. Pages set breadcrumbs with `useBreadcrumbs([{ label, to? }])` and their own `<h1>` and `useHead({ title })`. Icon names in `.ts` files are bundled because `nuxt.config.ts` makes the icon scanner read `.ts` files; use only bundled Lucide icons.
+
+### Notifications and errors
+
+- `useNotify()`: `error(e)` (ApiError with request ID, plain wording for 401/403/429/network), `success()`, `info()`, `jobStarted(job)` (toast with a "View progress" action). `utils/notify.ts` holds the formatting. Field errors still belong next to their fields.
+- `plugins/errors.client.ts` turns unhandled rejections and render errors into a toast. `error.vue` renders 403, 404, 5xx and unreachable states inside the shell for signed-in users. `AppNetworkBanner` shows when the browser is offline or a request failed at the network level, and clears on the next answer.
+
+### Job progress
+
+- `<JobProgress :job-id>` (polling) wraps `<JobProgressView :job>` (pure, tested). `<JobLink :job-id>` links to `/jobs/<id>`. After a `202`, call `useNotify().jobStarted(data.job)`.
+- The API has no job stream, so `useJob(id)` polls `GET /api/v1/jobs/{id}` through `utils/job-poller.ts`: 1 s while running or rolling back, 2 s queued, x1.5 per quiet poll after three (cap 5 s); stops at `succeeded`/`failed`/`rollback_failed`, on unmount, and on 401/403/404; retries network errors, 5xx and 429 at 2 s doubling to 30 s while the last state stays visible; pauses while the tab is hidden and polls again on show or `online`; aborts the request in flight on stop.
+- Steps show state, attempts, duration and a collapsible log (monospace, whitespace kept, text only, never `v-html`; follows new lines unless the user scrolled up). Failed jobs show the error and the roll-back outcome. Pages: `/jobs` (state and target filters, "Load more") and `/jobs/[id]`.
 
 ## Embedding in the Go binary
 

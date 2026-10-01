@@ -22,7 +22,10 @@ export default defineNuxtConfig({
     // API at runtime (self-hosted installs may have no outbound access, and
     // the CSP only allows same-origin requests).
     provider: 'none',
-    clientBundle: { scan: true },
+    // Icon names also live in .ts files (the navigation registry, job state
+    // views, toasts), which the scanner skips by default; without them those
+    // icons fail to load at runtime.
+    clientBundle: { scan: { globInclude: ['**/*.{vue,jsx,tsx,md,mdc,mdx,yml,yaml,ts}'] } },
   },
 
   typescript: { strict: true },
