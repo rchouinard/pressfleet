@@ -76,6 +76,8 @@ ui/
   placeholder/, ui.go, embed_*.go   the Go package that embeds the build (see below)
 ```
 
+Nuxt prefixes a component's name with its folder unless the name already starts with it: `components/alert/AlertTable.vue` is `<AlertTable>`, but `components/alert/ConfirmDelete.vue` would be `<AlertConfirmDelete>` and `<ConfirmDelete>` would silently render nothing. Generic components live directly in `components/`. `useCursorList()` is the shared "first page plus Load more" for list pages.
+
 Code that should be unit tested goes in `utils/` or in components that don't need the Nuxt runtime, and imports what it uses explicitly (`import { ApiError } from '../utils/api-error'`) rather than relying on auto-imports. Vitest runs it without Nuxt that way. Anything that needs `useState`, `useRoute` and so on is a composable, covered by the typecheck and by the end-to-end checks.
 
 ### Data fetching
