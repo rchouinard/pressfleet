@@ -168,6 +168,15 @@ Tests: pure logic in `utils/<x>.ts` (payloads, validation, gating via `can()`), 
 - **Detail**: status, domains, settings, and "Recent jobs" (`GET /jobs?target_type=site&target_id=`). The newest unfinished job is shown with `<JobProgress>` and stays on screen after it ends until dismissed; when it ends the page reloads the site and jobs, and a successful `site.delete` returns to the list. Start (stopped sites) and Stop (running sites) need `site.start`/`site.stop`; neither is offered for sites that are busy or failed, where the API answers `409`. Delete (`site.delete`, admin) goes through `<ConfirmDialog>`; the site then shows as "Deleting" with its job.
 - **Admin password, once**: the API generates it at creation and returns it only from `POST /sites/{id}/admin-credentials` (`410` afterwards). The detail page offers "Reveal admin credentials" (`site.credentials.retrieve`, operator) only while `admin_credentials_available` and the site is settled (`showCredentialsAction`). The response is held in one component ref while a non-dismissible dialog is open (`SiteCredentials`: copy buttons, selectable fields, a clear "only once" note) and dropped when the user confirms; it is never stored, put in the URL, or logged.
 
+## Go-live and domains
+
+The site page's "Domains" section is one mount, `<SiteDomains :site @changed>`. It wraps `SiteDomainsPanel` (props and callbacks only, tested with `mount`), which calls `POST /sites/{id}/go-live` and `PUT /sites/{id}/aliases` through `SiteDomains`. Logic is in `utils/domains.ts`.
+
+- **Role and state**: controls need `site.domains.manage` (operator); others only see the domains. Go-live (and "Change primary domain") needs a `running` site; editing aliases needs a live site that is `running` or `stopped`. In other states the section says why instead of offering a button (the API would answer `409`).
+- **Validation**: domains are trimmed and lower-cased, aliases are typed one per line (max 20, no repeats, none equal to the primary). The server's `422` stays authoritative.
+- **DNS check**: a `422` of the DNS problem type (`DNS_CHECK_PROBLEM_TYPE`) is shown as a per-domain list (`errors[].field` is mapped back to the domain that was sent), says nothing changed, and turns the button into "Check again". "Skip the DNS check" (`skip_dns_check`) is for hosts behind a CDN or load balancer. A check that couldn't run has no entries; its `detail` is shown.
+- **Job**: on `202` the panel toasts, closes the form and emits `changed`; the page reloads the site and jobs, and the usual "Job progress" section follows the new job (`<JobProgress>`).
+
 ## Logs viewer
 
 `/logs` picks a site (the sites list API), `/sites/<id>/logs` shows it: a "Runtime" tab (`SiteLogViewer`, takes a site id) and a "Jobs" tab (`SiteJobLogs`, `GET /sites/{id}/job-logs`, newest first, "Load older").

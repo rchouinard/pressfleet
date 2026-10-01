@@ -148,6 +148,10 @@ async function closeCredentials() {
   await refreshSite()
 }
 
+async function onDomainsChanged() {
+  await Promise.all([refreshSite(), refreshJobs()])
+}
+
 function when(iso: string): string {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
@@ -206,6 +210,8 @@ function when(iso: string): string {
         </p>
         <UButton icon="i-lucide-key-round" color="neutral" variant="outline" :loading="credentialsBusy" @click="reveal()">Reveal admin credentials</UButton>
       </section>
+
+      <SiteDomains :site="site" @changed="onDomainsChanged" />
 
       <section aria-labelledby="site-details-heading">
         <h2 id="site-details-heading" class="mb-2 text-lg font-semibold">Details</h2>
