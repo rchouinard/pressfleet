@@ -260,6 +260,10 @@ func scanAlertDelivery(s scanner) (AlertDelivery, error) {
 	return d, nil
 }
 
+// deliveryIDs makes delivery IDs that sort in creation order even within a
+// millisecond: the history is listed and paged by ID, newest first.
+var deliveryIDs id.Monotonic
+
 // Enqueue records that an alert event is to be delivered to a channel, due
 // now. It reports whether it created the delivery: false means the pair
 // already had one (the event was offered before), so nothing is sent twice.
@@ -269,7 +273,7 @@ func (r AlertDeliveries) Enqueue(ctx context.Context, alertID string, event Aler
 	res, err := r.q.ExecContext(ctx,
 		"INSERT INTO alert_deliveries (id, alert_id, event_type, channel_id, state, attempts, last_error, next_attempt_at, event, created_at, updated_at) "+
 			"VALUES (?, ?, ?, ?, ?, 0, '', ?, ?, ?, ?) ON CONFLICT (alert_id, event_type, channel_id) DO NOTHING",
-		id.New(), alertID, string(event), channelID, string(DeliveryPending), t, snapshot, t, t)
+		deliveryIDs.NewAt(t), alertID, string(event), channelID, string(DeliveryPending), t, snapshot, t, t)
 	if err != nil {
 		return false, fmt.Errorf("enqueue alert delivery: %w", err)
 	}
