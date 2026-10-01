@@ -289,6 +289,6 @@ Planning surfaced these items, which the design document doesn't yet cover. Each
 
 ## Where to start
 
-M1 and M2 are complete, and M3's backup and restore work (including retention and integrity checks, #54) has landed; continue with core rollout (#57), the resumable upload API (#111), and the SFTP gateway (#62). Original guidance:
+M1, M2, and M3 are complete. M4's platform and API work has landed: VictoriaMetrics (#66), the collector framework (#67), the alert engine and channels (#75, #76), the metrics query API (#77), and the logs API (#78), which is what the dashboard issues #88–#91 consume. The remaining M4 work is the collectors (#68–#74, written against the metric catalog in `control-plane/internal/metricsapi/doc.go`) and the M4 integration tests (#79). Original guidance:
 
 Begin with [#1](https://github.com/rchouinard/pressfleet/issues/1) (repo scaffolding). After it lands, CI ([#2](https://github.com/rchouinard/pressfleet/issues/2)), core interfaces ([#3](https://github.com/rchouinard/pressfleet/issues/3)), the CLI skeleton ([#4](https://github.com/rchouinard/pressfleet/issues/4)), and the `site-php` image ([#17](https://github.com/rchouinard/pressfleet/issues/17)) can proceed in parallel.
