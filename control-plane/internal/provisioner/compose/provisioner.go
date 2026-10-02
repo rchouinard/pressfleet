@@ -22,11 +22,11 @@ import (
 )
 
 // The Compose provisioner implements the Provisioner, TaskRunner, Prober,
-// ImagePinner, SessionRunner, and LogReader parts of the driver. StatsReader
-// comes with the issue that needs it (#68), and the full provisioner.Driver
-// assertion with it; stubbing it now would only hide which parts are
-// missing.
+// ImagePinner, SessionRunner, LogReader, and StatsReader parts of the
+// driver: all of provisioner.Driver.
 var (
+	_ provisioner.Driver        = (*Provisioner)(nil)
+	_ provisioner.StatsReader   = (*Provisioner)(nil)
 	_ provisioner.Provisioner   = (*Provisioner)(nil)
 	_ provisioner.TaskRunner    = (*Provisioner)(nil)
 	_ provisioner.SessionRunner = (*Provisioner)(nil)
