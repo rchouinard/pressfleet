@@ -121,7 +121,7 @@ func (a *app) databaseSessions(db *store.DB, siteDBs *mariadb.Manager, hostKey s
 
 // metricsService returns the metrics collector service (§7), writing to
 // the configured VictoriaMetrics, with the built-in collectors registered.
-func (a *app) metricsService(db *store.DB, stats provisioner.StatsReader, secretStore secrets.Store) (*metrics.Service, error) {
+func (a *app) metricsService(db *store.DB, prov *compose.Provisioner, secretStore secrets.Store) (*metrics.Service, error) {
 	log := a.log.With("component", "metrics")
 	client, err := metrics.NewClient(metrics.Options{URL: a.cfg.Metrics.URL, Logger: log})
 	if err != nil {
@@ -140,7 +140,7 @@ func (a *app) metricsService(db *store.DB, stats provisioner.StatsReader, secret
 	if err := svc.Register(metrics.TraefikCollector{}); err != nil {
 		return nil, err
 	}
-	if err := svc.Register(metrics.ContainerCollector{Stats: stats}); err != nil {
+	if err := svc.Register(metrics.ContainerCollector{Stats: prov}); err != nil {
 		return nil, err
 	}
 	uptime, err := metrics.NewUptimeCollector(metrics.UptimeOptions{
@@ -151,6 +151,14 @@ func (a *app) metricsService(db *store.DB, stats provisioner.StatsReader, secret
 	}
 	if err := svc.Register(uptime); err != nil {
 		return nil, err
+	}
+	for _, c := range []metrics.Collector{
+		&metrics.PageCacheCollector{Logs: prov},
+		metrics.PHPFPMCollector{Status: prov},
+	} {
+		if err := svc.Register(c); err != nil {
+			return nil, err
+		}
 	}
 	return svc, nil
 }
