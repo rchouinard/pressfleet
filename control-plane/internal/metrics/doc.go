@@ -49,7 +49,8 @@
 // site_id gets the client_group_id of that site's target (overwriting a
 // wrong one), and a sample for a site that is not among the targets, for
 // example one deleted mid-run, is dropped. Platform-wide metrics carry
-// neither label. Collector-specific labels (domain, component, state)
+// neither label; a per-group metric carries [LabelClientGroupID] alone, and
+// is dropped like a site's when no target is in that group. Collector-specific labels (domain, component, state)
 // come on top and must not reuse these two names.
 //
 // The collector's own metrics, pressfleet_collector_*, are documented on

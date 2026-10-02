@@ -220,12 +220,14 @@ func (s *Service) collect(ctx context.Context, c Collector) (targets []Target, s
 
 // normalize enforces the conventions on a collector's samples: the metric
 // prefix, a client_group_id on every site sample (taken from the target,
-// whatever the collector set), no sample for a site outside targets, and a
-// time. It returns the samples to write and how many it dropped.
+// whatever the collector set), no sample for a site or a client group
+// outside targets, and a time. It returns the samples to write and how many it dropped.
 func normalize(samples []Sample, targets []Target, runStart time.Time) ([]Sample, int) {
 	groups := make(map[string]string, len(targets))
+	known := make(map[string]bool, len(targets))
 	for _, t := range targets {
 		groups[t.SiteID] = t.ClientGroupID
+		known[t.ClientGroupID] = true
 	}
 	out := make([]Sample, 0, len(samples))
 	dropped := 0
@@ -248,7 +250,9 @@ func normalize(samples []Sample, targets []Target, runStart time.Time) ([]Sample
 			}
 			labels[LabelClientGroupID] = group
 			sm.Labels = labels
-		} else if _, ok := sm.Labels[LabelClientGroupID]; ok {
+		} else if group, ok := sm.Labels[LabelClientGroupID]; ok && !known[group] {
+			// A per-group metric (the Restic repository's size) is for a
+			// group with sites; one deleted mid-run is dropped like a site.
 			dropped++
 			continue
 		}

@@ -173,7 +173,8 @@ func TestServiceEnforcesLabelsAndNames(t *testing.T) {
 			{Name: "pressfleet_fixed", Labels: map[string]string{"site_id": "s1", "client_group_id": "wrong"}, Value: 1},
 			{Name: "pressfleet_fixed2", Labels: map[string]string{"site_id": "s1"}, Value: 1},
 			{Name: "pressfleet_gone", Labels: map[string]string{"site_id": "deleted"}, Value: 1},
-			{Name: "pressfleet_orphan_group", Labels: map[string]string{"client_group_id": "g1"}, Value: 1},
+			{Name: "pressfleet_group", Labels: map[string]string{"client_group_id": "g1"}, Value: 1},
+			{Name: "pressfleet_orphan_group", Labels: map[string]string{"client_group_id": "deleted"}, Value: 1},
 			{Name: "other_prefix", Value: 1},
 			{Name: "pressfleet_collector_spoofed", Value: 1},
 			{Name: "pressfleet_platform", Value: 1},
@@ -182,7 +183,7 @@ func TestServiceEnforcesLabelsAndNames(t *testing.T) {
 	start(t, newService(t, w, targets, c))
 	eventually(t, "a run", func() bool { return len(w.Named("pressfleet_platform")) > 0 })
 
-	for _, name := range []string{"pressfleet_fixed", "pressfleet_fixed2"} {
+	for _, name := range []string{"pressfleet_fixed", "pressfleet_fixed2", "pressfleet_group"} {
 		s := w.Named(name)
 		if len(s) == 0 || s[0].Labels["client_group_id"] != "g1" {
 			t.Errorf("%s = %+v, want client_group_id g1", name, s)
