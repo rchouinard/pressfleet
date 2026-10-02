@@ -215,6 +215,10 @@ function when(iso: string): string {
 
       <SiteDomains :site="site" @changed="onDomainsChanged" />
 
+      <SiteSettings :site="site" @changed="onDomainsChanged" />
+
+      <SiteCoreCard :site="site" @changed="onDomainsChanged" />
+
       <section aria-labelledby="site-details-heading">
         <h2 id="site-details-heading" class="mb-2 text-lg font-semibold">Details</h2>
         <dl class="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
@@ -244,14 +248,6 @@ function when(iso: string): string {
           <div>
             <dt class="text-muted">PHP / WordPress</dt>
             <dd>{{ site.php_version }} / {{ site.wp_core_version }}</dd>
-          </div>
-          <div>
-            <dt class="text-muted">Resources</dt>
-            <dd>{{ site.resources.cpu }} CPU, {{ site.resources.memory_limit_mb }} MiB limit</dd>
-          </div>
-          <div>
-            <dt class="text-muted">Maintenance mode</dt>
-            <dd>{{ site.maintenance ? 'On' : 'Off' }}</dd>
           </div>
           <div>
             <dt class="text-muted">Created</dt>

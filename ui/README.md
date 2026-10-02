@@ -178,6 +178,17 @@ The site page's "Domains" section is one mount, `<SiteDomains :site @changed>`. 
 - **DNS check**: a `422` of the DNS problem type (`DNS_CHECK_PROBLEM_TYPE`) is shown as a per-domain list (`errors[].field` is mapped back to the domain that was sent), says nothing changed, and turns the button into "Check again". "Skip the DNS check" (`skip_dns_check`) is for hosts behind a CDN or load balancer. A check that couldn't run has no entries; its `detail` is shown.
 - **Job**: on `202` the panel toasts, closes the form and emits `changed`; the page reloads the site and jobs, and the usual "Job progress" section follows the new job (`<JobProgress>`).
 
+## Site settings and core updates
+
+On the site page, after "Domains": `<SiteSettings :site @changed>` wraps `SiteSettingsPanel` (props and callbacks only, tested with `mount`) and `<SiteCoreCard :site @changed>` shows WordPress core. Logic is in `utils/site-settings.ts` and `utils/php.ts` (`tests/site-settings.test.ts`).
+
+- **Roles and state**: PHP, limits and preview protection need `site.update`, maintenance `site.maintenance.set`, cache purge `site.cache.purge` (all operator); viewers see the values. While the site is provisioning, updating, deleting or failed the controls are replaced by the reason (the API answers `409`).
+- **PHP and EOL**: the API has no list of supported PHP versions, so `utils/php.ts` holds the support dates (copied from `images/manifest.json`; keep in step). A current version past end of life, or within 180 days of it, gets a warning with an icon and text. The selector never offers EOL versions (the server answers `422`); its `422` shows next to the field.
+- **Limits**: validated like the spec (CPU number, reservation >= 32, limit >= 64 and >= reservation); only changed fields are sent (`PATCH /sites/{id}`).
+- **Jobs**: update, maintenance and purge answer `202`; the page toasts and its "Job progress" section follows the job.
+- **Preview password, once**: turning protection on for the first time (`preview_credentials` of the PATCH response) and "Generate a new password" (confirmed first; `POST /preview-password`) return the password. It is held in one ref while a non-dismissible dialog (`SitePreviewCredentials`) is open and dropped when the user confirms; never stored, in a URL or logged.
+- **Core**: shows version and branch, whose policy applies, the next release, a major release waiting for approval, branch warnings and a failed update. Operators (`core_update.approve`) can hold the branch, approve the pending major branch, follow the client group again (`PUT /core/policy`), or "Update now" (confirmed; `POST /core/update`, a job; only for running sites with a target).
+
 ## Logs viewer
 
 `/logs` picks a site (the sites list API), `/sites/<id>/logs` shows it: a "Runtime" tab (`SiteLogViewer`, takes a site id) and a "Jobs" tab (`SiteJobLogs`, `GET /sites/{id}/job-logs`, newest first, "Load older").
