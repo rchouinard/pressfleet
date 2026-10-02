@@ -28,7 +28,7 @@ PressFleet aims to simplify WordPress management for agencies by delivering:
 * **Staging clones.** Post-MVP, but the **highest-priority** follow-up (§8). The MVP data model and restore pipeline should anticipate it.
 * **Kubernetes deployment.** Planned for a later release; the MVP only has to keep the door open (§4.2).
 * **WordPress Multisite.**
-* **Managing plugin and theme updates.** WordPress handles these natively.
+* **Managing plugin and theme updates.** WordPress handles these natively; the dashboard only reports pending updates (§5.6).
 * **Multi-host clustering** of the Docker Compose target. One PressFleet install manages one Docker host.
 * **CDN / edge caching.** Caching is performed at the origin (Nginx + Redis). Agencies may place a third-party CDN in front.
 * **Email hosting and DNS hosting.** PressFleet does not run mail servers or authoritative DNS.
@@ -488,7 +488,7 @@ A go-live that fails before the URL update rolls back to the previous domains. O
 * The image matrix is kept small: for each supported PHP version, the latest WordPress core release, plus the latest release of every older branch a site is held on or awaiting approval for.
 
 ### 5.6. WordPress Runtime Defaults
-* **Plugin and theme updates:** Handled natively by WordPress (auto-updates or wp-admin), writing to the `wp-content` volume.
+* **Plugin and theme updates:** Handled natively by WordPress (auto-updates or wp-admin), writing to the `wp-content` volume. The platform only reports pending updates, as part of site health (§9 Q2); it never runs them.
 * **WP-Cron:** `DISABLE_WP_CRON` is set; cron is triggered by the control plane scheduler so it runs reliably on low-traffic sites.
 * **Cache purging:** Nginx Helper purges the FastCGI cache using file-based purging against the per-site cache volume shared between the `nginx` and `php` containers. Both containers run as the site's UID so the cache files can be deleted. The platform configures it that way at provisioning and whenever it reconciles the site. A full purge (`POST /api/v1/sites/{id}/cache/purge`, and the purges in go-live and restore) runs as a job in the control plane rather than inside WordPress, so it works on stopped or broken sites: it flushes the site's object cache database as the object cache admin, then deletes the page cache files through the driver (`Provisioner.PurgeCache`).
 * **Outbound email:** Sites send mail through a configurable SMTP relay.
@@ -656,7 +656,7 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
 ## 9. Open Questions
 
 1. ~~**Security plugins:** Which plugins make up the default "agency security" set, if any?~~ **Resolved (2026-09-27):** a configurable security set, set install-wide with no per-site overrides: must-use plugin modules, nginx settings, and the optional Two Factor plugin. No all-in-one security suite. See §6.1.
-2. **Plugin/theme update visibility:** WordPress handles plugin and theme updates, but should the dashboard *report* pending updates across all sites (via WP-CLI), and should it take a backup before updates run?
+2. ~~**Plugin/theme update visibility:** WordPress handles plugin and theme updates, but should the dashboard *report* pending updates across all sites (via WP-CLI), and should it take a backup before updates run?~~ **Resolved (2026-10-02):** report only. Pending plugin and theme updates count towards a site's health and are shown in the dashboard; the platform neither performs the updates nor takes a backup around them. See §5.6.
 3. ~~**Core rollout policy:** Confirm the proposed default in §5.5 (security/minor releases rolled out automatically, major releases approved per site or client group).~~ **Resolved (2026-09-28):** the proposal, with holds per major branch that keep receiving minor and security releases, and an optional delay after which majors are approved automatically. See §5.5.
 4. ~~**User roles:** Do agency staff need roles beyond full access (e.g. read-only, or access limited to certain client groups)?~~ **Resolved (2026-09-26):** fixed platform-wide Admin, Operator, and Viewer roles, only Admins can delete sites, and an audit log ships in the MVP. Client-group scoping is deferred. See §4.6.
 5. ~~**Preview domain protection:** Is `noindex` sufficient, or should preview domains optionally require HTTP basic auth?~~ **Resolved (2026-09-27):** optional per-site basic auth on the preview domain via Traefik, off by default, with a platform-generated password stored encrypted. See §5.1.
