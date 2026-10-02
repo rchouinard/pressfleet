@@ -96,7 +96,7 @@ tags:
       connect with `sftp -P <port> <site-slug>@<dashboard domain>`: the SSH
       username names the site and the key names the user.
   - name: platform
-    description: The install's own connection details.
+    description: Facts about the install itself, such as connection details, capacity and preflight (doctor) results.
   - name: client-groups
     description: Client groups own sites and a backup repository.
   - name: sites
@@ -119,8 +119,6 @@ tags:
       overview (design doc §7.1, §7.2), backed by VictoriaMetrics. Clients
       name metrics from a catalog; they never send queries. Every role can
       read.
-  - name: platform
-    description: Platform-wide status, such as the preflight (doctor) results. Every role can read.
   - name: audit
     description: The audit log (Admin only).
   - name: alerts
