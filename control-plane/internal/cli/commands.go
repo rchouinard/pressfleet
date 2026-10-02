@@ -485,6 +485,15 @@ func (a *app) serveCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
+				// The managers hold the admin access to both servers already.
+				for _, c := range []metrics.Collector{
+					metrics.MariaDBCollector{Source: siteDBs},
+					metrics.RedisCollector{Source: caches},
+				} {
+					if err := collector.Register(c); err != nil {
+						return err
+					}
+				}
 				workers.Go(func() { _ = collector.Run(workersCtx) })
 			}
 			if alertEngine != nil {
