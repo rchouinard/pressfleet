@@ -60,6 +60,21 @@ test: ## Run tests with the race detector
 image: ## Build the control plane container image (tag: IMAGE=...)
 	docker build -f control-plane/Dockerfile --build-arg VERSION=$(VERSION) -t $(IMAGE) .
 
+DEV_IMAGE ?= pressfleet-control-plane:dev
+
+.PHONY: dev-up
+dev-up: build ## Install and start a local dev platform in ./.dev (settings in .env, see CONTRIBUTING.md)
+	$(MAKE) image IMAGE=$(DEV_IMAGE)
+	PF_DEV_IMAGE=$(DEV_IMAGE) scripts/dev.sh up
+
+.PHONY: dev-down
+dev-down: ## Remove the local dev platform, its sites and data (PURGE_CERTS=1 also drops its certificates)
+	PURGE_CERTS=$(PURGE_CERTS) scripts/dev.sh down
+
+.PHONY: dev-status
+dev-status: ## Show the local dev platform's containers
+	scripts/dev.sh status
+
 .PHONY: test-platform
 test-platform: ## Bring up the platform project with a local image against real Docker, then tear it down
 	$(MAKE) image IMAGE=pressfleet-control-plane:platform-test
