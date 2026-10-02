@@ -663,6 +663,7 @@ var envVars = []struct {
 	{"PRESSFLEET_SFTP_HOST_KEY_FILE", func(c *Config) *string { return &c.SFTP.HostKeyFile }},
 	{"PRESSFLEET_UPDATES_WINDOW_START", func(c *Config) *string { return &c.Updates.WindowStart }},
 	{"PRESSFLEET_METRICS_URL", func(c *Config) *string { return &c.Metrics.URL }},
+	{"PRESSFLEET_METRICS_PUBLIC_DOMAIN", func(c *Config) *string { return &c.Metrics.PublicDomain }},
 	{"PRESSFLEET_IMAGE_MANIFEST_FILE", func(c *Config) *string { return &c.ImageManifestFile }},
 }
 
@@ -936,6 +937,14 @@ func (c Config) Validate() error {
 	}
 	if err := c.Metrics.Validate(); err != nil {
 		errs = append(errs, err)
+	}
+	if d := c.Metrics.PublicDomain; d != "" {
+		if d == c.DashboardDomain {
+			errs = append(errs, errors.New("metrics.public_domain must differ from dashboard_domain"))
+		}
+		if c.PreviewBaseDomain != "" && (d == c.PreviewBaseDomain || strings.HasSuffix(d, "."+c.PreviewBaseDomain)) {
+			errs = append(errs, errors.New("metrics.public_domain must not be the preview base domain or under it"))
+		}
 	}
 	if c.ImageManifestFile != "" && !filepath.IsAbs(c.ImageManifestFile) {
 		errs = append(errs, fmt.Errorf("image_manifest_file must be an absolute path, got %q", c.ImageManifestFile))

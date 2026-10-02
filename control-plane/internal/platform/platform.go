@@ -23,9 +23,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"text/template"
 
 	"go.yaml.in/yaml/v3"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/ingress"
@@ -219,6 +219,12 @@ type Config struct {
 	// and API (config.Config.DashboardDomain). Empty renders no dashboard
 	// route.
 	DashboardDomain string
+	// MetricsPublicDomain exposes VictoriaMetrics' read-only query API
+	// there, behind basic auth (config.MetricsConfig.PublicDomain). Empty
+	// renders no route. MetricsAccessHash is the bcrypt hash of its password
+	// (NewMetricsAccess); it is required with the domain.
+	MetricsPublicDomain string
+	MetricsAccessHash   string
 	// ACME configures how Traefik obtains certificates.
 	ACME ACMEConfig
 }
@@ -341,6 +347,17 @@ func (c Config) withDefaults() (Config, error) {
 	}
 	if c.DashboardDomain != "" && !config.ValidDomain(c.DashboardDomain) {
 		errs = append(errs, fmt.Errorf("dashboard domain must be a domain name like fleet.example.com, got %q", c.DashboardDomain))
+	}
+	if c.MetricsPublicDomain != "" {
+		switch {
+		case !config.ValidDomain(c.MetricsPublicDomain):
+			errs = append(errs, fmt.Errorf("metrics public domain must be a domain name like metrics.example.com, got %q", c.MetricsPublicDomain))
+		case c.MetricsPublicDomain == c.DashboardDomain:
+			errs = append(errs, errors.New("metrics public domain must differ from the dashboard domain"))
+		}
+		if _, err := bcrypt.Cost([]byte(c.MetricsAccessHash)); err != nil {
+			errs = append(errs, errors.New("a metrics public domain needs a bcrypt password hash (NewMetricsAccess)"))
+		}
 	}
 	acme := config.ACMEConfig{
 		Email:          c.ACME.Email,
@@ -473,7 +490,9 @@ const (
 	// writes TraefikDynamicConfigFile into it; the control plane adds and
 	// removes the maintenance routes of sites (package ingress), so it
 	// must be readable by Traefik, which runs without CAP_DAC_OVERRIDE,
-	// and holds nothing secret.
+	// and holds nothing secret but the bcrypt hash of the public metrics
+	// credential (TraefikMetricsConfigFile), which is no use without the
+	// password.
 	TraefikDynamicDir        = "traefik/dynamic"
 	TraefikDynamicConfigFile = TraefikDynamicDir + "/platform.yaml"
 	// Rendered only with a DNS provider.
@@ -557,11 +576,9 @@ func Render(dir string, cfg Config) error {
 	if cfg.Backup.Backend == config.BackupBackendS3 {
 		data.BackupS3 = &cfg.Backup.S3
 	}
-	tmpl, err := template.New("").Option("missingkey=error").
-		Funcs(template.FuncMap{"q": quote, "yq": yamlQuote, "backquote": backquote}).
-		ParseFS(templates.Platform(), "*.tmpl")
+	tmpl, err := parseTemplates()
 	if err != nil {
-		return fmt.Errorf("parsing platform templates: %w", err)
+		return err
 	}
 
 	outputs := []output{
@@ -579,6 +596,13 @@ func Render(dir string, cfg Config) error {
 	}
 	if err := os.Remove(filepath.Join(dir, legacyTraefikDynamicConfigFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("removing %s: %w", legacyTraefikDynamicConfigFile, err)
+	}
+	if cfg.MetricsPublicDomain != "" {
+		if err := writeMetricsAccess(dir, cfg.MetricsPublicDomain, cfg.MetricsAccessHash); err != nil {
+			return err
+		}
+	} else if err := removeMetricsAccess(dir); err != nil {
+		return err
 	}
 	if cfg.ACME.DNSProvider != "" {
 		outputs = append(outputs, dnsFiles...)
@@ -609,7 +633,7 @@ func Render(dir string, cfg Config) error {
 	}
 	// writeFile creates directories 0700; Traefik must be able to list this
 	// one (see TraefikDynamicDir).
-	if err := os.Chmod(filepath.Join(dir, TraefikDynamicDir), 0o755); err != nil { //nolint:gosec // G302: Traefik must list it, and it holds nothing secret
+	if err := os.Chmod(filepath.Join(dir, TraefikDynamicDir), 0o755); err != nil { //nolint:gosec // G302: Traefik must list it, and it holds no password
 		return fmt.Errorf("making %s readable: %w", TraefikDynamicDir, err)
 	}
 	return nil

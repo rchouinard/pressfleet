@@ -50,6 +50,7 @@ audit:
   retention_days: 365
 metrics:
   retention_days: 90
+  public_domain: metrics.agency.example   # optional; exposes the query API to Grafana
 platform_project: pressfleet
 smtp:                    # optional; without a host, sites send no email
   host: smtp.mailgun.org
@@ -137,6 +138,7 @@ database_export:
 | `mariadb.admin_password_file` | `PRESSFLEET_MARIADB_ADMIN_PASSWORD_FILE` | | `/run/secrets/mariadb_root_password` | File holding the admin password; a trailing newline is ignored. Must be an absolute path. The default is where the platform Compose project mounts the MariaDB root password secret. |
 | `audit.retention_days` | `PRESSFLEET_AUDIT_RETENTION_DAYS` | | `365` | How many days audit log events are kept, from 1 to 3660. A daily job deletes older events. See [Audit log](#audit-log). |
 | `metrics.retention_days` | `PRESSFLEET_METRICS_RETENTION_DAYS` | | `90` | How many days VictoriaMetrics keeps metrics, from 1 to 3660. Longer retention needs more disk. It is rendered into the platform project, so a change applies the next time the project is rendered (`pressfleet upgrade`). See [Metrics storage](#metrics-storage). |
+| `metrics.public_domain` | `PRESSFLEET_METRICS_PUBLIC_DOMAIN` | | (unset) | A domain that serves VictoriaMetrics' read-only query API over HTTPS behind basic auth, for your own Grafana. Unset, VictoriaMetrics stays internal. It must differ from `dashboard_domain`, must not be the preview base domain or under it, and needs a DNS record pointing at the host. Applies when `pressfleet init` runs. See [Connecting Grafana](#connecting-grafana). |
 | `redis.address` | `PRESSFLEET_REDIS_ADDRESS` | | `redis:6379` | `host:port` of the shared object cache server (Valkey), as seen from the control plane. See [Object cache](#object-cache). |
 | `redis.admin_user` | `PRESSFLEET_REDIS_ADMIN_USER` | | `pressfleet` | Object cache ACL user that creates and deletes site users. |
 | `redis.admin_password_file` | `PRESSFLEET_REDIS_ADMIN_PASSWORD_FILE` | | `/run/secrets/redis_admin_password` | File holding the admin password; a trailing newline is ignored. Must be an absolute path. The default is where the platform Compose project mounts the password `pressfleet init` generates. |
@@ -351,7 +353,23 @@ Some events carry `details`, such as the SFTP gateway's sessions (see below).
 
 ## Metrics storage
 
-Metrics are stored in a single-node VictoriaMetrics service of the platform project, limited to 256 MiB of memory, with its data on the `victoria-metrics-data` volume. It is reachable only on the platform network, as `http://victoria-metrics:8428`: it publishes no host port and has no Traefik route, so it isn't exposed to the internet. Data older than `metrics.retention_days` is deleted by VictoriaMetrics itself.
+Metrics are stored in a single-node VictoriaMetrics service of the platform project, limited to 256 MiB of memory, with its data on the `victoria-metrics-data` volume. It is reachable only on the platform network, as `http://victoria-metrics:8428`: it publishes no host port and has no Traefik route, so it isn't exposed to the internet. Data older than `metrics.retention_days` is deleted by VictoriaMetrics itself. [Connecting Grafana](#connecting-grafana) describes the optional way to query it from outside.
+
+### Connecting Grafana
+
+Set `metrics.public_domain` (for example `metrics.example.com`, with a DNS record pointing at the host) and run `pressfleet init` (with `--force` on an installed host; the existing master key and credentials are kept). Traefik then serves VictoriaMetrics' query API at `https://metrics.example.com/`, with a certificate from the same ACME resolver as the dashboard, behind HTTP basic auth. `init` prints the credential once: user `grafana` and a generated password. Only a bcrypt hash of the password is kept (in `secrets/metrics_access_hash` of the platform project, and in the Traefik route `traefik/dynamic/metrics.yaml`), because nothing needs the password itself after it is shown. This is a host setting: the host CLI renders it, and the control plane and its state database are not involved.
+
+Only the read paths of the Prometheus query API are routed: `/api/v1/query`, `/api/v1/query_range`, `/api/v1/series`, `/api/v1/labels`, `/api/v1/label/<name>/values`, `/api/v1/metadata`, `/api/v1/status/buildinfo`, and `/federate`. Everything else, VictoriaMetrics' write paths (`/write`, `/api/v1/import`, ...), its admin and snapshot paths, and its web UI, answers `404`, with or without the credential. Unset, there is no route and VictoriaMetrics remains reachable on the platform network only.
+
+To connect Grafana, add a **Prometheus** data source with:
+
+- URL: `https://metrics.example.com`
+- Authentication: **Basic authentication**, user `grafana` and the password
+- HTTP method: `POST` (or `GET`)
+
+The metric names and labels are those of the [Metrics API](#metrics-api) catalog.
+
+To replace the password, for instance when someone who knew it leaves, run `pressfleet metrics-access rotate` on the host. It prints the new password once. Traefik reloads the route within seconds, the old password stops working then, and no container restarts. Update the data source in Grafana afterwards. Removing `metrics.public_domain` and running `pressfleet init --force` removes the route and forgets the credential.
 
 ## Uptime and TLS checks
 

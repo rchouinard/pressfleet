@@ -566,7 +566,7 @@ All-in-one security suites (Wordfence and similar) are deliberately excluded: th
 
 ## 7. Monitoring, Metrics & Alerting
 
-Monitoring is a core feature, surfaced natively in the dashboard rather than requiring a separate tool. Metrics are stored in VictoriaMetrics and exposed in Prometheus format, so agencies can optionally connect Grafana or other tooling. Retention is configurable and defaults to 90 days.
+Monitoring is a core feature, surfaced natively in the dashboard rather than requiring a separate tool. Metrics are stored in VictoriaMetrics and exposed in Prometheus format, so agencies can optionally connect Grafana or other tooling: with `metrics.public_domain` set, Traefik serves only the read-only query paths on that domain behind HTTP basic auth, with a platform-generated credential that is shown once and can be rotated. Otherwise VictoriaMetrics is reachable on the platform network only. Retention is configurable and defaults to 90 days.
 
 ### 7.1. Per-Site Metrics
 

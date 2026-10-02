@@ -288,6 +288,9 @@ type installer struct {
 	in         *bufio.Reader
 	out        io.Writer
 	configPath string
+	// metricsPassword is the password of a public metrics credential
+	// startPlatform just created, which is shown once.
+	metricsPassword redact.Secret
 }
 
 func (a *app) runInit(ctx context.Context, f initFlags, given map[string]string) error {
@@ -417,11 +420,26 @@ func (i *installer) run(ctx context.Context, given map[string]string) error {
 	}
 	i.printBackupSummary(answers)
 	i.printf("  SFTP gateway:     sftp -P %d <site-slug>@%s\n", i.a.cfg.SFTP.Port, answers.DashboardDomain)
+	i.printMetricsSummary()
 	i.printf("  Admin user:       %s\n", auth.NormalizeEmail(answers.AdminEmail))
 	if created && generated {
 		i.printf("  Admin password:   %s\n\nStore the admin password now; it can't be shown again.\n", adminPassword.Reveal())
 	}
 	return nil
+}
+
+// printMetricsSummary tells where Grafana connects, and the credential when
+// this run created it.
+func (i *installer) printMetricsSummary() {
+	domain := i.a.cfg.Metrics.PublicDomain
+	if domain == "" {
+		return
+	}
+	i.printf("  Metrics API:      https://%s/ (basic auth as %s)\n", domain, platform.MetricsAccessUsername)
+	if i.metricsPassword != "" {
+		i.printf("  Metrics password: %s\n\nStore the metrics password now; it can't be shown again. "+
+			"`pressfleet metrics-access rotate` replaces it.\n\n", i.metricsPassword.Reveal())
+	}
 }
 
 func (i *installer) refuseExisting(found []string) error {
@@ -703,6 +721,28 @@ type fileConfig struct {
 	Backup *fileBackup `yaml:"backup,omitempty"`
 	// SFTP is only written for a port other than the default.
 	SFTP *fileSFTP `yaml:"sftp,omitempty"`
+	// Metrics is only written when it differs from the defaults, so
+	// reinstalling keeps these settings.
+	Metrics *fileMetrics `yaml:"metrics,omitempty"`
+}
+
+// fileMetrics are the metrics settings init renders into the platform
+// project, and so must keep in the config file.
+type fileMetrics struct {
+	RetentionDays int    `yaml:"retention_days,omitempty"`
+	PublicDomain  string `yaml:"public_domain,omitempty"`
+}
+
+// metricsFileConfig returns the metrics settings init keeps, or nil.
+func metricsFileConfig(m config.MetricsConfig) *fileMetrics {
+	f := fileMetrics{PublicDomain: m.PublicDomain}
+	if m.RetentionDays != config.DefaultMetricsRetentionDays {
+		f.RetentionDays = m.RetentionDays
+	}
+	if f == (fileMetrics{}) {
+		return nil
+	}
+	return &f
 }
 
 const configHeader = `# PressFleet configuration, written by pressfleet init.
@@ -723,6 +763,7 @@ func (i *installer) writeConfig(a initAnswers) error {
 		ACME:              a.acmeFileConfig(),
 		Backup:            a.backupFileConfig(),
 		SFTP:              sftpFileConfig(i.a.cfg.SFTP),
+		Metrics:           metricsFileConfig(i.a.cfg.Metrics),
 	})
 	if err != nil {
 		return err
@@ -797,6 +838,10 @@ func (i *installer) startPlatform(ctx context.Context, a initAnswers) error {
 	}
 	name := i.projectName()
 	acme := a.acmeConfig()
+	metricsHash, err := i.metricsAccessHash(dir)
+	if err != nil {
+		return err
+	}
 	if err := platform.Render(dir, platform.Config{
 		ProjectName:          name,
 		DataDir:              a.DataDir,
@@ -813,6 +858,8 @@ func (i *installer) startPlatform(ctx context.Context, a initAnswers) error {
 		Backup:               a.backupConfig(),
 		DashboardDomain:      a.DashboardDomain,
 		MetricsRetentionDays: i.a.cfg.Metrics.RetentionDays,
+		MetricsPublicDomain:  i.a.cfg.Metrics.PublicDomain,
+		MetricsAccessHash:    metricsHash,
 		ACME: platform.ACMEConfig{
 			Email:          acme.Email,
 			CAServer:       acme.Directory(),
@@ -833,6 +880,25 @@ func (i *installer) startPlatform(ctx context.Context, a initAnswers) error {
 	}
 	i.printf("The platform is running and healthy.\n")
 	return nil
+}
+
+// metricsAccessHash returns the credential hash of the public metrics route
+// (metrics.public_domain): the one already rendered into dir, so reinstalling
+// keeps Grafana working, or a new one whose password is kept in
+// i.metricsPassword for the summary. It is empty without a public domain.
+func (i *installer) metricsAccessHash(dir string) (string, error) {
+	if i.a.cfg.Metrics.PublicDomain == "" {
+		return "", nil
+	}
+	hash, err := platform.ReadMetricsAccessHash(dir)
+	if err == nil {
+		return hash, nil
+	}
+	if !errors.Is(err, platform.ErrNoMetricsAccess) {
+		return "", err
+	}
+	i.metricsPassword, hash, err = platform.NewMetricsAccess()
+	return hash, err
 }
 
 // platformProject returns the Compose project of the rendered platform.

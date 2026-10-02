@@ -289,6 +289,6 @@ Planning surfaced these items, which the design document doesn't yet cover. Each
 
 ## Where to start
 
-M1, M2, and M3 are complete. M4's platform and API work has landed: VictoriaMetrics (#66), the collector framework (#67), the alert engine and channels (#75, #76), the metrics query API (#77), and the logs API (#78), which is what the dashboard issues #88–#91 consume. The remaining M4 work is the collectors (#68–#74, written against the metric catalog in `control-plane/internal/metricsapi/doc.go`) and the M4 integration tests (#79). Original guidance:
+M1, M2, and M3 are complete, and M4 is complete with the optional authenticated metrics endpoint for Grafana (#117). M4's platform and API work landed as: VictoriaMetrics (#66), the collector framework (#67), the alert engine and channels (#75, #76), the metrics query API (#77), and the logs API (#78), which is what the dashboard issues #88–#91 consume. The collectors (#68–#74) are written against the metric catalog in `control-plane/internal/metricsapi/doc.go`, and the M4 integration tests are #79. Original guidance:
 
 Begin with [#1](https://github.com/rchouinard/pressfleet/issues/1) (repo scaffolding). After it lands, CI ([#2](https://github.com/rchouinard/pressfleet/issues/2)), core interfaces ([#3](https://github.com/rchouinard/pressfleet/issues/3)), the CLI skeleton ([#4](https://github.com/rchouinard/pressfleet/issues/4)), and the `site-php` image ([#17](https://github.com/rchouinard/pressfleet/issues/17)) can proceed in parallel.

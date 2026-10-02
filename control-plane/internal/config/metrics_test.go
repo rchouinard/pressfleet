@@ -43,6 +43,8 @@ func TestValidateMetrics(t *testing.T) {
 		{"empty URL", func(m *config.MetricsConfig) { m.URL = "" }, "metrics.url"},
 		{"too fast", func(m *config.MetricsConfig) { m.IntervalSeconds = 1 }, "metrics.interval_seconds"},
 		{"too slow", func(m *config.MetricsConfig) { m.IntervalSeconds = 3601 }, "metrics.interval_seconds"},
+		{"public domain", func(m *config.MetricsConfig) { m.PublicDomain = "metrics.example.com" }, ""},
+		{"public domain not a domain", func(m *config.MetricsConfig) { m.PublicDomain = "metrics" }, "metrics.public_domain"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -56,5 +58,31 @@ func TestValidateMetrics(t *testing.T) {
 				t.Errorf("Validate() = %v, want error mentioning %s", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestValidateMetricsPublicDomainConflicts(t *testing.T) {
+	for name, set := range map[string]func(*config.Config){
+		"dashboard":    func(c *config.Config) { c.DashboardDomain = c.Metrics.PublicDomain },
+		"preview base": func(c *config.Config) { c.PreviewBaseDomain = "example.com" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Metrics.PublicDomain = "metrics.example.com"
+			set(&cfg)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "metrics.public_domain") {
+				t.Errorf("Validate() = %v, want a metrics.public_domain error", err)
+			}
+		})
+	}
+}
+
+func TestMetricsPublicDomainFromEnv(t *testing.T) {
+	cfg, err := config.Load(writeFile(t, ""), env(map[string]string{"PRESSFLEET_METRICS_PUBLIC_DOMAIN": "metrics.example.com"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Metrics.PublicDomain != "metrics.example.com" {
+		t.Errorf("PublicDomain = %q", cfg.Metrics.PublicDomain)
 	}
 }

@@ -118,6 +118,7 @@ func (a *app) rootCommand() *cobra.Command {
 	root.AddCommand(a.keyCommand())
 	root.AddCommand(a.userCommand())
 	root.AddCommand(a.repositoryCommand())
+	root.AddCommand(a.metricsAccessCommand())
 	return root
 }
 

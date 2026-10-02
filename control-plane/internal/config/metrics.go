@@ -30,6 +30,13 @@ type MetricsConfig struct {
 	// IntervalSeconds is how often collectors run by default, 5 to 3600.
 	// A collector may ask for a longer interval of its own.
 	IntervalSeconds int `yaml:"interval_seconds"`
+	// PublicDomain, when set, exposes VictoriaMetrics' read-only query API
+	// at https://<PublicDomain> behind HTTP basic auth, for the agency's
+	// own Grafana (#117). Empty, the default, keeps VictoriaMetrics
+	// reachable on the platform network only. The host CLI renders it into
+	// the platform project (pressfleet init), and the credential with it
+	// (pressfleet metrics-access).
+	PublicDomain string `yaml:"public_domain"`
 }
 
 // DefaultMetrics collects every 30 seconds into the platform's
@@ -59,6 +66,9 @@ func (m MetricsConfig) Validate() error {
 	}
 	if m.IntervalSeconds < 5 || m.IntervalSeconds > 3600 {
 		errs = append(errs, fmt.Errorf("metrics.interval_seconds must be from 5 to 3600, got %d", m.IntervalSeconds))
+	}
+	if m.PublicDomain != "" && !ValidDomain(m.PublicDomain) {
+		errs = append(errs, fmt.Errorf("metrics.public_domain must be a domain name like metrics.example.com, got %q", m.PublicDomain))
 	}
 	return errors.Join(errs...)
 }
