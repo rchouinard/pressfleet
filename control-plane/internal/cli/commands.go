@@ -161,10 +161,13 @@ func (a *app) metricsService(db *store.DB, prov *compose.Provisioner, secretStor
 			return nil, err
 		}
 	}
+	if err := svc.Register(metrics.BackupJobsCollector{DB: db}); err != nil {
+		return nil, err
+	}
 	return svc, nil
 }
 
-// sftpGateway returns the SFTP gateway (§5.8), or nil when it is off (a nil
+// sftpGatewayreturns the SFTP gateway (§5.8), or nil when it is off (a nil
 // hostKey). Port forwarding goes to the database of a site on which the
 // user has an open database session, and nowhere else.
 func (a *app) sftpGateway(db *store.DB, authn *auth.Service, sessions provisioner.SessionRunner, hostKey ssh.Signer,
