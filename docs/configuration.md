@@ -363,6 +363,15 @@ A certificate that fails verification (expired, wrong name, untrusted) makes the
 
 **Limitation:** the checks run on the PressFleet host itself, so a full host outage can't be detected by them: nothing runs to report it, and the alert engine sees missing data, not `pressfleet_site_up` 0. Use an external uptime monitor for that. External checking is a future consideration (design doc §7.3). The control plane must also be able to reach its own public domains (hairpin routing to the host's public address).
 
+### Host and storage metrics
+
+The control plane collects these itself (no extra service):
+
+- **Host CPU, memory, and disk I/O** come from the host's `/proc/stat`, `/proc/meminfo`, and `/proc/diskstats`. The platform project mounts the host's `/proc` read-only at `/host/proc` in the control plane container, and the control plane reads it there when it exists (otherwise its own `/proc`). Disk I/O counts physical disks only (`sd*`, `vd*`, `xvd*`, `hd*`, `nvme*`, `mmcblk*`, not their partitions, and not device-mapper, md, or loop devices, which would count the same bytes twice). Installs rendered before this mount existed need `pressfleet init --force` (until `pressfleet upgrade` exists, #95); until then the container's own `/proc`, which on a stock Docker host shows the same host-wide counters, is used.
+- **Host disk usage** is the filesystem holding `data_dir`, labeled `mountpoint="<data_dir>"`. Docker's own volumes are on a filesystem the control plane can't see; it is the same one on a default install.
+- **wp-content size** (`pressfleet_site_wp_content_size_bytes`) is measured every 10 minutes for running and stopped sites by a short-lived task container that runs `du -sk` on the volume, through the provisioner. It is disk usage in whole KiB.
+- **Restic repository size** (`pressfleet_restic_repository_size_bytes`, per client group) is measured every 30 minutes with `restic stats --mode raw-data`, for the client groups that have a site and a repository, for both the `local` and `s3` backends.
+
 ## Metrics API
 
 The dashboard reads metrics through curated, read-only endpoints (design doc §7.1, §7.2, tag `metrics` in `api/openapi.yaml`); it never sends queries. Every role can use them. They read VictoriaMetrics (`metrics.url`), and answer `503` while it can't be reached or when `metrics.enabled` is false.

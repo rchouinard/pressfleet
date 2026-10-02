@@ -23,6 +23,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/audit"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repomaint"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/restic"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
@@ -121,7 +122,7 @@ func (a *app) databaseSessions(db *store.DB, siteDBs *mariadb.Manager, hostKey s
 
 // metricsService returns the metrics collector service (§7), writing to
 // the configured VictoriaMetrics, with the built-in collectors registered.
-func (a *app) metricsService(db *store.DB, prov *compose.Provisioner, secretStore secrets.Store) (*metrics.Service, error) {
+func (a *app) metricsService(db *store.DB, prov *compose.Provisioner, secretStore secrets.Store, repos *repository.Manager) (*metrics.Service, error) {
 	log := a.log.With("component", "metrics")
 	client, err := metrics.NewClient(metrics.Options{URL: a.cfg.Metrics.URL, Logger: log})
 	if err != nil {
@@ -152,10 +153,10 @@ func (a *app) metricsService(db *store.DB, prov *compose.Provisioner, secretStor
 	if err := svc.Register(uptime); err != nil {
 		return nil, err
 	}
-	for _, c := range []metrics.Collector{
+	for _, c := range append([]metrics.Collector{
 		&metrics.PageCacheCollector{Logs: prov},
 		metrics.PHPFPMCollector{Status: prov},
-	} {
+	}, a.hostStorageCollectors(prov, repos)...) {
 		if err := svc.Register(c); err != nil {
 			return nil, err
 		}
@@ -489,7 +490,7 @@ func (a *app) serveCommand() *cobra.Command {
 			// starting or down: write failures are logged and counted, and
 			// the next run tries again.
 			if a.cfg.Metrics.Enabled {
-				collector, err := a.metricsService(db, prov, secretStore)
+				collector, err := a.metricsService(db, prov, secretStore, repos)
 				if err != nil {
 					return err
 				}

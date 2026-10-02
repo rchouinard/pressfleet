@@ -100,6 +100,12 @@ services:
       - type: bind
         source: /var/run/docker.sock
         target: /var/run/docker.sock
+      # The host's CPU, memory, and disk counters, for the host metrics (§7.2).
+      # Read-only; the control plane reads /proc/stat, meminfo, and diskstats.
+      - type: bind
+        source: /proc
+        target: /host/proc
+        read_only: true
 {{- if .ACME.DNSProvider }}
       # The control plane decrypts the DNS provider credentials here for
       # Traefik.
