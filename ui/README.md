@@ -209,6 +209,23 @@ On the site page, after "Domains": `<SiteSettings :site @changed>` wraps `SiteSe
 - **Jobs**: backup and restore return a job, followed with `<JobProgress>` on the page (an unfinished job of the site is picked up on load). When it ends the site, history and schedule reload. Restore and "Back up now" are disabled meanwhile.
 - Restoring another site's snapshot (`source_site_id`) is not offered; the API supports it but the MVP UI restores the site's own backups.
 
+## Developer workflows
+
+Site import, code deployment, SSH keys and database access (design doc §5.7, §5.8). Pages are linked from the sites list and the site page, and gated by the permission table.
+
+| Page | Needs | What it does |
+| --- | --- | --- |
+| `/sites/import` ("Import site" on `/sites`) | `site.import` | Client group, a `wp-content` archive and a SQL dump, uploaded with progress; then `POST /sites/import` and the job is followed in place. The result links to the new site. A completed upload is reused if only the import request failed. |
+| `/sites/<id>/deploy` | `site.code.deploy` | Theme, plugin or must-use plugin, directory name, package (zip or tar.gz), "activate"; uploads, then `POST /sites/{id}/deploy` and follows the job (it rolls back by itself on a failed health check). Running sites only. |
+| `/sites/<id>/database` | `site.database.export` | Export: starts the job, then offers a plain `<a href download>` to the download path (built from the job result's IDs, never from a URL in it). The newest unexpired export is offered again after a reload. Sessions: open (read-only; read-write only with `site.database.session.create_read_write`), list, end. |
+| Site page, "SFTP" card | any role sees it | `sftp -P <port> <slug>@<dashboard host>` with copy buttons. The API doesn't report `sftp.port`, so the card shows the default (2222) and says to use the configured one if changed. |
+| `/account`, "SSH keys" (`components/ssh/`) | any role | Add (paste a public key) and remove your keys; says that only Operators and Admins can connect. |
+
+- **Uploads** (`composables/useUpload.ts`, `utils/upload.ts`): the resumable protocol of `/api/v1/uploads`. The file is hashed first with the incremental `utils/sha256.ts` (Web Crypto can't hash a multi-gigabyte file in slices) and the checksum declared on create; chunks (at most 16 MiB and the server's `max_chunk_bytes`) are PATCHed with `XMLHttpRequest`, the only way to get upload progress, with the CSRF header set by hand. A failed chunk is retried after asking `received_bytes`; a cancelled or failed upload is deleted. The other calls go through the generated client. `<UploadProgressBar>` shows the phase and bytes.
+- **Downloads** need no composable: a same-origin `<a href download>` sends the session cookie (GET, so no CSRF header) and the browser streams the file to disk.
+- **Secrets shown once**: a database session's password and tunnel command exist only in the page's `opened` ref while the dialog is open (not dismissible by clicking outside); closing drops them. They are never stored, in a URL or logged.
+- Job types for import, deploy and export are labelled in `utils/job.ts`.
+
 ## Metrics charts
 
 `/metrics` (platform, §7.2) and `/sites/<id>/metrics` (site, §7.1, linked from the site page) are one component, `<MetricsDashboard scope="platform|site">`, over `GET /api/v1/metrics/catalog` and the two range-query endpoints. Logic lives in `utils/metrics.ts` (tested in `tests/metrics.test.ts`).

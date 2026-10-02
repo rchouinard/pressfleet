@@ -178,6 +178,8 @@ async function signOut() {
       </template>
     </section>
 
+    <SshKeyPanel />
+
     <UModal v-model:open="createOpen" title="Create API token" description="Choose a name, what the token may do, and when it expires.">
       <template #body>
         <ProblemAlert v-if="generalCreateError" :error="generalCreateError" class="mb-4" />

@@ -62,9 +62,14 @@ async function create(values: SiteFormValues) {
   <div class="space-y-4">
     <div class="flex flex-wrap items-end justify-between gap-3">
       <h1 class="text-2xl font-semibold tracking-tight">Sites</h1>
-      <IfCan action="site.create">
-        <UButton icon="i-lucide-plus" @click="formOpen = true">New site</UButton>
-      </IfCan>
+      <div class="flex flex-wrap gap-2">
+        <IfCan action="site.import">
+          <UButton to="/sites/import" icon="i-lucide-upload" color="neutral" variant="outline">Import site</UButton>
+        </IfCan>
+        <IfCan action="site.create">
+          <UButton icon="i-lucide-plus" @click="formOpen = true">New site</UButton>
+        </IfCan>
+      </div>
     </div>
 
     <div class="flex flex-wrap items-end gap-3">

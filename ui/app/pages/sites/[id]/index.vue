@@ -152,6 +152,9 @@ async function onDomainsChanged() {
   await Promise.all([refreshSite(), refreshJobs()])
 }
 
+// The SFTP gateway listens on the dashboard's own host.
+const dashboardHost = window.location.hostname
+
 function when(iso: string): string {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
@@ -181,6 +184,12 @@ function when(iso: string): string {
           <UButton :to="`/sites/${site.id}/logs`" icon="i-lucide-scroll-text" color="neutral" variant="outline">Logs</UButton>
           <UButton :to="`/sites/${site.id}/backups`" icon="i-lucide-archive" color="neutral" variant="outline">Backups</UButton>
           <UButton :to="`/sites/${site.id}/metrics`" icon="i-lucide-chart-line" color="neutral" variant="outline">Metrics</UButton>
+          <IfCan action="site.code.deploy">
+            <UButton :to="`/sites/${site.id}/deploy`" icon="i-lucide-rocket" color="neutral" variant="outline">Deploy code</UButton>
+          </IfCan>
+          <IfCan action="site.database.export">
+            <UButton :to="`/sites/${site.id}/database`" icon="i-lucide-database" color="neutral" variant="outline">Database</UButton>
+          </IfCan>
           <IfCan action="site.delete">
             <UButton v-if="canDeleteSite(site)" icon="i-lucide-trash-2" color="error" variant="outline" @click="askDelete()">Delete</UButton>
           </IfCan>
@@ -218,6 +227,7 @@ function when(iso: string): string {
       <SiteSettings :site="site" @changed="onDomainsChanged" />
 
       <SiteCoreCard :site="site" @changed="onDomainsChanged" />
+      <SiteSftpCard v-if="site.status !== 'deleting'" :slug="site.slug" :host="dashboardHost" :can-connect="can('site.code.deploy')" />
 
       <section aria-labelledby="site-details-heading">
         <h2 id="site-details-heading" class="mb-2 text-lg font-semibold">Details</h2>

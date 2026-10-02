@@ -75,6 +75,9 @@ const jobTypeLabels: Record<string, string> = {
   'site.stop': 'Stop site',
   'site.go_live': 'Go live',
   'site.aliases': 'Update domains',
+  'site.import': 'Import site',
+  'site.deploy': 'Deploy code',
+  'site.database_export': 'Export database',
 }
 
 /** A readable job type. Unknown types are opaque (spec): shown as sent. */
