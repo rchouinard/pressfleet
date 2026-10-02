@@ -121,6 +121,10 @@ func (h *Handlers) checkMetricsSite(ctx context.Context, siteID string) error {
 	return nil
 }
 
+// metricsRetryAfterSeconds is the retry delay sent with 503 when the metrics
+// store can't be reached: long enough for a restarting store to come back.
+const metricsRetryAfterSeconds = 10
+
 // metricsError maps the metrics service's errors to responses.
 func metricsError(err error) error {
 	switch {
@@ -129,7 +133,9 @@ func metricsError(err error) error {
 	case errors.Is(err, metrics.ErrUnavailable):
 		// The cause names VictoriaMetrics' address, which clients need not
 		// see; the request log has it.
-		return httpserver.NewProblem(http.StatusServiceUnavailable, "The metrics store is unavailable; try again shortly.")
+		p := httpserver.NewProblem(http.StatusServiceUnavailable, "The metrics store is unavailable; try again shortly.")
+		p.RetryAfter = metricsRetryAfterSeconds
+		return p
 	}
 	return err
 }

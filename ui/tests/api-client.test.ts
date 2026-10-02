@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createApiClient } from '../app/utils/api-client'
-import { ApiError, toApiError } from '../app/utils/api-error'
+import { ApiError, parseRetryAfter, toApiError } from '../app/utils/api-error'
 
 const base = 'http://pressfleet.test'
 
@@ -148,5 +148,38 @@ describe('toApiError', () => {
     expect(wrapped.status).toBe(0)
     expect(wrapped.detail).toBe('boom')
     expect(toApiError('str').detail).toBe('str')
+  })
+})
+
+describe('Retry-After', () => {
+  const throttled = { type: 'about:blank', title: 'Too Many Requests', status: 429 }
+
+  it('is surfaced from the problem body', async () => {
+    const api = createApiClient({ baseUrl: base, fetch: async () => problem(429, { ...throttled, retry_after: 42 }, { 'Retry-After': '42' }) })
+    const err = await api.POST('/api/v1/auth/login', { body: { email: 'a@b.co', password: 'x' } }).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).retryAfter).toBe(42)
+  })
+
+  it('falls back to the header when the body lacks it', async () => {
+    const api = createApiClient({ baseUrl: base, fetch: async () => problem(429, throttled, { 'Retry-After': '7' }) })
+    const err = await api.POST('/api/v1/auth/login', { body: { email: 'a@b.co', password: 'x' } }).catch((e: unknown) => e)
+    expect((err as ApiError).retryAfter).toBe(7)
+  })
+
+  it('is absent when the server sent none', async () => {
+    const api = createApiClient({ baseUrl: base, fetch: async () => problem(429, throttled) })
+    const err = await api.POST('/api/v1/auth/login', { body: { email: 'a@b.co', password: 'x' } }).catch((e: unknown) => e)
+    expect((err as ApiError).retryAfter).toBeUndefined()
+  })
+
+  it('parses seconds and HTTP dates', () => {
+    const now = new Date('2026-10-02T12:00:00Z')
+    expect(parseRetryAfter('120', now)).toBe(120)
+    expect(parseRetryAfter('Fri, 02 Oct 2026 12:00:30 GMT', now)).toBe(30)
+    expect(parseRetryAfter('Fri, 02 Oct 2026 11:00:00 GMT', now)).toBeUndefined()
+    expect(parseRetryAfter('0', now)).toBeUndefined()
+    expect(parseRetryAfter('soon', now)).toBeUndefined()
+    expect(parseRetryAfter(null, now)).toBeUndefined()
   })
 })

@@ -22,13 +22,14 @@ import (
 
 // problem is the decoded Problem Details body.
 type problem struct {
-	Type      string `json:"type"`
-	Title     string `json:"title"`
-	Status    int    `json:"status"`
-	Detail    string `json:"detail"`
-	Instance  string `json:"instance"`
-	RequestID string `json:"request_id"`
-	Errors    []struct {
+	Type       string `json:"type"`
+	Title      string `json:"title"`
+	Status     int    `json:"status"`
+	Detail     string `json:"detail"`
+	Instance   string `json:"instance"`
+	RequestID  string `json:"request_id"`
+	RetryAfter int    `json:"retry_after"`
+	Errors     []struct {
 		Field  string `json:"field"`
 		Detail string `json:"detail"`
 	} `json:"errors"`

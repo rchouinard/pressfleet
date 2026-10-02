@@ -55,7 +55,8 @@ info:
 
     Failed logins return `401` without saying whether the email exists.
     Repeated failures for one account or from one client address are
-    throttled with `429` and a `Retry-After` header.
+    throttled with `429`, a `Retry-After` header, and the same delay as
+    `retry_after` in the problem document.
 
     ## Authorization
 
@@ -3920,15 +3921,24 @@ components:
       description: Too many failed attempts. Try again after `Retry-After` seconds.
       headers:
         Retry-After:
-          description: Seconds until another attempt is allowed.
+          description: Seconds until another attempt is allowed. Also `retry_after` in the body.
+          required: true
           schema:
             type: integer
+            minimum: 1
       content:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
     MetricsUnavailable:
       description: The metrics store (VictoriaMetrics) can't be reached, or metrics are turned off.
+      headers:
+        Retry-After:
+          description: Seconds to wait before trying again. Also `retry_after` in the body.
+          required: true
+          schema:
+            type: integer
+            minimum: 1
       content:
         application/problem+json:
           schema:
@@ -3990,6 +4000,12 @@ components:
           description: Validation errors, one per invalid field (`422` only).
           items:
             $ref: "#/components/schemas/FieldError"
+        retry_after:
+          type: integer
+          minimum: 1
+          description: |
+            Seconds to wait before retrying (`429` and some `503`). The same
+            value is in the `Retry-After` header.
 
     FieldError:
       type: object

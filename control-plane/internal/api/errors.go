@@ -79,6 +79,14 @@ func problemFor(err error) (*httpserver.Problem, bool) {
 		return httpserver.NewProblem(http.StatusRequestEntityTooLarge,
 			fmt.Sprintf("The request body exceeds the limit of %d bytes.", mbe.Limit)), true
 	}
+	var te *auth.ThrottledError
+	if errors.As(err, &te) {
+		p := httpserver.NewProblem(http.StatusTooManyRequests, err.Error())
+		// Round up, so a client that waits this long is never throttled
+		// again, and never send 0.
+		p.RetryAfter = max(1, int(math.Ceil(te.RetryAfter.Seconds())))
+		return p, true
+	}
 	for _, s := range sentinelStatus {
 		if errors.Is(err, s.err) {
 			return httpserver.NewProblem(s.status, err.Error()), true
@@ -99,9 +107,8 @@ func writeError(log *slog.Logger, w http.ResponseWriter, r *http.Request, err er
 		// automation clients can act on.
 		w.Header().Set("WWW-Authenticate", `Bearer realm="pressfleet"`)
 	}
-	var te *auth.ThrottledError
-	if errors.As(err, &te) {
-		w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(te.RetryAfter.Seconds()))))
+	if p.RetryAfter > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(p.RetryAfter))
 	}
 	httpserver.WriteProblem(w, r, p)
 }

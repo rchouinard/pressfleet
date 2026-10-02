@@ -441,6 +441,9 @@ func TestLoginThrottledOverHTTP(t *testing.T) {
 	if w.Header().Get("Retry-After") != "900" {
 		t.Errorf("Retry-After = %q", w.Header().Get("Retry-After"))
 	}
+	if p := decodeProblem(t, w); p.RetryAfter != 900 {
+		t.Errorf("retry_after = %d, want 900 (the header's value)", p.RetryAfter)
+	}
 }
 
 func TestFailsClosedWithoutAuthenticator(t *testing.T) {

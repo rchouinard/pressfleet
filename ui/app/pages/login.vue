@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // Sign-in: email and password against POST /api/v1/auth/login. Failures show
 // as Problem Details (wrong credentials, a disabled account, throttling) and
-// the password field is cleared after any failure. Signed-in visitors never
+// the password field is cleared after any failure. When throttled, the form
+// waits out the server's Retry-After with a countdown. Signed-in visitors never
 // see this page: the route middleware sends them on to `redirect` (or the
 // dashboard).
 import { toApiError, type ApiError } from '../utils/api-error'
@@ -18,6 +19,23 @@ const password = ref('')
 const showPassword = ref(false)
 const submitting = ref(false)
 const error = ref<ApiError>()
+
+// Throttling: seconds left until the server allows another attempt.
+const waitLeft = ref(0)
+let timer: ReturnType<typeof setInterval> | undefined
+function startCountdown(seconds: number) {
+  stopCountdown()
+  waitLeft.value = seconds
+  timer = setInterval(() => {
+    waitLeft.value = Math.max(0, waitLeft.value - 1)
+    if (waitLeft.value === 0) stopCountdown()
+  }, 1000)
+}
+function stopCountdown() {
+  if (timer) clearInterval(timer)
+  timer = undefined
+}
+onBeforeUnmount(stopCountdown)
 
 const expired = computed(() => route.query.expired === '1')
 const emailError = computed(() => error.value?.fieldError('/email'))
@@ -36,6 +54,7 @@ async function submit() {
   } catch (e) {
     error.value = toApiError(e)
     password.value = ''
+    if (error.value.status === 429 && error.value.retryAfter) startCountdown(error.value.retryAfter)
   } finally {
     submitting.value = false
   }
@@ -58,6 +77,9 @@ async function submit() {
     </div>
 
     <ProblemAlert v-if="generalError" :error="generalError" />
+    <p v-if="waitLeft > 0" role="status" class="text-sm text-muted">
+      Too many attempts. You can try again in {{ waitLeft }} {{ waitLeft === 1 ? 'second' : 'seconds' }}.
+    </p>
 
     <form class="space-y-4" novalidate @submit.prevent="submit">
       <UFormField label="Email" name="email" :error="emailError" required>
@@ -94,8 +116,8 @@ async function submit() {
           </template>
         </UInput>
       </UFormField>
-      <UButton type="submit" block :loading="submitting" :disabled="submitting || !email || !password">
-        {{ submitting ? 'Signing in...' : 'Sign in' }}
+      <UButton type="submit" block :loading="submitting" :disabled="submitting || waitLeft > 0 || !email || !password">
+        {{ submitting ? 'Signing in...' : waitLeft > 0 ? `Try again in ${waitLeft}s` : 'Sign in' }}
       </UButton>
     </form>
 

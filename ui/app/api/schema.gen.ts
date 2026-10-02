@@ -2244,6 +2244,11 @@ export interface components {
             request_id?: string;
             /** @description Validation errors, one per invalid field (`422` only). */
             errors?: components["schemas"]["FieldError"][];
+            /**
+             * @description Seconds to wait before retrying (`429` and some `503`). The same
+             *     value is in the `Retry-After` header.
+             */
+            retry_after?: number;
         };
         FieldError: {
             /**
@@ -3993,8 +3998,8 @@ export interface components {
         /** @description Too many failed attempts. Try again after `Retry-After` seconds. */
         TooManyRequests: {
             headers: {
-                /** @description Seconds until another attempt is allowed. */
-                "Retry-After"?: number;
+                /** @description Seconds until another attempt is allowed. Also `retry_after` in the body. */
+                "Retry-After": number;
                 [name: string]: unknown;
             };
             content: {
@@ -4004,6 +4009,8 @@ export interface components {
         /** @description The metrics store (VictoriaMetrics) can't be reached, or metrics are turned off. */
         MetricsUnavailable: {
             headers: {
+                /** @description Seconds to wait before trying again. Also `retry_after` in the body. */
+                "Retry-After": number;
                 [name: string]: unknown;
             };
             content: {

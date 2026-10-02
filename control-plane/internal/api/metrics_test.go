@@ -227,8 +227,12 @@ func TestMetricsUnavailable(t *testing.T) {
 				t.Errorf("%s: status = %d: %s", target, w.Code, w.Body)
 				continue
 			}
-			if p := decodeProblem(t, w); strings.Contains(p.Detail, "10.9.8.7") {
+			p := decodeProblem(t, w)
+			if strings.Contains(p.Detail, "10.9.8.7") {
 				t.Errorf("%s: the problem leaks the store's address: %q", target, p.Detail)
+			}
+			if got := w.Header().Get("Retry-After"); got != "10" || p.RetryAfter != 10 {
+				t.Errorf("%s: Retry-After = %q, retry_after = %d; want 10 in both", target, got, p.RetryAfter)
 			}
 		}
 

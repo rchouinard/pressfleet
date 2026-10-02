@@ -21,6 +21,8 @@ export class ApiError extends Error {
   readonly requestId: string | undefined
   /** Per-field validation errors (`422` only). */
   readonly errors: readonly FieldError[]
+  /** Seconds to wait before retrying, from a `429` or `503` (`Retry-After`). */
+  readonly retryAfter: number | undefined
 
   constructor(problem: Problem, options?: ErrorOptions) {
     super(problem.detail || problem.title, options)
@@ -32,12 +34,28 @@ export class ApiError extends Error {
     this.instance = problem.instance
     this.requestId = problem.request_id
     this.errors = problem.errors ?? []
+    this.retryAfter = problem.retry_after && problem.retry_after > 0 ? problem.retry_after : undefined
   }
 
   /** The validation message for a JSON Pointer field such as `/php_version`. */
   fieldError(field: string): string | undefined {
     return this.errors.find(e => e.field === field)?.detail
   }
+}
+
+/**
+ * Parses a `Retry-After` header: a number of seconds or an HTTP date.
+ * Returns whole seconds (at least 1), or undefined if the value is missing or
+ * unusable.
+ */
+export function parseRetryAfter(value: string | null | undefined, now: Date = new Date()): number | undefined {
+  const v = value?.trim()
+  if (!v) return undefined
+  if (/^\d+$/.test(v)) return Number(v) > 0 ? Number(v) : undefined
+  const at = Date.parse(v)
+  if (Number.isNaN(at)) return undefined
+  const seconds = Math.ceil((at - now.getTime()) / 1000)
+  return seconds > 0 ? seconds : undefined
 }
 
 /** Narrows an unknown thrown value to ApiError, wrapping anything else. */
@@ -79,14 +97,18 @@ export async function problemFromResponse(response: Response): Promise<ApiError>
       parsed = undefined
     }
   }
+  // The body's retry_after and the header carry the same delay; a proxy that
+  // answers for the control plane may send only the header.
+  const retryAfter = parseRetryAfter(response.headers.get('Retry-After'))
   if (isProblem(parsed)) {
-    return new ApiError({ ...parsed, request_id: parsed.request_id ?? requestId })
+    return new ApiError({ ...parsed, request_id: parsed.request_id ?? requestId, retry_after: parsed.retry_after ?? retryAfter })
   }
   return new ApiError({
     type: 'about:blank',
     title: statusTitles[response.status] ?? (response.statusText || `HTTP ${response.status}`),
     status: response.status,
     request_id: requestId,
+    retry_after: retryAfter,
   })
 }
 

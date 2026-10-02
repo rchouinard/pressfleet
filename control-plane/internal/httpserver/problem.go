@@ -29,6 +29,10 @@ type Problem struct {
 	RequestID string `json:"request_id,omitempty"`
 	// Errors lists invalid fields for validation failures.
 	Errors []FieldError `json:"errors,omitempty"`
+	// RetryAfter is how many seconds clients should wait before trying
+	// again, for 429 and 503. The writer also sends it as the Retry-After
+	// header, so clients that only see the body (or only the header) get it.
+	RetryAfter int `json:"retry_after,omitempty"`
 }
 
 // FieldError describes one invalid request field.

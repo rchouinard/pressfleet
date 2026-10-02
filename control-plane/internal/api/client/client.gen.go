@@ -2770,6 +2770,10 @@ type Problem struct {
 	// RequestID The request ID (also in the `X-Request-ID` response header). Include it when reporting issues.
 	RequestID *string `json:"request_id,omitempty"`
 
+	// RetryAfter Seconds to wait before retrying (`429` and some `503`). The same
+	// value is in the `Retry-After` header.
+	RetryAfter *int `json:"retry_after,omitempty"`
+
 	// Status The HTTP status code.
 	//
 	// Examples: 404
@@ -17362,7 +17366,7 @@ type LoginResponse200Headers struct {
 
 // LoginResponse429Headers the declared response headers of an HTTP 429 response for Login
 type LoginResponse429Headers struct {
-	RetryAfter *int
+	RetryAfter int
 }
 
 type LoginResponse struct {
@@ -17654,7 +17658,7 @@ func (r UpdateCurrentUserResponse) ContentType() string {
 
 // ChangePasswordResponse429Headers the declared response headers of an HTTP 429 response for ChangePassword
 type ChangePasswordResponse429Headers struct {
-	RetryAfter *int
+	RetryAfter int
 }
 
 type ChangePasswordResponse struct {
@@ -18998,6 +19002,11 @@ func (r GetMetricCatalogResponse) ContentType() string {
 	return ""
 }
 
+// QueryPlatformMetricsResponse503Headers the declared response headers of an HTTP 503 response for QueryPlatformMetrics
+type QueryPlatformMetricsResponse503Headers struct {
+	RetryAfter int
+}
+
 type QueryPlatformMetricsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -19013,6 +19022,8 @@ type QueryPlatformMetricsResponse struct {
 	ApplicationProblemJSON503 *MetricsUnavailable
 	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationProblemJSONDefault *Error
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *QueryPlatformMetricsResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -19074,6 +19085,11 @@ func (r QueryPlatformMetricsResponse) ContentType() string {
 	return ""
 }
 
+// GetPlatformMetricsSummaryResponse503Headers the declared response headers of an HTTP 503 response for GetPlatformMetricsSummary
+type GetPlatformMetricsSummaryResponse503Headers struct {
+	RetryAfter int
+}
+
 type GetPlatformMetricsSummaryResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -19089,6 +19105,8 @@ type GetPlatformMetricsSummaryResponse struct {
 	ApplicationProblemJSON503 *MetricsUnavailable
 	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationProblemJSONDefault *Error
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetPlatformMetricsSummaryResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -21542,6 +21560,11 @@ func (r SetSiteMaintenanceResponse) ContentType() string {
 	return ""
 }
 
+// QuerySiteMetricsResponse503Headers the declared response headers of an HTTP 503 response for QuerySiteMetrics
+type QuerySiteMetricsResponse503Headers struct {
+	RetryAfter int
+}
+
 type QuerySiteMetricsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -21559,6 +21582,8 @@ type QuerySiteMetricsResponse struct {
 	ApplicationProblemJSON503 *MetricsUnavailable
 	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationProblemJSONDefault *Error
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *QuerySiteMetricsResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -21625,6 +21650,11 @@ func (r QuerySiteMetricsResponse) ContentType() string {
 	return ""
 }
 
+// GetSiteMetricsSummaryResponse503Headers the declared response headers of an HTTP 503 response for GetSiteMetricsSummary
+type GetSiteMetricsSummaryResponse503Headers struct {
+	RetryAfter int
+}
+
 type GetSiteMetricsSummaryResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -21642,6 +21672,8 @@ type GetSiteMetricsSummaryResponse struct {
 	ApplicationProblemJSON503 *MetricsUnavailable
 	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationProblemJSONDefault *Error
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *GetSiteMetricsSummaryResponse503Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -27363,10 +27395,10 @@ func ParseLoginResponse(rsp *http.Response) (*LoginResponse, error) {
 		var headers LoginResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value int
-			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
 				return nil, err
 			}
-			headers.RetryAfter = &value
+			headers.RetryAfter = value
 		}
 		response.Headers429 = &headers
 	}
@@ -27604,10 +27636,10 @@ func ParseChangePasswordResponse(rsp *http.Response) (*ChangePasswordResponse, e
 		var headers ChangePasswordResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value int
-			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
 				return nil, err
 			}
-			headers.RetryAfter = &value
+			headers.RetryAfter = value
 		}
 		response.Headers429 = &headers
 	}
@@ -28684,6 +28716,19 @@ func ParseQueryPlatformMetricsResponse(rsp *http.Response) (*QueryPlatformMetric
 
 	}
 
+	switch {
+	case rsp.StatusCode == 503:
+		var headers QueryPlatformMetricsResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers503 = &headers
+	}
+
 	return response, nil
 }
 
@@ -28743,6 +28788,19 @@ func ParseGetPlatformMetricsSummaryResponse(rsp *http.Response) (*GetPlatformMet
 		}
 		response.ApplicationProblemJSONDefault = &dest
 
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers GetPlatformMetricsSummaryResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
@@ -30848,6 +30906,19 @@ func ParseQuerySiteMetricsResponse(rsp *http.Response) (*QuerySiteMetricsRespons
 
 	}
 
+	switch {
+	case rsp.StatusCode == 503:
+		var headers QuerySiteMetricsResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers503 = &headers
+	}
+
 	return response, nil
 }
 
@@ -30914,6 +30985,19 @@ func ParseGetSiteMetricsSummaryResponse(rsp *http.Response) (*GetSiteMetricsSumm
 		}
 		response.ApplicationProblemJSONDefault = &dest
 
+	}
+
+	switch {
+	case rsp.StatusCode == 503:
+		var headers GetSiteMetricsSummaryResponse503Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil
