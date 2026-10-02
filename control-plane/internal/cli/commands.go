@@ -137,6 +137,9 @@ func (a *app) metricsService(db *store.DB) (*metrics.Service, error) {
 	if err := svc.Register(metrics.InventoryCollector{}); err != nil {
 		return nil, err
 	}
+	if err := svc.Register(metrics.TraefikCollector{}); err != nil {
+		return nil, err
+	}
 	return svc, nil
 }
 
