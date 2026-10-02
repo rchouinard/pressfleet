@@ -95,6 +95,8 @@ tags:
       SSH public keys for the SFTP gateway (design doc §5.8). Developers
       connect with `sftp -P <port> <site-slug>@<dashboard domain>`: the SSH
       username names the site and the key names the user.
+  - name: platform
+    description: The install's own connection details.
   - name: client-groups
     description: Client groups own sites and a backup repository.
   - name: sites
@@ -2769,6 +2771,28 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/platform:
+    get:
+      operationId: getPlatform
+      tags: [platform]
+      summary: Get the platform's connection details
+      description: |
+        Facts about this install that clients need to build connection
+        strings, taken from its configuration. Every role can read.
+      responses:
+        "200":
+          description: The platform's connection details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Platform"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/image-rollout:
     get:
       operationId: getImageRollout
@@ -5095,6 +5119,28 @@ components:
         failed_at:
           $ref: "#/components/schemas/Timestamp"
 
+    Platform:
+      type: object
+      required: [sftp]
+      properties:
+        sftp:
+          $ref: "#/components/schemas/PlatformSftp"
+    PlatformSftp:
+      type: object
+      description: Where developers reach the SFTP gateway (design doc §5.8).
+      required: [enabled, host, port]
+      properties:
+        enabled:
+          type: boolean
+          description: Whether the gateway runs. When false, `host` and `port` are still reported but nothing listens.
+        host:
+          type: string
+          description: The gateway's host name, the dashboard domain.
+          example: fleet.example.com
+        port:
+          type: integer
+          description: The port the platform publishes the gateway on (`sftp.port`).
+          example: 2222
     ImageRollout:
       type: object
       required: [halted, consecutive_failures, max_failures, images, failures]

@@ -1,10 +1,3 @@
-/**
- * The port the SFTP gateway publishes unless `sftp.port` was changed
- * (docs/configuration.md). The API doesn't report the configured port, so the
- * dashboard shows the default and says where to look if it was changed.
- */
-export const DEFAULT_SFTP_PORT = 2222
-
 export interface SftpDetails {
   host: string
   port: number
@@ -19,7 +12,7 @@ export interface SftpDetails {
  * A site's SFTP connection details. The gateway lives on the dashboard's
  * host, there are no passwords, and the client sees `wp-content` as `/`.
  */
-export function sftpDetails(slug: string, host: string, port: number = DEFAULT_SFTP_PORT): SftpDetails {
+export function sftpDetails(slug: string, host: string, port: number): SftpDetails {
   return {
     host,
     port,

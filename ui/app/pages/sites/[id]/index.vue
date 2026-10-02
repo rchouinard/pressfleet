@@ -152,8 +152,16 @@ async function onDomainsChanged() {
   await Promise.all([refreshSite(), refreshJobs()])
 }
 
-// The SFTP gateway listens on the dashboard's own host.
-const dashboardHost = window.location.hostname
+// Where the SFTP gateway is, as configured. A failed lookup only hides the
+// card; the rest of the page doesn't depend on it.
+const { data: platform } = await useAsyncData('platform', async () => {
+  try {
+    const { data } = await api.GET('/api/v1/platform')
+    return data ?? null
+  } catch {
+    return null
+  }
+})
 
 function when(iso: string): string {
   const d = new Date(iso)
@@ -227,7 +235,7 @@ function when(iso: string): string {
       <SiteSettings :site="site" @changed="onDomainsChanged" />
 
       <SiteCoreCard :site="site" @changed="onDomainsChanged" />
-      <SiteSftpCard v-if="site.status !== 'deleting'" :slug="site.slug" :host="dashboardHost" :can-connect="can('site.code.deploy')" />
+      <SiteSftpCard v-if="site.status !== 'deleting' && platform" :slug="site.slug" :host="platform.sftp.host" :port="platform.sftp.port" :enabled="platform.sftp.enabled" :can-connect="can('site.code.deploy')" />
 
       <section aria-labelledby="site-details-heading">
         <h2 id="site-details-heading" class="mb-2 text-lg font-semibold">Details</h2>

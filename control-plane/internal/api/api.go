@@ -123,6 +123,16 @@ type Options struct {
 	// it is set when the request arrived over HTTPS, directly or through a
 	// trusted proxy, so plain-HTTP development on localhost still works.
 	SecureCookies bool
+	// SFTP is what GET /api/v1/platform reports about the gateway.
+	SFTP SFTPInfo
+}
+
+// SFTPInfo is where developers reach the SFTP gateway.
+type SFTPInfo struct {
+	Enabled bool
+	// Host is the dashboard domain, where the gateway's port is published.
+	Host string
+	Port int
 }
 
 // Handlers implements every API operation.
@@ -142,6 +152,7 @@ type Handlers struct {
 	channels      *alertchannels.Service
 	resolver      authz.Resolver
 	secureCookies bool
+	sftp          SFTPInfo
 }
 
 var _ gen.StrictServerInterface = (*Handlers)(nil)
@@ -173,7 +184,7 @@ func NewHandler(opts Options) (http.Handler, error) {
 	}
 
 	h := &Handlers{log: opts.Logger, readiness: opts.Readiness, db: opts.DB, auth: opts.Auth, sites: opts.Sites, backups: opts.Backups,
-		uploads: opts.Uploads, secureCookies: opts.SecureCookies}
+		uploads: opts.Uploads, secureCookies: opts.SecureCookies, sftp: opts.SFTP}
 	h.dbExports = opts.DatabaseExports
 	h.deploys = opts.Deployments
 	h.dbSessions = opts.DatabaseSessions

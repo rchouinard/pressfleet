@@ -82,6 +82,7 @@ var operationActions = map[string]authz.Action{
 	// Resuming a rollout is the same decision for images as for core
 	// releases.
 	"getImageRollout":    authz.ViewSites,
+	"getPlatform":        authz.ViewSites,
 	"resumeImageRollout": authz.ApproveCoreUpdate,
 
 	"listJobs": authz.ViewJobs,

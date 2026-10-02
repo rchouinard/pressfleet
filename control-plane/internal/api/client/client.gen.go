@@ -2473,6 +2473,24 @@ type PasswordChange struct {
 	NewPassword     *Password `json:"new_password,omitempty"`
 }
 
+// Platform defines model for Platform.
+type Platform struct {
+	// Sftp Where developers reach the SFTP gateway (design doc §5.8).
+	Sftp PlatformSftp `json:"sftp"`
+}
+
+// PlatformSftp Where developers reach the SFTP gateway (design doc §5.8).
+type PlatformSftp struct {
+	// Enabled Whether the gateway runs. When false, `host` and `port` are still reported but nothing listens.
+	Enabled bool `json:"enabled"`
+
+	// Host The gateway's host name, the dashboard domain.
+	Host string `json:"host"`
+
+	// Port The port the platform publishes the gateway on (`sftp.port`).
+	Port int `json:"port"`
+}
+
 // PreviewCredentials The preview domain's basic auth login. Shown only once.
 type PreviewCredentials struct {
 	// Password The plaintext password. Shown only once.
@@ -4343,6 +4361,14 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v1/metrics/platform/summary (the `GetPlatformMetricsSummary` operationId).
 	GetPlatformMetricsSummary(ctx context.Context, params *GetPlatformMetricsSummaryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPlatform Get the platform's connection details
+	//
+	// Facts about this install that clients need to build connection
+	// strings, taken from its configuration. Every role can read.
+	//
+	// Corresponds with GET /api/v1/platform (the `GetPlatform` operationId).
+	GetPlatform(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSites List sites
 	//
@@ -6663,6 +6689,24 @@ func (c *Client) QueryPlatformMetrics(ctx context.Context, params *QueryPlatform
 // Corresponds with GET /api/v1/metrics/platform/summary (the `GetPlatformMetricsSummary` operationId).
 func (c *Client) GetPlatformMetricsSummary(ctx context.Context, params *GetPlatformMetricsSummaryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetPlatformMetricsSummaryRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPlatform Get the platform's connection details
+//
+// Facts about this install that clients need to build connection
+// strings, taken from its configuration. Every role can read.
+//
+// Corresponds with GET /api/v1/platform (the `GetPlatform` operationId).
+func (c *Client) GetPlatform(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPlatformRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -10788,6 +10832,33 @@ func NewGetPlatformMetricsSummaryRequest(server string, params *GetPlatformMetri
 	return req, nil
 }
 
+// NewGetPlatformRequest constructs an http.Request for the GetPlatform method
+func NewGetPlatformRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/platform")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListSitesRequest constructs an http.Request for the ListSites method
 func NewListSitesRequest(server string, params *ListSitesParams) (*http.Request, error) {
 	var err error
@@ -13895,6 +13966,16 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/v1/metrics/platform/summary (the `GetPlatformMetricsSummary` operationId).
 	GetPlatformMetricsSummaryWithResponse(ctx context.Context, params *GetPlatformMetricsSummaryParams, reqEditors ...RequestEditorFn) (*GetPlatformMetricsSummaryResponse, error)
+
+	// GetPlatformWithResponse Get the platform's connection details
+	//
+	// Facts about this install that clients need to build connection
+	// strings, taken from its configuration. Every role can read.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/platform (the `GetPlatform` operationId).
+	GetPlatformWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPlatformResponse, error)
 
 	// ListSitesWithResponse List sites
 	//
@@ -18314,6 +18395,68 @@ func (r GetPlatformMetricsSummaryResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetPlatformMetricsSummaryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPlatformResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Platform
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPlatformResponse) GetJSON200() *Platform {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetPlatformResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetPlatformResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetPlatformResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPlatformResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPlatformResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPlatformResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPlatformResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -23251,6 +23394,22 @@ func (c *ClientWithResponses) GetPlatformMetricsSummaryWithResponse(ctx context.
 	return ParseGetPlatformMetricsSummaryResponse(rsp)
 }
 
+// GetPlatformWithResponse Get the platform's connection details
+//
+// Facts about this install that clients need to build connection
+// strings, taken from its configuration. Every role can read.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/platform (the `GetPlatform` operationId).
+func (c *ClientWithResponses) GetPlatformWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPlatformResponse, error) {
+	rsp, err := c.GetPlatform(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPlatformResponse(rsp)
+}
+
 // ListSitesWithResponse List sites
 //
 // Newest first. Listings come from the recorded state alone, so they
@@ -27502,6 +27661,53 @@ func ParseGetPlatformMetricsSummaryResponse(rsp *http.Response) (*GetPlatformMet
 			return nil, err
 		}
 		response.ApplicationProblemJSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPlatformResponse parses an HTTP response from a GetPlatformWithResponse call
+func ParseGetPlatformResponse(rsp *http.Response) (*GetPlatformResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPlatformResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Platform
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Error

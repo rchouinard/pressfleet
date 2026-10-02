@@ -1679,6 +1679,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/platform": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the platform's connection details
+         * @description Facts about this install that clients need to build connection
+         *     strings, taken from its configuration. Every role can read.
+         */
+        get: operations["getPlatform"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/image-rollout": {
         parameters: {
             query?: never;
@@ -2852,6 +2873,24 @@ export interface components {
             target: string;
             message: string;
             failed_at: components["schemas"]["Timestamp"];
+        };
+        Platform: {
+            sftp: components["schemas"]["PlatformSftp"];
+        };
+        /** @description Where developers reach the SFTP gateway (design doc §5.8). */
+        PlatformSftp: {
+            /** @description Whether the gateway runs. When false, `host` and `port` are still reported but nothing listens. */
+            enabled: boolean;
+            /**
+             * @description The gateway's host name, the dashboard domain.
+             * @example fleet.example.com
+             */
+            host: string;
+            /**
+             * @description The port the platform publishes the gateway on (`sftp.port`).
+             * @example 2222
+             */
+            port: number;
         };
         ImageRollout: {
             halted: boolean;
@@ -5976,6 +6015,29 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getPlatform: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The platform's connection details. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Platform"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             default: components["responses"]["Error"];
         };
     };

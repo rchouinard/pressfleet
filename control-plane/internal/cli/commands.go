@@ -390,6 +390,7 @@ func (a *app) serveCommand() *cobra.Command {
 				Logs:             prov,
 				Metrics:          metricsSvc,
 				TrustedProxies:   proxies,
+				SFTP:             api.SFTPInfo{Enabled: a.cfg.SFTP.Enabled(), Host: a.cfg.DashboardDomain, Port: a.cfg.SFTP.Port},
 				SecureCookies:    a.cfg.HTTP.SecureCookies == config.SecureCookiesAlways,
 			})
 			if err != nil {

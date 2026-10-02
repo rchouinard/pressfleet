@@ -10,7 +10,7 @@ import {
 } from '../app/utils/database'
 import type { Job } from '../app/utils/job'
 import { importPayload, importedSiteId, validateImport } from '../app/utils/site-import'
-import { DEFAULT_SFTP_PORT, sftpDetails } from '../app/utils/sftp'
+import { sftpDetails } from '../app/utils/sftp'
 import { sshKeyPayload, validateSshKey, type SshKey } from '../app/utils/ssh-key'
 import { can } from '../app/utils/permissions'
 import DatabaseSessionSecret from '../app/components/database/DatabaseSessionSecret.vue'
@@ -174,8 +174,8 @@ describe('database sessions', () => {
 
 describe('SFTP details', () => {
   it('names the site as the user and the dashboard as the host', () => {
-    expect(sftpDetails('acme', 'fleet.example')).toEqual({
-      host: 'fleet.example', port: DEFAULT_SFTP_PORT, username: 'acme',
+    expect(sftpDetails('acme', 'fleet.example', 2222)).toEqual({
+      host: 'fleet.example', port: 2222, username: 'acme',
       command: 'sftp -P 2222 acme@fleet.example', uri: 'sftp://acme@fleet.example:2222/',
     })
     expect(sftpDetails('acme', 'fleet.example', 2022).command).toBe('sftp -P 2022 acme@fleet.example')

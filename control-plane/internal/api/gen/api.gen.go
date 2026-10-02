@@ -2474,6 +2474,24 @@ type PasswordChange struct {
 	NewPassword     *Password `json:"new_password,omitempty"`
 }
 
+// Platform defines model for Platform.
+type Platform struct {
+	// Sftp Where developers reach the SFTP gateway (design doc §5.8).
+	Sftp PlatformSftp `json:"sftp"`
+}
+
+// PlatformSftp Where developers reach the SFTP gateway (design doc §5.8).
+type PlatformSftp struct {
+	// Enabled Whether the gateway runs. When false, `host` and `port` are still reported but nothing listens.
+	Enabled bool `json:"enabled"`
+
+	// Host The gateway's host name, the dashboard domain.
+	Host string `json:"host"`
+
+	// Port The port the platform publishes the gateway on (`sftp.port`).
+	Port int `json:"port"`
+}
+
 // PreviewCredentials The preview domain's basic auth login. Shown only once.
 type PreviewCredentials struct {
 	// Password The plaintext password. Shown only once.
@@ -3903,6 +3921,9 @@ type ServerInterface interface {
 	// GetPlatformMetricsSummary Current values of platform metrics
 	// (GET /api/v1/metrics/platform/summary)
 	GetPlatformMetricsSummary(w http.ResponseWriter, r *http.Request, params GetPlatformMetricsSummaryParams)
+	// GetPlatform Get the platform's connection details
+	// (GET /api/v1/platform)
+	GetPlatform(w http.ResponseWriter, r *http.Request)
 	// ListSites List sites
 	// (GET /api/v1/sites)
 	ListSites(w http.ResponseWriter, r *http.Request, params ListSitesParams)
@@ -5558,6 +5579,20 @@ func (siw *ServerInterfaceWrapper) GetPlatformMetricsSummary(w http.ResponseWrit
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetPlatformMetricsSummary(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPlatform operation middleware
+func (siw *ServerInterfaceWrapper) GetPlatform(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPlatform(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7508,6 +7543,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/database/sessions", wrapper.ListSiteDatabaseSessions)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/database/sessions", wrapper.CreateSiteDatabaseSession)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/sites/{site_id}/database/sessions/{session_id}", wrapper.EndSiteDatabaseSession)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/platform", wrapper.GetPlatform)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/image-rollout", wrapper.GetImageRollout)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/image-rollout/resume", wrapper.ResumeImageRollout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs", wrapper.ListJobs)
@@ -11540,6 +11576,76 @@ type GetPlatformMetricsSummarydefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetPlatformMetricsSummarydefaultApplicationProblemPlusJSONResponse) VisitGetPlatformMetricsSummaryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformRequestObject struct {
+}
+
+type GetPlatformResponseObject interface {
+	VisitGetPlatformResponse(w http.ResponseWriter) error
+}
+
+type GetPlatform200JSONResponse Platform
+
+func (response GetPlatform200JSONResponse) VisitGetPlatformResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatform401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlatform401ApplicationProblemPlusJSONResponse) VisitGetPlatformResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatform403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlatform403ApplicationProblemPlusJSONResponse) VisitGetPlatformResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetPlatformdefaultApplicationProblemPlusJSONResponse) VisitGetPlatformResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -17345,6 +17451,9 @@ type StrictServerInterface interface {
 	// GetPlatformMetricsSummary Current values of platform metrics
 	// (GET /api/v1/metrics/platform/summary)
 	GetPlatformMetricsSummary(ctx context.Context, request GetPlatformMetricsSummaryRequestObject) (GetPlatformMetricsSummaryResponseObject, error)
+	// GetPlatform Get the platform's connection details
+	// (GET /api/v1/platform)
+	GetPlatform(ctx context.Context, request GetPlatformRequestObject) (GetPlatformResponseObject, error)
 	// ListSites List sites
 	// (GET /api/v1/sites)
 	ListSites(ctx context.Context, request ListSitesRequestObject) (ListSitesResponseObject, error)
@@ -18668,6 +18777,30 @@ func (sh *strictHandler) GetPlatformMetricsSummary(w http.ResponseWriter, r *htt
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetPlatformMetricsSummaryResponseObject); ok {
 		if err := validResponse.VisitGetPlatformMetricsSummaryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPlatform operation middleware
+func (sh *strictHandler) GetPlatform(w http.ResponseWriter, r *http.Request) {
+	var request GetPlatformRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPlatform(ctx, request.(GetPlatformRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPlatform")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPlatformResponseObject); ok {
+		if err := validResponse.VisitGetPlatformResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
