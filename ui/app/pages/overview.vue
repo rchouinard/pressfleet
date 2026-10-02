@@ -44,6 +44,17 @@ const { data: ready, status: readyStatus, refresh: reloadReady } = useAsyncData(
   }
 })
 
+// The checks that work from inside the control plane; host-only ones come
+// back as "needs host" (#121).
+const { data: doctorResult, status: doctorStatus, refresh: reloadDoctor } = useAsyncData('overview-doctor', async () => {
+  try {
+    const { data } = await api.GET('/api/v1/platform/doctor')
+    return { report: data, error: null }
+  } catch (e) {
+    return { report: undefined, error: toApiError(e) }
+  }
+})
+
 const assessment = computed(() =>
   capacity.value?.capacity ? assessCapacity(capacity.value.capacity) : undefined,
 )
@@ -71,8 +82,9 @@ function refreshAll() {
   void reloadMetrics()
   void reloadCapacity()
   void reloadReady()
+  void reloadDoctor()
 }
-const busy = computed(() => [metricsStatus.value, capacityStatus.value, readyStatus.value].includes('pending'))
+const busy = computed(() => [metricsStatus.value, capacityStatus.value, readyStatus.value, doctorStatus.value].includes('pending'))
 </script>
 
 <template>
@@ -116,9 +128,9 @@ const busy = computed(() => [metricsStatus.value, capacityStatus.value, readySta
 
     <section aria-labelledby="doctor-heading" class="space-y-3">
       <h2 id="doctor-heading" class="font-medium">Host checks (doctor)</h2>
-      <p class="rounded-md border border-dashed border-default p-4 text-sm text-muted">
-        The API does not expose <code>pressfleet doctor</code> results yet. Run <code>pressfleet doctor</code> on the host to see them.
-      </p>
+      <ProblemAlert v-if="doctorResult?.error" :error="doctorResult.error" />
+      <p v-else-if="!doctorResult" class="text-sm text-muted" role="status">Running checks...</p>
+      <DoctorChecks v-else-if="doctorResult.report" :report="doctorResult.report" />
     </section>
   </div>
 </template>

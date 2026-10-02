@@ -119,6 +119,8 @@ tags:
       overview (design doc §7.1, §7.2), backed by VictoriaMetrics. Clients
       name metrics from a catalog; they never send queries. Every role can
       read.
+  - name: platform
+    description: Platform-wide status, such as the preflight (doctor) results. Every role can read.
   - name: audit
     description: The audit log (Admin only).
   - name: alerts
@@ -1675,6 +1677,33 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/platform/doctor:
+    get:
+      operationId: getPlatformDoctor
+      tags: [platform]
+      summary: Run the platform's preflight checks
+      description: |
+        Runs the checks of `pressfleet doctor` (design doc §4.1) and returns
+        their results in the shape of `pressfleet doctor --json`. The control
+        plane runs in a container and never calls `docker`, so checks that
+        need the host (Docker Engine and Compose, cgroups, address pools,
+        ports, log rotation) are reported with status `unavailable`, not
+        `fail`; run `pressfleet doctor` on the host for those. `unavailable`
+        results do not affect `outcome`. Every role can read.
+      responses:
+        "200":
+          description: The check results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoctorReport"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         default:
           $ref: "#/components/responses/Error"
 
@@ -3966,6 +3995,49 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ReadinessCheck"
+
+    DoctorReport:
+      type: object
+      required: [outcome, results]
+      properties:
+        outcome:
+          type: string
+          description: |
+            The worst result: `failed` if a required check failed,
+            `warnings` if a recommended check failed or a check warned,
+            otherwise `ok`.
+          enum: [ok, warnings, failed]
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/DoctorResult"
+
+    DoctorResult:
+      type: object
+      required: [id, name, severity, status, message]
+      properties:
+        id:
+          type: string
+          examples: ["docker"]
+        name:
+          type: string
+          examples: ["Docker Engine"]
+        severity:
+          type: string
+          description: Whether PressFleet can run when the check doesn't pass.
+          enum: [required, recommended]
+        status:
+          type: string
+          description: |
+            `warn` means a likely problem or an unverifiable requirement,
+            `skip` that the check doesn't apply, and `unavailable` that it
+            can't run from the control plane and needs the host.
+          enum: [pass, warn, fail, skip, unavailable]
+        message:
+          type: string
+        fix:
+          type: string
+          description: How to resolve a warning or failure.
 
     ReadinessCheck:
       type: object

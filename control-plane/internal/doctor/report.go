@@ -36,6 +36,9 @@ func (r Report) WriteText(w io.Writer) error {
 	}
 	fmt.Fprintf(&b, "\n* recommended\n%d passed, %d failed, %d warned, %d skipped\n",
 		counts[StatusPass], counts[StatusFail], counts[StatusWarn], counts[StatusSkip])
+	if n := counts[StatusUnavailable]; n > 0 {
+		fmt.Fprintf(&b, "%d unavailable\n", n)
+	}
 	_, err := io.WriteString(w, b.String())
 	return err
 }

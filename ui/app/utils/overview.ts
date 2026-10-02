@@ -114,3 +114,52 @@ export function worstDisk(metrics: readonly Pick<MetricSummaryResult, 'id' | 'va
   const top = m.values.reduce((a, b) => (b.value > a.value ? b : a))
   return { mountpoint: top.labels.mountpoint ?? '/', ratio: top.value }
 }
+
+export type DoctorReport = components['schemas']['DoctorReport']
+export type DoctorResult = components['schemas']['DoctorResult']
+
+export interface DoctorRow {
+  id: string
+  name: string
+  /** `pressfleet doctor` marks recommended checks with an asterisk; here it is a flag. */
+  recommended: boolean
+  status: DoctorResult['status']
+  /** Label shown for the status. */
+  label: string
+  /** Colour family for the status. */
+  tone: 'success' | 'warning' | 'error' | 'muted'
+  message: string
+  fix: string | undefined
+}
+
+const doctorStatus: Record<DoctorResult['status'], Pick<DoctorRow, 'label' | 'tone'>> = {
+  pass: { label: 'Pass', tone: 'success' },
+  warn: { label: 'Warning', tone: 'warning' },
+  fail: { label: 'Failed', tone: 'error' },
+  skip: { label: 'Skipped', tone: 'muted' },
+  unavailable: { label: 'Needs host', tone: 'muted' },
+}
+
+/** One row per doctor check, in the order the API returned them. Fixes are kept only for warnings and failures. */
+export function doctorRows(report: Pick<DoctorReport, 'results'>): DoctorRow[] {
+  return report.results.map(r => ({
+    id: r.id,
+    name: r.name,
+    recommended: r.severity === 'recommended',
+    status: r.status,
+    ...doctorStatus[r.status],
+    message: r.message,
+    fix: (r.status === 'fail' || r.status === 'warn') && r.fix ? r.fix : undefined,
+  }))
+}
+
+/** The sentence above the list: the worst outcome, and what the host-only checks mean. */
+export function doctorSummary(report: Pick<DoctorReport, 'outcome' | 'results'>): string {
+  const unavailable = report.results.filter(r => r.status === 'unavailable').length
+  const base = report.outcome === 'failed'
+    ? 'A required check failed.'
+    : report.outcome === 'warnings' ? 'Some checks need attention.' : 'No problems found.'
+  return unavailable > 0
+    ? `${base} ${unavailable} ${unavailable === 1 ? 'check needs' : 'checks need'} the host: run pressfleet doctor there to see them.`
+    : base
+}

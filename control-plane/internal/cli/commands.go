@@ -388,6 +388,7 @@ func (a *app) serveCommand() *cobra.Command {
 				DatabaseSessions: dbSessions,
 				Deployments:      deploys,
 				Logs:             prov,
+				Doctor:           a.platformDoctor,
 				Metrics:          metricsSvc,
 				TrustedProxies:   proxies,
 				SFTP:             api.SFTPInfo{Enabled: a.cfg.SFTP.Enabled(), Host: a.cfg.DashboardDomain, Port: a.cfg.SFTP.Port},

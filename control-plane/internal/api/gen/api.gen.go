@@ -412,6 +412,72 @@ func (e DatabaseSessionAccess) Valid() bool {
 	}
 }
 
+// Defines values for DoctorReportOutcome.
+const (
+	DoctorReportOutcomeFailed   DoctorReportOutcome = "failed"
+	DoctorReportOutcomeOk       DoctorReportOutcome = "ok"
+	DoctorReportOutcomeWarnings DoctorReportOutcome = "warnings"
+)
+
+// Valid indicates whether the value is a known member of the DoctorReportOutcome enum.
+func (e DoctorReportOutcome) Valid() bool {
+	switch e {
+	case DoctorReportOutcomeFailed:
+		return true
+	case DoctorReportOutcomeOk:
+		return true
+	case DoctorReportOutcomeWarnings:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DoctorResultSeverity.
+const (
+	Recommended DoctorResultSeverity = "recommended"
+	Required    DoctorResultSeverity = "required"
+)
+
+// Valid indicates whether the value is a known member of the DoctorResultSeverity enum.
+func (e DoctorResultSeverity) Valid() bool {
+	switch e {
+	case Recommended:
+		return true
+	case Required:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DoctorResultStatus.
+const (
+	DoctorResultStatusFail        DoctorResultStatus = "fail"
+	DoctorResultStatusPass        DoctorResultStatus = "pass"
+	DoctorResultStatusSkip        DoctorResultStatus = "skip"
+	DoctorResultStatusUnavailable DoctorResultStatus = "unavailable"
+	DoctorResultStatusWarn        DoctorResultStatus = "warn"
+)
+
+// Valid indicates whether the value is a known member of the DoctorResultStatus enum.
+func (e DoctorResultStatus) Valid() bool {
+	switch e {
+	case DoctorResultStatusFail:
+		return true
+	case DoctorResultStatusPass:
+		return true
+	case DoctorResultStatusSkip:
+		return true
+	case DoctorResultStatusUnavailable:
+		return true
+	case DoctorResultStatusWarn:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatus.
 const (
 	HealthStatusOk HealthStatus = "ok"
@@ -2153,6 +2219,49 @@ type DatabaseSessionOpened struct {
 		SSHCommand string `json:"ssh_command"`
 	} `json:"tunnel"`
 }
+
+// DoctorReport defines model for DoctorReport.
+type DoctorReport struct {
+	// Outcome The worst result: `failed` if a required check failed,
+	// `warnings` if a recommended check failed or a check warned,
+	// otherwise `ok`.
+	Outcome DoctorReportOutcome `json:"outcome"`
+	Results []DoctorResult      `json:"results"`
+}
+
+// DoctorReportOutcome The worst result: `failed` if a required check failed,
+// `warnings` if a recommended check failed or a check warned,
+// otherwise `ok`.
+type DoctorReportOutcome string
+
+// DoctorResult defines model for DoctorResult.
+type DoctorResult struct {
+	// Fix How to resolve a warning or failure.
+	Fix *string `json:"fix,omitempty"`
+
+	// ID Examples: docker
+	ID      string `json:"id"`
+	Message string `json:"message"`
+
+	// Name Examples: Docker Engine
+	Name string `json:"name"`
+
+	// Severity Whether PressFleet can run when the check doesn't pass.
+	Severity DoctorResultSeverity `json:"severity"`
+
+	// Status `warn` means a likely problem or an unverifiable requirement,
+	// `skip` that the check doesn't apply, and `unavailable` that it
+	// can't run from the control plane and needs the host.
+	Status DoctorResultStatus `json:"status"`
+}
+
+// DoctorResultSeverity Whether PressFleet can run when the check doesn't pass.
+type DoctorResultSeverity string
+
+// DoctorResultStatus `warn` means a likely problem or an unverifiable requirement,
+// `skip` that the check doesn't apply, and `unavailable` that it
+// can't run from the control plane and needs the host.
+type DoctorResultStatus string
 
 // Domain A host name, such as `www.acme.example`: letters, digits, and
 // hyphens, at least two labels, no scheme, port, path, or wildcard.
@@ -4038,6 +4147,9 @@ type ServerInterface interface {
 	// GetPlatformCapacity Host memory capacity and site memory reservations
 	// (GET /api/v1/platform/capacity)
 	GetPlatformCapacity(w http.ResponseWriter, r *http.Request)
+	// GetPlatformDoctor Run the platform's preflight checks
+	// (GET /api/v1/platform/doctor)
+	GetPlatformDoctor(w http.ResponseWriter, r *http.Request)
 	// ListSites List sites
 	// (GET /api/v1/sites)
 	ListSites(w http.ResponseWriter, r *http.Request, params ListSitesParams)
@@ -5735,6 +5847,20 @@ func (siw *ServerInterfaceWrapper) GetPlatformCapacity(w http.ResponseWriter, r 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetPlatformCapacity(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPlatformDoctor operation middleware
+func (siw *ServerInterfaceWrapper) GetPlatformDoctor(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPlatformDoctor(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7657,6 +7783,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/logs", wrapper.ListSiteLogs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/logs/stream", wrapper.StreamSiteLogs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/job-logs", wrapper.ListSiteJobLogs)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/platform/doctor", wrapper.GetPlatformDoctor)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/metrics/catalog", wrapper.GetMetricCatalog)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/metrics/platform", wrapper.QueryPlatformMetrics)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/metrics/platform/summary", wrapper.GetPlatformMetricsSummary)
@@ -11930,6 +12057,76 @@ type GetPlatformCapacitydefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetPlatformCapacitydefaultApplicationProblemPlusJSONResponse) VisitGetPlatformCapacityResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformDoctorRequestObject struct {
+}
+
+type GetPlatformDoctorResponseObject interface {
+	VisitGetPlatformDoctorResponse(w http.ResponseWriter) error
+}
+
+type GetPlatformDoctor200JSONResponse DoctorReport
+
+func (response GetPlatformDoctor200JSONResponse) VisitGetPlatformDoctorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformDoctor401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlatformDoctor401ApplicationProblemPlusJSONResponse) VisitGetPlatformDoctorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformDoctor403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlatformDoctor403ApplicationProblemPlusJSONResponse) VisitGetPlatformDoctorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformDoctordefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetPlatformDoctordefaultApplicationProblemPlusJSONResponse) VisitGetPlatformDoctorResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -17744,6 +17941,9 @@ type StrictServerInterface interface {
 	// GetPlatformCapacity Host memory capacity and site memory reservations
 	// (GET /api/v1/platform/capacity)
 	GetPlatformCapacity(ctx context.Context, request GetPlatformCapacityRequestObject) (GetPlatformCapacityResponseObject, error)
+	// GetPlatformDoctor Run the platform's preflight checks
+	// (GET /api/v1/platform/doctor)
+	GetPlatformDoctor(ctx context.Context, request GetPlatformDoctorRequestObject) (GetPlatformDoctorResponseObject, error)
 	// ListSites List sites
 	// (GET /api/v1/sites)
 	ListSites(ctx context.Context, request ListSitesRequestObject) (ListSitesResponseObject, error)
@@ -19139,6 +19339,30 @@ func (sh *strictHandler) GetPlatformCapacity(w http.ResponseWriter, r *http.Requ
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetPlatformCapacityResponseObject); ok {
 		if err := validResponse.VisitGetPlatformCapacityResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPlatformDoctor operation middleware
+func (sh *strictHandler) GetPlatformDoctor(w http.ResponseWriter, r *http.Request) {
+	var request GetPlatformDoctorRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPlatformDoctor(ctx, request.(GetPlatformDoctorRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPlatformDoctor")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPlatformDoctorResponseObject); ok {
+		if err := validResponse.VisitGetPlatformDoctorResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

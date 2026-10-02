@@ -14,6 +14,7 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
+	"github.com/rchouinard/pressfleet/control-plane/internal/doctor"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
@@ -219,7 +220,8 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 	up := newUploadService(t, db)
 	h := newHandler(t, api.Options{Authenticator: fa, Auth: svc, DB: db, Sites: env.svc, Backups: env.backups, Uploads: up, Logs: env.prov,
 		DatabaseExports: newDatabaseExports(t, db, env), Deployments: newDeployments(t, db, env, up),
-		DatabaseSessions: newDatabaseSessions(t, db, env, nil), AlertChannels: newAlertChannels(t, db)})
+		DatabaseSessions: newDatabaseSessions(t, db, env, nil), AlertChannels: newAlertChannels(t, db),
+		Doctor: func(context.Context) doctor.Report { return doctor.Report{} }})
 	for _, op := range ops {
 		t.Run(op.ID, func(t *testing.T) {
 			req := sampleRequest(op, false)
@@ -254,7 +256,7 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 			req.authed = true
 			w = do(t, h, req)
 			switch {
-			case op.ID == "getHealth" || op.ID == "getReadiness" || op.ID == "listJobs" || op.ID == "listAuditEvents" || op.ID == "getPlatformCapacity":
+			case op.ID == "getHealth" || op.ID == "getReadiness" || op.ID == "getPlatformDoctor" || op.ID == "listJobs" || op.ID == "listAuditEvents" || op.ID == "getPlatformCapacity":
 				if w.Code != http.StatusOK {
 					t.Errorf("status = %d, want 200; body: %s", w.Code, w.Body)
 				}

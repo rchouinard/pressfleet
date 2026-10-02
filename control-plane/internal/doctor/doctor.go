@@ -53,6 +53,10 @@ const (
 	// StatusSkip means the check doesn't apply, e.g. DNS checks when no
 	// domain is configured yet.
 	StatusSkip Status = "skip"
+	// StatusUnavailable means the check can't run in this environment, as
+	// opposed to having failed: host-only checks run from inside the control
+	// plane container. It never counts against the outcome.
+	StatusUnavailable Status = "unavailable"
 )
 
 // HostProbe reads facts about the host that aren't Docker's.
@@ -103,6 +107,11 @@ type Options struct {
 	// SFTPPort is the host port the SFTP gateway will be published on
 	// (sftp.port); zero skips its check.
 	SFTPPort int
+	// SkipHostOnly reports checks that need the host (Docker, ports, daemon
+	// configuration) as unavailable instead of running them. The control
+	// plane sets it: it must not shell out to docker (§4.2) and can't see the
+	// host's listeners or daemon.json from its container.
+	SkipHostOnly bool
 	// RandomLabel returns a DNS label for probing the wildcard preview
 	// record; nil uses a random one.
 	RandomLabel func() string
@@ -114,6 +123,8 @@ type Check struct {
 	Name     string
 	Severity Severity
 	Scopes   []Scope
+	// HostOnly marks checks that only work from the host itself.
+	HostOnly bool
 	run      func(ctx context.Context, e *env) outcome
 }
 
@@ -187,7 +198,12 @@ func Run(ctx context.Context, opts Options, scopes ...Scope) Report {
 		if !slices.ContainsFunc(c.Scopes, func(s Scope) bool { return slices.Contains(scopes, s) }) {
 			continue
 		}
-		o := c.run(ctx, e)
+		var o outcome
+		if c.HostOnly && opts.SkipHostOnly {
+			o = outcome{status: StatusUnavailable, message: "needs the host; run `pressfleet doctor` on the host to see this check"}
+		} else {
+			o = c.run(ctx, e)
+		}
 		rep.Results = append(rep.Results, Result{
 			ID: c.ID, Name: c.Name, Severity: c.Severity,
 			Status: o.status, Message: o.message, Fix: o.fix,

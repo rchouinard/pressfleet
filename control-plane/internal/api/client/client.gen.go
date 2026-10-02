@@ -411,6 +411,72 @@ func (e DatabaseSessionAccess) Valid() bool {
 	}
 }
 
+// Defines values for DoctorReportOutcome.
+const (
+	DoctorReportOutcomeFailed   DoctorReportOutcome = "failed"
+	DoctorReportOutcomeOk       DoctorReportOutcome = "ok"
+	DoctorReportOutcomeWarnings DoctorReportOutcome = "warnings"
+)
+
+// Valid indicates whether the value is a known member of the DoctorReportOutcome enum.
+func (e DoctorReportOutcome) Valid() bool {
+	switch e {
+	case DoctorReportOutcomeFailed:
+		return true
+	case DoctorReportOutcomeOk:
+		return true
+	case DoctorReportOutcomeWarnings:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DoctorResultSeverity.
+const (
+	Recommended DoctorResultSeverity = "recommended"
+	Required    DoctorResultSeverity = "required"
+)
+
+// Valid indicates whether the value is a known member of the DoctorResultSeverity enum.
+func (e DoctorResultSeverity) Valid() bool {
+	switch e {
+	case Recommended:
+		return true
+	case Required:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for DoctorResultStatus.
+const (
+	DoctorResultStatusFail        DoctorResultStatus = "fail"
+	DoctorResultStatusPass        DoctorResultStatus = "pass"
+	DoctorResultStatusSkip        DoctorResultStatus = "skip"
+	DoctorResultStatusUnavailable DoctorResultStatus = "unavailable"
+	DoctorResultStatusWarn        DoctorResultStatus = "warn"
+)
+
+// Valid indicates whether the value is a known member of the DoctorResultStatus enum.
+func (e DoctorResultStatus) Valid() bool {
+	switch e {
+	case DoctorResultStatusFail:
+		return true
+	case DoctorResultStatusPass:
+		return true
+	case DoctorResultStatusSkip:
+		return true
+	case DoctorResultStatusUnavailable:
+		return true
+	case DoctorResultStatusWarn:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatus.
 const (
 	HealthStatusOk HealthStatus = "ok"
@@ -2152,6 +2218,49 @@ type DatabaseSessionOpened struct {
 		SSHCommand string `json:"ssh_command"`
 	} `json:"tunnel"`
 }
+
+// DoctorReport defines model for DoctorReport.
+type DoctorReport struct {
+	// Outcome The worst result: `failed` if a required check failed,
+	// `warnings` if a recommended check failed or a check warned,
+	// otherwise `ok`.
+	Outcome DoctorReportOutcome `json:"outcome"`
+	Results []DoctorResult      `json:"results"`
+}
+
+// DoctorReportOutcome The worst result: `failed` if a required check failed,
+// `warnings` if a recommended check failed or a check warned,
+// otherwise `ok`.
+type DoctorReportOutcome string
+
+// DoctorResult defines model for DoctorResult.
+type DoctorResult struct {
+	// Fix How to resolve a warning or failure.
+	Fix *string `json:"fix,omitempty"`
+
+	// ID Examples: docker
+	ID      string `json:"id"`
+	Message string `json:"message"`
+
+	// Name Examples: Docker Engine
+	Name string `json:"name"`
+
+	// Severity Whether PressFleet can run when the check doesn't pass.
+	Severity DoctorResultSeverity `json:"severity"`
+
+	// Status `warn` means a likely problem or an unverifiable requirement,
+	// `skip` that the check doesn't apply, and `unavailable` that it
+	// can't run from the control plane and needs the host.
+	Status DoctorResultStatus `json:"status"`
+}
+
+// DoctorResultSeverity Whether PressFleet can run when the check doesn't pass.
+type DoctorResultSeverity string
+
+// DoctorResultStatus `warn` means a likely problem or an unverifiable requirement,
+// `skip` that the check doesn't apply, and `unavailable` that it
+// can't run from the control plane and needs the host.
+type DoctorResultStatus string
 
 // Domain A host name, such as `www.acme.example`: letters, digits, and
 // hyphens, at least two labels, no scheme, port, path, or wildcard.
@@ -4503,6 +4612,19 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v1/platform/capacity (the `GetPlatformCapacity` operationId).
 	GetPlatformCapacity(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPlatformDoctor Run the platform's preflight checks
+	//
+	// Runs the checks of `pressfleet doctor` (design doc §4.1) and returns
+	// their results in the shape of `pressfleet doctor --json`. The control
+	// plane runs in a container and never calls `docker`, so checks that
+	// need the host (Docker Engine and Compose, cgroups, address pools,
+	// ports, log rotation) are reported with status `unavailable`, not
+	// `fail`; run `pressfleet doctor` on the host for those. `unavailable`
+	// results do not affect `outcome`. Every role can read.
+	//
+	// Corresponds with GET /api/v1/platform/doctor (the `GetPlatformDoctor` operationId).
+	GetPlatformDoctor(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSites List sites
 	//
@@ -6887,6 +7009,29 @@ func (c *Client) GetPlatform(ctx context.Context, reqEditors ...RequestEditorFn)
 // Corresponds with GET /api/v1/platform/capacity (the `GetPlatformCapacity` operationId).
 func (c *Client) GetPlatformCapacity(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetPlatformCapacityRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPlatformDoctor Run the platform's preflight checks
+//
+// Runs the checks of `pressfleet doctor` (design doc §4.1) and returns
+// their results in the shape of `pressfleet doctor --json`. The control
+// plane runs in a container and never calls `docker`, so checks that
+// need the host (Docker Engine and Compose, cgroups, address pools,
+// ports, log rotation) are reported with status `unavailable`, not
+// `fail`; run `pressfleet doctor` on the host for those. `unavailable`
+// results do not affect `outcome`. Every role can read.
+//
+// Corresponds with GET /api/v1/platform/doctor (the `GetPlatformDoctor` operationId).
+func (c *Client) GetPlatformDoctor(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPlatformDoctorRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -11093,6 +11238,33 @@ func NewGetPlatformCapacityRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewGetPlatformDoctorRequest constructs an http.Request for the GetPlatformDoctor method
+func NewGetPlatformDoctorRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/platform/doctor")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListSitesRequest constructs an http.Request for the ListSites method
 func NewListSitesRequest(server string, params *ListSitesParams) (*http.Request, error) {
 	var err error
@@ -14240,6 +14412,21 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/v1/platform/capacity (the `GetPlatformCapacity` operationId).
 	GetPlatformCapacityWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPlatformCapacityResponse, error)
+
+	// GetPlatformDoctorWithResponse Run the platform's preflight checks
+	//
+	// Runs the checks of `pressfleet doctor` (design doc §4.1) and returns
+	// their results in the shape of `pressfleet doctor --json`. The control
+	// plane runs in a container and never calls `docker`, so checks that
+	// need the host (Docker Engine and Compose, cgroups, address pools,
+	// ports, log rotation) are reported with status `unavailable`, not
+	// `fail`; run `pressfleet doctor` on the host for those. `unavailable`
+	// results do not affect `outcome`. Every role can read.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/platform/doctor (the `GetPlatformDoctor` operationId).
+	GetPlatformDoctorWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPlatformDoctorResponse, error)
 
 	// ListSitesWithResponse List sites
 	//
@@ -18845,6 +19032,68 @@ func (r GetPlatformCapacityResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetPlatformCapacityResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPlatformDoctorResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DoctorReport
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPlatformDoctorResponse) GetJSON200() *DoctorReport {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetPlatformDoctorResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetPlatformDoctorResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetPlatformDoctorResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPlatformDoctorResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPlatformDoctorResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPlatformDoctorResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPlatformDoctorResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -23840,6 +24089,27 @@ func (c *ClientWithResponses) GetPlatformCapacityWithResponse(ctx context.Contex
 	return ParseGetPlatformCapacityResponse(rsp)
 }
 
+// GetPlatformDoctorWithResponse Run the platform's preflight checks
+//
+// Runs the checks of `pressfleet doctor` (design doc §4.1) and returns
+// their results in the shape of `pressfleet doctor --json`. The control
+// plane runs in a container and never calls `docker`, so checks that
+// need the host (Docker Engine and Compose, cgroups, address pools,
+// ports, log rotation) are reported with status `unavailable`, not
+// `fail`; run `pressfleet doctor` on the host for those. `unavailable`
+// results do not affect `outcome`. Every role can read.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/platform/doctor (the `GetPlatformDoctor` operationId).
+func (c *ClientWithResponses) GetPlatformDoctorWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPlatformDoctorResponse, error) {
+	rsp, err := c.GetPlatformDoctor(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPlatformDoctorResponse(rsp)
+}
+
 // ListSitesWithResponse List sites
 //
 // Newest first. Listings come from the recorded state alone, so they
@@ -28214,6 +28484,53 @@ func ParseGetPlatformCapacityResponse(rsp *http.Response) (*GetPlatformCapacityR
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest PlatformCapacity
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPlatformDoctorResponse parses an HTTP response from a GetPlatformDoctorWithResponse call
+func ParseGetPlatformDoctorResponse(rsp *http.Response) (*GetPlatformDoctorResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPlatformDoctorResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DoctorReport
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

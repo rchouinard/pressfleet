@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import {
-  assessCapacity, fetchReadiness, platformHealth, summaryValue, worstDisk, type PlatformCapacity, type Readiness,
+  assessCapacity, doctorRows, doctorSummary, fetchReadiness, platformHealth, summaryValue, worstDisk, type PlatformCapacity, type Readiness,
 } from '../app/utils/overview'
 import CapacityWarning from '../app/components/overview/CapacityWarning.vue'
+import DoctorChecks from '../app/components/overview/DoctorChecks.vue'
 import ReadinessList from '../app/components/overview/ReadinessList.vue'
 import { uiStubs } from './stubs'
 
@@ -78,6 +79,47 @@ describe('platformHealth and fetchReadiness', () => {
   it('returns undefined for other answers', async () => {
     expect(await fetchReadiness((async () => new Response('x', { status: 502 })) as typeof fetch)).toBeUndefined()
     expect(await fetchReadiness((async () => new Response('<html>', { status: 200 })) as typeof fetch)).toBeUndefined()
+  })
+})
+
+const doctorReport = {
+  outcome: 'warnings' as const,
+  results: [
+    { id: 'platform', name: 'Linux on amd64', severity: 'required' as const, status: 'pass' as const, message: 'linux/amd64' },
+    { id: 'docker', name: 'Docker Engine', severity: 'required' as const, status: 'unavailable' as const, message: 'needs the host' },
+    { id: 'disk', name: 'Free disk space', severity: 'recommended' as const, status: 'warn' as const, message: '1.0 GiB free', fix: 'Free some space.' },
+    { id: 'dns', name: 'Dashboard DNS', severity: 'required' as const, status: 'skip' as const, message: 'not set', fix: 'ignored' },
+  ],
+}
+
+describe('doctorRows', () => {
+  it('maps every check to a labelled row and keeps fixes only for problems', () => {
+    const rows = doctorRows(doctorReport)
+    expect(rows.map(r => [r.id, r.label, r.tone])).toEqual([
+      ['platform', 'Pass', 'success'],
+      ['docker', 'Needs host', 'muted'],
+      ['disk', 'Warning', 'warning'],
+      ['dns', 'Skipped', 'muted'],
+    ])
+    expect(rows.map(r => r.fix)).toEqual([undefined, undefined, 'Free some space.', undefined])
+    expect(rows[2]!.recommended).toBe(true)
+    expect(rows[0]!.recommended).toBe(false)
+  })
+
+  it('summarizes the outcome and the host-only checks', () => {
+    expect(doctorSummary(doctorReport)).toBe('Some checks need attention. 1 check needs the host: run pressfleet doctor there to see them.')
+    expect(doctorSummary({ outcome: 'failed', results: [] })).toBe('A required check failed.')
+    expect(doctorSummary({ outcome: 'ok', results: [] })).toBe('No problems found.')
+  })
+})
+
+describe('DoctorChecks', () => {
+  it('lists each check with its status and message', () => {
+    const w = mount(DoctorChecks, { props: { report: doctorReport }, global: { stubs: uiStubs } })
+    expect(w.findAll('li')).toHaveLength(4)
+    expect(w.get('[data-testid=doctor-docker]').text()).toContain('Needs host')
+    expect(w.get('[data-testid=doctor-disk]').text()).toContain('1.0 GiB free')
+    expect(w.get('[data-testid=doctor-disk]').text()).toContain('Fix: Free some space.')
   })
 })
 

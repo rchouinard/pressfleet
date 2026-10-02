@@ -119,6 +119,9 @@ type Options struct {
 	// AlertChannels manages alert channels and sends test notifications. If
 	// nil, the alert channel operations fail with 500.
 	AlertChannels *alertchannels.Service
+	// Doctor runs the platform's preflight checks for GET
+	// /api/v1/platform/doctor. If nil, that operation fails with 500.
+	Doctor DoctorFunc
 	// SecureCookies forces the Secure flag on the session cookie. Otherwise
 	// it is set when the request arrived over HTTPS, directly or through a
 	// trusted proxy, so plain-HTTP development on localhost still works.
@@ -150,6 +153,7 @@ type Handlers struct {
 	logs          provisioner.LogReader
 	metrics       *metricsapi.Service
 	channels      *alertchannels.Service
+	doctor        DoctorFunc
 	resolver      authz.Resolver
 	secureCookies bool
 	sftp          SFTPInfo
@@ -193,6 +197,7 @@ func NewHandler(opts Options) (http.Handler, error) {
 		h.metrics = metricsapi.New(nil, nil)
 	}
 	h.channels = opts.AlertChannels
+	h.doctor = opts.Doctor
 	if opts.DB != nil {
 		h.resolver = authz.NewResolver(opts.DB)
 	}

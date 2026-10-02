@@ -72,6 +72,15 @@ func (a *app) doctorOptions() doctor.Options {
 	return opts
 }
 
+// platformDoctor backs the API's doctor endpoint. The control plane runs in a
+// container with no docker CLI, so host-only checks are reported as
+// unavailable rather than run (and failed).
+func (a *app) platformDoctor(ctx context.Context) doctor.Report {
+	opts := a.doctorOptions()
+	opts.SkipHostOnly = true
+	return doctor.Run(ctx, opts, doctor.ScopeInstall, doctor.ScopeRuntime)
+}
+
 // preflight runs runtime-scope checks before the control plane starts and
 // refuses to start if a required check fails.
 func (a *app) preflight(ctx context.Context, skip bool) error {

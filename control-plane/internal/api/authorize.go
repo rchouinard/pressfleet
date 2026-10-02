@@ -102,6 +102,9 @@ var operationActions = map[string]authz.Action{
 	"querySiteMetrics":          authz.ViewMonitoring,
 	"getSiteMetricsSummary":     authz.ViewMonitoring,
 
+	// The doctor report is platform health, so monitoring data.
+	"getPlatformDoctor": authz.ViewMonitoring,
+
 	"listAuditEvents": authz.ViewAuditLog,
 
 	// Alert rules are managed by Operators and Admins (design doc §4.6);

@@ -936,6 +936,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/platform/doctor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run the platform's preflight checks
+         * @description Runs the checks of `pressfleet doctor` (design doc §4.1) and returns
+         *     their results in the shape of `pressfleet doctor --json`. The control
+         *     plane runs in a container and never calls `docker`, so checks that
+         *     need the host (Docker Engine and Compose, cgroups, address pools,
+         *     ports, log rotation) are reported with status `unavailable`, not
+         *     `fail`; run `pressfleet doctor` on the host for those. `unavailable`
+         *     results do not affect `outcome`. Every role can read.
+         */
+        get: operations["getPlatformDoctor"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/metrics/catalog": {
         parameters: {
             query?: never;
@@ -2232,6 +2258,37 @@ export interface components {
             /** @enum {string} */
             status: "ok" | "unavailable";
             checks: components["schemas"]["ReadinessCheck"][];
+        };
+        DoctorReport: {
+            /**
+             * @description The worst result: `failed` if a required check failed,
+             *     `warnings` if a recommended check failed or a check warned,
+             *     otherwise `ok`.
+             * @enum {string}
+             */
+            outcome: "ok" | "warnings" | "failed";
+            results: components["schemas"]["DoctorResult"][];
+        };
+        DoctorResult: {
+            /** @example docker */
+            id: string;
+            /** @example Docker Engine */
+            name: string;
+            /**
+             * @description Whether PressFleet can run when the check doesn't pass.
+             * @enum {string}
+             */
+            severity: "required" | "recommended";
+            /**
+             * @description `warn` means a likely problem or an unverifiable requirement,
+             *     `skip` that the check doesn't apply, and `unavailable` that it
+             *     can't run from the control plane and needs the host.
+             * @enum {string}
+             */
+            status: "pass" | "warn" | "fail" | "skip" | "unavailable";
+            message: string;
+            /** @description How to resolve a warning or failure. */
+            fix?: string;
         };
         ReadinessCheck: {
             /** @example database */
@@ -5259,6 +5316,29 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getPlatformDoctor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The check results. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DoctorReport"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             default: components["responses"]["Error"];
         };
     };

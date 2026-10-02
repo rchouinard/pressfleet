@@ -435,3 +435,33 @@ func TestWriteJSON(t *testing.T) {
 		t.Errorf("round trip = %+v", got)
 	}
 }
+
+func TestSkipHostOnly(t *testing.T) {
+	f := newFixture()
+	// A broken Docker must not matter: the checks are not run at all.
+	f.docker.InfoErr = errors.New("must not be asked")
+	f.docker.ComposeErr = errors.New("must not be asked")
+	f.opts.SkipHostOnly = true
+	f.opts.Host, f.opts.Docker = f.host, f.docker
+	rep := doctor.Run(context.Background(), f.opts, doctor.ScopeInstall, doctor.ScopeRuntime)
+	unavailable := map[string]bool{}
+	for _, r := range rep.Results {
+		if r.Status == doctor.StatusUnavailable {
+			unavailable[r.ID] = true
+		}
+	}
+	for _, id := range []string{"docker", "compose", "cgroup", "address-pools", "ports", "sftp-port", "log-rotation"} {
+		if !unavailable[id] {
+			t.Errorf("%s should be unavailable", id)
+		}
+	}
+	if unavailable["platform"] || unavailable["memory"] || unavailable["disk"] {
+		t.Errorf("checks that run anywhere were made unavailable: %v", unavailable)
+	}
+	if f.docker.EngineCalls != 0 {
+		t.Errorf("Docker was asked %d times", f.docker.EngineCalls)
+	}
+	if got := rep.Outcome(); got != doctor.OK {
+		t.Errorf("outcome = %v, want ok (unavailable is not a failure)", got)
+	}
+}
