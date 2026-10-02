@@ -56,6 +56,10 @@ type Pebble struct {
 	// Roots holds Pebble's root certificate, which every certificate it
 	// issues chains to. Pebble generates it when it starts.
 	Roots *x509.CertPool
+	// RootsPEM is the same certificate in PEM form, for handing to
+	// something that verifies certificates outside the test process, such
+	// as the control plane's own checks of its sites (SSL_CERT_FILE).
+	RootsPEM []byte
 	// TraefikIP is Traefik's address on the platform network. The DNS
 	// server resolves every name to it, and it is the platform's public_ip.
 	TraefikIP string
@@ -217,7 +221,7 @@ func (p *Platform) connectPebble(ctx context.Context, t *testing.T) {
 	if !roots.AppendCertsFromPEM(rootPEM.Bytes()) {
 		t.Fatalf("Pebble's root certificate isn't PEM: %q", rootPEM.String())
 	}
-	p.Pebble = &Pebble{Roots: roots, TraefikIP: traefikIP}
+	p.Pebble = &Pebble{Roots: roots, RootsPEM: rootPEM.Bytes(), TraefikIP: traefikIP}
 	t.Logf("Pebble issues certificates; every name resolves to Traefik at %s", traefikIP)
 
 	p.override.dns = []string{dnsIP}
