@@ -8,7 +8,7 @@
 // when the site's state would make the API answer 409.
 import { computed, reactive, ref, watch } from 'vue'
 import { toApiError, type ApiError } from '../../utils/api-error'
-import { phpOptions, phpStatus } from '../../utils/php'
+import { phpOptions, phpStatus, type PhpVersionInfo } from '../../utils/php'
 import {
   phpPayload, previewProtectionPayload, resourceFormValues, resourcesPayload, settingsBlockedReason,
   validateResources, type ResourceFormErrors, type SiteUpdate,
@@ -23,6 +23,8 @@ const props = defineProps<{
   canMaintain: boolean
   /** `site.cache.purge`. */
   canPurge: boolean
+  /** The PHP versions the API lists; empty until loaded, when statuses show as unknown. */
+  phpVersions?: readonly PhpVersionInfo[]
   update: (body: SiteUpdate) => Promise<void>
   setMaintenance: (enabled: boolean) => Promise<void>
   purgeCache: () => Promise<void>
@@ -53,9 +55,9 @@ const idle = computed(() => busy.value === undefined)
 // PHP version.
 const php = ref(props.site.php_version)
 watch(() => props.site.php_version, (v) => { php.value = v })
-const currentPhp = computed(() => phpStatus(props.site.php_version))
-const chosenPhp = computed(() => phpStatus(php.value))
-const phpChoices = computed(() => phpOptions(props.site.php_version))
+const currentPhp = computed(() => phpStatus(props.site.php_version, props.phpVersions))
+const chosenPhp = computed(() => phpStatus(php.value, props.phpVersions))
+const phpChoices = computed(() => phpOptions(props.site.php_version, props.phpVersions))
 const phpBody = computed(() => phpPayload(props.site.php_version, php.value))
 const phpError = computed(() => failures.php?.fieldError('/php_version'))
 async function savePhp() {

@@ -9,6 +9,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
+	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
@@ -58,6 +59,42 @@ func TestImageRolloutEndpoints(t *testing.T) {
 		}
 		if w := do(t, viewer, request{authed: true, method: http.MethodPost, target: "/api/v1/image-rollout/resume"}); w.Code != http.StatusForbidden {
 			t.Errorf("viewer resume: %d", w.Code)
+		}
+	})
+}
+
+func TestListPHPVersions(t *testing.T) {
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		e := newSiteEnv(t, db, testPreviewBase)
+		h := newHandler(t, api.Options{DB: db, Authenticator: &fakeAuth{}, Sites: e.svc, Backups: e.backups})
+		cat, err := catalog.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		const target = "/api/v1/catalog/php-versions"
+
+		if w := do(t, h, request{method: http.MethodGet, target: target}); w.Code != http.StatusUnauthorized {
+			t.Errorf("unauthenticated: %d, want 401", w.Code)
+		}
+		w := do(t, h, request{authed: true, method: http.MethodGet, target: target})
+		if w.Code != http.StatusOK {
+			t.Fatalf("list: %d %s", w.Code, w.Body)
+		}
+		got := decodeJSON[gen.PHPVersionCatalog](t, w.Body.Bytes())
+		want := cat.PHPVersions()
+		if len(got.Items) != len(want) {
+			t.Fatalf("items = %s, want %d versions", w.Body, len(want))
+		}
+		for i, v := range want {
+			it := got.Items[i]
+			if it.Version != v.Version || string(it.Status) != string(v.Status(time.Now())) ||
+				it.ActiveSupportEnds.Format(time.DateOnly) != v.ActiveSupportEnds.Format(time.DateOnly) ||
+				it.SecuritySupportEnds.Format(time.DateOnly) != v.SecuritySupportEnds.Format(time.DateOnly) {
+				t.Errorf("item %d = %+v, want %+v", i, it, v)
+			}
+		}
+		if def, _ := cat.DefaultPHPVersion(time.Now()); got.Default == nil || *got.Default != def {
+			t.Errorf("default = %v, want %s", got.Default, def)
 		}
 	})
 }

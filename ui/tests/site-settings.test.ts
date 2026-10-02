@@ -4,7 +4,7 @@ import SiteSettingsPanel from '../app/components/site/SiteSettingsPanel.vue'
 import SitePreviewCredentials from '../app/components/site/SitePreviewCredentials.vue'
 import ProblemAlert from '../app/components/ProblemAlert.vue'
 import { ApiError } from '../app/utils/api-error'
-import { phpOptions, phpStatus } from '../app/utils/php'
+import { phpOptions, phpStatus, type PhpVersionInfo } from '../app/utils/php'
 import {
   canUpdateCoreNow, coreApprove, coreDecisionText, coreFollowGroup, coreHold, hasOwnCorePolicy, phpPayload,
   previewProtectionPayload, resourceFormValues, resourcesPayload, settingsBlockedReason, validateResources,
@@ -13,38 +13,47 @@ import {
 import { can } from '../app/utils/permissions'
 import { uiStubs } from './stubs'
 
-const now = new Date('2026-10-02T12:00:00Z')
+// What GET /api/v1/catalog/php-versions answers on 2026-10-02.
+const versions: PhpVersionInfo[] = [
+  { version: '8.5', status: 'active', active_support_ends: '2027-12-31', security_support_ends: '2029-12-31' },
+  { version: '8.4', status: 'active', active_support_ends: '2026-12-31', security_support_ends: '2028-12-31' },
+  { version: '8.3', status: 'security-only', active_support_ends: '2025-12-31', security_support_ends: '2027-12-31' },
+  { version: '8.2', status: 'eol-soon', active_support_ends: '2024-12-31', security_support_ends: '2026-12-31' },
+  { version: '8.1', status: 'eol', active_support_ends: '2023-12-31', security_support_ends: '2025-12-31' },
+]
 const limits = { cpu: '1.0', memory_reservation_mb: 128, memory_limit_mb: 512 }
 
 describe('phpStatus', () => {
-  it('classifies branches by date', () => {
-    expect(phpStatus('8.5', now).status).toBe('active')
-    expect(phpStatus('8.4', now).status).toBe('active')
-    expect(phpStatus('8.3', now).status).toBe('security')
-    expect(phpStatus('8.2', now).status).toBe('eol-soon')
-    expect(phpStatus('8.1', now).status).toBe('eol')
-    expect(phpStatus('9.9', now).status).toBe('unknown')
+  it('maps the status the API reports', () => {
+    expect(phpStatus('8.5', versions).status).toBe('active')
+    expect(phpStatus('8.4', versions).status).toBe('active')
+    expect(phpStatus('8.3', versions).status).toBe('security')
+    expect(phpStatus('8.2', versions).status).toBe('eol-soon')
+    expect(phpStatus('8.1', versions).status).toBe('eol')
+    expect(phpStatus('9.9', versions).status).toBe('unknown')
+  })
+
+  it('is unknown until the versions have loaded', () => {
+    expect(phpStatus('8.4').status).toBe('unknown')
+    expect(phpStatus('8.4').warning).toBeUndefined()
   })
 
   it('warns for end-of-life and soon, with text and an icon', () => {
-    expect(phpStatus('8.1', now).warning).toContain('end of life')
-    expect(phpStatus('8.2', now).warning).toContain('2026-12-31')
-    expect(phpStatus('8.4', now).warning).toBeUndefined()
+    expect(phpStatus('8.1', versions).warning).toContain('end of life')
+    expect(phpStatus('8.1', versions).warning).toContain('2025-12-31')
+    expect(phpStatus('8.2', versions).warning).toContain('2026-12-31')
+    expect(phpStatus('8.4', versions).warning).toBeUndefined()
     for (const v of ['8.5', '8.2', '8.1']) {
-      expect(phpStatus(v, now).icon).toMatch(/^i-lucide-/)
-      expect(phpStatus(v, now).label).not.toBe('')
+      expect(phpStatus(v, versions).icon).toMatch(/^i-lucide-/)
+      expect(phpStatus(v, versions).label).not.toBe('')
     }
   })
 
-  it('counts the last day of support as supported', () => {
-    expect(phpStatus('8.2', new Date('2026-12-31T20:00:00Z')).status).toBe('eol-soon')
-    expect(phpStatus('8.2', new Date('2027-01-01T00:00:01Z')).status).toBe('eol')
-  })
-
   it('offers no end-of-life versions except the current one', () => {
-    expect(phpOptions('8.4', now).map(o => o.value)).toEqual(['8.5', '8.4', '8.3', '8.2'])
-    expect(phpOptions('8.1', now).map(o => o.value)).toContain('8.1')
-    expect(phpOptions('8.4', now).find(o => o.value === '8.4')?.label).toContain('current')
+    expect(phpOptions('8.4', versions).map(o => o.value)).toEqual(['8.5', '8.4', '8.3', '8.2'])
+    expect(phpOptions('8.1', versions).map(o => o.value)).toContain('8.1')
+    expect(phpOptions('8.4', versions).find(o => o.value === '8.4')?.label).toContain('current')
+    expect(phpOptions('8.4').map(o => o.value)).toEqual(['8.4'])
   })
 })
 
@@ -121,7 +130,7 @@ function panel(over: Record<string, unknown> = {}) {
         status: 'running', php_version: '8.4', resources: limits, maintenance: false,
         preview_protection: { enabled: false, username: null }, preview_domain: 'a.preview.example',
       },
-      canUpdate: true, canMaintain: true, canPurge: true, ...fns, ...over,
+      canUpdate: true, canMaintain: true, canPurge: true, phpVersions: versions, ...fns, ...over,
     },
     global: { stubs: { ...uiStubs, ProblemAlert } },
   })

@@ -83,6 +83,7 @@ var operationActions = map[string]authz.Action{
 	// releases.
 	"getImageRollout":    authz.ViewSites,
 	"getPlatform":        authz.ViewSites,
+	"listPHPVersions":    authz.ViewSites,
 	"resumeImageRollout": authz.ApproveCoreUpdate,
 
 	"listJobs": authz.ViewJobs,

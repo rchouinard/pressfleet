@@ -612,6 +612,30 @@ func (e MetricUnit) Valid() bool {
 	}
 }
 
+// Defines values for PHPVersionInfoStatus.
+const (
+	PHPVersionInfoStatusActive       PHPVersionInfoStatus = "active"
+	PHPVersionInfoStatusEol          PHPVersionInfoStatus = "eol"
+	PHPVersionInfoStatusEolSoon      PHPVersionInfoStatus = "eol-soon"
+	PHPVersionInfoStatusSecurityOnly PHPVersionInfoStatus = "security-only"
+)
+
+// Valid indicates whether the value is a known member of the PHPVersionInfoStatus enum.
+func (e PHPVersionInfoStatus) Valid() bool {
+	switch e {
+	case PHPVersionInfoStatusActive:
+		return true
+	case PHPVersionInfoStatusEol:
+		return true
+	case PHPVersionInfoStatusEolSoon:
+		return true
+	case PHPVersionInfoStatusSecurityOnly:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReadinessStatus.
 const (
 	ReadinessStatusOk          ReadinessStatus = "ok"
@@ -2464,6 +2488,43 @@ type NextCursor = string
 // Examples: 8.4
 type PHPVersion = string
 
+// PHPVersionCatalog defines model for PHPVersionCatalog.
+type PHPVersionCatalog struct {
+	// Default A PHP version the platform publishes site images for.
+	//
+	// Examples: 8.4
+	Default *PHPVersion `json:"default,omitempty"`
+
+	// Items Newest first.
+	Items []PHPVersionInfo `json:"items"`
+}
+
+// PHPVersionInfo defines model for PHPVersionInfo.
+type PHPVersionInfo struct {
+	// ActiveSupportEnds Last day of active support (bug fixes).
+	ActiveSupportEnds openapi_types.Date `json:"active_support_ends"`
+
+	// SecuritySupportEnds Last day of security support, the version's end of life.
+	SecuritySupportEnds openapi_types.Date `json:"security_support_ends"`
+
+	// Status Support status today. `active`: bug and security fixes.
+	// `security-only`: security fixes only. `eol-soon`: security fixes
+	// only, ending within 180 days. `eol`: no upstream support; no
+	// images are built, and sites can't be set to it.
+	Status PHPVersionInfoStatus `json:"status"`
+
+	// Version A PHP version the platform publishes site images for.
+	//
+	// Examples: 8.4
+	Version PHPVersion `json:"version"`
+}
+
+// PHPVersionInfoStatus Support status today. `active`: bug and security fixes.
+// `security-only`: security fixes only. `eol-soon`: security fixes
+// only, ending within 180 days. `eol`: no upstream support; no
+// images are built, and sites can't be set to it.
+type PHPVersionInfoStatus string
+
 // Password defines model for Password.
 type Password = string
 
@@ -4199,6 +4260,19 @@ type ClientInterface interface {
 	//
 	// Corresponds with DELETE /api/v1/auth/tokens/{token_id} (the `RevokeAPIToken` operationId).
 	RevokeAPIToken(ctx context.Context, tokenID TokenID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListPHPVersions List the PHP versions and their end-of-life dates
+	//
+	// Every PHP version in the platform's version manifest, newest first,
+	// with its upstream support status today and the last day of active
+	// and security support (the end of life). Versions past end of life
+	// stay listed so sites still on them can be flagged, but sites can't
+	// be set to them (`422`). `default` is the version new sites get when
+	// none is chosen; it is absent only if every version is past end of
+	// life.
+	//
+	// Corresponds with GET /api/v1/catalog/php-versions (the `ListPHPVersions` operationId).
+	ListPHPVersions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListClientGroups List client groups
 	//
@@ -6337,6 +6411,29 @@ func (c *Client) CreateAPIToken(ctx context.Context, body CreateAPITokenJSONRequ
 // Corresponds with DELETE /api/v1/auth/tokens/{token_id} (the `RevokeAPIToken` operationId).
 func (c *Client) RevokeAPIToken(ctx context.Context, tokenID TokenID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeAPITokenRequest(c.Server, tokenID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListPHPVersions List the PHP versions and their end-of-life dates
+//
+// Every PHP version in the platform's version manifest, newest first,
+// with its upstream support status today and the last day of active
+// and security support (the end of life). Versions past end of life
+// stay listed so sites still on them can be flagged, but sites can't
+// be set to them (`422`). `default` is the version new sites get when
+// none is chosen; it is absent only if every version is past end of
+// life.
+//
+// Corresponds with GET /api/v1/catalog/php-versions (the `ListPHPVersions` operationId).
+func (c *Client) ListPHPVersions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPHPVersionsRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -10067,6 +10164,33 @@ func NewRevokeAPITokenRequest(server string, tokenID TokenID) (*http.Request, er
 	return req, nil
 }
 
+// NewListPHPVersionsRequest constructs an http.Request for the ListPHPVersions method
+func NewListPHPVersionsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/catalog/php-versions")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListClientGroupsRequest constructs an http.Request for the ListClientGroups method
 func NewListClientGroupsRequest(server string, params *ListClientGroupsParams) (*http.Request, error) {
 	var err error
@@ -13779,6 +13903,21 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /api/v1/auth/tokens/{token_id} (the `RevokeAPIToken` operationId).
 	RevokeAPITokenWithResponse(ctx context.Context, tokenID TokenID, reqEditors ...RequestEditorFn) (*RevokeAPITokenResponse, error)
 
+	// ListPHPVersionsWithResponse List the PHP versions and their end-of-life dates
+	//
+	// Every PHP version in the platform's version manifest, newest first,
+	// with its upstream support status today and the last day of active
+	// and security support (the end of life). Versions past end of life
+	// stay listed so sites still on them can be flagged, but sites can't
+	// be set to them (`422`). `default` is the version new sites get when
+	// none is chosen; it is absent only if every version is past end of
+	// life.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/catalog/php-versions (the `ListPHPVersions` operationId).
+	ListPHPVersionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListPHPVersionsResponse, error)
+
 	// ListClientGroupsWithResponse List client groups
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -17256,6 +17395,68 @@ func (r RevokeAPITokenResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RevokeAPITokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListPHPVersionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PHPVersionCatalog
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListPHPVersionsResponse) GetJSON200() *PHPVersionCatalog {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListPHPVersionsResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListPHPVersionsResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListPHPVersionsResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListPHPVersionsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPHPVersionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPHPVersionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListPHPVersionsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -23092,6 +23293,27 @@ func (c *ClientWithResponses) RevokeAPITokenWithResponse(ctx context.Context, to
 	return ParseRevokeAPITokenResponse(rsp)
 }
 
+// ListPHPVersionsWithResponse List the PHP versions and their end-of-life dates
+//
+// Every PHP version in the platform's version manifest, newest first,
+// with its upstream support status today and the last day of active
+// and security support (the end of life). Versions past end of life
+// stay listed so sites still on them can be flagged, but sites can't
+// be set to them (`422`). `default` is the version new sites get when
+// none is chosen; it is absent only if every version is past end of
+// life.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/catalog/php-versions (the `ListPHPVersions` operationId).
+func (c *ClientWithResponses) ListPHPVersionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListPHPVersionsResponse, error) {
+	rsp, err := c.ListPHPVersions(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPHPVersionsResponse(rsp)
+}
+
 // ListClientGroupsWithResponse List client groups
 //
 // Returns a wrapper object for the known response body format(s).
@@ -26753,6 +26975,53 @@ func ParseRevokeAPITokenResponse(rsp *http.Response) (*RevokeAPITokenResponse, e
 			return nil, err
 		}
 		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListPHPVersionsResponse parses an HTTP response from a ListPHPVersionsWithResponse call
+func ParseListPHPVersionsResponse(rsp *http.Response) (*ListPHPVersionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPHPVersionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PHPVersionCatalog
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Error

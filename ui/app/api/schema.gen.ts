@@ -1700,6 +1700,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalog/php-versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the PHP versions and their end-of-life dates
+         * @description Every PHP version in the platform's version manifest, newest first,
+         *     with its upstream support status today and the last day of active
+         *     and security support (the end of life). Versions past end of life
+         *     stay listed so sites still on them can be flagged, but sites can't
+         *     be set to them (`422`). `default` is the version new sites get when
+         *     none is chosen; it is absent only if every version is past end of
+         *     life.
+         */
+        get: operations["listPHPVersions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/image-rollout": {
         parameters: {
             query?: never;
@@ -2891,6 +2917,32 @@ export interface components {
              * @example 2222
              */
             port: number;
+        };
+        PHPVersionCatalog: {
+            /** @description Newest first. */
+            items: components["schemas"]["PHPVersionInfo"][];
+            default?: components["schemas"]["PHPVersion"];
+        };
+        PHPVersionInfo: {
+            version: components["schemas"]["PHPVersion"];
+            /**
+             * @description Support status today. `active`: bug and security fixes.
+             *     `security-only`: security fixes only. `eol-soon`: security fixes
+             *     only, ending within 180 days. `eol`: no upstream support; no
+             *     images are built, and sites can't be set to it.
+             * @enum {string}
+             */
+            status: "active" | "security-only" | "eol-soon" | "eol";
+            /**
+             * Format: date
+             * @description Last day of active support (bug fixes).
+             */
+            active_support_ends: string;
+            /**
+             * Format: date
+             * @description Last day of security support, the version's end of life.
+             */
+            security_support_ends: string;
         };
         ImageRollout: {
             halted: boolean;
@@ -6034,6 +6086,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Platform"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listPHPVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The PHP versions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PHPVersionCatalog"];
                 };
             };
             401: components["responses"]["Unauthorized"];

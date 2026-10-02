@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
@@ -567,4 +568,14 @@ func (s *Service) finishFailedImageUpdate(ctx context.Context, r *jobs.Run) erro
 		return s.recordRolloutOutcome(ctx, r, imageRollout, p.Rollout, imageTarget(p.Images), "")
 	}
 	return s.recordRolloutOutcome(ctx, r, imageRollout, p.Rollout, imageTarget(p.Images), msg)
+}
+
+// PHPCatalog returns every PHP branch in the version manifest, newest first,
+// with the branch new sites default to ("" if all are past end of life), and
+// the time the statuses are computed at, so the API reports the same status
+// that site creation and updates enforce.
+func (s *Service) PHPCatalog() (versions []catalog.PHPVersion, defaultVersion string, now time.Time) {
+	now = s.now()
+	defaultVersion, _ = s.catalog.DefaultPHPVersion(now)
+	return s.catalog.PHPVersions(), defaultVersion, now
 }

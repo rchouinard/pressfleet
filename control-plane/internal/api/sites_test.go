@@ -40,6 +40,8 @@ var implementedSiteOps = map[string]bool{
 	"getCoreRollout":                true,
 	"resumeCoreRollout":             true,
 	"getImageRollout":               true,
+	"getPlatform":                   true,
+	"listPHPVersions":               true,
 	"resumeImageRollout":            true,
 	"listSites":                     true,
 	"createSite":                    true,

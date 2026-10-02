@@ -180,10 +180,10 @@ The site page's "Domains" section is one mount, `<SiteDomains :site @changed>`. 
 
 ## Site settings and core updates
 
-On the site page, after "Domains": `<SiteSettings :site @changed>` wraps `SiteSettingsPanel` (props and callbacks only, tested with `mount`) and `<SiteCoreCard :site @changed>` shows WordPress core. Logic is in `utils/site-settings.ts` and `utils/php.ts` (`tests/site-settings.test.ts`).
+On the site page, after "Domains": `<SiteSettings :site @changed>` wraps `SiteSettingsPanel` (props and callbacks only, tested with `mount`) and `<SiteCoreCard :site @changed>` shows WordPress core. Logic is in `utils/site-settings.ts` and `utils/php.ts`, which only maps the API's status to a badge and warning (`tests/site-settings.test.ts`).
 
 - **Roles and state**: PHP, limits and preview protection need `site.update`, maintenance `site.maintenance.set`, cache purge `site.cache.purge` (all operator); viewers see the values. While the site is provisioning, updating, deleting or failed the controls are replaced by the reason (the API answers `409`).
-- **PHP and EOL**: the API has no list of supported PHP versions, so `utils/php.ts` holds the support dates (copied from `images/manifest.json`; keep in step). A current version past end of life, or within 180 days of it, gets a warning with an icon and text. The selector never offers EOL versions (the server answers `422`); its `422` shows next to the field.
+- **PHP and EOL**: the versions, statuses and dates come from `GET /api/v1/catalog/php-versions` (`usePhpVersions`; nothing is copied into the UI). A current version past end of life, or within 180 days of it, gets a warning with an icon and text. The selector never offers EOL versions (the server answers `422`); its `422` shows next to the field.
 - **Limits**: validated like the spec (CPU number, reservation >= 32, limit >= 64 and >= reservation); only changed fields are sent (`PATCH /sites/{id}`).
 - **Jobs**: update, maintenance and purge answer `202`; the page toasts and its "Job progress" section follows the job.
 - **Preview password, once**: turning protection on for the first time (`preview_credentials` of the PATCH response) and "Generate a new password" (confirmed first; `POST /preview-password`) return the password. It is held in one ref while a non-dismissible dialog (`SitePreviewCredentials`) is open and dropped when the user confirms; never stored, in a URL or logged.

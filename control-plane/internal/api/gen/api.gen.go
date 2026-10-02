@@ -613,6 +613,30 @@ func (e MetricUnit) Valid() bool {
 	}
 }
 
+// Defines values for PHPVersionInfoStatus.
+const (
+	PHPVersionInfoStatusActive       PHPVersionInfoStatus = "active"
+	PHPVersionInfoStatusEol          PHPVersionInfoStatus = "eol"
+	PHPVersionInfoStatusEolSoon      PHPVersionInfoStatus = "eol-soon"
+	PHPVersionInfoStatusSecurityOnly PHPVersionInfoStatus = "security-only"
+)
+
+// Valid indicates whether the value is a known member of the PHPVersionInfoStatus enum.
+func (e PHPVersionInfoStatus) Valid() bool {
+	switch e {
+	case PHPVersionInfoStatusActive:
+		return true
+	case PHPVersionInfoStatusEol:
+		return true
+	case PHPVersionInfoStatusEolSoon:
+		return true
+	case PHPVersionInfoStatusSecurityOnly:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReadinessStatus.
 const (
 	ReadinessStatusOk          ReadinessStatus = "ok"
@@ -2465,6 +2489,43 @@ type NextCursor = string
 // Examples: 8.4
 type PHPVersion = string
 
+// PHPVersionCatalog defines model for PHPVersionCatalog.
+type PHPVersionCatalog struct {
+	// Default A PHP version the platform publishes site images for.
+	//
+	// Examples: 8.4
+	Default *PHPVersion `json:"default,omitempty"`
+
+	// Items Newest first.
+	Items []PHPVersionInfo `json:"items"`
+}
+
+// PHPVersionInfo defines model for PHPVersionInfo.
+type PHPVersionInfo struct {
+	// ActiveSupportEnds Last day of active support (bug fixes).
+	ActiveSupportEnds openapi_types.Date `json:"active_support_ends"`
+
+	// SecuritySupportEnds Last day of security support, the version's end of life.
+	SecuritySupportEnds openapi_types.Date `json:"security_support_ends"`
+
+	// Status Support status today. `active`: bug and security fixes.
+	// `security-only`: security fixes only. `eol-soon`: security fixes
+	// only, ending within 180 days. `eol`: no upstream support; no
+	// images are built, and sites can't be set to it.
+	Status PHPVersionInfoStatus `json:"status"`
+
+	// Version A PHP version the platform publishes site images for.
+	//
+	// Examples: 8.4
+	Version PHPVersion `json:"version"`
+}
+
+// PHPVersionInfoStatus Support status today. `active`: bug and security fixes.
+// `security-only`: security fixes only. `eol-soon`: security fixes
+// only, ending within 180 days. `eol`: no upstream support; no
+// images are built, and sites can't be set to it.
+type PHPVersionInfoStatus string
+
 // Password defines model for Password.
 type Password = string
 
@@ -3873,6 +3934,9 @@ type ServerInterface interface {
 	// RevokeAPIToken Revoke one of the current user's API tokens
 	// (DELETE /api/v1/auth/tokens/{token_id})
 	RevokeAPIToken(w http.ResponseWriter, r *http.Request, tokenID TokenID)
+	// ListPHPVersions List the PHP versions and their end-of-life dates
+	// (GET /api/v1/catalog/php-versions)
+	ListPHPVersions(w http.ResponseWriter, r *http.Request)
 	// ListClientGroups List client groups
 	// (GET /api/v1/client-groups)
 	ListClientGroups(w http.ResponseWriter, r *http.Request, params ListClientGroupsParams)
@@ -5051,6 +5115,20 @@ func (siw *ServerInterfaceWrapper) RevokeAPIToken(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.RevokeAPIToken(w, r, tokenID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListPHPVersions operation middleware
+func (siw *ServerInterfaceWrapper) ListPHPVersions(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPHPVersions(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7544,6 +7622,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/database/sessions", wrapper.CreateSiteDatabaseSession)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/sites/{site_id}/database/sessions/{session_id}", wrapper.EndSiteDatabaseSession)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/platform", wrapper.GetPlatform)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/catalog/php-versions", wrapper.ListPHPVersions)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/image-rollout", wrapper.GetImageRollout)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/image-rollout/resume", wrapper.ResumeImageRollout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs", wrapper.ListJobs)
@@ -10103,6 +10182,76 @@ type RevokeAPITokendefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response RevokeAPITokendefaultApplicationProblemPlusJSONResponse) VisitRevokeAPITokenResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPHPVersionsRequestObject struct {
+}
+
+type ListPHPVersionsResponseObject interface {
+	VisitListPHPVersionsResponse(w http.ResponseWriter) error
+}
+
+type ListPHPVersions200JSONResponse PHPVersionCatalog
+
+func (response ListPHPVersions200JSONResponse) VisitListPHPVersionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPHPVersions401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ListPHPVersions401ApplicationProblemPlusJSONResponse) VisitListPHPVersionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPHPVersions403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ListPHPVersions403ApplicationProblemPlusJSONResponse) VisitListPHPVersionsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPHPVersionsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ListPHPVersionsdefaultApplicationProblemPlusJSONResponse) VisitListPHPVersionsResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -17403,6 +17552,9 @@ type StrictServerInterface interface {
 	// RevokeAPIToken Revoke one of the current user's API tokens
 	// (DELETE /api/v1/auth/tokens/{token_id})
 	RevokeAPIToken(ctx context.Context, request RevokeAPITokenRequestObject) (RevokeAPITokenResponseObject, error)
+	// ListPHPVersions List the PHP versions and their end-of-life dates
+	// (GET /api/v1/catalog/php-versions)
+	ListPHPVersions(ctx context.Context, request ListPHPVersionsRequestObject) (ListPHPVersionsResponseObject, error)
 	// ListClientGroups List client groups
 	// (GET /api/v1/client-groups)
 	ListClientGroups(ctx context.Context, request ListClientGroupsRequestObject) (ListClientGroupsResponseObject, error)
@@ -18352,6 +18504,30 @@ func (sh *strictHandler) RevokeAPIToken(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RevokeAPITokenResponseObject); ok {
 		if err := validResponse.VisitRevokeAPITokenResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListPHPVersions operation middleware
+func (sh *strictHandler) ListPHPVersions(w http.ResponseWriter, r *http.Request) {
+	var request ListPHPVersionsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListPHPVersions(ctx, request.(ListPHPVersionsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListPHPVersions")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListPHPVersionsResponseObject); ok {
+		if err := validResponse.VisitListPHPVersionsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

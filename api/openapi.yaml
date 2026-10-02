@@ -2793,6 +2793,33 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/catalog/php-versions:
+    get:
+      operationId: listPHPVersions
+      tags: [sites]
+      summary: List the PHP versions and their end-of-life dates
+      description: |
+        Every PHP version in the platform's version manifest, newest first,
+        with its upstream support status today and the last day of active
+        and security support (the end of life). Versions past end of life
+        stay listed so sites still on them can be flagged, but sites can't
+        be set to them (`422`). `default` is the version new sites get when
+        none is chosen; it is absent only if every version is past end of
+        life.
+      responses:
+        "200":
+          description: The PHP versions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PHPVersionCatalog"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/image-rollout:
     get:
       operationId: getImageRollout
@@ -5141,6 +5168,42 @@ components:
           type: integer
           description: The port the platform publishes the gateway on (`sftp.port`).
           example: 2222
+
+    PHPVersionCatalog:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          description: Newest first.
+          items:
+            $ref: "#/components/schemas/PHPVersionInfo"
+        default:
+          $ref: "#/components/schemas/PHPVersion"
+
+    PHPVersionInfo:
+      type: object
+      required: [version, status, active_support_ends, security_support_ends]
+      properties:
+        version:
+          $ref: "#/components/schemas/PHPVersion"
+        status:
+          type: string
+          description: |
+            Support status today. `active`: bug and security fixes.
+            `security-only`: security fixes only. `eol-soon`: security fixes
+            only, ending within 180 days. `eol`: no upstream support; no
+            images are built, and sites can't be set to it.
+          enum: [active, security-only, eol-soon, eol]
+        active_support_ends:
+          type: string
+          format: date
+          description: Last day of active support (bug fixes).
+        security_support_ends:
+          type: string
+          format: date
+          description: Last day of security support, the version's end of life.
+
     ImageRollout:
       type: object
       required: [halted, consecutive_failures, max_failures, images, failures]

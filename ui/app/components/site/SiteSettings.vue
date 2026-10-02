@@ -26,6 +26,7 @@ function close() {
   credentials.value = undefined
 }
 
+const phpVersions = usePhpVersions()
 const path = computed(() => ({ site_id: props.site.id }))
 
 async function update(body: SiteUpdate) {
@@ -60,6 +61,7 @@ async function regeneratePassword() {
     :can-update="can('site.update')"
     :can-maintain="can('site.maintenance.set')"
     :can-purge="can('site.cache.purge')"
+    :php-versions="phpVersions"
     :update="update"
     :set-maintenance="setMaintenance"
     :purge-cache="purgeCache"
