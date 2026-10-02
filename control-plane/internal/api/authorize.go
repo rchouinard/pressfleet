@@ -98,6 +98,7 @@ var operationActions = map[string]authz.Action{
 	"getMetricCatalog":          authz.ViewMonitoring,
 	"queryPlatformMetrics":      authz.ViewMonitoring,
 	"getPlatformMetricsSummary": authz.ViewMonitoring,
+	"getPlatformCapacity":       authz.ViewMonitoring,
 	"querySiteMetrics":          authz.ViewMonitoring,
 	"getSiteMetricsSummary":     authz.ViewMonitoring,
 

@@ -505,6 +505,23 @@ func (r Sites) ListIDs(ctx context.Context, except ...SiteStatus) ([]string, err
 	return ids, nil
 }
 
+// MemoryReservations returns the memory reserved, in MiB, by the sites whose
+// status is not one of except, and how many sites that is. The sum is done
+// in the database so callers need not page through every site.
+func (r Sites) MemoryReservations(ctx context.Context, except ...SiteStatus) (totalMB int64, count int, err error) {
+	query, args := "SELECT COALESCE(SUM(memory_reservation_mb), 0), COUNT(*) FROM sites", []any{}
+	if len(except) > 0 {
+		query += " WHERE status NOT IN (" + placeholders(len(except)) + ")"
+		for _, s := range except {
+			args = append(args, string(s))
+		}
+	}
+	if err := r.q.QueryRowContext(ctx, query, args...).Scan(&totalMB, &count); err != nil {
+		return 0, 0, fmt.Errorf("sum memory reservations: %w", err)
+	}
+	return totalMB, count, nil
+}
+
 // SetStatus sets the site's status and status message. If from is given,
 // only a site whose current status is one of them changes, so a job can't
 // overwrite a status another request has set since. It reports whether the

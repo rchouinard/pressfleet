@@ -3,39 +3,7 @@ type MetricSummaryResult = components['schemas']['MetricSummaryResult']
 
 export type Readiness = components['schemas']['Readiness']
 export type ReadinessCheck = components['schemas']['ReadinessCheck']
-type Site = components['schemas']['Site']
-
-const MiB = 1024 * 1024
-
-/** Share of host memory the reservations may reach before the overview calls it close (design doc §4.1). */
-export const reservationCautionRatio = 0.9
-
-/**
- * Sites whose containers hold their memory reservation. A stopped site's
- * containers are down and a site being deleted is going away; a failed site
- * may be half-built, so it is counted too, which errs toward warning early.
- */
-export function holdsReservation(site: Pick<Site, 'status'>): boolean {
-  return site.status !== 'stopped' && site.status !== 'deleting'
-}
-
-export interface Reservations {
-  /** Total reserved by counted sites, in MiB. */
-  reservedMb: number
-  /** Number of sites counted. */
-  sites: number
-}
-
-export function totalReservations(sites: readonly Pick<Site, 'status' | 'resources'>[]): Reservations {
-  let reservedMb = 0
-  let counted = 0
-  for (const s of sites) {
-    if (!holdsReservation(s)) continue
-    reservedMb += s.resources.memory_reservation_mb
-    counted++
-  }
-  return { reservedMb, sites: counted }
-}
+export type PlatformCapacity = components['schemas']['PlatformCapacity']
 
 /** The latest value of one label combination of a summary metric, e.g. `host_memory` type=total. */
 export function summaryValue(
@@ -48,7 +16,7 @@ export function summaryValue(
   return v?.value
 }
 
-export type CapacityLevel = 'ok' | 'caution' | 'exceeded' | 'unknown'
+export type CapacityLevel = PlatformCapacity['level']
 
 export interface CapacityAssessment {
   level: CapacityLevel
@@ -67,48 +35,39 @@ export function formatMb(mb: number): string {
 }
 
 /**
- * Compares reservations with host memory. The design doc says reservations
- * must not exceed host memory and that the dashboard warns when they do; a
- * caution at 90% gives operators room to act first. Without a host memory
- * metric (no collector data yet) the level is `unknown`, never `ok`.
+ * Words for the capacity the API reports (`GET /api/v1/platform/capacity`).
+ * The server decides which sites count and where the caution and error
+ * thresholds are; this only phrases the level it returns.
  */
-export function assessCapacity(reservedMb: number, hostTotalBytes: number | undefined): CapacityAssessment {
-  if (hostTotalBytes === undefined || !Number.isFinite(hostTotalBytes) || hostTotalBytes <= 0) {
+export function assessCapacity(c: PlatformCapacity): CapacityAssessment {
+  const reservedMb = c.reserved_memory_mb
+  const hostMb = c.host_memory_mb ?? undefined
+  const ratio = c.ratio ?? undefined
+  const base = { level: c.level, reservedMb, hostMb, ratio }
+  if (hostMb === undefined || ratio === undefined) {
     return {
+      ...base,
       level: 'unknown',
-      reservedMb,
-      hostMb: undefined,
-      ratio: undefined,
       message: `${formatMb(reservedMb)} is reserved by sites, but the host's memory is not known yet, so it can't be compared.`,
     }
   }
-  const hostMb = hostTotalBytes / MiB
-  const ratio = reservedMb / hostMb
   const pct = `${Math.round(ratio * 100)}%`
-  if (reservedMb > hostMb) {
-    return {
-      level: 'exceeded',
-      reservedMb,
-      hostMb,
-      ratio,
-      message: `Site memory reservations (${formatMb(reservedMb)}) exceed the host's memory (${formatMb(hostMb)}). Stop or delete sites, lower their reservations, or add memory.`,
-    }
-  }
-  if (ratio >= reservationCautionRatio) {
-    return {
-      level: 'caution',
-      reservedMb,
-      hostMb,
-      ratio,
-      message: `Site memory reservations (${formatMb(reservedMb)}) use ${pct} of the host's memory (${formatMb(hostMb)}). Little room is left for new sites.`,
-    }
-  }
-  return {
-    level: 'ok',
-    reservedMb,
-    hostMb,
-    ratio,
-    message: `Site memory reservations (${formatMb(reservedMb)}) use ${pct} of the host's memory (${formatMb(hostMb)}).`,
+  switch (c.level) {
+    case 'exceeded':
+      return {
+        ...base,
+        message: `Site memory reservations (${formatMb(reservedMb)}) exceed the host's memory (${formatMb(hostMb)}). Stop or delete sites, lower their reservations, or add memory.`,
+      }
+    case 'caution':
+      return {
+        ...base,
+        message: `Site memory reservations (${formatMb(reservedMb)}) use ${pct} of the host's memory (${formatMb(hostMb)}). Little room is left for new sites.`,
+      }
+    default:
+      return {
+        ...base,
+        message: `Site memory reservations (${formatMb(reservedMb)}) use ${pct} of the host's memory (${formatMb(hostMb)}).`,
+      }
   }
 }
 

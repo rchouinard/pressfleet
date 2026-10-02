@@ -1784,6 +1784,33 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/platform/capacity:
+    get:
+      operationId: getPlatformCapacity
+      tags: [metrics]
+      summary: Host memory capacity and site memory reservations
+      description: |
+        The memory the sites reserve, counted from every site that is not
+        stopped or deleting (a failed site may be half-built, so it counts),
+        against the host's memory (design doc §4.1). `level` applies the
+        platform's thresholds: `caution` from 90% of host memory, `exceeded`
+        above 100%. `unknown` means the host's memory is not known yet (the
+        metrics store has no data), so the reservations can't be compared;
+        the request still succeeds.
+      responses:
+        "200":
+          description: The capacity.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformCapacity"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/sites/{site_id}/metrics:
     parameters:
       - $ref: "#/components/parameters/SiteID"
@@ -4562,6 +4589,32 @@ components:
           description: Empty while the metric has no data.
           items:
             $ref: "#/components/schemas/MetricValue"
+
+    PlatformCapacity:
+      type: object
+      required: [reserved_memory_mb, counted_sites, host_memory_mb, ratio, level]
+      properties:
+        reserved_memory_mb:
+          type: integer
+          format: int64
+          description: Memory reserved by the counted sites, in MiB.
+        counted_sites:
+          type: integer
+          description: Number of sites counted, those not stopped or deleting.
+        host_memory_mb:
+          type: [number, "null"]
+          format: double
+          description: The host's memory in MiB; null when not known yet.
+        ratio:
+          type: [number, "null"]
+          format: double
+          description: Reserved share of host memory (1 = all of it); null when the host's memory is not known.
+        level:
+          type: string
+          enum: [ok, caution, exceeded, unknown]
+          description: |
+            `caution` from 90% of host memory, `exceeded` above 100%,
+            `unknown` when the host's memory is not known.
 
     MetricsSummary:
       type: object

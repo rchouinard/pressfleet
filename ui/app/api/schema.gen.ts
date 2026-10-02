@@ -1012,6 +1012,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/platform/capacity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Host memory capacity and site memory reservations
+         * @description The memory the sites reserve, counted from every site that is not
+         *     stopped or deleting (a failed site may be half-built, so it counts),
+         *     against the host's memory (design doc §4.1). `level` applies the
+         *     platform's thresholds: `caution` from 90% of host memory, `exceeded`
+         *     above 100%. `unknown` means the host's memory is not known yet (the
+         *     metrics store has no data), so the reservations can't be compared;
+         *     the request still succeeds.
+         */
+        get: operations["getPlatformCapacity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sites/{site_id}/metrics": {
         parameters: {
             query?: never;
@@ -2559,6 +2585,31 @@ export interface components {
             kind: components["schemas"]["MetricKind"];
             /** @description Empty while the metric has no data. */
             values: components["schemas"]["MetricValue"][];
+        };
+        PlatformCapacity: {
+            /**
+             * Format: int64
+             * @description Memory reserved by the counted sites, in MiB.
+             */
+            reserved_memory_mb: number;
+            /** @description Number of sites counted, those not stopped or deleting. */
+            counted_sites: number;
+            /**
+             * Format: double
+             * @description The host's memory in MiB; null when not known yet.
+             */
+            host_memory_mb: number | null;
+            /**
+             * Format: double
+             * @description Reserved share of host memory (1 = all of it); null when the host's memory is not known.
+             */
+            ratio: number | null;
+            /**
+             * @description `caution` from 90% of host memory, `exceeded` above 100%,
+             *     `unknown` when the host's memory is not known.
+             * @enum {string}
+             */
+            level: "ok" | "caution" | "exceeded" | "unknown";
         };
         MetricsSummary: {
             time: components["schemas"]["Timestamp"];
@@ -5313,6 +5364,29 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             503: components["responses"]["MetricsUnavailable"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getPlatformCapacity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The capacity. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformCapacity"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             default: components["responses"]["Error"];
         };
     };

@@ -5,10 +5,9 @@
 // doesn't blank the page.
 import { formatValue } from '../utils/metrics'
 import {
-  assessCapacity, fetchReadiness, overviewMetricIds, summaryValue, totalReservations, worstDisk,
+  assessCapacity, fetchReadiness, overviewMetricIds, summaryValue, worstDisk,
 } from '../utils/overview'
 import { toApiError } from '../utils/api-error'
-import type { components } from '../api/schema.gen'
 
 definePageMeta({ requires: 'monitoring.view' })
 useHead({ title: 'Platform overview' })
@@ -27,19 +26,13 @@ const { data: metrics, status: metricsStatus, refresh: reloadMetrics } = useAsyn
   }
 })
 
-// Reservations need every site, not one page.
-const { data: reserved, status: reservedStatus, refresh: reloadReserved } = useAsyncData('overview-reservations', async () => {
+// One request: the server counts the reservations and applies the thresholds.
+const { data: capacity, status: capacityStatus, refresh: reloadCapacity } = useAsyncData('overview-capacity', async () => {
   try {
-    const sites: components['schemas']['Site'][] = []
-    let cursor: string | undefined
-    do {
-      const { data } = await api.GET('/api/v1/sites', { params: { query: { limit: 200, cursor } } })
-      sites.push(...(data?.items ?? []))
-      cursor = data?.next_cursor ?? undefined
-    } while (cursor)
-    return { ...totalReservations(sites), error: null }
+    const { data } = await api.GET('/api/v1/platform/capacity')
+    return { capacity: data, error: null }
   } catch (e) {
-    return { reservedMb: 0, sites: 0, error: toApiError(e) }
+    return { capacity: undefined, error: toApiError(e) }
   }
 })
 
@@ -52,9 +45,7 @@ const { data: ready, status: readyStatus, refresh: reloadReady } = useAsyncData(
 })
 
 const assessment = computed(() =>
-  reserved.value && !reserved.value.error
-    ? assessCapacity(reserved.value.reservedMb, summaryValue(metrics.value?.metrics ?? [], 'host_memory', { type: 'total' }))
-    : undefined,
+  capacity.value?.capacity ? assessCapacity(capacity.value.capacity) : undefined,
 )
 
 const figures = computed(() => {
@@ -78,10 +69,10 @@ const figures = computed(() => {
 
 function refreshAll() {
   void reloadMetrics()
-  void reloadReserved()
+  void reloadCapacity()
   void reloadReady()
 }
-const busy = computed(() => [metricsStatus.value, reservedStatus.value, readyStatus.value].includes('pending'))
+const busy = computed(() => [metricsStatus.value, capacityStatus.value, readyStatus.value].includes('pending'))
 </script>
 
 <template>
@@ -98,9 +89,9 @@ const busy = computed(() => [metricsStatus.value, reservedStatus.value, readySta
 
     <section aria-labelledby="capacity-heading" class="space-y-3">
       <h2 id="capacity-heading" class="font-medium">Capacity</h2>
-      <ProblemAlert v-if="reserved?.error" :error="reserved.error" />
+      <ProblemAlert v-if="capacity?.error" :error="capacity.error" />
       <p v-else-if="!assessment" class="text-sm text-muted" role="status">Loading reservations...</p>
-      <CapacityWarning v-else :assessment="assessment" :sites="reserved?.sites ?? 0" />
+      <CapacityWarning v-else :assessment="assessment" :sites="capacity?.capacity?.counted_sites ?? 0" />
 
       <ProblemAlert v-if="metrics?.error" :error="metrics.error" />
       <p v-else-if="!metrics" class="text-sm text-muted" role="status">Loading host figures...</p>

@@ -332,3 +332,32 @@ func TestSitePreviewPassword(t *testing.T) {
 		}
 	})
 }
+
+func TestSitesMemoryReservations(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		group := createGroup(ctx, t, db)
+		sites := store.NewSites(db)
+		if mb, n, err := sites.MemoryReservations(ctx); err != nil || mb != 0 || n != 0 {
+			t.Fatalf("empty = %d, %d, %v", mb, n, err)
+		}
+		for i, c := range []struct {
+			status store.SiteStatus
+			mb     int
+		}{
+			{store.SiteRunning, 128}, {store.SiteFailed, 256}, {store.SiteStopped, 512}, {store.SiteDeleting, 1024},
+		} {
+			s := newTestSite(group, "mem"+string(rune('a'+i)), 21000+i)
+			s.Status, s.MemoryReservationMB = c.status, c.mb
+			if err := sites.Create(ctx, s); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if mb, n, err := sites.MemoryReservations(ctx); err != nil || mb != 1920 || n != 4 {
+			t.Errorf("all = %d, %d, %v", mb, n, err)
+		}
+		if mb, n, err := sites.MemoryReservations(ctx, store.SiteStopped, store.SiteDeleting); err != nil || mb != 384 || n != 2 {
+			t.Errorf("except stopped and deleting = %d, %d, %v", mb, n, err)
+		}
+	})
+}

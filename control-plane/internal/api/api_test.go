@@ -254,7 +254,7 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 			req.authed = true
 			w = do(t, h, req)
 			switch {
-			case op.ID == "getHealth" || op.ID == "getReadiness" || op.ID == "listJobs" || op.ID == "listAuditEvents":
+			case op.ID == "getHealth" || op.ID == "getReadiness" || op.ID == "listJobs" || op.ID == "listAuditEvents" || op.ID == "getPlatformCapacity":
 				if w.Code != http.StatusOK {
 					t.Errorf("status = %d, want 200; body: %s", w.Code, w.Body)
 				}

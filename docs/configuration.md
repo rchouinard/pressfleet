@@ -383,6 +383,7 @@ The dashboard reads metrics through curated, read-only endpoints (design doc §7
 | `GET /api/v1/sites/{site_id}/metrics/summary` | The current value of a site's metrics (instant queries), cheap enough for the site list. |
 | `GET /api/v1/metrics/platform` | Time series of platform metrics and per-client-group metrics; `client_group_id` narrows the latter. |
 | `GET /api/v1/metrics/platform/summary` | Current values of platform metrics, for the overview. |
+| `GET /api/v1/platform/capacity` | Memory reserved by sites that are not stopped or deleting, the host's memory, their ratio, and the level (`ok`, `caution` from 90%, `exceeded` above 100%, `unknown` without host memory data). |
 
 Select metrics with repeatable `metric` (ids from the catalog) and `group` parameters; a range request needs at least one, and a summary without any returns a small default set. A range request takes `start`, `end`, and `step` (seconds): by default the last hour with a step chosen to give about 300 points. `start` and `end` are aligned down to the step, `end` is capped at now, and the response reports what was queried. A request may select at most 20 metrics; ranges are limited to 366 days, steps to at least 15 seconds and at most 1500 points per series. Violations are `400` problems. A metric that has no data yet is returned with an empty `series` (or `values`) list, not an error. Every query of a site endpoint selects on the `site_id` in the path.
 

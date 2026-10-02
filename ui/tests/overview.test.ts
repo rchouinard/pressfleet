@@ -1,41 +1,36 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import {
-  assessCapacity, fetchReadiness, platformHealth, summaryValue, totalReservations, worstDisk, type Readiness,
+  assessCapacity, fetchReadiness, platformHealth, summaryValue, worstDisk, type PlatformCapacity, type Readiness,
 } from '../app/utils/overview'
 import CapacityWarning from '../app/components/overview/CapacityWarning.vue'
 import ReadinessList from '../app/components/overview/ReadinessList.vue'
 import { uiStubs } from './stubs'
 
-const GiB = 1024 ** 3
-const res = (mb: number) => ({ cpu: '1.0', memory_reservation_mb: mb, memory_limit_mb: 512 })
-
-describe('totalReservations', () => {
-  it('skips stopped and deleting sites', () => {
-    const r = totalReservations([
-      { status: 'running', resources: res(128) },
-      { status: 'updating', resources: res(256) },
-      { status: 'stopped', resources: res(512) },
-      { status: 'deleting', resources: res(512) },
-    ])
-    expect(r).toEqual({ reservedMb: 384, sites: 2 })
-  })
+const cap = (reserved: number, level: PlatformCapacity['level'], host: number | null = 8192): PlatformCapacity => ({
+  reserved_memory_mb: reserved,
+  counted_sites: 3,
+  host_memory_mb: host,
+  ratio: host === null ? null : reserved / host,
+  level,
 })
 
 describe('assessCapacity', () => {
-  it.each([
-    [1024, 8 * GiB, 'ok'],
-    [7400, 8 * GiB, 'caution'],
-    [8192, 8 * GiB, 'caution'],
-    [8193, 8 * GiB, 'exceeded'],
-    [100, undefined, 'unknown'],
-    [100, 0, 'unknown'],
-  ] as const)('%d MiB on %s bytes is %s', (mb, host, level) => {
-    expect(assessCapacity(mb, host).level).toBe(level)
+  it('keeps the level the server reports', () => {
+    expect(assessCapacity(cap(1024, 'ok')).level).toBe('ok')
+    expect(assessCapacity(cap(7400, 'caution')).level).toBe('caution')
+    expect(assessCapacity(cap(9000, 'exceeded')).level).toBe('exceeded')
+  })
+
+  it('is unknown without the host memory', () => {
+    const a = assessCapacity(cap(100, 'unknown', null))
+    expect(a.level).toBe('unknown')
+    expect(a.hostMb).toBeUndefined()
+    expect(a.message).toContain('not known')
   })
 
   it('names both sizes in the warning', () => {
-    const a = assessCapacity(9216, 8 * GiB)
+    const a = assessCapacity(cap(9216, 'exceeded'))
     expect(a.message).toContain('9 GiB')
     expect(a.message).toContain('8 GiB')
   })
@@ -89,7 +84,7 @@ describe('platformHealth and fetchReadiness', () => {
 describe('components', () => {
   it('shows the over-commit warning as an alert', () => {
     const w = mount(CapacityWarning, {
-      props: { assessment: assessCapacity(9000, 8 * GiB), sites: 3 },
+      props: { assessment: assessCapacity(cap(9000, 'exceeded')), sites: 3 },
       global: { stubs: uiStubs },
     })
     expect(w.attributes('role')).toBe('alert')

@@ -636,6 +636,30 @@ func (e PHPVersionInfoStatus) Valid() bool {
 	}
 }
 
+// Defines values for PlatformCapacityLevel.
+const (
+	PlatformCapacityLevelCaution  PlatformCapacityLevel = "caution"
+	PlatformCapacityLevelExceeded PlatformCapacityLevel = "exceeded"
+	PlatformCapacityLevelOk       PlatformCapacityLevel = "ok"
+	PlatformCapacityLevelUnknown  PlatformCapacityLevel = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the PlatformCapacityLevel enum.
+func (e PlatformCapacityLevel) Valid() bool {
+	switch e {
+	case PlatformCapacityLevelCaution:
+		return true
+	case PlatformCapacityLevelExceeded:
+		return true
+	case PlatformCapacityLevelOk:
+		return true
+	case PlatformCapacityLevelUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReadinessStatus.
 const (
 	ReadinessStatusOk          ReadinessStatus = "ok"
@@ -2540,6 +2564,29 @@ type Platform struct {
 	Sftp PlatformSftp `json:"sftp"`
 }
 
+// PlatformCapacity defines model for PlatformCapacity.
+type PlatformCapacity struct {
+	// CountedSites Number of sites counted, those not stopped or deleting.
+	CountedSites int `json:"counted_sites"`
+
+	// HostMemoryMb The host's memory in MiB; null when not known yet.
+	HostMemoryMb *float64 `json:"host_memory_mb"`
+
+	// Level `caution` from 90% of host memory, `exceeded` above 100%,
+	// `unknown` when the host's memory is not known.
+	Level PlatformCapacityLevel `json:"level"`
+
+	// Ratio Reserved share of host memory (1 = all of it); null when the host's memory is not known.
+	Ratio *float64 `json:"ratio"`
+
+	// ReservedMemoryMb Memory reserved by the counted sites, in MiB.
+	ReservedMemoryMb int64 `json:"reserved_memory_mb"`
+}
+
+// PlatformCapacityLevel `caution` from 90% of host memory, `exceeded` above 100%,
+// `unknown` when the host's memory is not known.
+type PlatformCapacityLevel string
+
 // PlatformSftp Where developers reach the SFTP gateway (design doc §5.8).
 type PlatformSftp struct {
 	// Enabled Whether the gateway runs. When false, `host` and `port` are still reported but nothing listens.
@@ -4443,6 +4490,19 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v1/platform (the `GetPlatform` operationId).
 	GetPlatform(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPlatformCapacity Host memory capacity and site memory reservations
+	//
+	// The memory the sites reserve, counted from every site that is not
+	// stopped or deleting (a failed site may be half-built, so it counts),
+	// against the host's memory (design doc §4.1). `level` applies the
+	// platform's thresholds: `caution` from 90% of host memory, `exceeded`
+	// above 100%. `unknown` means the host's memory is not known yet (the
+	// metrics store has no data), so the reservations can't be compared;
+	// the request still succeeds.
+	//
+	// Corresponds with GET /api/v1/platform/capacity (the `GetPlatformCapacity` operationId).
+	GetPlatformCapacity(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSites List sites
 	//
@@ -6804,6 +6864,29 @@ func (c *Client) GetPlatformMetricsSummary(ctx context.Context, params *GetPlatf
 // Corresponds with GET /api/v1/platform (the `GetPlatform` operationId).
 func (c *Client) GetPlatform(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetPlatformRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetPlatformCapacity Host memory capacity and site memory reservations
+//
+// The memory the sites reserve, counted from every site that is not
+// stopped or deleting (a failed site may be half-built, so it counts),
+// against the host's memory (design doc §4.1). `level` applies the
+// platform's thresholds: `caution` from 90% of host memory, `exceeded`
+// above 100%. `unknown` means the host's memory is not known yet (the
+// metrics store has no data), so the reservations can't be compared;
+// the request still succeeds.
+//
+// Corresponds with GET /api/v1/platform/capacity (the `GetPlatformCapacity` operationId).
+func (c *Client) GetPlatformCapacity(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPlatformCapacityRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -10983,6 +11066,33 @@ func NewGetPlatformRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewGetPlatformCapacityRequest constructs an http.Request for the GetPlatformCapacity method
+func NewGetPlatformCapacityRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/platform/capacity")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListSitesRequest constructs an http.Request for the ListSites method
 func NewListSitesRequest(server string, params *ListSitesParams) (*http.Request, error) {
 	var err error
@@ -14115,6 +14225,21 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/v1/platform (the `GetPlatform` operationId).
 	GetPlatformWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPlatformResponse, error)
+
+	// GetPlatformCapacityWithResponse Host memory capacity and site memory reservations
+	//
+	// The memory the sites reserve, counted from every site that is not
+	// stopped or deleting (a failed site may be half-built, so it counts),
+	// against the host's memory (design doc §4.1). `level` applies the
+	// platform's thresholds: `caution` from 90% of host memory, `exceeded`
+	// above 100%. `unknown` means the host's memory is not known yet (the
+	// metrics store has no data), so the reservations can't be compared;
+	// the request still succeeds.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/platform/capacity (the `GetPlatformCapacity` operationId).
+	GetPlatformCapacityWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPlatformCapacityResponse, error)
 
 	// ListSitesWithResponse List sites
 	//
@@ -18658,6 +18783,68 @@ func (r GetPlatformResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetPlatformResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPlatformCapacityResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PlatformCapacity
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetPlatformCapacityResponse) GetJSON200() *PlatformCapacity {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetPlatformCapacityResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetPlatformCapacityResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetPlatformCapacityResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetPlatformCapacityResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPlatformCapacityResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPlatformCapacityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPlatformCapacityResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -23632,6 +23819,27 @@ func (c *ClientWithResponses) GetPlatformWithResponse(ctx context.Context, reqEd
 	return ParseGetPlatformResponse(rsp)
 }
 
+// GetPlatformCapacityWithResponse Host memory capacity and site memory reservations
+//
+// The memory the sites reserve, counted from every site that is not
+// stopped or deleting (a failed site may be half-built, so it counts),
+// against the host's memory (design doc §4.1). `level` applies the
+// platform's thresholds: `caution` from 90% of host memory, `exceeded`
+// above 100%. `unknown` means the host's memory is not known yet (the
+// metrics store has no data), so the reservations can't be compared;
+// the request still succeeds.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/platform/capacity (the `GetPlatformCapacity` operationId).
+func (c *ClientWithResponses) GetPlatformCapacityWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetPlatformCapacityResponse, error) {
+	rsp, err := c.GetPlatformCapacity(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPlatformCapacityResponse(rsp)
+}
+
 // ListSitesWithResponse List sites
 //
 // Newest first. Listings come from the recorded state alone, so they
@@ -27959,6 +28167,53 @@ func ParseGetPlatformResponse(rsp *http.Response) (*GetPlatformResponse, error) 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest Platform
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPlatformCapacityResponse parses an HTTP response from a GetPlatformCapacityWithResponse call
+func ParseGetPlatformCapacityResponse(rsp *http.Response) (*GetPlatformCapacityResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPlatformCapacityResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PlatformCapacity
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

@@ -240,7 +240,7 @@ Site import, code deployment, SSH keys and database access (design doc §5.7, §
 `/overview` (any role, `monitoring.view`) shows host capacity, reservations against host memory, and platform health. Logic is in `utils/overview.ts` (tests in `tests/overview.test.ts`); each panel loads and fails independently.
 
 - **Capacity figures**: `GET /api/v1/metrics/platform/summary` with an explicit metric list (CPU, memory, fullest disk, MariaDB connections, Redis memory, job queue, job failure rate). Missing data shows as a dash, not an error.
-- **Reservations vs host memory** (design doc §4.1): the page pages through every site and sums `resources.memory_reservation_mb` of sites that are not `stopped` or `deleting`, then compares with the `host_memory` total. Over 100% is an error alert, 90% or more a caution; with no host memory data the result is "unknown", never "ok". There is no capacity endpoint, so the sum is computed in the browser.
+- **Reservations vs host memory** (design doc §4.1): one request, `GET /api/v1/platform/capacity`. The server sums `memory_reservation_mb` of sites that are not `stopped` or `deleting`, compares it with the host's memory, and reports the level (90% or more is `caution`, over 100% `exceeded`, no host memory data `unknown`, never `ok`). The thresholds live only on the server; `assessCapacity` just words the level.
 - **Platform health**: `/readyz` checks, read with plain `fetch` because the API client throws on the `503` that carries the failing checks.
 - **Doctor results**: the API has no endpoint for `pressfleet doctor` results, so the page says to run it on the host. Replace that panel when an endpoint exists.
 

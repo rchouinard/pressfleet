@@ -637,6 +637,30 @@ func (e PHPVersionInfoStatus) Valid() bool {
 	}
 }
 
+// Defines values for PlatformCapacityLevel.
+const (
+	PlatformCapacityLevelCaution  PlatformCapacityLevel = "caution"
+	PlatformCapacityLevelExceeded PlatformCapacityLevel = "exceeded"
+	PlatformCapacityLevelOk       PlatformCapacityLevel = "ok"
+	PlatformCapacityLevelUnknown  PlatformCapacityLevel = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the PlatformCapacityLevel enum.
+func (e PlatformCapacityLevel) Valid() bool {
+	switch e {
+	case PlatformCapacityLevelCaution:
+		return true
+	case PlatformCapacityLevelExceeded:
+		return true
+	case PlatformCapacityLevelOk:
+		return true
+	case PlatformCapacityLevelUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReadinessStatus.
 const (
 	ReadinessStatusOk          ReadinessStatus = "ok"
@@ -2541,6 +2565,29 @@ type Platform struct {
 	Sftp PlatformSftp `json:"sftp"`
 }
 
+// PlatformCapacity defines model for PlatformCapacity.
+type PlatformCapacity struct {
+	// CountedSites Number of sites counted, those not stopped or deleting.
+	CountedSites int `json:"counted_sites"`
+
+	// HostMemoryMb The host's memory in MiB; null when not known yet.
+	HostMemoryMb *float64 `json:"host_memory_mb"`
+
+	// Level `caution` from 90% of host memory, `exceeded` above 100%,
+	// `unknown` when the host's memory is not known.
+	Level PlatformCapacityLevel `json:"level"`
+
+	// Ratio Reserved share of host memory (1 = all of it); null when the host's memory is not known.
+	Ratio *float64 `json:"ratio"`
+
+	// ReservedMemoryMb Memory reserved by the counted sites, in MiB.
+	ReservedMemoryMb int64 `json:"reserved_memory_mb"`
+}
+
+// PlatformCapacityLevel `caution` from 90% of host memory, `exceeded` above 100%,
+// `unknown` when the host's memory is not known.
+type PlatformCapacityLevel string
+
 // PlatformSftp Where developers reach the SFTP gateway (design doc §5.8).
 type PlatformSftp struct {
 	// Enabled Whether the gateway runs. When false, `host` and `port` are still reported but nothing listens.
@@ -3988,6 +4035,9 @@ type ServerInterface interface {
 	// GetPlatform Get the platform's connection details
 	// (GET /api/v1/platform)
 	GetPlatform(w http.ResponseWriter, r *http.Request)
+	// GetPlatformCapacity Host memory capacity and site memory reservations
+	// (GET /api/v1/platform/capacity)
+	GetPlatformCapacity(w http.ResponseWriter, r *http.Request)
 	// ListSites List sites
 	// (GET /api/v1/sites)
 	ListSites(w http.ResponseWriter, r *http.Request, params ListSitesParams)
@@ -5671,6 +5721,20 @@ func (siw *ServerInterfaceWrapper) GetPlatform(w http.ResponseWriter, r *http.Re
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetPlatform(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPlatformCapacity operation middleware
+func (siw *ServerInterfaceWrapper) GetPlatformCapacity(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPlatformCapacity(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7596,6 +7660,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/metrics/catalog", wrapper.GetMetricCatalog)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/metrics/platform", wrapper.QueryPlatformMetrics)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/metrics/platform/summary", wrapper.GetPlatformMetricsSummary)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/platform/capacity", wrapper.GetPlatformCapacity)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/metrics", wrapper.QuerySiteMetrics)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/metrics/summary", wrapper.GetSiteMetricsSummary)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/backups", wrapper.ListSiteBackups)
@@ -11795,6 +11860,76 @@ type GetPlatformdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetPlatformdefaultApplicationProblemPlusJSONResponse) VisitGetPlatformResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformCapacityRequestObject struct {
+}
+
+type GetPlatformCapacityResponseObject interface {
+	VisitGetPlatformCapacityResponse(w http.ResponseWriter) error
+}
+
+type GetPlatformCapacity200JSONResponse PlatformCapacity
+
+func (response GetPlatformCapacity200JSONResponse) VisitGetPlatformCapacityResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformCapacity401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlatformCapacity401ApplicationProblemPlusJSONResponse) VisitGetPlatformCapacityResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformCapacity403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetPlatformCapacity403ApplicationProblemPlusJSONResponse) VisitGetPlatformCapacityResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPlatformCapacitydefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetPlatformCapacitydefaultApplicationProblemPlusJSONResponse) VisitGetPlatformCapacityResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -17606,6 +17741,9 @@ type StrictServerInterface interface {
 	// GetPlatform Get the platform's connection details
 	// (GET /api/v1/platform)
 	GetPlatform(ctx context.Context, request GetPlatformRequestObject) (GetPlatformResponseObject, error)
+	// GetPlatformCapacity Host memory capacity and site memory reservations
+	// (GET /api/v1/platform/capacity)
+	GetPlatformCapacity(ctx context.Context, request GetPlatformCapacityRequestObject) (GetPlatformCapacityResponseObject, error)
 	// ListSites List sites
 	// (GET /api/v1/sites)
 	ListSites(ctx context.Context, request ListSitesRequestObject) (ListSitesResponseObject, error)
@@ -18977,6 +19115,30 @@ func (sh *strictHandler) GetPlatform(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetPlatformResponseObject); ok {
 		if err := validResponse.VisitGetPlatformResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPlatformCapacity operation middleware
+func (sh *strictHandler) GetPlatformCapacity(w http.ResponseWriter, r *http.Request) {
+	var request GetPlatformCapacityRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPlatformCapacity(ctx, request.(GetPlatformCapacityRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPlatformCapacity")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPlatformCapacityResponseObject); ok {
+		if err := validResponse.VisitGetPlatformCapacityResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
