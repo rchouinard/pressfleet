@@ -38,6 +38,8 @@ type User struct {
 	ID string
 	// Email is normalized to lowercase by the caller; it is unique.
 	Email string
+	// DisplayName is optional; empty means the user hasn't set one.
+	DisplayName string
 	// PasswordHash is the encoded argon2id hash (package auth). It isn't
 	// the password, but it would allow an offline guessing attack, so it is
 	// kept out of logs like a secret.
@@ -63,14 +65,14 @@ func NewUsers(q Querier) Users {
 	return Users{q: q}
 }
 
-const userColumns = "id, email, password_hash, role, disabled_at, last_login_at, created_at, updated_at"
+const userColumns = "id, email, display_name, password_hash, role, disabled_at, last_login_at, created_at, updated_at"
 
 func scanUser(s scanner) (User, error) {
 	var (
 		u                 User
 		disabled, lastLog sql.NullTime
 	)
-	err := s.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &disabled, &lastLog, &u.CreatedAt, &u.UpdatedAt)
+	err := s.Scan(&u.ID, &u.Email, &u.DisplayName, &u.PasswordHash, &u.Role, &disabled, &lastLog, &u.CreatedAt, &u.UpdatedAt)
 	u.DisabledAt, u.LastLoginAt = timePtr(disabled), timePtr(lastLog)
 	return u, err
 }
@@ -102,8 +104,8 @@ func (r Users) Create(ctx context.Context, u *User) error {
 	created.UpdatedAt = created.CreatedAt
 	created.DisabledAt, created.LastLoginAt = utcPtr(created.DisabledAt), utcPtr(created.LastLoginAt)
 	_, err := r.q.ExecContext(ctx,
-		"INSERT INTO users ("+userColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		created.ID, created.Email, created.PasswordHash.Reveal(), string(created.Role),
+		"INSERT INTO users ("+userColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		created.ID, created.Email, created.DisplayName, created.PasswordHash.Reveal(), string(created.Role),
 		created.DisabledAt, created.LastLoginAt, created.CreatedAt, created.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create user: %w", err)
@@ -174,7 +176,7 @@ func (r Users) List(ctx context.Context, f UserFilter) ([]User, error) {
 	return users, nil
 }
 
-// Update saves u's email, password hash, role, and disabled state, and sets
+// Update saves u's email, display name, password hash, role, and disabled state, and sets
 // UpdatedAt to at. It returns ErrNotFound if u doesn't exist and ErrConflict
 // if the new email is taken.
 func (r Users) Update(ctx context.Context, u *User, at time.Time) error {
@@ -188,8 +190,8 @@ func (r Users) Update(ctx context.Context, u *User, at time.Time) error {
 		lastLogin sql.NullTime
 	)
 	err := r.q.QueryRowContext(ctx,
-		"UPDATE users SET email = ?, password_hash = ?, role = ?, disabled_at = ?, updated_at = ? WHERE id = ? RETURNING created_at, last_login_at",
-		u.Email, u.PasswordHash.Reveal(), string(u.Role), disabled, at, u.ID).Scan(&createdAt, &lastLogin)
+		"UPDATE users SET email = ?, display_name = ?, password_hash = ?, role = ?, disabled_at = ?, updated_at = ? WHERE id = ? RETURNING created_at, last_login_at",
+		u.Email, u.DisplayName, u.PasswordHash.Reveal(), string(u.Role), disabled, at, u.ID).Scan(&createdAt, &lastLogin)
 	if err != nil {
 		return fmt.Errorf("update user %s: %w", u.ID, err)
 	}

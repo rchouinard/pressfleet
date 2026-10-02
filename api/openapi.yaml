@@ -247,6 +247,35 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+    patch:
+      operationId: updateCurrentUser
+      tags: [auth]
+      summary: Update the authenticated user's profile
+      description: Currently only the display name. Send an empty string to clear it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileUpdate"
+      responses:
+        "200":
+          description: The updated user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/auth/password:
     post:
       operationId: changePassword
@@ -4084,12 +4113,14 @@ components:
 
     User:
       type: object
-      required: [id, email, role, disabled, created_at, updated_at]
+      required: [id, email, display_name, role, disabled, created_at, updated_at]
       properties:
         id:
           $ref: "#/components/schemas/ID"
         email:
           $ref: "#/components/schemas/Email"
+        display_name:
+          $ref: "#/components/schemas/DisplayName"
         role:
           $ref: "#/components/schemas/Role"
         disabled:
@@ -4146,6 +4177,8 @@ components:
       properties:
         email:
           $ref: "#/components/schemas/Email"
+        display_name:
+          $ref: "#/components/schemas/DisplayName"
         password:
           $ref: "#/components/schemas/Password"
         role:
@@ -4159,12 +4192,30 @@ components:
       properties:
         email:
           $ref: "#/components/schemas/Email"
+        display_name:
+          $ref: "#/components/schemas/DisplayName"
         password:
           $ref: "#/components/schemas/Password"
         role:
           $ref: "#/components/schemas/Role"
         disabled:
           type: boolean
+
+    DisplayName:
+      type: string
+      maxLength: 100
+      description: |
+        A name to show instead of the email address. Empty if the user hasn't
+        set one; clients then fall back to the email.
+      examples: ["Alex Rivera"]
+
+    ProfileUpdate:
+      type: object
+      required: [display_name]
+      additionalProperties: false
+      properties:
+        display_name:
+          $ref: "#/components/schemas/DisplayName"
 
     UserList:
       type: object

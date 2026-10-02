@@ -2108,8 +2108,15 @@ type CurrentUser struct {
 	CsrfToken *string `json:"csrf_token"`
 
 	// Disabled Disabled users can't log in and their tokens are rejected.
-	Disabled bool  `json:"disabled"`
-	Email    Email `json:"email"`
+	Disabled bool `json:"disabled"`
+
+	// DisplayName A name to show instead of the email address. Empty if the user hasn't
+	// set one; clients then fall back to the email.
+	//
+	//
+	// Examples: Alex Rivera
+	DisplayName DisplayName `json:"display_name"`
+	Email       Email       `json:"email"`
 
 	// ID Opaque, server-assigned identifier.
 	//
@@ -2218,6 +2225,12 @@ type DatabaseSessionOpened struct {
 		SSHCommand string `json:"ssh_command"`
 	} `json:"tunnel"`
 }
+
+// DisplayName A name to show instead of the email address. Empty if the user hasn't
+// set one; clients then fall back to the email.
+//
+// Examples: Alex Rivera
+type DisplayName = string
 
 // DoctorReport defines model for DoctorReport.
 type DoctorReport struct {
@@ -2771,6 +2784,16 @@ type Problem struct {
 	//
 	// Examples: about:blank
 	Type string `json:"type"`
+}
+
+// ProfileUpdate defines model for ProfileUpdate.
+type ProfileUpdate struct {
+	// DisplayName A name to show instead of the email address. Empty if the user hasn't
+	// set one; clients then fall back to the email.
+	//
+	//
+	// Examples: Alex Rivera
+	DisplayName DisplayName `json:"display_name"`
 }
 
 // Readiness defines model for Readiness.
@@ -3433,8 +3456,15 @@ type User struct {
 	CreatedAt Timestamp `json:"created_at"`
 
 	// Disabled Disabled users can't log in and their tokens are rejected.
-	Disabled bool  `json:"disabled"`
-	Email    Email `json:"email"`
+	Disabled bool `json:"disabled"`
+
+	// DisplayName A name to show instead of the email address. Empty if the user hasn't
+	// set one; clients then fall back to the email.
+	//
+	//
+	// Examples: Alex Rivera
+	DisplayName DisplayName `json:"display_name"`
+	Email       Email       `json:"email"`
 
 	// ID Opaque, server-assigned identifier.
 	//
@@ -3453,8 +3483,14 @@ type User struct {
 
 // UserCreate defines model for UserCreate.
 type UserCreate struct {
-	Email    Email     `json:"email"`
-	Password *Password `json:"password,omitempty"`
+	// DisplayName A name to show instead of the email address. Empty if the user hasn't
+	// set one; clients then fall back to the email.
+	//
+	//
+	// Examples: Alex Rivera
+	DisplayName *DisplayName `json:"display_name,omitempty"`
+	Email       Email        `json:"email"`
+	Password    *Password    `json:"password,omitempty"`
 
 	// Role Platform-wide role (design doc §4.6).
 	Role Role `json:"role"`
@@ -3470,9 +3506,16 @@ type UserList struct {
 
 // UserUpdate Only the fields present are changed.
 type UserUpdate struct {
-	Disabled *bool     `json:"disabled,omitempty"`
-	Email    *Email    `json:"email,omitempty"`
-	Password *Password `json:"password,omitempty"`
+	Disabled *bool `json:"disabled,omitempty"`
+
+	// DisplayName A name to show instead of the email address. Empty if the user hasn't
+	// set one; clients then fall back to the email.
+	//
+	//
+	// Examples: Alex Rivera
+	DisplayName *DisplayName `json:"display_name,omitempty"`
+	Email       *Email       `json:"email,omitempty"`
+	Password    *Password    `json:"password,omitempty"`
 
 	// Role Platform-wide role (design doc §4.6).
 	Role *Role `json:"role,omitempty"`
@@ -3943,6 +3986,9 @@ type UpdateAlertRuleJSONRequestBody = AlertRuleUpdate
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
 
+// UpdateCurrentUserJSONRequestBody defines body for UpdateCurrentUser for application/json ContentType.
+type UpdateCurrentUserJSONRequestBody = ProfileUpdate
+
 // ChangePasswordJSONRequestBody defines body for ChangePassword for application/json ContentType.
 type ChangePasswordJSONRequestBody = PasswordChange
 
@@ -4348,6 +4394,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v1/auth/me (the `GetCurrentUser` operationId).
 	GetCurrentUser(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateCurrentUserWithBody Update the authenticated user's profile
+	//
+	// Currently only the display name. Send an empty string to clear it.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /api/v1/auth/me (the `UpdateCurrentUser` operationId).
+	UpdateCurrentUserWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateCurrentUser Update the authenticated user's profile
+	//
+	// Currently only the display name. Send an empty string to clear it.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /api/v1/auth/me (the `UpdateCurrentUser` operationId).
+	UpdateCurrentUser(ctx context.Context, body UpdateCurrentUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ChangePasswordWithBody Change the current user's password
 	//
@@ -6465,6 +6529,44 @@ func (c *Client) Logout(ctx context.Context, reqEditors ...RequestEditorFn) (*ht
 // Corresponds with GET /api/v1/auth/me (the `GetCurrentUser` operationId).
 func (c *Client) GetCurrentUser(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCurrentUserRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateCurrentUserWithBody Update the authenticated user's profile
+//
+// Currently only the display name. Send an empty string to clear it.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /api/v1/auth/me (the `UpdateCurrentUser` operationId).
+func (c *Client) UpdateCurrentUserWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateCurrentUserRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateCurrentUser Update the authenticated user's profile
+//
+// Currently only the display name. Send an empty string to clear it.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /api/v1/auth/me (the `UpdateCurrentUser` operationId).
+func (c *Client) UpdateCurrentUser(ctx context.Context, body UpdateCurrentUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateCurrentUserRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10208,6 +10310,46 @@ func NewGetCurrentUserRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewUpdateCurrentUserRequest calls the generic UpdateCurrentUser builder with application/json body
+func NewUpdateCurrentUserRequest(server string, body UpdateCurrentUserJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateCurrentUserRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewUpdateCurrentUserRequestWithBody constructs an http.Request for the UpdateCurrentUser method, with any body, and a specified content type
+func NewUpdateCurrentUserRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/auth/me")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -14113,6 +14255,24 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/v1/auth/me (the `GetCurrentUser` operationId).
 	GetCurrentUserWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCurrentUserResponse, error)
 
+	// UpdateCurrentUserWithBodyWithResponse Update the authenticated user's profile
+	//
+	// Currently only the display name. Send an empty string to clear it.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v1/auth/me (the `UpdateCurrentUser` operationId).
+	UpdateCurrentUserWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateCurrentUserResponse, error)
+
+	// UpdateCurrentUserWithResponse Update the authenticated user's profile
+	//
+	// Currently only the display name. Send an empty string to clear it.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v1/auth/me (the `UpdateCurrentUser` operationId).
+	UpdateCurrentUserWithResponse(ctx context.Context, body UpdateCurrentUserJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateCurrentUserResponse, error)
+
 	// ChangePasswordWithBodyWithResponse Change the current user's password
 	//
 	// Requires the current password. Signs out the user's other sessions and
@@ -17410,6 +17570,82 @@ func (r GetCurrentUserResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetCurrentUserResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateCurrentUserResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *User
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateCurrentUserResponse) GetJSON200() *User {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r UpdateCurrentUserResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r UpdateCurrentUserResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r UpdateCurrentUserResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r UpdateCurrentUserResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r UpdateCurrentUserResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateCurrentUserResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateCurrentUserResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateCurrentUserResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateCurrentUserResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -23621,6 +23857,36 @@ func (c *ClientWithResponses) GetCurrentUserWithResponse(ctx context.Context, re
 	return ParseGetCurrentUserResponse(rsp)
 }
 
+// UpdateCurrentUserWithBodyWithResponse Update the authenticated user's profile
+//
+// Currently only the display name. Send an empty string to clear it.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v1/auth/me (the `UpdateCurrentUser` operationId).
+func (c *ClientWithResponses) UpdateCurrentUserWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateCurrentUserResponse, error) {
+	rsp, err := c.UpdateCurrentUserWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateCurrentUserResponse(rsp)
+}
+
+// UpdateCurrentUserWithResponse Update the authenticated user's profile
+//
+// Currently only the display name. Send an empty string to clear it.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v1/auth/me (the `UpdateCurrentUser` operationId).
+func (c *ClientWithResponses) UpdateCurrentUserWithResponse(ctx context.Context, body UpdateCurrentUserJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateCurrentUserResponse, error) {
+	rsp, err := c.UpdateCurrentUser(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateCurrentUserResponse(rsp)
+}
+
 // ChangePasswordWithBodyWithResponse Change the current user's password
 //
 // Requires the current password. Signs out the user's other sessions and
@@ -27198,6 +27464,67 @@ func ParseGetCurrentUserResponse(rsp *http.Response) (*GetCurrentUserResponse, e
 			return nil, err
 		}
 		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateCurrentUserResponse parses an HTTP response from a UpdateCurrentUserWithResponse call
+func ParseUpdateCurrentUserResponse(rsp *http.Response) (*UpdateCurrentUserResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateCurrentUserResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest User
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Error

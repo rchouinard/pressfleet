@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
@@ -43,6 +44,9 @@ var (
 	ErrWrongPassword = errors.New("current password is incorrect")
 	// ErrInvalidEmail means an email address is malformed.
 	ErrInvalidEmail = errors.New("invalid email address")
+	// ErrInvalidDisplayName means a display name is too long or contains
+	// control characters.
+	ErrInvalidDisplayName = errors.New("invalid display name")
 	// ErrInvalidRole means a role isn't admin, operator, or viewer.
 	ErrInvalidRole = errors.New("role must be admin, operator, or viewer")
 	// ErrInvalidScope means a token scope isn't full or read-only.
@@ -121,6 +125,19 @@ func NewService(db *store.DB, opts Options) *Service {
 // NormalizeEmail returns the canonical form of an email address, as stored.
 func NormalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
+}
+
+// MaxDisplayNameLength is the longest display name, in characters.
+const MaxDisplayNameLength = 100
+
+// NormalizeDisplayName trims a display name and checks it. The empty string
+// is valid and means no display name.
+func NormalizeDisplayName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if utf8.RuneCountInString(name) > MaxDisplayNameLength || strings.ContainsFunc(name, unicode.IsControl) {
+		return "", ErrInvalidDisplayName
+	}
+	return name, nil
 }
 
 // ValidEmail reports whether email is a bare address such as a@example.com
@@ -390,9 +407,10 @@ func revokeAccess(ctx context.Context, q store.Querier, userID, keepSessionID st
 
 // NewUser describes a user to create.
 type NewUser struct {
-	Email    string
-	Password redact.Secret
-	Role     store.Role
+	Email       string
+	DisplayName string
+	Password    redact.Secret
+	Role        store.Role
 }
 
 // CreateUser validates and creates a user.
@@ -404,6 +422,10 @@ func (s *Service) CreateUser(ctx context.Context, nu NewUser) (store.User, error
 	if !nu.Role.Valid() {
 		return store.User{}, ErrInvalidRole
 	}
+	displayName, err := NormalizeDisplayName(nu.DisplayName)
+	if err != nil {
+		return store.User{}, err
+	}
 	if err := CheckPasswordPolicy(nu.Password); err != nil {
 		return store.User{}, err
 	}
@@ -411,7 +433,7 @@ func (s *Service) CreateUser(ctx context.Context, nu NewUser) (store.User, error
 	if err != nil {
 		return store.User{}, fmt.Errorf("create user: %w", err)
 	}
-	u := store.User{Email: email, PasswordHash: h, Role: nu.Role, CreatedAt: s.now()}
+	u := store.User{Email: email, DisplayName: displayName, PasswordHash: h, Role: nu.Role, CreatedAt: s.now()}
 	if err := store.NewUsers(s.db).Create(ctx, &u); err != nil {
 		if errors.Is(err, store.ErrConflict) {
 			return store.User{}, ErrEmailTaken
@@ -450,10 +472,11 @@ func (s *Service) ListUsers(ctx context.Context, f store.UserFilter) ([]store.Us
 
 // UserChanges lists changes to a user; nil fields are left alone.
 type UserChanges struct {
-	Email    *string
-	Password *redact.Secret
-	Role     *store.Role
-	Disabled *bool
+	Email       *string
+	DisplayName *string
+	Password    *redact.Secret
+	Role        *store.Role
+	Disabled    *bool
 }
 
 // UpdateUser applies changes to a user. Setting a password or disabling the
@@ -470,6 +493,13 @@ func (s *Service) UpdateUser(ctx context.Context, userID string, c UserChanges) 
 	}
 	if c.Role != nil && !c.Role.Valid() {
 		return store.User{}, ErrInvalidRole
+	}
+	var displayName string
+	if c.DisplayName != nil {
+		var err error
+		if displayName, err = NormalizeDisplayName(*c.DisplayName); err != nil {
+			return store.User{}, err
+		}
 	}
 	var hash redact.Secret
 	if c.Password != nil {
@@ -504,6 +534,9 @@ func (s *Service) UpdateUser(ctx context.Context, userID string, c UserChanges) 
 		revoke := false
 		if c.Email != nil {
 			user.Email = email
+		}
+		if c.DisplayName != nil {
+			user.DisplayName = displayName
 		}
 		if c.Role != nil {
 			user.Role = *c.Role

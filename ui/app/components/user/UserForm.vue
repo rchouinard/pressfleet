@@ -1,13 +1,14 @@
 <script setup lang="ts">
 // Create-user and edit-user form. Create asks for email, a starting password
-// and a role. Edit changes the role and the disabled flag (email and password
-// changes are out of scope for now). Emits the request body; the page makes
+// and a role, plus an optional display name. Edit changes the display name,
+// the role and the disabled flag (email and password changes are out of scope
+// for now). Emits the request body; the page makes
 // the call and passes back any ApiError for field errors.
 import { computed, ref } from 'vue'
 import type { ApiError } from '../../utils/api-error'
 import type { Role } from '../../utils/roles'
 import {
-  PASSWORD_MAX, PASSWORD_MIN, roleOptions, userCreateBody, userUpdateBody, validateCreateUser,
+  DISPLAY_NAME_MAX, PASSWORD_MAX, PASSWORD_MIN, roleOptions, userCreateBody, userUpdateBody, validateCreateUser, validateDisplayName,
   type User, type UserCreate, type UserUpdate,
 } from '../../utils/users'
 
@@ -26,14 +27,16 @@ const emit = defineEmits<{
 }>()
 
 const email = ref('')
+const displayName = ref(props.user?.display_name ?? '')
 const password = ref('')
 const showPassword = ref(false)
 const role = ref<Role>(props.user?.role ?? 'viewer')
 const disabled = ref(props.user?.disabled ?? false)
-const local = ref<{ email?: string, password?: string }>({})
+const local = ref<{ email?: string, displayName?: string, password?: string }>({})
 const nothingChanged = ref(false)
 
 const emailError = computed(() => local.value.email ?? props.error?.fieldError('/email'))
+const displayNameError = computed(() => local.value.displayName ?? props.error?.fieldError('/display_name'))
 const passwordError = computed(() => local.value.password ?? props.error?.fieldError('/password'))
 const roleError = computed(() => props.error?.fieldError('/role'))
 const roleHint = computed(() => roleOptions.find(o => o.value === role.value)?.hint)
@@ -41,12 +44,14 @@ const roleHint = computed(() => roleOptions.find(o => o.value === role.value)?.h
 function submit() {
   nothingChanged.value = false
   if (!props.user) {
-    local.value = validateCreateUser({ email: email.value, password: password.value, role: role.value })
-    if (local.value.email || local.value.password) return
-    emit('create', userCreateBody({ email: email.value, password: password.value, role: role.value }))
+    local.value = { ...validateCreateUser({ email: email.value, password: password.value, role: role.value }), displayName: validateDisplayName(displayName.value) }
+    if (local.value.email || local.value.password || local.value.displayName) return
+    emit('create', userCreateBody({ email: email.value, displayName: displayName.value, password: password.value, role: role.value }))
     return
   }
-  const body = userUpdateBody(props.user, { role: role.value, disabled: disabled.value })
+  local.value = { displayName: validateDisplayName(displayName.value) }
+  if (local.value.displayName) return
+  const body = userUpdateBody(props.user, { role: role.value, disabled: disabled.value, displayName: displayName.value })
   if (!body) {
     nothingChanged.value = true
     return
@@ -60,6 +65,9 @@ function submit() {
     <template v-if="!user">
       <UFormField label="Email" name="email" :error="emailError" required>
         <UInput v-model="email" type="email" autocomplete="off" autofocus class="w-full" :disabled="submitting" />
+      </UFormField>
+      <UFormField label="Display name" name="display_name" :error="displayNameError" description="Optional. Shown instead of the email address.">
+        <UInput v-model="displayName" autocomplete="off" :maxlength="DISPLAY_NAME_MAX" class="w-full" :disabled="submitting" />
       </UFormField>
       <UFormField
         label="Starting password"
@@ -91,9 +99,14 @@ function submit() {
         </UInput>
       </UFormField>
     </template>
-    <p v-else class="text-sm">
-      <span class="text-muted">Editing</span> <span class="font-medium">{{ user.email }}</span>
-    </p>
+    <template v-else>
+      <p class="text-sm">
+        <span class="text-muted">Editing</span> <span class="font-medium">{{ user.email }}</span>
+      </p>
+      <UFormField label="Display name" name="display_name" :error="displayNameError" description="Optional. Shown instead of the email address.">
+        <UInput v-model="displayName" autocomplete="off" :maxlength="DISPLAY_NAME_MAX" class="w-full" :disabled="submitting" />
+      </UFormField>
+    </template>
 
     <UFormField label="Role" name="role" :error="roleError" :description="self ? 'You can\'t change your own role. Ask another admin.' : roleHint">
       <USelect v-model="role" :items="roleOptions.map(o => ({ value: o.value, label: o.label }))" value-key="value" class="w-full" :disabled="submitting || self" />

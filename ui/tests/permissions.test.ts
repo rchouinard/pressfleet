@@ -10,8 +10,8 @@ const matrix: Record<Role, Action[]> = {
   viewer: [
     // "View sites, client groups, jobs, backups, metrics, logs, and alerts"
     'site.view', 'client_group.view', 'job.view', 'backup.view', 'monitoring.view',
-    // "Manage their own password, API tokens, and SSH keys"
-    'self.password.change', 'self.tokens.manage', 'self.ssh_keys.manage',
+    // "Manage their own profile (display name), password, API tokens, and SSH keys"
+    'self.profile.update', 'self.password.change', 'self.tokens.manage', 'self.ssh_keys.manage',
   ],
   operator: [
     // "Create and import sites; change site settings; go-live and domains; start/stop; maintenance mode; cache purge"

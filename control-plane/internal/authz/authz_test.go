@@ -75,9 +75,10 @@ var designTable = map[authz.Action]struct {
 	authz.ViewAuditLog:        {true, false, false, false},
 	// Change platform settings.
 	authz.ManagePlatformSettings: {true, false, false, true},
-	// Manage their own password, API tokens, and SSH keys.
+	// Manage their own profile (display name), password, API tokens, and SSH keys.
 	authz.ViewSelf:          {true, true, true, false},
 	authz.Logout:            {true, true, true, false},
+	authz.UpdateOwnProfile:  {true, true, true, true},
 	authz.ChangeOwnPassword: {true, true, true, true},
 	authz.ViewOwnTokens:     {true, true, true, false},
 	authz.CreateOwnToken:    {true, true, true, true},

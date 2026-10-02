@@ -103,7 +103,11 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Update the authenticated user's profile
+         * @description Currently only the display name. Send an empty string to clear it.
+         */
+        patch: operations["updateCurrentUser"];
         trace?: never;
     };
     "/api/v1/auth/password": {
@@ -2315,6 +2319,7 @@ export interface components {
         User: {
             id: components["schemas"]["ID"];
             email: components["schemas"]["Email"];
+            display_name: components["schemas"]["DisplayName"];
             role: components["schemas"]["Role"];
             /** @description Disabled users can't log in and their tokens are rejected. */
             disabled: boolean;
@@ -2341,15 +2346,26 @@ export interface components {
         };
         UserCreate: {
             email: components["schemas"]["Email"];
+            display_name?: components["schemas"]["DisplayName"];
             password: components["schemas"]["Password"];
             role: components["schemas"]["Role"];
         };
         /** @description Only the fields present are changed. */
         UserUpdate: {
             email?: components["schemas"]["Email"];
+            display_name?: components["schemas"]["DisplayName"];
             password?: components["schemas"]["Password"];
             role?: components["schemas"]["Role"];
             disabled?: boolean;
+        };
+        /**
+         * @description A name to show instead of the email address. Empty if the user hasn't
+         *     set one; clients then fall back to the email.
+         * @example Alex Rivera
+         */
+        DisplayName: string;
+        ProfileUpdate: {
+            display_name: components["schemas"]["DisplayName"];
         };
         UserList: {
             items: components["schemas"]["User"][];
@@ -4180,6 +4196,35 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    updateCurrentUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileUpdate"];
+            };
+        };
+        responses: {
+            /** @description The updated user. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["UnprocessableContent"];
             default: components["responses"]["Error"];
         };
     };

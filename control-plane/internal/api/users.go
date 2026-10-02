@@ -42,9 +42,10 @@ func (h *Handlers) CreateUser(ctx context.Context, req gen.CreateUserRequestObje
 		return nil, err
 	}
 	u, err := h.auth.CreateUser(ctx, auth.NewUser{
-		Email:    string(req.Body.Email),
-		Password: redact.Secret(deref(req.Body.Password)),
-		Role:     store.Role(req.Body.Role),
+		Email:       string(req.Body.Email),
+		DisplayName: deref(req.Body.DisplayName),
+		Password:    redact.Secret(deref(req.Body.Password)),
+		Role:        store.Role(req.Body.Role),
 	})
 	if err != nil {
 		return nil, authError(err, "/password")
@@ -66,7 +67,7 @@ func (h *Handlers) GetUser(ctx context.Context, req gen.GetUserRequestObject) (g
 	return gen.GetUser200JSONResponse(user(u)), nil
 }
 
-// UpdateUser changes a user's email, password, role, or disabled flag.
+// UpdateUser changes a user's email, display name, password, role, or disabled flag.
 // Setting a password or disabling the user revokes their sessions and
 // tokens. Role changes apply to the user's next request.
 func (h *Handlers) UpdateUser(ctx context.Context, req gen.UpdateUserRequestObject) (gen.UpdateUserResponseObject, error) {
@@ -78,6 +79,7 @@ func (h *Handlers) UpdateUser(ctx context.Context, req gen.UpdateUserRequestObje
 		s := string(*e)
 		c.Email = &s
 	}
+	c.DisplayName = req.Body.DisplayName
 	if p := req.Body.Password; p != nil {
 		s := redact.Secret(*p)
 		c.Password = &s

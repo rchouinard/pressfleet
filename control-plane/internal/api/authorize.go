@@ -15,12 +15,13 @@ import (
 // a handler that checks a different action than its operation declares, so
 // the declaration, the check, and the audit log agree.
 var operationActions = map[string]authz.Action{
-	"logout":         authz.Logout,
-	"getCurrentUser": authz.ViewSelf,
-	"changePassword": authz.ChangeOwnPassword,
-	"listApiTokens":  authz.ViewOwnTokens,
-	"createApiToken": authz.CreateOwnToken,
-	"revokeApiToken": authz.RevokeOwnToken,
+	"logout":            authz.Logout,
+	"getCurrentUser":    authz.ViewSelf,
+	"updateCurrentUser": authz.UpdateOwnProfile,
+	"changePassword":    authz.ChangeOwnPassword,
+	"listApiTokens":     authz.ViewOwnTokens,
+	"createApiToken":    authz.CreateOwnToken,
+	"revokeApiToken":    authz.RevokeOwnToken,
 
 	"listUsers":  authz.ViewUsers,
 	"createUser": authz.CreateUser,

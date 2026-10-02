@@ -3,6 +3,7 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -312,6 +313,34 @@ func TestRevocationOnPasswordChangeAndDisable(t *testing.T) {
 		}
 		if _, err := svc.AuthenticateSession(ctx, res.Token); !errors.Is(err, auth.ErrUnauthenticated) {
 			t.Errorf("session survived reset: %v", err)
+		}
+	})
+}
+
+func TestUserDisplayName(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		svc, _ := newService(t, db)
+		u, err := svc.CreateUser(ctx, auth.NewUser{Email: "a@example.com", DisplayName: "  Alex Rivera ", Password: pw, Role: store.RoleViewer})
+		if err != nil || u.DisplayName != "Alex Rivera" {
+			t.Fatalf("CreateUser = %q, %v; want a trimmed display name", u.DisplayName, err)
+		}
+		// Other changes leave it alone; an empty string clears it.
+		role := store.RoleOperator
+		if u, err = svc.UpdateUser(ctx, u.ID, auth.UserChanges{Role: &role}); err != nil || u.DisplayName != "Alex Rivera" {
+			t.Errorf("UpdateUser role = %q, %v", u.DisplayName, err)
+		}
+		empty := ""
+		if u, err = svc.UpdateUser(ctx, u.ID, auth.UserChanges{DisplayName: &empty}); err != nil || u.DisplayName != "" {
+			t.Errorf("UpdateUser clear = %q, %v", u.DisplayName, err)
+		}
+		for _, name := range []string{strings.Repeat("x", auth.MaxDisplayNameLength+1), "line\nbreak"} {
+			if _, err := svc.UpdateUser(ctx, u.ID, auth.UserChanges{DisplayName: &name}); !errors.Is(err, auth.ErrInvalidDisplayName) {
+				t.Errorf("UpdateUser(%q) = %v, want ErrInvalidDisplayName", name, err)
+			}
+			if _, err := svc.CreateUser(ctx, auth.NewUser{Email: "b@example.com", DisplayName: name, Password: pw, Role: store.RoleViewer}); !errors.Is(err, auth.ErrInvalidDisplayName) {
+				t.Errorf("CreateUser(%q) = %v, want ErrInvalidDisplayName", name, err)
+			}
 		}
 	})
 }

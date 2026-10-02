@@ -346,6 +346,29 @@ func TestSessionLifecycle(t *testing.T) {
 	expectStatus(t, e.do(http.MethodGet, "/api/v1/auth/me", "", creds{cookie: s.cookie.Value}), http.StatusUnauthorized, "after logout")
 }
 
+func TestDisplayName(t *testing.T) {
+	e := newAuthEnv(t, api.Options{})
+	s := e.mustLogin()
+
+	w := e.do(http.MethodGet, "/api/v1/auth/me", "", s.creds())
+	if got := decodeJSON[map[string]any](t, w.Body.Bytes())["display_name"]; got != "" {
+		t.Errorf("display_name before setting = %v, want empty string", got)
+	}
+	w = e.do(http.MethodPatch, "/api/v1/auth/me", `{"display_name":" Alex Rivera "}`, s.creds())
+	expectStatus(t, w, http.StatusOK, "set display name")
+	if got := decodeJSON[map[string]any](t, w.Body.Bytes())["display_name"]; got != "Alex Rivera" {
+		t.Errorf("display_name = %v, want Alex Rivera", got)
+	}
+	w = e.do(http.MethodGet, "/api/v1/auth/me", "", s.creds())
+	if got := decodeJSON[map[string]any](t, w.Body.Bytes())["display_name"]; got != "Alex Rivera" {
+		t.Errorf("GET /auth/me display_name = %v", got)
+	}
+
+	w = e.do(http.MethodPatch, "/api/v1/auth/me", `{"display_name":"`+strings.Repeat("x", 101)+`"}`, s.creds())
+	expectStatus(t, w, http.StatusUnprocessableEntity, "too long")
+	expectStatus(t, e.do(http.MethodPatch, "/api/v1/auth/me", `{"display_name":"x"}`, creds{}), http.StatusUnauthorized, "anonymous")
+}
+
 func TestPasswordChangeRevokesOtherSessions(t *testing.T) {
 	e := newAuthEnv(t, api.Options{})
 	current, other := e.mustLogin(), e.mustLogin()

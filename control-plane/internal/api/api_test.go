@@ -127,6 +127,7 @@ var sampleBodies = map[string]string{
 	"login":                    `{"email":"a@example.com","password":"x"}`,
 	"createApiToken":           `{"name":"ci","scope":"read-only","expires_at":null}`,
 	"createUser":               `{"email":"a@example.com","password":"correct horse battery","role":"viewer"}`,
+	"updateCurrentUser":        `{"display_name":"x"}`,
 	"changePassword":           `{"current_password":"wrong","new_password":"correct horse battery"}`,
 	"updateUser":               `{"role":"operator"}`,
 	"createClientGroup":        `{"name":"Acme"}`,

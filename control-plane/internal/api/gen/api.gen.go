@@ -2109,8 +2109,15 @@ type CurrentUser struct {
 	CsrfToken *string `json:"csrf_token"`
 
 	// Disabled Disabled users can't log in and their tokens are rejected.
-	Disabled bool  `json:"disabled"`
-	Email    Email `json:"email"`
+	Disabled bool `json:"disabled"`
+
+	// DisplayName A name to show instead of the email address. Empty if the user hasn't
+	// set one; clients then fall back to the email.
+	//
+	//
+	// Examples: Alex Rivera
+	DisplayName DisplayName `json:"display_name"`
+	Email       Email       `json:"email"`
 
 	// ID Opaque, server-assigned identifier.
 	//
@@ -2219,6 +2226,12 @@ type DatabaseSessionOpened struct {
 		SSHCommand string `json:"ssh_command"`
 	} `json:"tunnel"`
 }
+
+// DisplayName A name to show instead of the email address. Empty if the user hasn't
+// set one; clients then fall back to the email.
+//
+// Examples: Alex Rivera
+type DisplayName = string
 
 // DoctorReport defines model for DoctorReport.
 type DoctorReport struct {
@@ -2772,6 +2785,16 @@ type Problem struct {
 	//
 	// Examples: about:blank
 	Type string `json:"type"`
+}
+
+// ProfileUpdate defines model for ProfileUpdate.
+type ProfileUpdate struct {
+	// DisplayName A name to show instead of the email address. Empty if the user hasn't
+	// set one; clients then fall back to the email.
+	//
+	//
+	// Examples: Alex Rivera
+	DisplayName DisplayName `json:"display_name"`
 }
 
 // Readiness defines model for Readiness.
@@ -3434,8 +3457,15 @@ type User struct {
 	CreatedAt Timestamp `json:"created_at"`
 
 	// Disabled Disabled users can't log in and their tokens are rejected.
-	Disabled bool  `json:"disabled"`
-	Email    Email `json:"email"`
+	Disabled bool `json:"disabled"`
+
+	// DisplayName A name to show instead of the email address. Empty if the user hasn't
+	// set one; clients then fall back to the email.
+	//
+	//
+	// Examples: Alex Rivera
+	DisplayName DisplayName `json:"display_name"`
+	Email       Email       `json:"email"`
 
 	// ID Opaque, server-assigned identifier.
 	//
@@ -3454,8 +3484,14 @@ type User struct {
 
 // UserCreate defines model for UserCreate.
 type UserCreate struct {
-	Email    Email     `json:"email"`
-	Password *Password `json:"password,omitempty"`
+	// DisplayName A name to show instead of the email address. Empty if the user hasn't
+	// set one; clients then fall back to the email.
+	//
+	//
+	// Examples: Alex Rivera
+	DisplayName *DisplayName `json:"display_name,omitempty"`
+	Email       Email        `json:"email"`
+	Password    *Password    `json:"password,omitempty"`
 
 	// Role Platform-wide role (design doc §4.6).
 	Role Role `json:"role"`
@@ -3471,9 +3507,16 @@ type UserList struct {
 
 // UserUpdate Only the fields present are changed.
 type UserUpdate struct {
-	Disabled *bool     `json:"disabled,omitempty"`
-	Email    *Email    `json:"email,omitempty"`
-	Password *Password `json:"password,omitempty"`
+	Disabled *bool `json:"disabled,omitempty"`
+
+	// DisplayName A name to show instead of the email address. Empty if the user hasn't
+	// set one; clients then fall back to the email.
+	//
+	//
+	// Examples: Alex Rivera
+	DisplayName *DisplayName `json:"display_name,omitempty"`
+	Email       *Email       `json:"email,omitempty"`
+	Password    *Password    `json:"password,omitempty"`
 
 	// Role Platform-wide role (design doc §4.6).
 	Role *Role `json:"role,omitempty"`
@@ -3944,6 +3987,9 @@ type UpdateAlertRuleJSONRequestBody = AlertRuleUpdate
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
 
+// UpdateCurrentUserJSONRequestBody defines body for UpdateCurrentUser for application/json ContentType.
+type UpdateCurrentUserJSONRequestBody = ProfileUpdate
+
 // ChangePasswordJSONRequestBody defines body for ChangePassword for application/json ContentType.
 type ChangePasswordJSONRequestBody = PasswordChange
 
@@ -4078,6 +4124,9 @@ type ServerInterface interface {
 	// GetCurrentUser Get the authenticated user
 	// (GET /api/v1/auth/me)
 	GetCurrentUser(w http.ResponseWriter, r *http.Request)
+	// UpdateCurrentUser Update the authenticated user's profile
+	// (PATCH /api/v1/auth/me)
+	UpdateCurrentUser(w http.ResponseWriter, r *http.Request)
 	// ChangePassword Change the current user's password
 	// (POST /api/v1/auth/password)
 	ChangePassword(w http.ResponseWriter, r *http.Request)
@@ -5177,6 +5226,20 @@ func (siw *ServerInterfaceWrapper) GetCurrentUser(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetCurrentUser(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateCurrentUser operation middleware
+func (siw *ServerInterfaceWrapper) UpdateCurrentUser(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateCurrentUser(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7746,6 +7809,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/login", wrapper.Login)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/logout", wrapper.Logout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/auth/me", wrapper.GetCurrentUser)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/v1/auth/me", wrapper.UpdateCurrentUser)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/password", wrapper.ChangePassword)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/auth/tokens", wrapper.ListAPITokens)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/tokens", wrapper.CreateAPIToken)
@@ -9977,6 +10041,109 @@ type GetCurrentUserdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetCurrentUserdefaultApplicationProblemPlusJSONResponse) VisitGetCurrentUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCurrentUserRequestObject struct {
+	Body *UpdateCurrentUserJSONRequestBody
+}
+
+type UpdateCurrentUserResponseObject interface {
+	VisitUpdateCurrentUserResponse(w http.ResponseWriter) error
+}
+
+type UpdateCurrentUser200JSONResponse User
+
+func (response UpdateCurrentUser200JSONResponse) VisitUpdateCurrentUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCurrentUser400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateCurrentUser400ApplicationProblemPlusJSONResponse) VisitUpdateCurrentUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCurrentUser401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateCurrentUser401ApplicationProblemPlusJSONResponse) VisitUpdateCurrentUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCurrentUser403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateCurrentUser403ApplicationProblemPlusJSONResponse) VisitUpdateCurrentUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCurrentUser422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateCurrentUser422ApplicationProblemPlusJSONResponse) VisitUpdateCurrentUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCurrentUserdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response UpdateCurrentUserdefaultApplicationProblemPlusJSONResponse) VisitUpdateCurrentUserResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -17872,6 +18039,9 @@ type StrictServerInterface interface {
 	// GetCurrentUser Get the authenticated user
 	// (GET /api/v1/auth/me)
 	GetCurrentUser(ctx context.Context, request GetCurrentUserRequestObject) (GetCurrentUserResponseObject, error)
+	// UpdateCurrentUser Update the authenticated user's profile
+	// (PATCH /api/v1/auth/me)
+	UpdateCurrentUser(ctx context.Context, request UpdateCurrentUserRequestObject) (UpdateCurrentUserResponseObject, error)
 	// ChangePassword Change the current user's password
 	// (POST /api/v1/auth/password)
 	ChangePassword(ctx context.Context, request ChangePasswordRequestObject) (ChangePasswordResponseObject, error)
@@ -18728,6 +18898,37 @@ func (sh *strictHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetCurrentUserResponseObject); ok {
 		if err := validResponse.VisitGetCurrentUserResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateCurrentUser operation middleware
+func (sh *strictHandler) UpdateCurrentUser(w http.ResponseWriter, r *http.Request) {
+	var request UpdateCurrentUserRequestObject
+
+	var body UpdateCurrentUserJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateCurrentUser(ctx, request.(UpdateCurrentUserRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateCurrentUser")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateCurrentUserResponseObject); ok {
+		if err := validResponse.VisitUpdateCurrentUserResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

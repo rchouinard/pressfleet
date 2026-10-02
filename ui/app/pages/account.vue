@@ -4,7 +4,7 @@
 // the dialog is open; closing the dialog drops it. It is never stored, put in
 // a URL or logged.
 import { toApiError, type ApiError } from '../utils/api-error'
-import { roleColors } from '../utils/users'
+import { DISPLAY_NAME_MAX, roleColors, validateDisplayName } from '../utils/users'
 import { formatTimestamp, type ApiToken, type ApiTokenCreate } from '../utils/tokens'
 
 useHead({ title: 'Account & tokens' })
@@ -12,7 +12,7 @@ useBreadcrumbs([{ label: 'Account & tokens' }])
 
 const api = useApi()
 const notify = useNotify()
-const { user, logout } = useSession()
+const { user, logout, refresh: refreshSession } = useSession()
 
 const items = ref<ApiToken[]>([])
 const cursor = ref<string | null>(null)
@@ -111,6 +111,30 @@ async function revoke() {
   }
 }
 
+// Display name
+const displayName = ref(user.value?.display_name ?? '')
+const savingName = ref(false)
+const nameError = ref<string>()
+const nameChanged = computed(() => displayName.value.trim() !== (user.value?.display_name ?? ''))
+
+async function saveName() {
+  nameError.value = validateDisplayName(displayName.value)
+  if (nameError.value) return
+  savingName.value = true
+  try {
+    await api.PATCH('/api/v1/auth/me', { body: { display_name: displayName.value.trim() } })
+    await refreshSession()
+    displayName.value = user.value?.display_name ?? ''
+    notify.success('Display name saved')
+  } catch (e) {
+    const error = toApiError(e)
+    nameError.value = error.fieldError('/display_name')
+    if (!nameError.value) notify.error(error)
+  } finally {
+    savingName.value = false
+  }
+}
+
 const signingOut = ref(false)
 async function signOut() {
   signingOut.value = true
@@ -148,6 +172,12 @@ async function signOut() {
           <dd>{{ user.auth_method === 'session' ? 'Dashboard session' : 'API token' }}</dd>
         </div>
       </dl>
+      <form v-if="user" class="flex flex-wrap items-end gap-3" novalidate @submit.prevent="saveName">
+        <UFormField label="Display name" name="display_name" :error="nameError" description="Optional. Shown instead of your email address." class="w-full max-w-sm">
+          <UInput v-model="displayName" autocomplete="name" :maxlength="DISPLAY_NAME_MAX" class="w-full" :disabled="savingName" />
+        </UFormField>
+        <UButton type="submit" color="neutral" variant="outline" :loading="savingName" :disabled="savingName || !nameChanged">Save name</UButton>
+      </form>
       <UButton color="neutral" variant="outline" icon="i-lucide-log-out" :loading="signingOut" @click="signOut">Sign out</UButton>
     </section>
 

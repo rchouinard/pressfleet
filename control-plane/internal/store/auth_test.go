@@ -21,6 +21,28 @@ func createUser(t *testing.T, db *store.DB, email string, role store.Role) store
 	return u
 }
 
+func TestUserDisplayName(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		users := store.NewUsers(db)
+		u := createUser(t, db, "a@example.com", store.RoleViewer)
+		if u.DisplayName != "" {
+			t.Errorf("new user's display name = %q, want empty", u.DisplayName)
+		}
+		u.DisplayName = "Alex Rivera"
+		if err := users.Update(ctx, &u, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := users.Get(ctx, u.ID); err != nil || got.DisplayName != "Alex Rivera" {
+			t.Errorf("Get after Update = %q, %v", got.DisplayName, err)
+		}
+		listed, err := users.List(ctx, store.UserFilter{})
+		if err != nil || len(listed) != 1 || listed[0].DisplayName != "Alex Rivera" {
+			t.Errorf("List = %+v, %v", listed, err)
+		}
+	})
+}
+
 func TestUsers(t *testing.T) {
 	ctx := context.Background()
 	storetest.Run(t, func(t *testing.T, db *store.DB) {

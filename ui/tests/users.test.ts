@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isSelf, userCreateBody, userStatus, userUpdateBody, validateCreateUser } from '../app/utils/users'
+import { isSelf, userCreateBody, userLabel, userStatus, userUpdateBody, validateCreateUser, validateDisplayName } from '../app/utils/users'
 
 describe('validateCreateUser', () => {
   it('accepts a good email and a 12+ character password', () => {
@@ -28,7 +28,7 @@ describe('userCreateBody', () => {
 })
 
 describe('userUpdateBody', () => {
-  const user = { role: 'viewer', disabled: false } as const
+  const user = { role: 'viewer', disabled: false, display_name: '' } as const
 
   it('sends only what changed', () => {
     expect(userUpdateBody(user, { role: 'admin', disabled: false })).toEqual({ role: 'admin' })
@@ -51,5 +51,32 @@ describe('userStatus and isSelf', () => {
     expect(isSelf({ id: '1' }, { id: '1' })).toBe(true)
     expect(isSelf({ id: '1' }, { id: '2' })).toBe(false)
     expect(isSelf({ id: '1' }, undefined)).toBe(false)
+  })
+})
+
+describe('display names', () => {
+  it('falls back to the email', () => {
+    expect(userLabel({ email: 'a@example.com', display_name: '' })).toBe('a@example.com')
+    expect(userLabel({ email: 'a@example.com', display_name: ' Alex ' })).toBe('Alex')
+  })
+
+  it('validates length and control characters', () => {
+    expect(validateDisplayName('Alex Rivera')).toBeUndefined()
+    expect(validateDisplayName('')).toBeUndefined()
+    expect(validateDisplayName('x'.repeat(101))).toBeTruthy()
+    expect(validateDisplayName('a\nb')).toBeTruthy()
+  })
+
+  it('sends a changed or cleared display name, and only when given', () => {
+    const user = { role: 'viewer', disabled: false, display_name: 'Alex' } as const
+    expect(userUpdateBody(user, { role: 'viewer', disabled: false, displayName: ' Sam ' })).toEqual({ display_name: 'Sam' })
+    expect(userUpdateBody(user, { role: 'viewer', disabled: false, displayName: '' })).toEqual({ display_name: '' })
+    expect(userUpdateBody(user, { role: 'viewer', disabled: false, displayName: 'Alex' })).toBeUndefined()
+    expect(userUpdateBody(user, { role: 'viewer', disabled: false })).toBeUndefined()
+  })
+
+  it('omits an empty display name when creating', () => {
+    expect(userCreateBody({ email: 'a@b.co', displayName: ' ', password: 'x'.repeat(12), role: 'viewer' })).not.toHaveProperty('display_name')
+    expect(userCreateBody({ email: 'a@b.co', displayName: 'Alex', password: 'x'.repeat(12), role: 'viewer' }).display_name).toBe('Alex')
   })
 })

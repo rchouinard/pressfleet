@@ -1,8 +1,9 @@
 <script setup lang="ts">
-// Users as a table: email, role, status, last sign-in, and an Edit button.
+// Users as a table: name (the email address below it, if there is a display
+// name), role, status, last sign-in, and an Edit button.
 // The table scrolls sideways inside its own region on narrow screens.
 import { formatTimestamp } from '../../utils/tokens'
-import { isSelf, roleColors, userStatus, type User } from '../../utils/users'
+import { isSelf, roleColors, userLabel, userStatus, type User } from '../../utils/users'
 
 defineProps<{ users: readonly User[], caption: string, currentUserId?: string }>()
 defineEmits<{ edit: [user: User] }>()
@@ -14,7 +15,7 @@ defineEmits<{ edit: [user: User] }>()
       <caption class="sr-only">{{ caption }}</caption>
       <thead class="bg-elevated text-xs uppercase tracking-wide text-muted">
         <tr>
-          <th scope="col" class="px-3 py-2 font-medium">Email</th>
+          <th scope="col" class="px-3 py-2 font-medium">User</th>
           <th scope="col" class="px-3 py-2 font-medium">Role</th>
           <th scope="col" class="px-3 py-2 font-medium">Status</th>
           <th scope="col" class="px-3 py-2 font-medium">Last sign-in</th>
@@ -24,8 +25,9 @@ defineEmits<{ edit: [user: User] }>()
       <tbody class="divide-y divide-default">
         <tr v-for="user in users" :key="user.id">
           <th scope="row" class="px-3 py-2 font-medium">
-            <span class="[overflow-wrap:anywhere]">{{ user.email }}</span>
+            <span class="[overflow-wrap:anywhere]">{{ userLabel(user) }}</span>
             <UBadge v-if="isSelf(user, currentUserId ? { id: currentUserId } : undefined)" color="neutral" variant="outline" size="sm" class="ml-2">You</UBadge>
+            <span v-if="user.display_name" class="block text-xs font-normal text-muted [overflow-wrap:anywhere]">{{ user.email }}</span>
           </th>
           <td class="px-3 py-2"><UBadge :color="roleColors[user.role]" variant="subtle" size="sm">{{ user.role }}</UBadge></td>
           <td class="px-3 py-2">
@@ -38,7 +40,7 @@ defineEmits<{ edit: [user: User] }>()
               variant="ghost"
               size="sm"
               icon="i-lucide-pencil"
-              :aria-label="`Edit ${user.email}`"
+              :aria-label="`Edit ${userLabel(user)}`"
               data-testid="edit"
               @click="$emit('edit', user)"
             >

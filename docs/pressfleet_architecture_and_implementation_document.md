@@ -359,7 +359,7 @@ Each user has one platform-wide role. The roles are fixed in the MVP; there are 
 | Delete or offboard client groups (export or delete the backup repository and its key) | ✓ | | |
 | Manage users, roles, and other users' API tokens; view the audit log | ✓ | | |
 | Change platform settings (DNS and S3 credentials, SMTP, alert channels, backup location, retention, WordPress security set) | ✓ | | |
-| Manage their own password, API tokens, and SSH keys | ✓ | ✓ | ✓ |
+| Manage their own profile (display name), password, API tokens, and SSH keys | ✓ | ✓ | ✓ |
 
 **Rules:**
 * **Single check point:** Every API handler calls one authorization check with the caller, the action, and the target before doing anything. The UI hides actions the user can't take, but the server is authoritative.

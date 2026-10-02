@@ -5,6 +5,7 @@ export type User = components['schemas']['User']
 export type UserCreate = components['schemas']['UserCreate']
 export type UserUpdate = components['schemas']['UserUpdate']
 
+export const DISPLAY_NAME_MAX = 100
 export const PASSWORD_MIN = 12
 export const PASSWORD_MAX = 256
 
@@ -28,10 +29,24 @@ export function userStatus(user: Pick<User, 'disabled'>): UserStatus {
     : { label: 'Active', color: 'success', icon: 'i-lucide-circle-check' }
 }
 
+/** What to call a user: their display name, or the email address if they haven't set one. */
+export function userLabel(user: Pick<User, 'email' | 'display_name'>): string {
+  return user.display_name.trim() || user.email
+}
+
+/** An early check for the display name field; the server's 422 is shown as well. */
+export function validateDisplayName(name: string): string | undefined {
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(name)) return 'Use plain text without control characters.'
+  if ([...name.trim()].length > DISPLAY_NAME_MAX) return `Use at most ${DISPLAY_NAME_MAX} characters.`
+  return undefined
+}
+
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export interface CreateUserInput {
   email: string
+  displayName?: string
   password: string
   role: Role
 }
@@ -46,7 +61,10 @@ export function validateCreateUser(input: CreateUserInput): { email?: string, pa
 }
 
 export function userCreateBody(input: CreateUserInput): UserCreate {
-  return { email: input.email.trim(), password: input.password, role: input.role }
+  const body: UserCreate = { email: input.email.trim(), password: input.password, role: input.role }
+  const displayName = input.displayName?.trim()
+  if (displayName) body.display_name = displayName
+  return body
 }
 
 /**
@@ -54,8 +72,12 @@ export function userCreateBody(input: CreateUserInput): UserCreate {
  * one field and says only present fields change). `undefined` means nothing
  * to send.
  */
-export function userUpdateBody(user: Pick<User, 'role' | 'disabled'>, next: { role: Role, disabled: boolean }): UserUpdate | undefined {
+export function userUpdateBody(
+  user: Pick<User, 'role' | 'disabled' | 'display_name'>,
+  next: { role: Role, disabled: boolean, displayName?: string },
+): UserUpdate | undefined {
   const body: UserUpdate = {}
+  if (next.displayName !== undefined && next.displayName.trim() !== user.display_name) body.display_name = next.displayName.trim()
   if (next.role !== user.role) body.role = next.role
   if (next.disabled !== user.disabled) body.disabled = next.disabled
   return Object.keys(body).length > 0 ? body : undefined

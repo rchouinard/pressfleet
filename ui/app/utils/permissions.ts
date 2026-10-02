@@ -66,6 +66,7 @@ export const permissions = {
   'platform.settings.manage': 'admin',
 
   // Everyone's own password, tokens and SSH keys.
+  'self.profile.update': 'viewer',
   'self.password.change': 'viewer',
   'self.tokens.manage': 'viewer',
   'self.ssh_keys.manage': 'viewer',

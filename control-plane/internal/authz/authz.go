@@ -135,10 +135,11 @@ const (
 	// channels, backup location, retention).
 	ManagePlatformSettings Action = "platform.settings.manage"
 
-	// Manage their own password, API tokens, and SSH keys. Viewing oneself
+	// Manage their own profile, password, API tokens, and SSH keys. Viewing oneself
 	// and logging out belong here too.
 	ViewSelf          Action = "self.view"
 	Logout            Action = "self.logout"
+	UpdateOwnProfile  Action = "self.profile.update"
 	ChangeOwnPassword Action = "self.password.change"
 	ViewOwnTokens     Action = "self.tokens.view"
 	CreateOwnToken    Action = "self.tokens.create" //nolint:gosec // G101: an action name, not a credential
@@ -238,6 +239,7 @@ var rules = map[Action]rule{
 	// session has no scope, so logging out is not a write for scope
 	// purposes.
 	Logout:            {store.RoleViewer, false},
+	UpdateOwnProfile:  {store.RoleViewer, true},
 	ChangeOwnPassword: {store.RoleViewer, true},
 	ViewOwnTokens:     {store.RoleViewer, false},
 	CreateOwnToken:    {store.RoleViewer, true},

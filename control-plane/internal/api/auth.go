@@ -93,6 +93,21 @@ func (h *Handlers) GetCurrentUser(ctx context.Context, _ gen.GetCurrentUserReque
 	return gen.GetCurrentUser200JSONResponse(currentUser(u, method, csrf)), nil
 }
 
+// UpdateCurrentUser changes the caller's own display name.
+func (h *Handlers) UpdateCurrentUser(ctx context.Context, req gen.UpdateCurrentUserRequestObject) (gen.UpdateCurrentUserResponseObject, error) {
+	p, err := h.authorizeAuth(ctx, authz.UpdateOwnProfile, self(ctx))
+	if err != nil {
+		return nil, err
+	}
+	u, err := h.auth.UpdateUser(ctx, p.UserID, auth.UserChanges{DisplayName: &req.Body.DisplayName})
+	if errors.Is(err, auth.ErrUserNotFound) {
+		return nil, ErrUnauthenticated
+	} else if err != nil {
+		return nil, authError(err, "")
+	}
+	return gen.UpdateCurrentUser200JSONResponse(user(u)), nil
+}
+
 // ChangePassword changes the caller's own password.
 func (h *Handlers) ChangePassword(ctx context.Context, req gen.ChangePasswordRequestObject) (gen.ChangePasswordResponseObject, error) {
 	p, err := h.authorizeAuth(ctx, authz.ChangeOwnPassword, self(ctx))
@@ -200,6 +215,8 @@ func authError(err error, passwordField string) error {
 		return fieldError(passwordField, err.Error())
 	case errors.Is(err, auth.ErrInvalidEmail):
 		return fieldError("/email", "must be an email address such as name@example.com")
+	case errors.Is(err, auth.ErrInvalidDisplayName):
+		return fieldError("/display_name", err.Error())
 	case errors.Is(err, auth.ErrInvalidRole):
 		return fieldError("/role", err.Error())
 	case errors.Is(err, auth.ErrInvalidScope):
@@ -219,7 +236,7 @@ func fieldError(field, detail string) error {
 func currentUser(u store.User, method gen.CurrentUserAuthMethod, csrf *string) gen.CurrentUser {
 	g := user(u)
 	return gen.CurrentUser{
-		ID: g.ID, Email: g.Email, Role: g.Role, Disabled: g.Disabled,
+		ID: g.ID, Email: g.Email, DisplayName: g.DisplayName, Role: g.Role, Disabled: g.Disabled,
 		CreatedAt: g.CreatedAt, UpdatedAt: g.UpdatedAt, LastLoginAt: g.LastLoginAt,
 		AuthMethod: method, CsrfToken: csrf,
 	}
@@ -229,6 +246,7 @@ func user(u store.User) gen.User {
 	return gen.User{
 		ID:          u.ID,
 		Email:       openapi_types.Email(u.Email),
+		DisplayName: u.DisplayName,
 		Role:        gen.Role(u.Role),
 		Disabled:    u.Disabled(),
 		CreatedAt:   u.CreatedAt,

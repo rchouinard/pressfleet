@@ -15,6 +15,7 @@ const user = (over: Partial<User> = {}): User => ({
   created_at: '2026-09-01T00:00:00Z',
   updated_at: '2026-09-01T00:00:00Z',
   last_login_at: null,
+  display_name: '',
   ...over,
 })
 
@@ -51,7 +52,7 @@ describe('UserForm (create)', () => {
     const wrapper = mount(UserForm, { global })
     const inputs = wrapper.findAll('input')
     await inputs[0]!.setValue(' new@example.com ')
-    await inputs[1]!.setValue('a long enough password')
+    await inputs[2]!.setValue('a long enough password')
     await wrapper.find('select').setValue('operator')
     await wrapper.find('form').trigger('submit')
 
@@ -61,9 +62,9 @@ describe('UserForm (create)', () => {
   it('toggles password visibility with an accessible control', async () => {
     const wrapper = mount(UserForm, { global })
     const toggle = wrapper.find('button[aria-label="Show password"]')
-    expect(wrapper.findAll('input')[1]!.attributes('type')).toBe('password')
+    expect(wrapper.findAll('input')[2]!.attributes('type')).toBe('password')
     await toggle.trigger('click')
-    expect(wrapper.findAll('input')[1]!.attributes('type')).toBe('text')
+    expect(wrapper.findAll('input')[2]!.attributes('type')).toBe('text')
     expect(wrapper.find('button[aria-label="Hide password"]').exists()).toBe(true)
   })
 })
@@ -74,6 +75,13 @@ describe('UserForm (edit)', () => {
     await wrapper.find('select').setValue('admin')
     await wrapper.find('form').trigger('submit')
     expect(wrapper.emitted('update')![0]).toEqual([{ role: 'admin' }])
+  })
+
+  it('emits a changed display name', async () => {
+    const wrapper = mount(UserForm, { props: { user: user() }, global })
+    await wrapper.findAll('input')[0]!.setValue('Ann Lee')
+    await wrapper.find('form').trigger('submit')
+    expect(wrapper.emitted('update')![0]).toEqual([{ display_name: 'Ann Lee' }])
   })
 
   it('says so and emits nothing when nothing changed', async () => {
