@@ -121,7 +121,7 @@ func (a *app) databaseSessions(db *store.DB, siteDBs *mariadb.Manager, hostKey s
 
 // metricsService returns the metrics collector service (§7), writing to
 // the configured VictoriaMetrics, with the built-in collectors registered.
-func (a *app) metricsService(db *store.DB, stats provisioner.StatsReader) (*metrics.Service, error) {
+func (a *app) metricsService(db *store.DB, stats provisioner.StatsReader, secretStore secrets.Store) (*metrics.Service, error) {
 	log := a.log.With("component", "metrics")
 	client, err := metrics.NewClient(metrics.Options{URL: a.cfg.Metrics.URL, Logger: log})
 	if err != nil {
@@ -141,6 +141,15 @@ func (a *app) metricsService(db *store.DB, stats provisioner.StatsReader) (*metr
 		return nil, err
 	}
 	if err := svc.Register(metrics.ContainerCollector{Stats: stats}); err != nil {
+		return nil, err
+	}
+	uptime, err := metrics.NewUptimeCollector(metrics.UptimeOptions{
+		Aliases: store.NewSites(db), Secrets: secretStore, Logger: log.With("collector", "uptime"),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := svc.Register(uptime); err != nil {
 		return nil, err
 	}
 	return svc, nil
@@ -472,7 +481,7 @@ func (a *app) serveCommand() *cobra.Command {
 			// starting or down: write failures are logged and counted, and
 			// the next run tries again.
 			if a.cfg.Metrics.Enabled {
-				collector, err := a.metricsService(db, prov)
+				collector, err := a.metricsService(db, prov, secretStore)
 				if err != nil {
 					return err
 				}

@@ -353,6 +353,16 @@ Some events carry `details`, such as the SFTP gateway's sessions (see below).
 
 Metrics are stored in a single-node VictoriaMetrics service of the platform project, limited to 256 MiB of memory, with its data on the `victoria-metrics-data` volume. It is reachable only on the platform network, as `http://victoria-metrics:8428`: it publishes no host port and has no Traefik route, so it isn't exposed to the internet. Data older than `metrics.retention_days` is deleted by VictoriaMetrics itself.
 
+## Uptime and TLS checks
+
+The `uptime` collector requests `https://<domain>/` for every running site from the control plane, at `metrics.interval_seconds`, and writes `pressfleet_site_up`, `pressfleet_site_http_check_status_code`, `pressfleet_site_http_check_duration_seconds`, and `pressfleet_site_tls_certificate_expiry_timestamp_seconds{domain}`. The availability metrics come from the site's primary domain, or its preview domain before go-live; the certificate expiry comes from every domain (preview, primary, and aliases). A site is up when it answers with a status below 500 (a site in maintenance mode answers 503 and still counts as up). Redirects aren't followed. Stopped, provisioning, updating, and failed sites aren't checked.
+
+When preview password protection is on, the preview domain's check sends the site's preview credentials (§5.1), so it sees the site and not a 401. No other domain is sent them.
+
+A certificate that fails verification (expired, wrong name, untrusted) makes the check fail: the site reads as down and no expiry is written for that domain.
+
+**Limitation:** the checks run on the PressFleet host itself, so a full host outage can't be detected by them: nothing runs to report it, and the alert engine sees missing data, not `pressfleet_site_up` 0. Use an external uptime monitor for that. External checking is a future consideration (design doc §7.3). The control plane must also be able to reach its own public domains (hairpin routing to the host's public address).
+
 ## Metrics API
 
 The dashboard reads metrics through curated, read-only endpoints (design doc §7.1, §7.2, tag `metrics` in `api/openapi.yaml`); it never sends queries. Every role can use them. They read VictoriaMetrics (`metrics.url`), and answer `503` while it can't be reached or when `metrics.enabled` is false.
