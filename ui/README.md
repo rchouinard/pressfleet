@@ -218,6 +218,15 @@ On the site page, after "Domains": `<SiteSettings :site @changed>` wraps `SiteSe
 - **States**: loading skeletons per group, `ProblemAlert` per failed group (a `503` when the metrics store is down), and "No data" per metric. Collectors (#68 to #74) may not exist, so empty is normal: when nothing in the range has data, the page says so once instead of showing a wall of empty charts, and metrics without data are listed in one muted line per group. Timestamp-unit metrics (TLS expiry, last backup) are shown as dates, not lines.
 - **Accessibility and themes**: the canvas is `role="img"` with a generated text summary; each card has a table of latest/min/avg/max per series, which also serves as the legend. Series differ by dash pattern as well as colour. Colours are re-picked and the chart rebuilt on a colour-mode change. Cards stack on one column at 360 px and the tables scroll horizontally.
 
+## Platform overview
+
+`/overview` (any role, `monitoring.view`) shows host capacity, reservations against host memory, and platform health. Logic is in `utils/overview.ts` (tests in `tests/overview.test.ts`); each panel loads and fails independently.
+
+- **Capacity figures**: `GET /api/v1/metrics/platform/summary` with an explicit metric list (CPU, memory, fullest disk, MariaDB connections, Redis memory, job queue, job failure rate). Missing data shows as a dash, not an error.
+- **Reservations vs host memory** (design doc §4.1): the page pages through every site and sums `resources.memory_reservation_mb` of sites that are not `stopped` or `deleting`, then compares with the `host_memory` total. Over 100% is an error alert, 90% or more a caution; with no host memory data the result is "unknown", never "ok". There is no capacity endpoint, so the sum is computed in the browser.
+- **Platform health**: `/readyz` checks, read with plain `fetch` because the API client throws on the `503` that carries the failing checks.
+- **Doctor results**: the API has no endpoint for `pressfleet doctor` results, so the page says to run it on the host. Replace that panel when an endpoint exists.
+
 ## Embedding in the Go binary
 
 `go:embed` can't reach outside a package directory, and the Nuxt output lives in `ui/.output/public`, so `ui/` is also the Go package `github.com/rchouinard/pressfleet/ui`, which exposes the files as an `fs.FS`:

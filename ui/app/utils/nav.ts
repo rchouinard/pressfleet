@@ -39,7 +39,7 @@ export const navRegistry: readonly NavItem[] = [
   { id: 'backups', label: 'Backups', icon: 'i-lucide-archive', minRole: 'viewer', section: 'main' },
   { id: 'jobs', label: 'Jobs', icon: 'i-lucide-list-checks', route: '/jobs', minRole: 'viewer', section: 'main' },
 
-  { id: 'overview', label: 'Platform overview', icon: 'i-lucide-gauge', minRole: 'viewer', section: 'monitor' },
+  { id: 'overview', label: 'Platform overview', icon: 'i-lucide-gauge', route: '/overview', minRole: 'viewer', section: 'monitor' },
   { id: 'metrics', label: 'Metrics', icon: 'i-lucide-chart-line', route: '/metrics', minRole: 'viewer', section: 'monitor' },
   { id: 'logs', label: 'Logs', icon: 'i-lucide-scroll-text', route: '/logs', minRole: 'viewer', section: 'monitor' },
   { id: 'alerts', label: 'Alerts', icon: 'i-lucide-bell', route: '/alerts', minRole: 'viewer', section: 'monitor' },
