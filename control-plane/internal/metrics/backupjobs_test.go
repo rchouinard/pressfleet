@@ -35,7 +35,7 @@ func addJob(t *testing.T, db *store.DB, state store.JobState) {
 }
 
 // find returns the value of the sample with the name and the label pairs.
-func find(samples []metrics.Sample, name string, labels ...string) (float64, bool) {
+func findSample(samples []metrics.Sample, name string, labels ...string) (float64, bool) {
 next:
 	for _, s := range samples {
 		if s.Name != name {
@@ -118,14 +118,14 @@ func TestBackupJobsCollector(t *testing.T) {
 			{"pressfleet_site_backup_size_bytes", []string{"site_id", failSite}, 500},
 			{"pressfleet_site_backup_duration_seconds", []string{"site_id", failSite}, 30},
 		} {
-			got, ok := find(samples, tc.name, tc.labels...)
+			got, ok := findSample(samples, tc.name, tc.labels...)
 			if !ok || got != tc.want {
 				t.Errorf("%s%v = %v (found %v), want %v", tc.name, tc.labels, got, ok, tc.want)
 			}
 		}
 		for _, siteID := range []string{offSite, neverSite} {
 			for _, name := range []string{"pressfleet_site_backup_last_run_success", "pressfleet_site_backup_last_success_timestamp_seconds"} {
-				if _, ok := find(samples, name, "site_id", siteID); ok {
+				if _, ok := findSample(samples, name, "site_id", siteID); ok {
 					t.Errorf("%s emitted for site %s, which has no schedule or no backups", name, siteID)
 				}
 			}
