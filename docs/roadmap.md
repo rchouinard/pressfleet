@@ -265,6 +265,14 @@ KubernetesProvisioner using client-go (§4.2, §8). Do not implement before MVP 
 | --- | --- | --- | --- | --- |
 | [#102](https://github.com/rchouinard/pressfleet/issues/102) | Kubernetes driver (tracking) | P2 | XL | #3 |
 
+### Post-MVP: MCP Server
+
+Built-in Model Context Protocol server exposing the dashboard's operations to agentic clients (§1.1, §8). Its open questions (authentication, secrets in model context, destructive operations, uploads) are listed in the tracking issue. Do not implement before MVP ships.
+
+| # | Issue | Priority | Size | Depends on |
+| --- | --- | --- | --- | --- |
+| [#132](https://github.com/rchouinard/pressfleet/issues/132) | Built-in MCP server (tracking) | P2 | XL | #11, #103, #104 |
+
 ## Open decisions
 
 These must be resolved before the work they block.

@@ -27,6 +27,7 @@ PressFleet aims to simplify WordPress management for agencies by delivering:
 * **Client access to the platform.** Only agency staff use the dashboard and API. Exposing platform features to clients (e.g. via WordPress plugins that call the platform API) is a future consideration (§4.2).
 * **Staging clones.** Post-MVP, but the **highest-priority** follow-up (§8). The MVP data model and restore pipeline should anticipate it.
 * **Kubernetes deployment.** Planned for a later release; the MVP only has to keep the door open (§4.2).
+* **MCP server.** A built-in Model Context Protocol server that gives agentic clients the dashboard's operations is planned for after the MVP (§8). It goes through the same API authorization and audit log (§4.6), so the MVP needs nothing extra for it.
 * **WordPress Multisite.**
 * **Managing plugin and theme updates.** WordPress handles these natively; the dashboard only reports pending updates (§5.6).
 * **Multi-host clustering** of the Docker Compose target. One PressFleet install manages one Docker host.
@@ -622,6 +623,7 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
                                                                                                                                   │
                                                                              [ Post-MVP: Staging Clones (priority) ] ◄────────────┘
                                                                              [ Post-MVP: Kubernetes ]
+                                                                             [ Post-MVP: MCP Server ]
 ```
 
 * **Phase 1: Core Engine & Compose Driver**
@@ -665,6 +667,9 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
 * **Post-MVP: Kubernetes Driver**
   * Implement `KubernetesProvisioner` using `client-go`, with templates in `/templates/k8s`.
   * Test against kind or k3d.
+* **Post-MVP: MCP Server**
+  * A Model Context Protocol server built into the control plane (Streamable HTTP, off by default) whose tools are derived from the OpenAPI spec and cover the dashboard's operations.
+  * Every tool goes through the API's authorization check and audit log; `tools/list` shows only what the caller's token and role allow.
 
 ---
 
