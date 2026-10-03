@@ -3,8 +3,11 @@
 // server's 422 field errors then show next to their fields and anything else
 // (409, 403, network) in a ProblemAlert. The caller does the request in
 // `submit` and the modal stays open until it resolves; a throw is shown here.
+// PHP versions come from the catalog the caller loads (`usePhpCatalog`);
+// "Platform default" is preselected and sends no version, as a blank field did.
 import { computed, reactive, ref, watch } from 'vue'
 import { toApiError, type ApiError } from '../../utils/api-error'
+import { PHP_DEFAULT_CHOICE, phpCreateOptions, phpStatus, type PhpVersionInfo } from '../../utils/php'
 import {
   ADMIN_USERNAME_MAX, SITE_NAME_MAX, validateSite,
   type SiteFormValues,
@@ -15,6 +18,12 @@ const props = defineProps<{
   /** Preselects a client group (the list's filter). */
   defaultGroupId?: string
   submit: (values: SiteFormValues) => Promise<void>
+  /** The PHP versions the API lists; empty while loading or after a failure. */
+  phpVersions?: readonly PhpVersionInfo[]
+  /** The version new sites get when none is chosen (the catalog's `default`). */
+  phpDefault?: string
+  /** Why the catalog couldn't be loaded; only the platform default is offered then. */
+  phpError?: ApiError
 }>()
 const open = defineModel<boolean>('open', { required: true })
 
@@ -33,6 +42,18 @@ watch(open, (isOpen) => {
   local.value = {}
   failure.value = undefined
 }, { immediate: true })
+
+const phpChoices = computed(() => phpCreateOptions(props.phpVersions, props.phpDefault))
+const phpChoice = computed({
+  get: () => values.php_version === '' ? PHP_DEFAULT_CHOICE : values.php_version,
+  set: (v: string) => { values.php_version = v === PHP_DEFAULT_CHOICE ? '' : v },
+})
+// A chosen version that is no longer offered (the catalog reloaded) falls back to the default.
+watch(phpChoices, (items) => {
+  if (!items.some(i => i.value === phpChoice.value)) values.php_version = ''
+})
+const phpEffective = computed(() => values.php_version || props.phpDefault)
+const phpChosen = computed(() => (phpEffective.value ? phpStatus(phpEffective.value, props.phpVersions) : undefined))
 
 function err(field: keyof SiteFormValues) {
   return local.value[field] ?? failure.value?.fieldError(`/${field}`)
@@ -77,9 +98,16 @@ async function onSubmit() {
         <UFormField label="Admin username" name="admin_username" hint="Optional" :error="err('admin_username')" description="A name is generated if you leave this blank.">
           <UInput v-model="values.admin_username" :maxlength="ADMIN_USERNAME_MAX" autocomplete="off" class="w-full" />
         </UFormField>
-        <UFormField label="PHP version" name="php_version" hint="Optional" :error="err('php_version')" description="For example 8.4. The platform default is used if blank.">
-          <UInput v-model="values.php_version" autocomplete="off" class="w-full" />
+        <UFormField label="PHP version" name="php_version" :error="err('php_version')" description="End-of-life versions aren't offered. You can change the version later in the site's settings.">
+          <USelect v-model="phpChoice" :items="phpChoices" class="w-full" data-testid="php-select" />
         </UFormField>
+        <p v-if="phpChosen?.warning" class="flex items-start gap-2 rounded-md border border-default bg-elevated p-3 text-sm" data-testid="php-chosen-warning">
+          <UIcon :name="phpChosen.icon" class="mt-0.5 size-4 shrink-0" aria-hidden="true" />{{ phpChosen.warning }}
+        </p>
+        <div v-if="phpError" class="space-y-2" data-testid="php-catalog-error">
+          <p class="text-sm">The PHP versions couldn't be loaded, so only the platform default is offered.</p>
+          <ProblemAlert :error="phpError" />
+        </div>
         <p class="text-sm text-muted">
           The WordPress admin password is generated for you. Once the site is running, an operator can reveal it, once, on the site's page.
         </p>

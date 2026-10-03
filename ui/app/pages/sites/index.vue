@@ -50,6 +50,11 @@ async function loadMore() {
 
 // Provisioning: the form closes on 202 and the detail page shows the job.
 const formOpen = ref(false)
+const php = usePhpCatalog()
+// A catalog that failed earlier is tried again each time the form opens.
+watch(formOpen, (isOpen) => {
+  if (isOpen && php.error.value) void php.retry()
+})
 async function create(values: SiteFormValues) {
   const { data } = await api.POST('/api/v1/sites', { body: createSitePayload(values) })
   if (!data) return
@@ -101,6 +106,9 @@ async function create(values: SiteFormValues) {
       :groups="groupItems"
       :default-group-id="groupFilter === SITE_FILTER_ALL ? undefined : groupFilter"
       :submit="create"
+      :php-versions="php.versions.value"
+      :php-default="php.defaultVersion.value"
+      :php-error="php.error.value"
     />
   </div>
 </template>

@@ -57,3 +57,26 @@ export function phpOptions(current: string, versions: readonly PhpVersionInfo[] 
     return { value: v, label: v === current ? `${v} (current, ${s.label.toLowerCase()})` : `${v} (${s.label.toLowerCase()})` }
   })
 }
+
+/** The create form's choice for "no version chosen": the request omits `php_version`. */
+export const PHP_DEFAULT_CHOICE = 'default'
+
+/**
+ * The versions to offer when creating a site: "Platform default" first (the
+ * preselected choice, which sends no version), then every version not past
+ * end of life, newest first, each with its status. EOL versions are left out
+ * as in the settings selector, because the server rejects them (`422`). With
+ * no catalog (still loading, or failed) only the platform default is offered.
+ */
+export function phpCreateOptions(versions: readonly PhpVersionInfo[] = [], defaultVersion?: string): { label: string, value: string }[] {
+  const def = defaultVersion
+    ? `Platform default (PHP ${defaultVersion}, ${phpStatus(defaultVersion, versions).label.toLowerCase()})`
+    : 'Platform default'
+  return [
+    { value: PHP_DEFAULT_CHOICE, label: def },
+    ...versions.filter(b => b.status !== 'eol').map(b => ({
+      value: b.version,
+      label: `PHP ${b.version} (${phpStatus(b.version, versions).label.toLowerCase()})`,
+    })),
+  ]
+}
