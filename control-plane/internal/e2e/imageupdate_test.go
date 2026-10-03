@@ -277,7 +277,7 @@ func TestImageUpdate(t *testing.T) {
 	})
 
 	for _, id := range siteIDs {
-		resp, err := p.Client.DeleteSiteWithResponse(ctx, id)
+		resp, err := p.Client.DeleteSiteWithResponse(ctx, id, nil)
 		if err != nil || resp.JSON202 == nil {
 			t.Fatalf("delete site: %v %s", err, resp.Body)
 		}

@@ -32,7 +32,8 @@ type Call struct {
 type Fake struct {
 	// Err, if set, is consulted at the start of every call; a non-nil result
 	// is returned without changing state. Use it to inject failures. siteID
-	// is the client group ID for Prune, Check, and GroupSnapshots.
+	// is the client group ID for Prune, Check, and GroupSnapshots, and the
+	// site ID for ForgetSite.
 	Err func(op, siteID string) error
 	// KeepLast is Prune's retention policy.
 	KeepLast int
@@ -178,4 +179,20 @@ func (f *Fake) GroupSnapshots(_ context.Context, clientGroupID string) ([]backup
 	}
 	slices.SortFunc(out, func(a, b backup.Snapshot) int { return a.Time.Compare(b.Time) })
 	return out, nil
+}
+
+// ForgetSite implements backup.Engine: it removes all of the site's
+// snapshots. A site the fake never backed up has none to remove.
+func (f *Fake) ForgetSite(_ context.Context, siteID string) (backup.PruneResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.begin(Call{Op: "ForgetSite", SiteID: siteID}); err != nil {
+		return backup.PruneResult{}, err
+	}
+	res := backup.PruneResult{Forgotten: []backup.SnapshotID{}}
+	for _, s := range f.snapshots[siteID] {
+		res.Forgotten = append(res.Forgotten, s.ID)
+	}
+	delete(f.snapshots, siteID)
+	return res, nil
 }

@@ -63,6 +63,8 @@ var designTable = map[authz.Action]struct {
 	authz.ManageAlertRules:  {true, true, false, true},
 	// Delete sites.
 	authz.DeleteSite: {true, false, false, true},
+	// Delete a site with its backups: deleting backups is Admin-only.
+	authz.DeleteSiteBackups: {true, false, false, true},
 	// Delete or offboard client groups.
 	authz.DeleteClientGroup:   {true, false, false, true},
 	authz.OffboardClientGroup: {true, false, false, true},

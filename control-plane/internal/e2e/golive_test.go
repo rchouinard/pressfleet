@@ -339,7 +339,7 @@ func TestSiteGoLive(t *testing.T) {
 		waitIngress(t, hc, "https://"+goLivePrimary+"/", nil, http.StatusOK)
 	})
 
-	deleted, err := p.Client.DeleteSiteWithResponse(ctx, site.ID)
+	deleted, err := p.Client.DeleteSiteWithResponse(ctx, site.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

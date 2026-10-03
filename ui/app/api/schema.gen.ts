@@ -488,6 +488,19 @@ export interface paths {
          * @description Queues a job that removes the site's containers, network, volumes,
          *     database, secrets, and rendered files. The site's status becomes
          *     `deleting`; the site disappears when the job succeeds.
+         *
+         *     The site's backups stay unless `delete_backups` is `true`: they can
+         *     still be listed (`deleted=true`), exported, and restored into another
+         *     site of the client group. With `delete_backups=true` the job also
+         *     removes all of the site's snapshots from the client group's
+         *     repository (other sites' snapshots stay), prunes the data only they
+         *     used, and deletes the site's backup records; its result has
+         *     `forgotten_snapshots` and `deleted_backup_records`. That can't be
+         *     undone, and needs the `site.delete_with_backups` permission, which
+         *     the audit log records instead of `site.delete`. The backups go after
+         *     the site's other resources, so a deletion that fails earlier leaves
+         *     them all in place. If a deletion job is already queued or running, it
+         *     is returned with the choice it was queued with.
          */
         delete: operations["deleteSite"];
         options?: never;
@@ -5356,7 +5369,10 @@ export interface operations {
     };
     deleteSite: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Also delete the site's backups. Defaults to `false`. */
+                delete_backups?: boolean;
+            };
             header?: never;
             path: {
                 site_id: components["parameters"]["SiteID"];

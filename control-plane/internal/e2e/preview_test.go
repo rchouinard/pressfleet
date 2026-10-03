@@ -309,7 +309,7 @@ func TestSitePreview(t *testing.T) {
 		t.Logf("site back after %s", time.Since(start).Round(100*time.Millisecond))
 	})
 
-	deleted, err := p.Client.DeleteSiteWithResponse(ctx, site.ID)
+	deleted, err := p.Client.DeleteSiteWithResponse(ctx, site.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -297,7 +297,7 @@ func TestDeleteWhileUpdateQueued(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := e.svc.Delete(ctx, site.ID, ""); err != nil {
+		if _, err := e.svc.Delete(ctx, site.ID, "", sites.DeleteOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		e.runJobs(t)

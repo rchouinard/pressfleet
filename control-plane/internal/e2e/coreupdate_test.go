@@ -244,7 +244,7 @@ func TestCoreUpdate(t *testing.T) {
 		}
 	})
 
-	resp, err := p.Client.DeleteSiteWithResponse(ctx, site.ID)
+	resp, err := p.Client.DeleteSiteWithResponse(ctx, site.ID, nil)
 	if err != nil || resp.JSON202 == nil {
 		t.Fatalf("delete site: %v %s", err, resp.Body)
 	}

@@ -94,9 +94,10 @@ type Retention struct {
 // removes nothing.
 func (r Retention) KeepsEverything() bool { return r == Retention{} }
 
-// PruneResult is what Prune did.
+// PruneResult is what Prune or ForgetSite did.
 type PruneResult struct {
-	// Forgotten are the snapshots the retention policy removed.
+	// Forgotten are the snapshots removed: for Prune those the retention
+	// policy doesn't keep, for ForgetSite all of the site's.
 	Forgotten []SnapshotID
 }
 
@@ -139,4 +140,15 @@ type Engine interface {
 	// repository, of any site, oldest first; none if the group has no
 	// repository.
 	GroupSnapshots(ctx context.Context, clientGroupID string) ([]Snapshot, error)
+	// ForgetSite removes every snapshot of the site from its client
+	// group's repository, then the data that only they used (restic
+	// prune), e.g. when the site is deleted together with its backups.
+	// Other sites' snapshots in the repository are untouched. Running it
+	// again converges on the same state: it prunes even when nothing is
+	// left to forget, in case an earlier attempt forgot snapshots and
+	// failed before pruning. Like Prune it takes an exclusive repository
+	// lock, waiting for a prune or check that holds one. A group without
+	// a repository has nothing to forget. It returns ErrSiteNotFound if
+	// the platform knows nothing of the site.
+	ForgetSite(ctx context.Context, siteID string) (PruneResult, error)
 }

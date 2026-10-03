@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
@@ -338,19 +339,27 @@ func (h *Handlers) RegenerateSitePreviewPassword(ctx context.Context, req gen.Re
 }
 
 // DeleteSite queues the site deletion job, or returns the one already
-// queued.
+// queued. Deleting the site's backups too needs authz.DeleteSiteBackups,
+// which the audit event records instead of authz.DeleteSite, with the
+// choice in its details.
 func (h *Handlers) DeleteSite(ctx context.Context, req gen.DeleteSiteRequestObject) (gen.DeleteSiteResponseObject, error) {
-	p, err := h.authorize(ctx, authz.DeleteSite, authz.Site(req.SiteID))
+	deleteBackups := req.Params.DeleteBackups != nil && *req.Params.DeleteBackups
+	action := authz.DeleteSite
+	if deleteBackups {
+		action = authz.DeleteSiteBackups
+	}
+	p, err := h.authorize(ctx, action, authz.Site(req.SiteID))
 	if err != nil {
 		return nil, err
 	}
 	if h.sites == nil {
 		return nil, errNoSites
 	}
-	job, err := h.sites.Delete(ctx, req.SiteID, p.UserID)
+	job, err := h.sites.Delete(ctx, req.SiteID, p.UserID, sites.DeleteOptions{DeleteBackups: deleteBackups})
 	if err != nil {
 		return nil, siteError(err)
 	}
+	setAuditDetails(ctx, map[string]string{"delete_backups": strconv.FormatBool(deleteBackups), "job_id": job.ID})
 	j, err := jobResponse(job, nil, nil)
 	if err != nil {
 		return nil, err

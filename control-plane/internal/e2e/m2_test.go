@@ -333,7 +333,7 @@ func TestM2Acceptance(t *testing.T) {
 
 	var deletions []string
 	for _, id := range []string{a.ID, b.ID} {
-		deleted, err := p.Client.DeleteSiteWithResponse(ctx, id)
+		deleted, err := p.Client.DeleteSiteWithResponse(ctx, id, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

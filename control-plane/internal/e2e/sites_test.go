@@ -534,7 +534,7 @@ func TestSiteCreateDelete(t *testing.T) {
 	// Delete both sites; their deletions run at the same time.
 	var deletions []string
 	for _, id := range []string{site.ID, other.Site.ID} {
-		deleted, err := p.Client.DeleteSiteWithResponse(ctx, id)
+		deleted, err := p.Client.DeleteSiteWithResponse(ctx, id, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

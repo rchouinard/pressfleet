@@ -4111,6 +4111,12 @@ type ListSitesParams struct {
 	Status *SiteStatus `form:"status,omitempty" json:"status,omitempty"`
 }
 
+// DeleteSiteParams defines parameters for DeleteSite.
+type DeleteSiteParams struct {
+	// DeleteBackups Also delete the site's backups. Defaults to `false`.
+	DeleteBackups *bool `form:"delete_backups,omitempty" json:"delete_backups,omitempty"`
+}
+
 // ListSiteBackupsParams defines parameters for ListSiteBackups.
 type ListSiteBackupsParams struct {
 	// Limit Maximum number of items to return.
@@ -5179,8 +5185,21 @@ type ClientInterface interface {
 	// database, secrets, and rendered files. The site's status becomes
 	// `deleting`; the site disappears when the job succeeds.
 	//
+	// The site's backups stay unless `delete_backups` is `true`: they can
+	// still be listed (`deleted=true`), exported, and restored into another
+	// site of the client group. With `delete_backups=true` the job also
+	// removes all of the site's snapshots from the client group's
+	// repository (other sites' snapshots stay), prunes the data only they
+	// used, and deletes the site's backup records; its result has
+	// `forgotten_snapshots` and `deleted_backup_records`. That can't be
+	// undone, and needs the `site.delete_with_backups` permission, which
+	// the audit log records instead of `site.delete`. The backups go after
+	// the site's other resources, so a deletion that fails earlier leaves
+	// them all in place. If a deletion job is already queued or running, it
+	// is returned with the choice it was queued with.
+	//
 	// Corresponds with DELETE /api/v1/sites/{site_id} (the `DeleteSite` operationId).
-	DeleteSite(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeleteSite(ctx context.Context, siteID SiteID, params *DeleteSiteParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetSite Get a site
 	//
@@ -7919,9 +7938,22 @@ func (c *Client) ImportSite(ctx context.Context, body ImportSiteJSONRequestBody,
 // database, secrets, and rendered files. The site's status becomes
 // `deleting`; the site disappears when the job succeeds.
 //
+// The site's backups stay unless `delete_backups` is `true`: they can
+// still be listed (`deleted=true`), exported, and restored into another
+// site of the client group. With `delete_backups=true` the job also
+// removes all of the site's snapshots from the client group's
+// repository (other sites' snapshots stay), prunes the data only they
+// used, and deletes the site's backup records; its result has
+// `forgotten_snapshots` and `deleted_backup_records`. That can't be
+// undone, and needs the `site.delete_with_backups` permission, which
+// the audit log records instead of `site.delete`. The backups go after
+// the site's other resources, so a deletion that fails earlier leaves
+// them all in place. If a deletion job is already queued or running, it
+// is returned with the choice it was queued with.
+//
 // Corresponds with DELETE /api/v1/sites/{site_id} (the `DeleteSite` operationId).
-func (c *Client) DeleteSite(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteSiteRequest(c.Server, siteID)
+func (c *Client) DeleteSite(ctx context.Context, siteID SiteID, params *DeleteSiteParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteSiteRequest(c.Server, siteID, params)
 	if err != nil {
 		return nil, err
 	}
@@ -12685,7 +12717,7 @@ func NewImportSiteRequestWithBody(server string, contentType string, body io.Rea
 }
 
 // NewDeleteSiteRequest constructs an http.Request for the DeleteSite method
-func NewDeleteSiteRequest(server string, siteID SiteID) (*http.Request, error) {
+func NewDeleteSiteRequest(server string, siteID SiteID, params *DeleteSiteParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -12708,6 +12740,33 @@ func NewDeleteSiteRequest(server string, siteID SiteID) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.DeleteBackups != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "delete_backups", *params.DeleteBackups, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
@@ -16070,10 +16129,23 @@ type ClientWithResponsesInterface interface {
 	// database, secrets, and rendered files. The site's status becomes
 	// `deleting`; the site disappears when the job succeeds.
 	//
+	// The site's backups stay unless `delete_backups` is `true`: they can
+	// still be listed (`deleted=true`), exported, and restored into another
+	// site of the client group. With `delete_backups=true` the job also
+	// removes all of the site's snapshots from the client group's
+	// repository (other sites' snapshots stay), prunes the data only they
+	// used, and deletes the site's backup records; its result has
+	// `forgotten_snapshots` and `deleted_backup_records`. That can't be
+	// undone, and needs the `site.delete_with_backups` permission, which
+	// the audit log records instead of `site.delete`. The backups go after
+	// the site's other resources, so a deletion that fails earlier leaves
+	// them all in place. If a deletion job is already queued or running, it
+	// is returned with the choice it was queued with.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /api/v1/sites/{site_id} (the `DeleteSite` operationId).
-	DeleteSiteWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*DeleteSiteResponse, error)
+	DeleteSiteWithResponse(ctx context.Context, siteID SiteID, params *DeleteSiteParams, reqEditors ...RequestEditorFn) (*DeleteSiteResponse, error)
 
 	// GetSiteWithResponse Get a site
 	//
@@ -26878,11 +26950,24 @@ func (c *ClientWithResponses) ImportSiteWithResponse(ctx context.Context, body I
 // database, secrets, and rendered files. The site's status becomes
 // `deleting`; the site disappears when the job succeeds.
 //
+// The site's backups stay unless `delete_backups` is `true`: they can
+// still be listed (`deleted=true`), exported, and restored into another
+// site of the client group. With `delete_backups=true` the job also
+// removes all of the site's snapshots from the client group's
+// repository (other sites' snapshots stay), prunes the data only they
+// used, and deletes the site's backup records; its result has
+// `forgotten_snapshots` and `deleted_backup_records`. That can't be
+// undone, and needs the `site.delete_with_backups` permission, which
+// the audit log records instead of `site.delete`. The backups go after
+// the site's other resources, so a deletion that fails earlier leaves
+// them all in place. If a deletion job is already queued or running, it
+// is returned with the choice it was queued with.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /api/v1/sites/{site_id} (the `DeleteSite` operationId).
-func (c *ClientWithResponses) DeleteSiteWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*DeleteSiteResponse, error) {
-	rsp, err := c.DeleteSite(ctx, siteID, reqEditors...)
+func (c *ClientWithResponses) DeleteSiteWithResponse(ctx context.Context, siteID SiteID, params *DeleteSiteParams, reqEditors ...RequestEditorFn) (*DeleteSiteResponse, error) {
+	rsp, err := c.DeleteSite(ctx, siteID, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

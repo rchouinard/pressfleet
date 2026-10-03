@@ -190,7 +190,7 @@ func TestSiteExport(t *testing.T) {
 	})
 
 	t.Run("deleted site", func(t *testing.T) {
-		del, err := p.Client.DeleteSiteWithResponse(ctx, site.ID)
+		del, err := p.Client.DeleteSiteWithResponse(ctx, site.ID, nil)
 		if err != nil || del.JSON202 == nil {
 			t.Fatalf("delete: %v %s", err, del.Body)
 		}

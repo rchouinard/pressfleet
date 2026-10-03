@@ -376,6 +376,21 @@ func (r BackupRecords) DeleteForClientGroup(ctx context.Context, groupID string)
 	return int(n), nil
 }
 
+// DeleteForSite deletes every record of the site's backups, e.g. when the
+// site is deleted together with its snapshots. It returns how many it
+// deleted; deleting again deletes none.
+func (r BackupRecords) DeleteForSite(ctx context.Context, siteID string) (int, error) {
+	res, err := r.q.ExecContext(ctx, "DELETE FROM backup_records WHERE site_id = ?", siteID)
+	if err != nil {
+		return 0, fmt.Errorf("delete backup records of site %s: %w", siteID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("delete backup records of site %s: %w", siteID, err)
+	}
+	return int(n), nil
+}
+
 func (r BackupRecords) exec(ctx context.Context, what, query string, args ...any) (bool, error) {
 	res, err := r.q.ExecContext(ctx, query, args...)
 	if err != nil {

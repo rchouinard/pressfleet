@@ -4112,6 +4112,12 @@ type ListSitesParams struct {
 	Status *SiteStatus `form:"status,omitempty" json:"status,omitempty"`
 }
 
+// DeleteSiteParams defines parameters for DeleteSite.
+type DeleteSiteParams struct {
+	// DeleteBackups Also delete the site's backups. Defaults to `false`.
+	DeleteBackups *bool `form:"delete_backups,omitempty" json:"delete_backups,omitempty"`
+}
+
 // ListSiteBackupsParams defines parameters for ListSiteBackups.
 type ListSiteBackupsParams struct {
 	// Limit Maximum number of items to return.
@@ -4507,7 +4513,7 @@ type ServerInterface interface {
 	ImportSite(w http.ResponseWriter, r *http.Request)
 	// DeleteSite Delete a site
 	// (DELETE /api/v1/sites/{site_id})
-	DeleteSite(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	DeleteSite(w http.ResponseWriter, r *http.Request, siteID SiteID, params DeleteSiteParams)
 	// GetSite Get a site
 	// (GET /api/v1/sites/{site_id})
 	GetSite(w http.ResponseWriter, r *http.Request, siteID SiteID)
@@ -6675,8 +6681,24 @@ func (siw *ServerInterfaceWrapper) DeleteSite(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteSiteParams
+
+	// ------------- Optional query parameter "delete_backups" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "delete_backups", r.URL.Query(), &params.DeleteBackups, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "delete_backups"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "delete_backups", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteSite(w, r, siteID)
+		siw.Handler.DeleteSite(w, r, siteID, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -13961,6 +13983,7 @@ func (response ImportSitedefaultApplicationProblemPlusJSONResponse) VisitImportS
 
 type DeleteSiteRequestObject struct {
 	SiteID SiteID `json:"site_id"`
+	Params DeleteSiteParams
 }
 
 type DeleteSiteResponseObject interface {
@@ -21618,10 +21641,11 @@ func (sh *strictHandler) ImportSite(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteSite operation middleware
-func (sh *strictHandler) DeleteSite(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+func (sh *strictHandler) DeleteSite(w http.ResponseWriter, r *http.Request, siteID SiteID, params DeleteSiteParams) {
 	var request DeleteSiteRequestObject
 
 	request.SiteID = siteID
+	request.Params = params
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.DeleteSite(ctx, request.(DeleteSiteRequestObject))

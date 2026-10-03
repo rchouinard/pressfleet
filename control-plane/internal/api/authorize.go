@@ -167,6 +167,10 @@ var operationAltActions = map[string][]authz.Action{
 	"appendUploadChunk":         {authz.UploadForDeploy},
 	"completeUpload":            {authz.UploadForDeploy},
 	"deleteUpload":              {authz.UploadForDeploy},
+
+	// Deleting a site's backups with it needs the permission to delete
+	// backups (#138).
+	"deleteSite": {authz.DeleteSiteBackups},
 }
 
 // errActionMismatch is a programming error: a handler checked a different

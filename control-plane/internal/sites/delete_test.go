@@ -49,7 +49,7 @@ func TestDeletion(t *testing.T) {
 			t.Fatalf("site = %+v", got)
 		}
 
-		job, err := e.svc.Delete(ctx, site.ID, "")
+		job, err := e.svc.Delete(ctx, site.ID, "", sites.DeleteOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -60,7 +60,7 @@ func TestDeletion(t *testing.T) {
 			t.Errorf("status = %s, want deleting", got.Status)
 		}
 		// Asking again returns the queued job rather than a second one.
-		again, err := e.svc.Delete(ctx, site.ID, "")
+		again, err := e.svc.Delete(ctx, site.ID, "", sites.DeleteOptions{})
 		if err != nil || again.ID != job.ID {
 			t.Errorf("second Delete = %s, %v; want %s", again.ID, err, job.ID)
 		}
@@ -74,13 +74,13 @@ func TestDeletion(t *testing.T) {
 		for _, s := range d.Steps {
 			steps = append(steps, s.Name)
 		}
-		if got := strings.Join(steps, ","); got != "mark_deleting,delete_stack,drop_database,delete_object_cache,delete_secrets,delete_record" {
+		if got := strings.Join(steps, ","); got != "mark_deleting,delete_stack,drop_database,delete_object_cache,delete_secrets,delete_backups,delete_record" {
 			t.Errorf("steps = %s", got)
 		}
 		e.assertGone(t, site.ID)
 
 		// The site is gone for the API too.
-		if _, err := e.svc.Delete(ctx, site.ID, ""); !errors.Is(err, sites.ErrNotFound) {
+		if _, err := e.svc.Delete(ctx, site.ID, "", sites.DeleteOptions{}); !errors.Is(err, sites.ErrNotFound) {
 			t.Errorf("Delete of a deleted site: err = %v, want ErrNotFound", err)
 		}
 		// A deletion job for a site that is already gone finishes quietly.
@@ -118,7 +118,7 @@ func TestDeletionRetriesAreIdempotent(t *testing.T) {
 			}
 			return nil
 		}
-		job, err := e.svc.Delete(ctx, site.ID, "")
+		job, err := e.svc.Delete(ctx, site.ID, "", sites.DeleteOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -151,7 +151,7 @@ func TestDeletionDuringProvisioning(t *testing.T) {
 		if d := e.job(t, create.ID); d.Job.State != store.JobQueued || d.Job.Attempts != 1 {
 			t.Fatalf("create job %s after %d attempts: %s", d.Job.State, d.Job.Attempts, d.Job.Error)
 		}
-		del, err := e.svc.Delete(ctx, site.ID, "")
+		del, err := e.svc.Delete(ctx, site.ID, "", sites.DeleteOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -188,7 +188,7 @@ func TestFailedDeletionCanBeRetried(t *testing.T) {
 			}
 			return nil
 		}
-		first, err := e.svc.Delete(ctx, site.ID, "")
+		first, err := e.svc.Delete(ctx, site.ID, "", sites.DeleteOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -201,7 +201,7 @@ func TestFailedDeletionCanBeRetried(t *testing.T) {
 		}
 
 		e.prov.Err = nil
-		second, err := e.svc.Delete(ctx, site.ID, "")
+		second, err := e.svc.Delete(ctx, site.ID, "", sites.DeleteOptions{})
 		if err != nil || second.ID == first.ID {
 			t.Fatalf("Delete again = %s, %v", second.ID, err)
 		}
@@ -223,7 +223,7 @@ func TestDeletingAFailedSite(t *testing.T) {
 		if got := e.site(t, site.ID); got.Status != store.SiteFailed {
 			t.Fatalf("site = %+v", got)
 		}
-		job, err := e.svc.Delete(ctx, site.ID, "")
+		job, err := e.svc.Delete(ctx, site.ID, "", sites.DeleteOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}

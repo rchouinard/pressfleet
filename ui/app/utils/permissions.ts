@@ -54,6 +54,8 @@ export const permissions = {
 
   // Destructive actions.
   'site.delete': 'admin',
+  // Delete a site together with its backups (#138).
+  'site.delete_with_backups': 'admin',
   'client_group.delete': 'admin',
   'client_group.offboard': 'admin',
 

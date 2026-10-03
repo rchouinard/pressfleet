@@ -319,3 +319,40 @@ func TestBackupRecordsExpire(t *testing.T) {
 		}
 	})
 }
+
+func TestBackupRecordsDeleteForSite(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		group := &store.ClientGroup{Name: "Acme"}
+		if err := store.NewClientGroups(db).Create(ctx, group); err != nil {
+			t.Fatal(err)
+		}
+		records := store.NewBackupRecords(db)
+		doomed, other := id.New(), id.New()
+		var keep []string
+		for _, siteID := range []string{doomed, doomed, other} {
+			rec := &store.BackupRecord{SiteID: siteID, ClientGroupID: group.ID, Kind: store.BackupManual}
+			if err := records.Create(ctx, rec); err != nil {
+				t.Fatal(err)
+			}
+			if siteID == other {
+				keep = append(keep, rec.ID)
+			}
+		}
+
+		if n, err := records.DeleteForSite(ctx, doomed); err != nil || n != 2 {
+			t.Errorf("DeleteForSite = %d, %v; want 2", n, err)
+		}
+		if _, err := records.SiteClientGroup(ctx, doomed); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("SiteClientGroup after DeleteForSite: %v, want ErrNotFound", err)
+		}
+		// The other site's records in the same group stay.
+		page, err := records.List(ctx, store.BackupRecordFilter{ClientGroupID: group.ID})
+		if err != nil || !sameRecordIDs(page.Records, keep...) {
+			t.Errorf("records left = %+v, %v; want %v", page.Records, err, keep)
+		}
+		if n, err := records.DeleteForSite(ctx, doomed); err != nil || n != 0 {
+			t.Errorf("second DeleteForSite = %d, %v; want 0", n, err)
+		}
+	})
+}

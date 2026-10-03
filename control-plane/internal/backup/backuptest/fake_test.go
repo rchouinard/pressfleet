@@ -106,3 +106,25 @@ func TestFakeRetention(t *testing.T) {
 		t.Errorf("Check = %v", err)
 	}
 }
+
+func TestFakeForgetSite(t *testing.T) {
+	ctx := context.Background()
+	f := backuptest.New()
+	a1, _ := f.Backup(ctx, "a", backup.Options{})
+	a2, _ := f.Backup(ctx, "a", backup.Options{})
+	b1, _ := f.Backup(ctx, "b", backup.Options{})
+
+	res, err := f.ForgetSite(ctx, "a")
+	if err != nil || !slices.Equal(res.Forgotten, []backup.SnapshotID{a1.ID, a2.ID}) {
+		t.Fatalf("ForgetSite = %+v, %v; want [%s %s]", res, err, a1.ID, a2.ID)
+	}
+	if left, _ := f.ListSnapshots(ctx, "a"); len(left) != 0 {
+		t.Errorf("site a still has %d snapshots", len(left))
+	}
+	if left, _ := f.ListSnapshots(ctx, "b"); len(left) != 1 || left[0].ID != b1.ID {
+		t.Errorf("site b's snapshots = %+v, want only %s", left, b1.ID)
+	}
+	if res, err := f.ForgetSite(ctx, "a"); err != nil || len(res.Forgotten) != 0 {
+		t.Errorf("second ForgetSite = %+v, %v", res, err)
+	}
+}

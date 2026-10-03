@@ -123,6 +123,11 @@ const (
 
 	// Delete sites.
 	DeleteSite Action = "site.delete"
+	// DeleteSiteBackups is deleting a site together with its backups
+	// (#138). Destroying backups is governed by the client group row
+	// below (deleting the backup repository), which is Admin-only too; it
+	// is its own action so the audit log tells the two deletions apart.
+	DeleteSiteBackups Action = "site.delete_with_backups"
 
 	// Delete or offboard client groups (export or delete the backup
 	// repository and its key).
@@ -234,7 +239,8 @@ var rules = map[Action]rule{
 	UpdateClientGroup: {store.RoleOperator, true},
 	ManageAlertRules:  {store.RoleOperator, true},
 
-	DeleteSite: {store.RoleAdmin, true},
+	DeleteSite:        {store.RoleAdmin, true},
+	DeleteSiteBackups: {store.RoleAdmin, true},
 
 	DeleteClientGroup:   {store.RoleAdmin, true},
 	OffboardClientGroup: {store.RoleAdmin, true},

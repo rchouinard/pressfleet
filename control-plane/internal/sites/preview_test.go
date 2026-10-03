@@ -120,7 +120,7 @@ func TestPreviewProtection(t *testing.T) {
 
 		// Deleting the site deletes the password.
 		ref := e.site(t, site.ID).PreviewPasswordSecretRef
-		if _, err := e.svc.Delete(ctx, site.ID, ""); err != nil {
+		if _, err := e.svc.Delete(ctx, site.ID, "", sites.DeleteOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		e.runJobs(t)

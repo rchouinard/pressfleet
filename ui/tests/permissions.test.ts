@@ -31,8 +31,8 @@ const matrix: Record<Role, Action[]> = {
   admin: [
     // "Open read-write database sessions"
     'site.database.session.create_read_write',
-    // "Delete sites"
-    'site.delete',
+    // "Delete sites", optionally with their backups
+    'site.delete', 'site.delete_with_backups',
     // "Delete or offboard client groups"
     'client_group.delete', 'client_group.offboard',
     // "Manage users, roles, and other users' API tokens; view the audit log"

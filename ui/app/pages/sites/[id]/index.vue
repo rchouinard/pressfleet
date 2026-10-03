@@ -8,6 +8,7 @@ import {
   activeJob, canDeleteSite, canStartSite, canStopSite, groupLabel, showCredentialsAction,
   type Site, type SiteAdminCredentials,
 } from '../../../utils/site'
+import { countSnapshots, deleteSiteQuery, type SnapshotCount } from '../../../utils/site-delete'
 
 definePageMeta({ requires: 'site.view' })
 
@@ -102,16 +103,43 @@ async function power(action: 'start' | 'stop') {
 const deleteOpen = ref(false)
 const deleteBusy = ref(false)
 const deleteError = ref<ApiError>()
+// Deleting the backups too is opt-in, and needs its own permission; the
+// dialog counts the snapshots it would remove each time it opens.
+const deleteBackups = ref(false)
+const snapshotCount = ref<SnapshotCount>()
+const snapshotCountLoading = ref(false)
+const snapshotCountFailed = ref(false)
+async function loadSnapshotCount(siteId: string) {
+  snapshotCount.value = undefined
+  snapshotCountFailed.value = false
+  snapshotCountLoading.value = true
+  try {
+    snapshotCount.value = await countSnapshots(async (cursor) => {
+      const { data } = await api.GET('/api/v1/sites/{site_id}/backups', {
+        params: { path: { site_id: siteId }, query: { limit: 200, cursor } },
+      })
+      return data ?? { items: [] }
+    })
+  } catch {
+    snapshotCountFailed.value = true
+  } finally {
+    snapshotCountLoading.value = false
+  }
+}
 function askDelete() {
   deleteError.value = undefined
+  deleteBackups.value = false
   deleteOpen.value = true
+  if (site.value && can('site.delete_with_backups')) void loadSnapshotCount(site.value.id)
 }
 async function confirmDelete() {
   if (!site.value) return
   deleteBusy.value = true
   deleteError.value = undefined
   try {
-    const { data } = await api.DELETE('/api/v1/sites/{site_id}', { params: { path: { site_id: site.value.id } } })
+    const { data } = await api.DELETE('/api/v1/sites/{site_id}', {
+      params: { path: { site_id: site.value.id }, query: deleteSiteQuery(deleteBackups.value) },
+    })
     deleteOpen.value = false
     if (data) notify.jobStarted(data.job)
     await Promise.all([refreshSite(), refreshJobs()])
@@ -312,6 +340,18 @@ function when(iso: string): string {
         <p class="text-sm">
           This removes the site's containers, database, files and secrets. It can't be undone, so make sure you have what you need from it first.
         </p>
+        <p v-if="!can('site.delete_with_backups')" class="mt-2 text-sm text-muted">
+          The site's backups are kept, and can still be exported or restored into another site of its client group.
+        </p>
+        <SiteDeleteBackups
+          v-else
+          v-model="deleteBackups"
+          class="mt-3"
+          :count="snapshotCount"
+          :loading="snapshotCountLoading"
+          :failed="snapshotCountFailed"
+          :disabled="deleteBusy"
+        />
       </ConfirmDialog>
 
       <UModal

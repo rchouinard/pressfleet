@@ -357,7 +357,7 @@ Each user has one platform-wide role. The roles are fixed in the MVP; there are 
 | Open read-write database sessions | ✓ | | |
 | Take backups, restore, and approve core updates | ✓ | ✓ | |
 | Create and edit client groups; manage alert rules | ✓ | ✓ | |
-| Delete sites | ✓ | | |
+| Delete sites, optionally with their backups (snapshots and backup records) | ✓ | | |
 | Delete or offboard client groups (export or delete the backup repository and its key) | ✓ | | |
 | Manage users, roles, and other users' API tokens; view the audit log | ✓ | | |
 | Change platform settings (DNS and S3 credentials, SMTP, alert channels, backup location, retention, WordPress security set) | ✓ | | |

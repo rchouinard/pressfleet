@@ -1851,9 +1851,17 @@
                 "v1",
                 "sites",
                 "{{site_id}}"
+              ],
+              "query": [
+                {
+                  "key": "delete_backups",
+                  "value": "true",
+                  "description": "Also delete the site's backups (Admin; can't be undone). Defaults to false.",
+                  "disabled": true
+                }
               ]
             },
-            "description": "Queues deletion of the site's containers, network, volumes, database, and secrets."
+            "description": "Queues deletion of the site's containers, network, volumes, database, and secrets. With delete_backups=true, also its snapshots and backup records."
           },
           "event": [
             {
