@@ -352,6 +352,7 @@ Each user has one platform-wide role. The roles are fixed in the MVP; there are 
 | View sites, client groups, jobs, backups, metrics, logs, and alerts | ✓ | ✓ | ✓ |
 | Create and import sites; change site settings (PHP version, core branch hold, resources, preview password protection); go-live and domains; start/stop; maintenance mode; cache purge | ✓ | ✓ | |
 | Deploy code; connect over SFTP; export the database; open read-only database sessions (§5.8) | ✓ | ✓ | |
+| Log in to a site's WordPress admin from the dashboard (§5.9) | ✓ | ✓ | |
 | Open read-write database sessions | ✓ | | |
 | Take backups, restore, and approve core updates | ✓ | ✓ | |
 | Create and edit client groups; manage alert rules | ✓ | ✓ | |
@@ -525,6 +526,19 @@ Agency developers get files onto a site and reach its database through the platf
 * **Temporary database sessions:** for tools like TablePlus or DBeaver, a user opens a session through the API. The control plane creates a temporary MariaDB user limited to the site's database, read-only unless an Admin asks for write access, and returns its credentials once with an `ssh -L` command. The SFTP gateway forwards connections only to that site's database, and only for a user with an active session. At expiry (default 1 hour, at most 8), the control plane drops the MariaDB user and ends its connections.
 * There is no web database UI in the MVP; an on-demand Adminer, behind the platform's authentication and using the same temporary users, can be added later if agencies ask for it.
 
+### 5.9. Dashboard Login to WordPress
+
+A button on a site's dashboard page logs the current platform user in to the site's wp-admin as an administrator, without a WordPress password (decided 2026-10-02). Operators and Admins can use it (§4.6), as they already have full control of a site through deployments and database access (§5.8); Viewers and `read-only` tokens can't.
+
+* **Which user:** the administrator the platform created with the site (§5.1). If that user no longer exists or is no longer an administrator, or the site was imported and has no platform-created administrator (§5.7), the dashboard lists the site's administrators (read with WP-CLI) and the user picks one. They can also pick another administrator on purpose.
+* **Login tokens:** the control plane signs a short-lived, single-use token with a platform Ed25519 key. The private key is stored encrypted in the state database with the master key, and the public key and the site's ID are written to every site's `wp-config.php` as `PRESSFLEET_LOGIN_PUBLIC_KEY` and `PRESSFLEET_SITE_ID`, so sites hold no new secret and logging in needs no WP-CLI call. Existing sites get the constants when the control plane reconciles them at startup. Key rotation isn't part of the MVP.
+* **Token format (v1):** `v1.<payload>.<signature>`, both parts base64url without padding. The payload is JSON `{"site", "user", "actor", "jti", "iat", "exp"}`: the site ID, the WordPress user's login, the platform user's ID, a random 128-bit ID (hex), and Unix times 60 seconds apart. The signature is Ed25519 over the ASCII bytes `v1.<payload>`.
+* **Flow:** `POST /api/v1/sites/{id}/admin-login` returns the token and the site's login URL: `wp-login.php?action=pressfleet-login` on the primary domain once the site is live (§5.2), otherwise on the preview domain. The dashboard submits the token as a form POST in a new tab, so it never appears in a URL, an access log (which Viewers can read, §7.4), a `Referer` header, or browser history. The site must be running and not in maintenance mode.
+* **Site side:** a module of the platform must-use plugin checks the signature, the site ID, the expiry, and that the token hasn't been used (each `jti` is recorded in the site's database until it expires, not in the object cache, which can evict it). It then checks that the user is an administrator, sets the WordPress auth cookie for a browser session, and redirects to wp-admin. Any failure shows one generic error. The session is marked as a platform login with the actor and `jti`.
+* **Two-factor:** the platform login counts as authentication. When the security set requires two-factor authentication (§6.1), a dashboard login asks for no second factor, and its session is exempt from the forced enrollment, so a shared administrator account isn't bound to one person's device. Password logins are unaffected.
+* **Audit:** every issued token is an audit event (§4.6) naming the WordPress user and the `jti` (never the token), so a WordPress session can be traced to the platform user who opened it.
+* **Preview password protection:** when it is on (§5.1) and the site isn't live, Traefik asks for the preview credentials before the login reaches WordPress; the dashboard says so.
+
 ---
 
 ## 6. Security Baseline
@@ -541,6 +555,7 @@ Agency developers get files onto a site and reach its database through the platf
 * **Secrets:** Database passwords, Redis ACL passwords, preview basic auth passwords, Restic repository keys, and S3 credentials are stored encrypted at rest in the control plane database using the platform master key, supplied via environment variable or file. Install-time secrets that `pressfleet init` collects before the state database exists (DNS provider credentials, the SMTP relay password) are encrypted with the same key and stored sealed in the configuration file; the control plane decrypts them at startup. Plaintext secrets are never logged. Losing the master key makes all backups unrecoverable; see the warning in §4.1.
 * **Docker socket:** Access to the Docker socket is equivalent to root on the host. Traefik uses a read-only socket proxy, and only the control plane has write access.
 * **Developer access:** SFTP and database tunnels authenticate with SSH keys tied to platform users, not shared passwords. SFTP runs as the site's UID with only its `wp-content` mounted, and database sessions use temporary MariaDB users that are dropped at expiry, so the site's own database password is never revealed (§5.8).
+* **Dashboard login to WordPress:** platform users log in to wp-admin with signed tokens that expire after 60 seconds and work once, sent in a POST body rather than a URL. Sites hold only the platform's public key, and every login is audited (§5.9).
 * **Control plane access:** All API endpoints require authentication (session for the UI, API tokens for automation) and role-based authorization (§4.6). State-changing actions and authorization denials are written to the audit log.
 
 ### 6.1. WordPress Security Set
@@ -557,7 +572,7 @@ PHP features are modules of the platform must-use plugin in the site images (`/o
 | **Login rate limiting:** per-IP request rate limit on `wp-login.php` | On | nginx `limit_req` |
 | **Disable the theme and plugin file editor** (`DISALLOW_FILE_EDIT`). Plugin and theme updates keep working. | On | `wp-config.php` |
 | **Security headers:** `Referrer-Policy`, `X-Frame-Options: SAMEORIGIN`, `Permissions-Policy`. HSTS on production domains only, without `includeSubDomains`, since a client's other subdomains may not serve HTTPS. | On | nginx; HSTS via a Traefik middleware on primary-domain routers |
-| **Two-factor authentication:** the WordPress.org [Two Factor](https://wordpress.org/plugins/two-factor/) plugin, installed during provisioning, optionally required for administrators. When required, administrators without a second factor (including the one provisioning creates) are sent to set one up at their next login, and can't reach the rest of wp-admin or use application passwords until they have. | Off | Regular plugin (updated by WordPress); enforcement in the must-use plugin |
+| **Two-factor authentication:** the WordPress.org [Two Factor](https://wordpress.org/plugins/two-factor/) plugin, installed during provisioning, optionally required for administrators. When required, administrators without a second factor (including the one provisioning creates) are sent to set one up at their next login, and can't reach the rest of wp-admin or use application passwords until they have. Logins from the dashboard (§5.9) are exempt: the platform login stands in for the second factor. | Off | Regular plugin (updated by WordPress); enforcement in the must-use plugin |
 | **Disable application passwords.** Left available by default because integrations rely on them. | Off | Must-use plugin |
 
 All-in-one security suites (Wordfence and similar) are deliberately excluded: their memory use conflicts with the capacity target, they expect to write to `wp-config.php`, `.user.ini`, and core files (all read-only here), and they duplicate platform features.
@@ -639,7 +654,7 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
   * Metrics and log query API endpoints for the dashboard.
   * **Done when:** every metric in §7.1–7.2 is collected and queryable via the API, and each default alert rule fires and resolves correctly in integration tests.
 * **Phase 5: Dashboard**
-  * Build the Nuxt management UI for client groups, provisioning, go-live, site status, job progress, backups, metrics charts, logs, alerts, users and roles, and the audit log.
+  * Build the Nuxt management UI for client groups, provisioning, go-live, site status, job progress, backups, metrics charts, logs, alerts, users and roles, and the audit log, plus one-click login to a site's WordPress admin (§5.9).
   * Embed the static UI build into the Go binary.
   * **Done when:** every Phase 1–4 operation can be performed from the UI.
 * **MVP Release Gate**

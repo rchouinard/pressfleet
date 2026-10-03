@@ -222,9 +222,15 @@ Done when: every Phase 1–4 operation can be performed from the UI. (Design doc
 | [#90](https://github.com/rchouinard/pressfleet/issues/90) | UI: alerts, rules, and channels | P0 | M | #81, #76 |
 | [#91](https://github.com/rchouinard/pressfleet/issues/91) | UI: platform overview and capacity warnings | P1 | M | #81, #9, #72 |
 | [#92](https://github.com/rchouinard/pressfleet/issues/92) | Decision: plugin/theme update visibility | P2 | S | — |
-| [#93](https://github.com/rchouinard/pressfleet/issues/93) | UI end-to-end tests (Playwright) | P1 | L | #82, #85, #86, #87, #88, #89, #90, #91, #116 |
+| [#93](https://github.com/rchouinard/pressfleet/issues/93) | UI end-to-end tests (Playwright) | P1 | L | #82, #85, #86, #87, #88, #89, #90, #91, #116, #130 |
 | [#105](https://github.com/rchouinard/pressfleet/issues/105) | UI: audit log viewer | P1 | S | #81, #104 |
 | [#116](https://github.com/rchouinard/pressfleet/issues/116) | UI: site import, code deployment, SSH keys, and database access | P1 | M | #84, #82, #112, #113, #114, #115, #62 |
+| [#126](https://github.com/rchouinard/pressfleet/issues/126) | Design: one-click WordPress admin login from the dashboard | P1 | S | — |
+| [#127](https://github.com/rchouinard/pressfleet/issues/127) | Must-use plugin: one-click admin login module | P1 | M | #126 |
+| [#128](https://github.com/rchouinard/pressfleet/issues/128) | Platform login signing key and wp-config constants | P1 | S | #126 |
+| [#129](https://github.com/rchouinard/pressfleet/issues/129) | API: one-click WordPress admin login | P1 | M | #128 |
+| [#130](https://github.com/rchouinard/pressfleet/issues/130) | UI: one-click WordPress admin login button | P1 | S | #129 |
+| [#131](https://github.com/rchouinard/pressfleet/issues/131) | Integration tests: one-click admin login | P1 | M | #127, #129 |
 
 ### MVP Release Gate
 
