@@ -127,6 +127,11 @@ type ProvisionerConfig struct {
 	// site's wp-config.php for the platform mu-plugin (§5.6). Nil means
 	// sites send no email.
 	SMTP *wpconfig.SMTP
+	// LoginPublicKey is the platform's login public key in base64
+	// (adminlogin.Signer.PublicKeyBase64), rendered with the site's ID
+	// into every site's wp-config.php for dashboard login (§5.9). Empty
+	// omits both constants.
+	LoginPublicKey string
 }
 
 // Provisioner is the Compose implementation of provisioner.Provisioner. Each
@@ -147,6 +152,7 @@ type Provisioner struct {
 	log         *slog.Logger
 	waitTimeout time.Duration
 	smtp        *wpconfig.SMTP
+	loginKey    string // ProvisionerConfig.LoginPublicKey
 	platform    string // ProvisionerConfig.PlatformProject
 	routesDir   string // ProvisionerConfig.TraefikDynamicDir
 
@@ -216,6 +222,7 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 		log:            cfg.Logger,
 		waitTimeout:    cfg.WaitTimeout,
 		smtp:           cfg.SMTP,
+		loginKey:       cfg.LoginPublicKey,
 		platform:       cfg.PlatformProject,
 		routesDir:      cfg.TraefikDynamicDir,
 		wpcliDocker:    cfg.Docker,
@@ -398,7 +405,7 @@ func (p *Provisioner) siteRender(ctx context.Context, cfg *provisioner.SiteConfi
 	return SiteRender{
 		Site:            cfg,
 		Images:          siteImages,
-		WPConfig:        wpconfig.Params{DB: creds, Salts: salts, Redis: redis, SMTP: p.smtp, TablePrefix: cfg.TablePrefix},
+		WPConfig:        wpconfig.Params{DB: creds, Salts: salts, Redis: redis, SMTP: p.smtp, TablePrefix: cfg.TablePrefix, LoginPublicKey: p.loginKey, SiteID: loginSiteID(cfg.ID, p.loginKey)},
 		Security:        p.security,
 		PlatformProject: p.platform,
 	}, nil
@@ -828,4 +835,13 @@ func sitePhase(containers []Container) (provisioner.SitePhase, string) {
 	default:
 		return provisioner.SiteRunning, ""
 	}
+}
+
+// loginSiteID is the site ID for PRESSFLEET_SITE_ID: only set along with the
+// public key, since wpconfig emits the pair or nothing.
+func loginSiteID(siteID, publicKey string) string {
+	if publicKey == "" {
+		return ""
+	}
+	return siteID
 }

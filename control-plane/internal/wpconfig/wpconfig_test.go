@@ -197,6 +197,35 @@ func TestRenderSecurity(t *testing.T) {
 	}
 }
 
+func TestRenderLogin(t *testing.T) {
+	p := testParams()
+	p.SiteID = "01jsite"
+	p.LoginPublicKey = "q80+/w=="
+	out, err := Render(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"define( 'PRESSFLEET_SITE_ID', '01jsite' );",
+		"define( 'PRESSFLEET_LOGIN_PUBLIC_KEY', 'q80+/w==' );",
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("output lacks %s", want)
+		}
+	}
+	// One without the other would half-configure the login module.
+	p.SiteID = ""
+	if _, err := Render(p); !errors.Is(err, ErrInvalidParams) {
+		t.Errorf("Render with a key and no site ID = %v, want ErrInvalidParams", err)
+	}
+	// Agency constants can't override the platform's.
+	p = testParams()
+	p.Constants = []Constant{{Name: "pressfleet_site_id", Value: "x"}}
+	if _, err := Render(p); !errors.Is(err, ErrInvalidParams) {
+		t.Errorf("reserved constant = %v, want ErrInvalidParams", err)
+	}
+}
+
 func TestLiteral(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"", `''`},

@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/adminlogin"
 	"github.com/rchouinard/pressfleet/control-plane/internal/alerts"
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/audit"
@@ -54,10 +55,17 @@ import (
 const reattachTimeout = 5 * time.Minute
 
 // siteRuntime returns the Compose provisioner and the site database manager.
-func (a *app) siteRuntime(cat *catalog.Catalog, secretStore secrets.Store, keys *secrets.Keyring, db *store.DB) (*compose.Provisioner, *mariadb.Manager, error) {
+func (a *app) siteRuntime(ctx context.Context, cat *catalog.Catalog, secretStore secrets.Store, keys *secrets.Keyring, db *store.DB) (*compose.Provisioner, *mariadb.Manager, error) {
 	smtp, err := siteSMTP(a.cfg.SMTP, keys)
 	if err != nil {
 		return nil, nil, err
+	}
+	// Generated on first start. Every site's wp-config.php gets the public
+	// half, so the reconcile jobs queued at startup add it to existing sites.
+	// Not cancelable: a quick write, and startup shouldn't stop half way.
+	loginSigner, err := adminlogin.Ensure(context.WithoutCancel(ctx), db, secretStore)
+	if err != nil {
+		return nil, nil, fmt.Errorf("platform login key: %w", err)
 	}
 	prov, err := compose.NewProvisioner(compose.ProvisionerConfig{
 		Layout:            a.cfg.Layout(),
@@ -73,6 +81,7 @@ func (a *app) siteRuntime(cat *catalog.Catalog, secretStore secrets.Store, keys 
 		WordPressSecurity: a.cfg.WordPressSecurity,
 		Logger:            a.log.With("component", "provisioner"),
 		SMTP:              smtp,
+		LoginPublicKey:    loginSigner.PublicKeyBase64(),
 	})
 	if err != nil {
 		return nil, nil, err
@@ -275,7 +284,7 @@ func (a *app) serveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			prov, siteDBs, err := a.siteRuntime(cat, secretStore, keys, db)
+			prov, siteDBs, err := a.siteRuntime(cmd.Context(), cat, secretStore, keys, db)
 			if err != nil {
 				return err
 			}

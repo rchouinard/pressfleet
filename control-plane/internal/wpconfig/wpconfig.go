@@ -74,6 +74,13 @@ type Params struct {
 	// settings and must-use plugin modules (§6.1). The zero value turns
 	// everything off.
 	Security Security
+	// SiteID is the site's ID (PRESSFLEET_SITE_ID), which login tokens are
+	// bound to (§5.9). Empty emits neither login constant.
+	SiteID string
+	// LoginPublicKey is the platform's login public key, base64
+	// (adminlogin.Signer.PublicKeyBase64), for PRESSFLEET_LOGIN_PUBLIC_KEY.
+	// It is public, not a secret. Empty emits neither login constant.
+	LoginPublicKey string
 	// Constants are agency-specific constants from the site's configuration,
 	// defined in this order after the platform's.
 	Constants []Constant
@@ -117,6 +124,9 @@ const (
 	ConstPasswordHashing             = "PRESSFLEET_PASSWORD_HASHING"
 	ConstDisableApplicationPasswords = "PRESSFLEET_DISABLE_APPLICATION_PASSWORDS" //nolint:gosec // G101: a constant name, not a credential
 	ConstRequireTwoFactor            = "PRESSFLEET_REQUIRE_TWO_FACTOR"
+	// Read by the dashboard login module (§5.9).
+	ConstSiteID         = "PRESSFLEET_SITE_ID"
+	ConstLoginPublicKey = "PRESSFLEET_LOGIN_PUBLIC_KEY"
 )
 
 // enabled reports whether any setting emits something.
@@ -290,6 +300,14 @@ func Render(p Params) ([]byte, error) {
 		w.line("")
 	}
 
+	if p.SiteID != "" && p.LoginPublicKey != "" {
+		w.line("// ** Dashboard login (§5.9) ** //")
+		w.line("// The platform's Ed25519 public key; sites hold no signing secret.")
+		w.define(ConstSiteID, p.SiteID)
+		w.define(ConstLoginPublicKey, p.LoginPublicKey)
+		w.line("")
+	}
+
 	if sec := p.Security; sec.enabled() {
 		w.line("// ** WordPress security set (§6.1), install-wide ** //")
 		if sec.DisallowFileEdit {
@@ -371,6 +389,9 @@ func (p *Params) validate() error {
 		default:
 			errs = append(errs, errors.New(`smtp: encryption must be "tls", "ssl", or empty`))
 		}
+	}
+	if (p.SiteID == "") != (p.LoginPublicKey == "") {
+		errs = append(errs, errors.New("login: the site ID and the public key go together"))
 	}
 	if p.Security.PasswordMinLength < 0 {
 		errs = append(errs, errors.New("security: password minimum length must not be negative"))

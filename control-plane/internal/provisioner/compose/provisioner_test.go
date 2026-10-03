@@ -526,6 +526,55 @@ func TestSMTPRenderedIntoWPConfig(t *testing.T) {
 	wantCommands(t, f.docker, recreate, upWait)
 }
 
+// The platform's login public key and each site's ID go into every site's
+// wp-config.php (§5.9), and an existing site gets them when next converged.
+func TestLoginConstantsRenderedIntoWPConfig(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	sec := memSecrets{}
+	f.cfg.DBSecretRef, f.cfg.WPSaltsSecretRef = siteSecrets(t, sec, testSiteID,
+		sitedb.Credentials{Database: "site_db", Username: "site_user", Password: "pw"})
+	withKey := func(key string) *compose.Provisioner {
+		p, err := compose.NewProvisioner(compose.ProvisionerConfig{
+			Layout: f.layout, Secrets: sec, MariaDBContainer: testMariaDB, Docker: f.docker.exec,
+			Images: imageMap{"8.4": {PHP: "a", Nginx: "b"}}, LoginPublicKey: key,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	wpConfig := func() string {
+		b, err := os.ReadFile(filepath.Join(f.siteDir(t), compose.SiteWPConfigFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+
+	if _, err := withKey("").CreateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := wpConfig(); strings.Contains(got, "PRESSFLEET_LOGIN_") || strings.Contains(got, "PRESSFLEET_SITE_ID") {
+		t.Errorf("wp-config.php has login constants without a key:\n%s", got)
+	}
+	f.docker.calls = nil
+
+	if _, err := withKey("a2V5").UpdateSite(ctx, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	got := wpConfig()
+	for _, want := range []string{
+		"define( 'PRESSFLEET_SITE_ID', '" + testSiteID + "' );",
+		"define( 'PRESSFLEET_LOGIN_PUBLIC_KEY', 'a2V5' );",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("wp-config.php lacks %s:\n%s", want, got)
+		}
+	}
+	wantCommands(t, f.docker, recreate, upWait)
+}
+
 func TestConvergeRecreatesPHPAfterFailedAttempt(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()

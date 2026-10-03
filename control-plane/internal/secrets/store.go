@@ -39,6 +39,9 @@ const (
 	// KindAlertChannel is the credentials of an alert channel (#76): an
 	// SMTP password, a webhook URL, a webhook signing secret.
 	KindAlertChannel Kind = "alert-channel-credentials"
+	// KindPlatformLoginKey is the Ed25519 private key (its 32-byte seed,
+	// base64) that signs dashboard login tokens (#128, §5.9).
+	KindPlatformLoginKey Kind = "platform-login-key"
 )
 
 // Kinds are validated by shape rather than against the list above, so a new
