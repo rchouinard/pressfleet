@@ -15,6 +15,13 @@ defined( 'ABSPATH' ) || exit;
 /** Marks a request as running under PressFleet; also used by the image smoke test. */
 define( 'PRESSFLEET_PLATFORM', true );
 
+// One-click administrator login from the dashboard (design doc §5.9). Not a
+// security set toggle: it is on whenever the control plane wrote the site's
+// ID and the platform's login public key to wp-config.php.
+if ( defined( 'PRESSFLEET_SITE_ID' ) && defined( 'PRESSFLEET_LOGIN_PUBLIC_KEY' ) ) {
+	require __DIR__ . '/pressfleet-login/admin-login.php';
+}
+
 /*
  * Core is baked into the image and read-only; the platform rolls out core
  * releases by replacing the image (design doc §5.5). WP_AUTO_UPDATE_CORE=false

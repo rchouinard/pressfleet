@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test for the site images (issues #17, #18, #39, #40, #41, #43, #47, #108, #109).
+# Smoke test for the site images (issues #17, #18, #39, #40, #41, #43, #47, #108, #109, #127).
 #
 #   images/test.sh [php-version ...]     default: every PHP version images/matrix.sh builds
 #
@@ -155,6 +155,10 @@ if ( file_exists( __DIR__ . '/wp-content/pf-smoke-security.php' ) ) {
 if ( file_exists( __DIR__ . '/wp-content/pf-smoke-two-factor.php' ) ) {
 	require __DIR__ . '/wp-content/pf-smoke-two-factor.php';
 }
+// Site ID and public key for the one-click login checks (#127).
+if ( file_exists( __DIR__ . '/wp-content/pf-smoke-login.php' ) ) {
+	require __DIR__ . '/wp-content/pf-smoke-login.php';
+}
 if ( ! defined( 'ABSPATH' ) ) {
 	define( 'ABSPATH', __DIR__ . '/' );
 }
@@ -244,6 +248,8 @@ test_stack() {
 	for ext in bcmath curl exif gd igbinary imagick intl mbstring mysqli redis sodium zip "Zend OPcache"; do
 		check_contains "extension $ext" "$ext" "$modules"
 	done
+	check "sodium verifies Ed25519 signatures (one-click login, #127)" "${cexec[@]}" php -r \
+		'$k = sodium_crypto_sign_keypair(); $m = "x"; exit(sodium_crypto_sign_verify_detached(sodium_crypto_sign_detached($m, sodium_crypto_sign_secretkey($k)), $m, sodium_crypto_sign_publickey($k)) ? 0 : 1);'
 	check "gd supports WebP and AVIF" "${cexec[@]}" php -r \
 		'$i = gd_info(); exit(($i["WebP Support"] && $i["AVIF Support"]) ? 0 : 1);'
 	check "phpredis built with igbinary" "${cexec[@]}" php -r 'exit(defined("Redis::SERIALIZER_IGBINARY") ? 0 : 1);'
@@ -508,6 +514,92 @@ test_stack() {
 	check_contains "argon2id: bcrypt hash upgraded at login" '$argon2id$' "$("${cexec[@]}" wp user get hasher --field=user_pass)"
 	"${cexec[@]}" rm -f wp-content/pf-smoke-security.php
 
+	# --- One-click administrator login (#127, §5.9) ---------------------------
+	# Tokens are signed here with a throwaway key pair; the site gets the
+	# public key (base64url, as the control plane writes it) and its ID, as
+	# the generated wp-config.php would. Each request uses its own client IP,
+	# clear of the login rate limit.
+	local login_keys login_sk login_site="smoke-site-1" login_n=0
+	login_keys="$("${cexec[@]}" php -r '$k = sodium_crypto_sign_keypair(); echo sodium_bin2hex(sodium_crypto_sign_secretkey($k)), " ", rtrim(strtr(base64_encode(sodium_crypto_sign_publickey($k)), "+/", "-_"), "=");')"
+	login_sk="${login_keys%% *}"
+	docker exec -i "$php" sh -c 'cat > wp-content/pf-smoke-login.php' <<-PHP
+		<?php
+		define( 'PRESSFLEET_SITE_ID', '$login_site' );
+		define( 'PRESSFLEET_LOGIN_PUBLIC_KEY', '${login_keys#* }' );
+	PHP
+	# mint_token USER SITE IAT_OFFSET EXP_OFFSET [tamper]: a v1 token on stdout.
+	mint_token() {
+		docker exec -e "SK=$login_sk" "$php" php -r '
+			[ , $user, $site, $iat, $exp, $tamper ] = array_pad( $argv, 6, "" );
+			$b64 = fn( $d ) => rtrim( strtr( base64_encode( $d ), "+/", "-_" ), "=" );
+			$p = $b64( json_encode( array( "site" => $site, "user" => $user, "actor" => "usr_smoke", "jti" => bin2hex( random_bytes( 16 ) ), "iat" => time() + (int) $iat, "exp" => time() + (int) $exp ) ) );
+			$sig = $b64( sodium_crypto_sign_detached( "v1." . $p, sodium_hex2bin( getenv( "SK" ) ) ) );
+			if ( "tamper" === $tamper ) {
+				$p = $b64( str_replace( "usr_smoke", "usr_evil", base64_decode( strtr( $p, "-_", "+/" ) ) ) );
+			}
+			echo "v1.$p.$sig";
+		' -- "$@"
+	}
+	# login_request TOKEN [curl args...]: POSTs the token; prints "CODE REDIRECT_URL".
+	# Headers go to $tmp/login-headers, the body to $tmp/login-body, cookies to $tmp/login-cookies.
+	login_request() {
+		local token="$1"
+		shift
+		# Counted in a file: callers run this in a command substitution, so a
+		# shell variable would never advance.
+		login_n=$(($(cat "$tmp/login-n" 2>/dev/null || echo 0) + 1))
+		echo "$login_n" >"$tmp/login-n"
+		rm -f "$tmp/login-cookies"
+		curl -s -o "$tmp/login-body" -D "$tmp/login-headers" -c "$tmp/login-cookies" \
+			-w '%{http_code} %{redirect_url}' -H "X-Forwarded-For: 198.51.100.$((100 + login_n))" \
+			--data-urlencode "token=$token" "$@" "$base/wp-login.php?action=pressfleet-login"
+	}
+	local login_refused="The login link is not valid" login_ok="302 $base/wp-admin/" login_res
+	"${cexec[@]}" wp user create pf-editor pf-editor@example.com --role=editor --user_pass="$(head -c 18 /dev/urandom | base64 | tr -d '/+=')" >/dev/null
+	check_eq "login: constants make the module load" "yes" \
+		"$("${cexec[@]}" wp eval 'echo function_exists( "pressfleet_login_verify" ) ? "yes" : "no";')"
+
+	check_eq "login: a valid token redirects to wp-admin" "$login_ok" "$(login_request "$(mint_token admin "$login_site" -1 59)")"
+	check_contains "login: response is Cache-Control: no-store" "cache-control: no-store" "$(tr -d '\r' <"$tmp/login-headers" | tr '[:upper:]' '[:lower:]')"
+	check_contains "login: sets the logged-in cookie" "wordpress_logged_in_" "$(cat "$tmp/login-cookies")"
+	check_not "login: the cookie is a browser-session cookie" grep -qi 'expires=' "$tmp/login-headers"
+	check_eq "login: the session reaches wp-admin as admin" "200 admin" \
+		"$(curl -s -b "$tmp/login-cookies" -H 'X-Forwarded-For: 198.51.100.99' -o "$tmp/login-body" -w '%{http_code}' "$base/wp-admin/profile.php") $(grep -o 'id="user_login"[^>]*value="[^"]*"' "$tmp/login-body" | sed 's/.*value="//;s/"//')"
+	check_eq "login: the session records actor and jti" "usr_smoke yes" \
+		"$("${cexec[@]}" wp eval '$s = WP_Session_Tokens::get_instance( get_user_by( "login", "admin" )->ID )->get_all(); foreach ( $s as $x ) { if ( ! empty( $x["pressfleet_login"] ) ) { echo $x["pressfleet_login"]["actor"], " ", preg_match( "/^[0-9a-f]{32}$/", $x["pressfleet_login"]["jti"] ) ? "yes" : "no"; break; } }')"
+	check_eq "login: the used token ID is recorded in the database" "1" \
+		"$("${cexec[@]}" wp eval 'global $wpdb; echo $wpdb->get_var( "SELECT COUNT(*) FROM $wpdb->options WHERE option_name LIKE \"pressfleet\\_login\\_jti\\_%\"" ) > 0 ? 1 : 0;')"
+
+	local replay_token
+	replay_token="$(mint_token admin "$login_site" -1 59)"
+	check_eq "login: first use of a token succeeds" "$login_ok" "$(login_request "$replay_token")"
+	check_eq "login: a replayed token is refused" "403 " "$(login_request "$replay_token")"
+	check_contains "login: refusal shows the generic error" "$login_refused" "$(cat "$tmp/login-body")"
+	check_not "login: refusal sets no cookie" grep -q wordpress_logged_in_ "$tmp/login-cookies"
+	check_eq "login: an expired token is refused" "403 " "$(login_request "$(mint_token admin "$login_site" -120 -60)")"
+	check_contains "login: expiry looks like any other refusal" "$login_refused" "$(cat "$tmp/login-body")"
+	check_eq "login: a token that outlives 60 s is refused" "403 " "$(login_request "$(mint_token admin "$login_site" -1 120)")"
+	check_eq "login: a token issued in the future is refused" "403 " "$(login_request "$(mint_token admin "$login_site" 300 360)")"
+	check_eq "login: a token for another site is refused" "403 " "$(login_request "$(mint_token admin other-site -1 59)")"
+	check_eq "login: a tampered payload is refused" "403 " "$(login_request "$(mint_token admin "$login_site" -1 59 tamper)")"
+	local sig_token
+	sig_token="$(mint_token admin "$login_site" -1 59)"
+	# Change the signature's first character (fully significant, unlike the last).
+	check_eq "login: a tampered signature is refused" "403 " \
+		"$(login_request "${sig_token%.*}.$(sed 's/^A/B/;t;s/^./A/' <<<"${sig_token##*.}")")"
+	check_eq "login: a token signed by another key is refused" "403 " \
+		"$(login_request "$(docker exec "$php" php -r '$b = fn( $d ) => rtrim( strtr( base64_encode( $d ), "+/", "-_" ), "=" ); $p = $b( json_encode( array( "site" => "'"$login_site"'", "user" => "admin", "actor" => "x", "jti" => bin2hex( random_bytes( 16 ) ), "iat" => time(), "exp" => time() + 30 ) ) ); echo "v1.$p.", $b( sodium_crypto_sign_detached( "v1.$p", sodium_crypto_sign_secretkey( sodium_crypto_sign_keypair() ) ) );')")"
+	check_eq "login: a non-administrator is refused" "403 " "$(login_request "$(mint_token pf-editor "$login_site" -1 59)")"
+	check_eq "login: an unknown user is refused" "403 " "$(login_request "$(mint_token nobody "$login_site" -1 59)")"
+	check_eq "login: an empty token is refused" "403 " "$(login_request "")"
+	check_eq "login: GET is refused" "405 " \
+		"$(curl -s -o "$tmp/login-body" -w '%{http_code} %{redirect_url}' -H 'X-Forwarded-For: 198.51.100.90' "$base/wp-login.php?action=pressfleet-login&token=$(mint_token admin "$login_site" -1 59)")"
+	check_contains "login: GET refusal shows the generic error" "$login_refused" "$(cat "$tmp/login-body")"
+	check_contains "login: refusals are logged with a reason" "pressfleet-login: refused: token expired" "$(docker logs "$php" 2>&1)"
+	check_not "login: tokens never reach the logs" grep -qE 'v1\.[A-Za-z0-9_-]{20,}\.' <(docker logs "$php" 2>&1)
+	check_eq "login: password login is unaffected" "302 $base/wp-admin/" \
+		"$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -H 'X-Forwarded-For: 198.51.100.91' -b 'wordpress_test_cookie=WP%20Cookie%20check' -d "log=admin&pwd=$admin_password&wp-submit=Log+In&testcookie=1" "$base/wp-login.php")"
+
 	# Two-factor required for administrators (#43). The bundled Two Factor
 	# plugin was installed above but never activated: the module keeps it
 	# active and enrols administrators at their next login. Requests use
@@ -531,7 +623,17 @@ test_stack() {
 		"$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -H "$tfa_ip" -H "Cookie: $tfa_cookies" "$base/wp-admin/")"
 	check_contains "2fa: the profile says why" "requires two-factor authentication for administrators" \
 		"$(curl -s -H "$tfa_ip" -H "Cookie: $tfa_cookies" "$base/wp-admin/profile.php")"
+	# One-click login (#127): exempt from the enrollment redirect and notice.
+	check_eq "2fa: a dashboard login is not redirected to enrollment" "$login_ok" "$(login_request "$(mint_token admin "$login_site" -1 59)")"
+	check_eq "2fa: a dashboard login reaches the dashboard" "200" \
+		"$(curl -s -o "$tmp/login-body" -w '%{http_code}' -b "$tmp/login-cookies" -H "$tfa_ip" "$base/wp-admin/")"
+	check_not "2fa: a dashboard login sees no enrollment notice" grep -q "requires two-factor authentication" "$tmp/login-body"
+	check_eq "2fa: a dashboard login still has no application passwords" "no" \
+		"$("${cexec[@]}" wp eval '$_SERVER["HTTPS"] = "on"; echo wp_is_application_passwords_available_for_user( get_user_by( "login", "admin" ) ) ? "yes" : "no";')"
 	"${cexec[@]}" wp eval 'Two_Factor_Core::enable_provider_for_user( get_user_by( "login", "admin" )->ID, "Two_Factor_Email" );'
+	check_eq "2fa: with a second factor, a dashboard login still asks for none" "$login_ok" "$(login_request "$(mint_token admin "$login_site" -1 59)")"
+	check_eq "2fa: with a second factor, a dashboard login reaches the dashboard" "200" \
+		"$(curl -s -o "$tmp/login-body" -w '%{http_code}' -b "$tmp/login-cookies" -H "$tfa_ip" "$base/wp-admin/")"
 	check_eq "2fa: with a second factor the admin is done" "no" "$("${cexec[@]}" wp eval "$tfa_check")"
 	"${cexec[@]}" rm -f wp-content/pf-smoke-two-factor.php
 	"${cexec[@]}" wp plugin deactivate two-factor >/dev/null 2>&1 || true
