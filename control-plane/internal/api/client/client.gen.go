@@ -1071,6 +1071,29 @@ func (e WebhookFormat) Valid() bool {
 	}
 }
 
+// AdminLogin defines model for AdminLogin.
+type AdminLogin struct {
+	// ExpiresAt Examples: 2026-09-26T17:25:00Z
+	ExpiresAt Timestamp `json:"expires_at"`
+
+	// Token The login token. Single-use, and shown only here; never log it.
+	Token string `json:"token"`
+
+	// URL The site's login URL to submit the token to, on the primary domain once the site is live, else on the preview domain.
+	//
+	// Examples: https://acme-marketing.preview.agency.example/wp-login.php?action=pressfleet-login
+	URL string `json:"url"`
+
+	// User The WordPress login the token logs in.
+	User string `json:"user"`
+}
+
+// AdminLoginCreate defines model for AdminLoginCreate.
+type AdminLoginCreate struct {
+	// User The WordPress login to use. Defaults to the administrator the platform created with the site.
+	User *string `json:"user,omitempty"`
+}
+
 // Alert One incident of one rule for one series. A condition that keeps
 // holding updates its alert rather than creating another, and each
 // alert emits one firing event and, once it stops, one resolved event.
@@ -2956,6 +2979,20 @@ type SiteAdminCredentials struct {
 	Username string `json:"username"`
 }
 
+// SiteAdministrator defines model for SiteAdministrator.
+type SiteAdministrator struct {
+	// Default Whether this is the administrator the platform created with the site.
+	Default     bool   `json:"default"`
+	DisplayName string `json:"display_name"`
+	Email       string `json:"email"`
+	Login       string `json:"login"`
+}
+
+// SiteAdministratorList defines model for SiteAdministratorList.
+type SiteAdministratorList struct {
+	Items []SiteAdministrator `json:"items"`
+}
+
 // SiteAliases defines model for SiteAliases.
 type SiteAliases struct {
 	// Aliases The site's aliases from now on; an empty list removes them all.
@@ -4017,6 +4054,9 @@ type ImportSiteJSONRequestBody = SiteImport
 // UpdateSiteJSONRequestBody defines body for UpdateSite for application/json ContentType.
 type UpdateSiteJSONRequestBody = SiteUpdate
 
+// CreateSiteAdminLoginJSONRequestBody defines body for CreateSiteAdminLogin for application/json ContentType.
+type CreateSiteAdminLoginJSONRequestBody = AdminLoginCreate
+
 // SetSiteAliasesJSONRequestBody defines body for SetSiteAliases for application/json ContentType.
 type SetSiteAliasesJSONRequestBody = SiteAliases
 
@@ -4931,6 +4971,73 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/admin-credentials (the `RetrieveSiteAdminCredentials` operationId).
 	RetrieveSiteAdminCredentials(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateSiteAdminLoginWithBody Get a one-click WordPress admin login
+	//
+	// Signs a short-lived (60 seconds), single-use token that logs the
+	// calling platform user in to the site's wp-admin as a WordPress
+	// administrator, without a WordPress password (design doc §5.9).
+	// Needs an Operator or Admin; Viewers and `read-only` tokens get
+	// `403`. The caller submits `token` to `url` as a form field named
+	// `token` in a `POST`, so it never appears in a URL or a log.
+	//
+	// Without `user`, the administrator the platform created with the
+	// site is used. If that user was deleted or is no longer an
+	// administrator, or the site was imported and has none, the call
+	// returns `409` with the problem type
+	// `https://github.com/rchouinard/pressfleet/blob/main/docs/pressfleet_architecture_and_implementation_document.md#59-dashboard-login-to-wordpress`
+	// ("choose a user"): list the candidates with `GET
+	// /sites/{site_id}/administrators` and send the call again with
+	// `user`. With `user`, the user must be an administrator of the
+	// site, or the call returns `422`. Other `409` responses mean the site
+	// isn't running or is in maintenance mode.
+	//
+	// Every issued token is an audit event (`site.admin_login`) with the
+	// WordPress user and the token's `jti` in `details`, never the token.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/admin-login (the `CreateSiteAdminLogin` operationId).
+	CreateSiteAdminLoginWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateSiteAdminLogin Get a one-click WordPress admin login
+	//
+	// Signs a short-lived (60 seconds), single-use token that logs the
+	// calling platform user in to the site's wp-admin as a WordPress
+	// administrator, without a WordPress password (design doc §5.9).
+	// Needs an Operator or Admin; Viewers and `read-only` tokens get
+	// `403`. The caller submits `token` to `url` as a form field named
+	// `token` in a `POST`, so it never appears in a URL or a log.
+	//
+	// Without `user`, the administrator the platform created with the
+	// site is used. If that user was deleted or is no longer an
+	// administrator, or the site was imported and has none, the call
+	// returns `409` with the problem type
+	// `https://github.com/rchouinard/pressfleet/blob/main/docs/pressfleet_architecture_and_implementation_document.md#59-dashboard-login-to-wordpress`
+	// ("choose a user"): list the candidates with `GET
+	// /sites/{site_id}/administrators` and send the call again with
+	// `user`. With `user`, the user must be an administrator of the
+	// site, or the call returns `422`. Other `409` responses mean the site
+	// isn't running or is in maintenance mode.
+	//
+	// Every issued token is an audit event (`site.admin_login`) with the
+	// WordPress user and the token's `jti` in `details`, never the token.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/admin-login (the `CreateSiteAdminLogin` operationId).
+	CreateSiteAdminLogin(ctx context.Context, siteID SiteID, body CreateSiteAdminLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSiteAdministrators List the site's WordPress administrators
+	//
+	// Lists the WordPress users with the administrator role, read with
+	// WP-CLI, so a caller can choose whom `POST
+	// /sites/{site_id}/admin-login` logs in. It needs the same permission
+	// as that call, because it lists WordPress users. Returns `409` if
+	// the site isn't running.
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/administrators (the `ListSiteAdministrators` operationId).
+	ListSiteAdministrators(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetSiteAliasesWithBody Replace a live site's aliases
 	//
@@ -7476,6 +7583,103 @@ func (c *Client) UpdateSite(ctx context.Context, siteID SiteID, body UpdateSiteJ
 // Corresponds with POST /api/v1/sites/{site_id}/admin-credentials (the `RetrieveSiteAdminCredentials` operationId).
 func (c *Client) RetrieveSiteAdminCredentials(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRetrieveSiteAdminCredentialsRequest(c.Server, siteID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateSiteAdminLoginWithBody Get a one-click WordPress admin login
+//
+// Signs a short-lived (60 seconds), single-use token that logs the
+// calling platform user in to the site's wp-admin as a WordPress
+// administrator, without a WordPress password (design doc §5.9).
+// Needs an Operator or Admin; Viewers and `read-only` tokens get
+// `403`. The caller submits `token` to `url` as a form field named
+// `token` in a `POST`, so it never appears in a URL or a log.
+//
+// Without `user`, the administrator the platform created with the
+// site is used. If that user was deleted or is no longer an
+// administrator, or the site was imported and has none, the call
+// returns `409` with the problem type
+// `https://github.com/rchouinard/pressfleet/blob/main/docs/pressfleet_architecture_and_implementation_document.md#59-dashboard-login-to-wordpress`
+// ("choose a user"): list the candidates with `GET
+// /sites/{site_id}/administrators` and send the call again with
+// `user`. With `user`, the user must be an administrator of the
+// site, or the call returns `422`. Other `409` responses mean the site
+// isn't running or is in maintenance mode.
+//
+// Every issued token is an audit event (`site.admin_login`) with the
+// WordPress user and the token's `jti` in `details`, never the token.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/admin-login (the `CreateSiteAdminLogin` operationId).
+func (c *Client) CreateSiteAdminLoginWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateSiteAdminLoginRequestWithBody(c.Server, siteID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateSiteAdminLogin Get a one-click WordPress admin login
+//
+// Signs a short-lived (60 seconds), single-use token that logs the
+// calling platform user in to the site's wp-admin as a WordPress
+// administrator, without a WordPress password (design doc §5.9).
+// Needs an Operator or Admin; Viewers and `read-only` tokens get
+// `403`. The caller submits `token` to `url` as a form field named
+// `token` in a `POST`, so it never appears in a URL or a log.
+//
+// Without `user`, the administrator the platform created with the
+// site is used. If that user was deleted or is no longer an
+// administrator, or the site was imported and has none, the call
+// returns `409` with the problem type
+// `https://github.com/rchouinard/pressfleet/blob/main/docs/pressfleet_architecture_and_implementation_document.md#59-dashboard-login-to-wordpress`
+// ("choose a user"): list the candidates with `GET
+// /sites/{site_id}/administrators` and send the call again with
+// `user`. With `user`, the user must be an administrator of the
+// site, or the call returns `422`. Other `409` responses mean the site
+// isn't running or is in maintenance mode.
+//
+// Every issued token is an audit event (`site.admin_login`) with the
+// WordPress user and the token's `jti` in `details`, never the token.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/admin-login (the `CreateSiteAdminLogin` operationId).
+func (c *Client) CreateSiteAdminLogin(ctx context.Context, siteID SiteID, body CreateSiteAdminLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateSiteAdminLoginRequest(c.Server, siteID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListSiteAdministrators List the site's WordPress administrators
+//
+// Lists the WordPress users with the administrator role, read with
+// WP-CLI, so a caller can choose whom `POST
+// /sites/{site_id}/admin-login` logs in. It needs the same permission
+// as that call, because it lists WordPress users. Returns `409` if
+// the site isn't running.
+//
+// Corresponds with GET /api/v1/sites/{site_id}/administrators (the `ListSiteAdministrators` operationId).
+func (c *Client) ListSiteAdministrators(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSiteAdministratorsRequest(c.Server, siteID)
 	if err != nil {
 		return nil, err
 	}
@@ -11730,6 +11934,87 @@ func NewRetrieveSiteAdminCredentialsRequest(server string, siteID SiteID) (*http
 	return req, nil
 }
 
+// NewCreateSiteAdminLoginRequest calls the generic CreateSiteAdminLogin builder with application/json body
+func NewCreateSiteAdminLoginRequest(server string, siteID SiteID, body CreateSiteAdminLoginJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateSiteAdminLoginRequestWithBody(server, siteID, "application/json", bodyReader)
+}
+
+// NewCreateSiteAdminLoginRequestWithBody constructs an http.Request for the CreateSiteAdminLogin method, with any body, and a specified content type
+func NewCreateSiteAdminLoginRequestWithBody(server string, siteID SiteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/admin-login", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListSiteAdministratorsRequest constructs an http.Request for the ListSiteAdministrators method
+func NewListSiteAdministratorsRequest(server string, siteID SiteID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/administrators", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewSetSiteAliasesRequest calls the generic SetSiteAliases builder with application/json body
 func NewSetSiteAliasesRequest(server string, siteID SiteID, body SetSiteAliasesJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -14837,6 +15122,75 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/admin-credentials (the `RetrieveSiteAdminCredentials` operationId).
 	RetrieveSiteAdminCredentialsWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*RetrieveSiteAdminCredentialsResponse, error)
+
+	// CreateSiteAdminLoginWithBodyWithResponse Get a one-click WordPress admin login
+	//
+	// Signs a short-lived (60 seconds), single-use token that logs the
+	// calling platform user in to the site's wp-admin as a WordPress
+	// administrator, without a WordPress password (design doc §5.9).
+	// Needs an Operator or Admin; Viewers and `read-only` tokens get
+	// `403`. The caller submits `token` to `url` as a form field named
+	// `token` in a `POST`, so it never appears in a URL or a log.
+	//
+	// Without `user`, the administrator the platform created with the
+	// site is used. If that user was deleted or is no longer an
+	// administrator, or the site was imported and has none, the call
+	// returns `409` with the problem type
+	// `https://github.com/rchouinard/pressfleet/blob/main/docs/pressfleet_architecture_and_implementation_document.md#59-dashboard-login-to-wordpress`
+	// ("choose a user"): list the candidates with `GET
+	// /sites/{site_id}/administrators` and send the call again with
+	// `user`. With `user`, the user must be an administrator of the
+	// site, or the call returns `422`. Other `409` responses mean the site
+	// isn't running or is in maintenance mode.
+	//
+	// Every issued token is an audit event (`site.admin_login`) with the
+	// WordPress user and the token's `jti` in `details`, never the token.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/admin-login (the `CreateSiteAdminLogin` operationId).
+	CreateSiteAdminLoginWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSiteAdminLoginResponse, error)
+
+	// CreateSiteAdminLoginWithResponse Get a one-click WordPress admin login
+	//
+	// Signs a short-lived (60 seconds), single-use token that logs the
+	// calling platform user in to the site's wp-admin as a WordPress
+	// administrator, without a WordPress password (design doc §5.9).
+	// Needs an Operator or Admin; Viewers and `read-only` tokens get
+	// `403`. The caller submits `token` to `url` as a form field named
+	// `token` in a `POST`, so it never appears in a URL or a log.
+	//
+	// Without `user`, the administrator the platform created with the
+	// site is used. If that user was deleted or is no longer an
+	// administrator, or the site was imported and has none, the call
+	// returns `409` with the problem type
+	// `https://github.com/rchouinard/pressfleet/blob/main/docs/pressfleet_architecture_and_implementation_document.md#59-dashboard-login-to-wordpress`
+	// ("choose a user"): list the candidates with `GET
+	// /sites/{site_id}/administrators` and send the call again with
+	// `user`. With `user`, the user must be an administrator of the
+	// site, or the call returns `422`. Other `409` responses mean the site
+	// isn't running or is in maintenance mode.
+	//
+	// Every issued token is an audit event (`site.admin_login`) with the
+	// WordPress user and the token's `jti` in `details`, never the token.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/admin-login (the `CreateSiteAdminLogin` operationId).
+	CreateSiteAdminLoginWithResponse(ctx context.Context, siteID SiteID, body CreateSiteAdminLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSiteAdminLoginResponse, error)
+
+	// ListSiteAdministratorsWithResponse List the site's WordPress administrators
+	//
+	// Lists the WordPress users with the administrator role, read with
+	// WP-CLI, so a caller can choose whom `POST
+	// /sites/{site_id}/admin-login` logs in. It needs the same permission
+	// as that call, because it lists WordPress users. Returns `409` if
+	// the site isn't running.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/administrators (the `ListSiteAdministrators` operationId).
+	ListSiteAdministratorsWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*ListSiteAdministratorsResponse, error)
 
 	// SetSiteAliasesWithBodyWithResponse Replace a live site's aliases
 	//
@@ -19942,6 +20296,186 @@ func (r RetrieveSiteAdminCredentialsResponse) ContentType() string {
 	return ""
 }
 
+// CreateSiteAdminLoginResponse200Headers the declared response headers of an HTTP 200 response for CreateSiteAdminLogin
+type CreateSiteAdminLoginResponse200Headers struct {
+	CacheControl *string
+}
+
+type CreateSiteAdminLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AdminLogin
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *CreateSiteAdminLoginResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreateSiteAdminLoginResponse) GetJSON200() *AdminLogin {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CreateSiteAdminLoginResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CreateSiteAdminLoginResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CreateSiteAdminLoginResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r CreateSiteAdminLoginResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CreateSiteAdminLoginResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r CreateSiteAdminLoginResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateSiteAdminLoginResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateSiteAdminLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateSiteAdminLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateSiteAdminLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateSiteAdminLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListSiteAdministratorsResponse200Headers the declared response headers of an HTTP 200 response for ListSiteAdministrators
+type ListSiteAdministratorsResponse200Headers struct {
+	CacheControl *string
+}
+
+type ListSiteAdministratorsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SiteAdministratorList
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ListSiteAdministratorsResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListSiteAdministratorsResponse) GetJSON200() *SiteAdministratorList {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListSiteAdministratorsResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListSiteAdministratorsResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ListSiteAdministratorsResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ListSiteAdministratorsResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListSiteAdministratorsResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListSiteAdministratorsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSiteAdministratorsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSiteAdministratorsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListSiteAdministratorsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // SetSiteAliasesResponse202Headers the declared response headers of an HTTP 202 response for SetSiteAliases
 type SetSiteAliasesResponse202Headers struct {
 	Location *string
@@ -24714,6 +25248,93 @@ func (c *ClientWithResponses) RetrieveSiteAdminCredentialsWithResponse(ctx conte
 	return ParseRetrieveSiteAdminCredentialsResponse(rsp)
 }
 
+// CreateSiteAdminLoginWithBodyWithResponse Get a one-click WordPress admin login
+//
+// Signs a short-lived (60 seconds), single-use token that logs the
+// calling platform user in to the site's wp-admin as a WordPress
+// administrator, without a WordPress password (design doc §5.9).
+// Needs an Operator or Admin; Viewers and `read-only` tokens get
+// `403`. The caller submits `token` to `url` as a form field named
+// `token` in a `POST`, so it never appears in a URL or a log.
+//
+// Without `user`, the administrator the platform created with the
+// site is used. If that user was deleted or is no longer an
+// administrator, or the site was imported and has none, the call
+// returns `409` with the problem type
+// `https://github.com/rchouinard/pressfleet/blob/main/docs/pressfleet_architecture_and_implementation_document.md#59-dashboard-login-to-wordpress`
+// ("choose a user"): list the candidates with `GET
+// /sites/{site_id}/administrators` and send the call again with
+// `user`. With `user`, the user must be an administrator of the
+// site, or the call returns `422`. Other `409` responses mean the site
+// isn't running or is in maintenance mode.
+//
+// Every issued token is an audit event (`site.admin_login`) with the
+// WordPress user and the token's `jti` in `details`, never the token.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/admin-login (the `CreateSiteAdminLogin` operationId).
+func (c *ClientWithResponses) CreateSiteAdminLoginWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateSiteAdminLoginResponse, error) {
+	rsp, err := c.CreateSiteAdminLoginWithBody(ctx, siteID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateSiteAdminLoginResponse(rsp)
+}
+
+// CreateSiteAdminLoginWithResponse Get a one-click WordPress admin login
+//
+// Signs a short-lived (60 seconds), single-use token that logs the
+// calling platform user in to the site's wp-admin as a WordPress
+// administrator, without a WordPress password (design doc §5.9).
+// Needs an Operator or Admin; Viewers and `read-only` tokens get
+// `403`. The caller submits `token` to `url` as a form field named
+// `token` in a `POST`, so it never appears in a URL or a log.
+//
+// Without `user`, the administrator the platform created with the
+// site is used. If that user was deleted or is no longer an
+// administrator, or the site was imported and has none, the call
+// returns `409` with the problem type
+// `https://github.com/rchouinard/pressfleet/blob/main/docs/pressfleet_architecture_and_implementation_document.md#59-dashboard-login-to-wordpress`
+// ("choose a user"): list the candidates with `GET
+// /sites/{site_id}/administrators` and send the call again with
+// `user`. With `user`, the user must be an administrator of the
+// site, or the call returns `422`. Other `409` responses mean the site
+// isn't running or is in maintenance mode.
+//
+// Every issued token is an audit event (`site.admin_login`) with the
+// WordPress user and the token's `jti` in `details`, never the token.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/admin-login (the `CreateSiteAdminLogin` operationId).
+func (c *ClientWithResponses) CreateSiteAdminLoginWithResponse(ctx context.Context, siteID SiteID, body CreateSiteAdminLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSiteAdminLoginResponse, error) {
+	rsp, err := c.CreateSiteAdminLogin(ctx, siteID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateSiteAdminLoginResponse(rsp)
+}
+
+// ListSiteAdministratorsWithResponse List the site's WordPress administrators
+//
+// Lists the WordPress users with the administrator role, read with
+// WP-CLI, so a caller can choose whom `POST
+// /sites/{site_id}/admin-login` logs in. It needs the same permission
+// as that call, because it lists WordPress users. Returns `409` if
+// the site isn't running.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/sites/{site_id}/administrators (the `ListSiteAdministrators` operationId).
+func (c *ClientWithResponses) ListSiteAdministratorsWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*ListSiteAdministratorsResponse, error) {
+	rsp, err := c.ListSiteAdministrators(ctx, siteID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSiteAdministratorsResponse(rsp)
+}
+
 // SetSiteAliasesWithBodyWithResponse Replace a live site's aliases
 //
 // Replaces the aliases of a site that has gone live and queues a job
@@ -29447,6 +30068,168 @@ func ParseRetrieveSiteAdminCredentialsResponse(rsp *http.Response) (*RetrieveSit
 	switch {
 	case rsp.StatusCode == 200:
 		var headers RetrieveSiteAdminCredentialsResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers200 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCreateSiteAdminLoginResponse parses an HTTP response from a CreateSiteAdminLoginWithResponse call
+func ParseCreateSiteAdminLoginResponse(rsp *http.Response) (*CreateSiteAdminLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateSiteAdminLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AdminLogin
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers CreateSiteAdminLoginResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers200 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListSiteAdministratorsResponse parses an HTTP response from a ListSiteAdministratorsWithResponse call
+func ParseListSiteAdministratorsResponse(rsp *http.Response) (*ListSiteAdministratorsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSiteAdministratorsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SiteAdministratorList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ListSiteAdministratorsResponse200Headers
 		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

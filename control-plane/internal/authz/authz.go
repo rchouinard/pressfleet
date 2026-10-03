@@ -79,6 +79,10 @@ const (
 	SetSiteMaintenance      Action = "site.maintenance.set"
 	PurgeSiteCache          Action = "site.cache.purge"
 
+	// Log in to a site's wp-admin as one of its administrators from the
+	// dashboard (§5.9), and list those administrators.
+	AdminLogin Action = "site.admin_login"
+
 	// Deploy code; connect over SFTP; export the database; open read-only
 	// database sessions (§5.8).
 	ConnectSFTP            Action = "site.sftp.connect"
@@ -188,6 +192,11 @@ var rules = map[Action]rule{
 	ImportSite:              {store.RoleOperator, true},
 
 	DeployCode: {store.RoleOperator, true},
+
+	// Hands out a session in wp-admin, so a read-only token must not reach
+	// it; listing the administrators exposes WordPress users, so it takes
+	// the same action.
+	AdminLogin: {store.RoleOperator, true},
 
 	// An upload needs the permission of the job it is for.
 	UploadForImport: {store.RoleOperator, true}, // as ImportSite

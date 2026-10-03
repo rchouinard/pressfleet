@@ -41,6 +41,7 @@ var designTable = map[authz.Action]struct {
 	// import or deployment needs.
 	authz.ConnectSFTP:            {true, true, false, true},
 	authz.DeployCode:             {true, true, false, true},
+	authz.AdminLogin:             {true, true, false, true},
 	authz.UploadForImport:        {true, true, false, true},
 	authz.UploadForDeploy:        {true, true, false, true},
 	authz.ExportDatabase:         {true, true, false, true},

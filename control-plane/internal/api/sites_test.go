@@ -70,6 +70,8 @@ var implementedSiteOps = map[string]bool{
 	"deploySiteCode":                true,
 	"listSiteDatabaseSessions":      true,
 	"createSiteDatabaseSession":     true,
+	"createSiteAdminLogin":          true,
+	"listSiteAdministrators":        true,
 	"endSiteDatabaseSession":        true,
 }
 

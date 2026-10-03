@@ -67,6 +67,9 @@ var operationActions = map[string]authz.Action{
 
 	"deploySiteCode": authz.DeployCode,
 
+	"createSiteAdminLogin":   authz.AdminLogin,
+	"listSiteAdministrators": authz.AdminLogin,
+
 	"exportSiteDatabase":         authz.ExportDatabase,
 	"downloadSiteDatabaseExport": authz.DownloadDatabaseExport,
 	// Listing sessions shows no credentials.

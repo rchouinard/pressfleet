@@ -349,7 +349,7 @@ Downloads of database exports are the one kind of read that is recorded, whateve
 
 Admins can list and filter the log with `GET /api/v1/audit-events`. A daily job deletes events older than `audit.retention_days`; a changed retention applies from the next run after the control plane restarts. Events outlive the users and tokens they name, so an event can refer to a user who has since been deleted.
 
-Some events carry `details`, such as the SFTP gateway's sessions (see below).
+Some events carry `details`, such as the SFTP gateway's sessions (see below). Every one-click WordPress login token (`POST /api/v1/sites/{site_id}/admin-login`) is an event with the action `site.admin_login` and the WordPress user (`wp_user`) and the token's ID (`jti`) in `details`, never the token itself.
 
 ## Metrics storage
 

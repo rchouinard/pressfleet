@@ -383,7 +383,13 @@ func (a *app) serveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Ensure is idempotent: it returns the key siteRuntime made.
+			loginSigner, err := adminlogin.Ensure(context.WithoutCancel(cmd.Context()), db, secretStore)
+			if err != nil {
+				return fmt.Errorf("platform login key: %w", err)
+			}
 			handler, err := api.NewHandler(api.Options{
+				AdminLogin:       adminlogin.NewService(db, prov, loginSigner),
 				AlertChannels:    channels,
 				Logger:           a.log,
 				Readiness:        readiness,

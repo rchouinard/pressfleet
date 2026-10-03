@@ -1072,6 +1072,29 @@ func (e WebhookFormat) Valid() bool {
 	}
 }
 
+// AdminLogin defines model for AdminLogin.
+type AdminLogin struct {
+	// ExpiresAt Examples: 2026-09-26T17:25:00Z
+	ExpiresAt Timestamp `json:"expires_at"`
+
+	// Token The login token. Single-use, and shown only here; never log it.
+	Token string `json:"token"`
+
+	// URL The site's login URL to submit the token to, on the primary domain once the site is live, else on the preview domain.
+	//
+	// Examples: https://acme-marketing.preview.agency.example/wp-login.php?action=pressfleet-login
+	URL string `json:"url"`
+
+	// User The WordPress login the token logs in.
+	User string `json:"user"`
+}
+
+// AdminLoginCreate defines model for AdminLoginCreate.
+type AdminLoginCreate struct {
+	// User The WordPress login to use. Defaults to the administrator the platform created with the site.
+	User *string `json:"user,omitempty"`
+}
+
 // Alert One incident of one rule for one series. A condition that keeps
 // holding updates its alert rather than creating another, and each
 // alert emits one firing event and, once it stops, one resolved event.
@@ -2957,6 +2980,20 @@ type SiteAdminCredentials struct {
 	Username string `json:"username"`
 }
 
+// SiteAdministrator defines model for SiteAdministrator.
+type SiteAdministrator struct {
+	// Default Whether this is the administrator the platform created with the site.
+	Default     bool   `json:"default"`
+	DisplayName string `json:"display_name"`
+	Email       string `json:"email"`
+	Login       string `json:"login"`
+}
+
+// SiteAdministratorList defines model for SiteAdministratorList.
+type SiteAdministratorList struct {
+	Items []SiteAdministrator `json:"items"`
+}
+
 // SiteAliases defines model for SiteAliases.
 type SiteAliases struct {
 	// Aliases The site's aliases from now on; an empty list removes them all.
@@ -4018,6 +4055,9 @@ type ImportSiteJSONRequestBody = SiteImport
 // UpdateSiteJSONRequestBody defines body for UpdateSite for application/json ContentType.
 type UpdateSiteJSONRequestBody = SiteUpdate
 
+// CreateSiteAdminLoginJSONRequestBody defines body for CreateSiteAdminLogin for application/json ContentType.
+type CreateSiteAdminLoginJSONRequestBody = AdminLoginCreate
+
 // SetSiteAliasesJSONRequestBody defines body for SetSiteAliases for application/json ContentType.
 type SetSiteAliasesJSONRequestBody = SiteAliases
 
@@ -4224,6 +4264,12 @@ type ServerInterface interface {
 	// RetrieveSiteAdminCredentials Retrieve the initial WordPress admin credentials (once)
 	// (POST /api/v1/sites/{site_id}/admin-credentials)
 	RetrieveSiteAdminCredentials(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// CreateSiteAdminLogin Get a one-click WordPress admin login
+	// (POST /api/v1/sites/{site_id}/admin-login)
+	CreateSiteAdminLogin(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// ListSiteAdministrators List the site's WordPress administrators
+	// (GET /api/v1/sites/{site_id}/administrators)
+	ListSiteAdministrators(w http.ResponseWriter, r *http.Request, siteID SiteID)
 	// SetSiteAliases Replace a live site's aliases
 	// (PUT /api/v1/sites/{site_id}/aliases)
 	SetSiteAliases(w http.ResponseWriter, r *http.Request, siteID SiteID)
@@ -6141,6 +6187,58 @@ func (siw *ServerInterfaceWrapper) RetrieveSiteAdminCredentials(w http.ResponseW
 	handler.ServeHTTP(w, r)
 }
 
+// CreateSiteAdminLogin operation middleware
+func (siw *ServerInterfaceWrapper) CreateSiteAdminLogin(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateSiteAdminLogin(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListSiteAdministrators operation middleware
+func (siw *ServerInterfaceWrapper) ListSiteAdministrators(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListSiteAdministrators(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // SetSiteAliases operation middleware
 func (siw *ServerInterfaceWrapper) SetSiteAliases(w http.ResponseWriter, r *http.Request) {
 
@@ -7844,6 +7942,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/stop", wrapper.StopSite)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/cache/purge", wrapper.PurgeSiteCache)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/admin-credentials", wrapper.RetrieveSiteAdminCredentials)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/admin-login", wrapper.CreateSiteAdminLogin)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/administrators", wrapper.ListSiteAdministrators)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/sites/{site_id}/maintenance", wrapper.SetSiteMaintenance)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/go-live", wrapper.GoLiveSite)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/sites/{site_id}/aliases", wrapper.SetSiteAliases)
@@ -13134,6 +13234,265 @@ func (response RetrieveSiteAdminCredentialsdefaultApplicationProblemPlusJSONResp
 	return err
 }
 
+type CreateSiteAdminLoginRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+	Body   *CreateSiteAdminLoginJSONRequestBody
+}
+
+type CreateSiteAdminLoginResponseObject interface {
+	VisitCreateSiteAdminLoginResponse(w http.ResponseWriter) error
+}
+
+type CreateSiteAdminLogin200ResponseHeaders struct {
+	CacheControl *string
+}
+
+type CreateSiteAdminLogin200JSONResponse struct {
+	Body    AdminLogin
+	Headers CreateSiteAdminLogin200ResponseHeaders
+}
+
+func (response CreateSiteAdminLogin200JSONResponse) VisitCreateSiteAdminLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteAdminLogin400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response CreateSiteAdminLogin400ApplicationProblemPlusJSONResponse) VisitCreateSiteAdminLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteAdminLogin401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response CreateSiteAdminLogin401ApplicationProblemPlusJSONResponse) VisitCreateSiteAdminLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteAdminLogin403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response CreateSiteAdminLogin403ApplicationProblemPlusJSONResponse) VisitCreateSiteAdminLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteAdminLogin404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response CreateSiteAdminLogin404ApplicationProblemPlusJSONResponse) VisitCreateSiteAdminLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteAdminLogin409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response CreateSiteAdminLogin409ApplicationProblemPlusJSONResponse) VisitCreateSiteAdminLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteAdminLogin422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response CreateSiteAdminLogin422ApplicationProblemPlusJSONResponse) VisitCreateSiteAdminLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateSiteAdminLogindefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response CreateSiteAdminLogindefaultApplicationProblemPlusJSONResponse) VisitCreateSiteAdminLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteAdministratorsRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+}
+
+type ListSiteAdministratorsResponseObject interface {
+	VisitListSiteAdministratorsResponse(w http.ResponseWriter) error
+}
+
+type ListSiteAdministrators200ResponseHeaders struct {
+	CacheControl *string
+}
+
+type ListSiteAdministrators200JSONResponse struct {
+	Body    SiteAdministratorList
+	Headers ListSiteAdministrators200ResponseHeaders
+}
+
+func (response ListSiteAdministrators200JSONResponse) VisitListSiteAdministratorsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteAdministrators401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ListSiteAdministrators401ApplicationProblemPlusJSONResponse) VisitListSiteAdministratorsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteAdministrators403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ListSiteAdministrators403ApplicationProblemPlusJSONResponse) VisitListSiteAdministratorsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteAdministrators404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response ListSiteAdministrators404ApplicationProblemPlusJSONResponse) VisitListSiteAdministratorsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteAdministrators409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response ListSiteAdministrators409ApplicationProblemPlusJSONResponse) VisitListSiteAdministratorsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListSiteAdministratorsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ListSiteAdministratorsdefaultApplicationProblemPlusJSONResponse) VisitListSiteAdministratorsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type SetSiteAliasesRequestObject struct {
 	SiteID SiteID `json:"site_id"`
 	Body   *SetSiteAliasesJSONRequestBody
@@ -18146,6 +18505,12 @@ type StrictServerInterface interface {
 	// RetrieveSiteAdminCredentials Retrieve the initial WordPress admin credentials (once)
 	// (POST /api/v1/sites/{site_id}/admin-credentials)
 	RetrieveSiteAdminCredentials(ctx context.Context, request RetrieveSiteAdminCredentialsRequestObject) (RetrieveSiteAdminCredentialsResponseObject, error)
+	// CreateSiteAdminLogin Get a one-click WordPress admin login
+	// (POST /api/v1/sites/{site_id}/admin-login)
+	CreateSiteAdminLogin(ctx context.Context, request CreateSiteAdminLoginRequestObject) (CreateSiteAdminLoginResponseObject, error)
+	// ListSiteAdministrators List the site's WordPress administrators
+	// (GET /api/v1/sites/{site_id}/administrators)
+	ListSiteAdministrators(ctx context.Context, request ListSiteAdministratorsRequestObject) (ListSiteAdministratorsResponseObject, error)
 	// SetSiteAliases Replace a live site's aliases
 	// (PUT /api/v1/sites/{site_id}/aliases)
 	SetSiteAliases(ctx context.Context, request SetSiteAliasesRequestObject) (SetSiteAliasesResponseObject, error)
@@ -19774,6 +20139,68 @@ func (sh *strictHandler) RetrieveSiteAdminCredentials(w http.ResponseWriter, r *
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RetrieveSiteAdminCredentialsResponseObject); ok {
 		if err := validResponse.VisitRetrieveSiteAdminCredentialsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateSiteAdminLogin operation middleware
+func (sh *strictHandler) CreateSiteAdminLogin(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request CreateSiteAdminLoginRequestObject
+
+	request.SiteID = siteID
+
+	var body CreateSiteAdminLoginJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateSiteAdminLogin(ctx, request.(CreateSiteAdminLoginRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateSiteAdminLogin")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateSiteAdminLoginResponseObject); ok {
+		if err := validResponse.VisitCreateSiteAdminLoginResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListSiteAdministrators operation middleware
+func (sh *strictHandler) ListSiteAdministrators(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request ListSiteAdministratorsRequestObject
+
+	request.SiteID = siteID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListSiteAdministrators(ctx, request.(ListSiteAdministratorsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListSiteAdministrators")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListSiteAdministratorsResponseObject); ok {
+		if err := validResponse.VisitListSiteAdministratorsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

@@ -47,6 +47,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/adminlogin"
 	"github.com/rchouinard/pressfleet/control-plane/internal/alertchannels"
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
@@ -110,6 +111,10 @@ type Options struct {
 	// DatabaseSessions opens and ends temporary database sessions. If nil,
 	// the database session operations fail with 500.
 	DatabaseSessions *dbsession.Service
+	// AdminLogin issues one-click WordPress admin login tokens and lists
+	// the administrators to choose from. If nil, those operations fail with
+	// 500.
+	AdminLogin *adminlogin.Service
 	// Logs reads the site containers' logs through the orchestrator
 	// driver. If nil, the site log operations fail with 500.
 	Logs provisioner.LogReader
@@ -150,6 +155,7 @@ type Handlers struct {
 	dbExports     *dbexport.Service
 	deploys       *deploy.Service
 	dbSessions    *dbsession.Service
+	adminLogin    *adminlogin.Service
 	logs          provisioner.LogReader
 	metrics       *metricsapi.Service
 	channels      *alertchannels.Service
@@ -192,6 +198,7 @@ func NewHandler(opts Options) (http.Handler, error) {
 	h.dbExports = opts.DatabaseExports
 	h.deploys = opts.Deployments
 	h.dbSessions = opts.DatabaseSessions
+	h.adminLogin = opts.AdminLogin
 	h.logs = opts.Logs
 	if h.metrics = opts.Metrics; h.metrics == nil {
 		h.metrics = metricsapi.New(nil, nil)

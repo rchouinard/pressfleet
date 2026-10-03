@@ -635,6 +635,73 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sites/{site_id}/admin-login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Get a one-click WordPress admin login
+         * @description Signs a short-lived (60 seconds), single-use token that logs the
+         *     calling platform user in to the site's wp-admin as a WordPress
+         *     administrator, without a WordPress password (design doc §5.9).
+         *     Needs an Operator or Admin; Viewers and `read-only` tokens get
+         *     `403`. The caller submits `token` to `url` as a form field named
+         *     `token` in a `POST`, so it never appears in a URL or a log.
+         *
+         *     Without `user`, the administrator the platform created with the
+         *     site is used. If that user was deleted or is no longer an
+         *     administrator, or the site was imported and has none, the call
+         *     returns `409` with the problem type
+         *     `https://github.com/rchouinard/pressfleet/blob/main/docs/pressfleet_architecture_and_implementation_document.md#59-dashboard-login-to-wordpress`
+         *     ("choose a user"): list the candidates with `GET
+         *     /sites/{site_id}/administrators` and send the call again with
+         *     `user`. With `user`, the user must be an administrator of the
+         *     site, or the call returns `422`. Other `409` responses mean the site
+         *     isn't running or is in maintenance mode.
+         *
+         *     Every issued token is an audit event (`site.admin_login`) with the
+         *     WordPress user and the token's `jti` in `details`, never the token.
+         */
+        post: operations["createSiteAdminLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sites/{site_id}/administrators": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List the site's WordPress administrators
+         * @description Lists the WordPress users with the administrator role, read with
+         *     WP-CLI, so a caller can choose whom `POST
+         *     /sites/{site_id}/admin-login` logs in. It needs the same permission
+         *     as that call, because it lists WordPress users. Returns `409` if
+         *     the site isn't running.
+         */
+        get: operations["listSiteAdministrators"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sites/{site_id}/maintenance": {
         parameters: {
             query?: never;
@@ -3211,6 +3278,36 @@ export interface components {
              */
             login_url: string;
         };
+        AdminLoginCreate: {
+            /** @description The WordPress login to use. Defaults to the administrator the platform created with the site. */
+            user?: string;
+        };
+        AdminLogin: {
+            /**
+             * Format: uri
+             * @description The site's login URL to submit the token to, on the primary domain once the site is live, else on the preview domain.
+             * @example https://acme-marketing.preview.agency.example/wp-login.php?action=pressfleet-login
+             */
+            url: string;
+            /**
+             * Format: password
+             * @description The login token. Single-use, and shown only here; never log it.
+             */
+            token: string;
+            /** @description The WordPress login the token logs in. */
+            user: string;
+            expires_at: components["schemas"]["Timestamp"];
+        };
+        SiteAdministrator: {
+            login: string;
+            display_name: string;
+            email: string;
+            /** @description Whether this is the administrator the platform created with the site. */
+            default: boolean;
+        };
+        SiteAdministratorList: {
+            items: components["schemas"]["SiteAdministrator"][];
+        };
         SiteList: {
             items: components["schemas"]["Site"][];
             next_cursor: components["schemas"]["NextCursor"];
@@ -5105,6 +5202,70 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             410: components["responses"]["Gone"];
+            default: components["responses"]["Error"];
+        };
+    };
+    createSiteAdminLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["AdminLoginCreate"];
+            };
+        };
+        responses: {
+            /** @description A login token. */
+            200: {
+                headers: {
+                    /** @description Always `no-store`. */
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminLogin"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableContent"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listSiteAdministrators: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The site's administrators. */
+            200: {
+                headers: {
+                    /** @description Always `no-store`. */
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteAdministratorList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             default: components["responses"]["Error"];
         };
     };

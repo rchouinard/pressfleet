@@ -222,7 +222,7 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 	up := newUploadService(t, db)
 	h := newHandler(t, api.Options{Authenticator: fa, Auth: svc, DB: db, Sites: env.svc, Backups: env.backups, Uploads: up, Logs: env.prov,
 		DatabaseExports: newDatabaseExports(t, db, env), Deployments: newDeployments(t, db, env, up),
-		DatabaseSessions: newDatabaseSessions(t, db, env, nil), AlertChannels: newAlertChannels(t, db),
+		DatabaseSessions: newDatabaseSessions(t, db, env, nil), AdminLogin: newAdminLogin(t, db, env), AlertChannels: newAlertChannels(t, db),
 		Doctor: func(context.Context) doctor.Report { return doctor.Report{} }})
 	for _, op := range ops {
 		t.Run(op.ID, func(t *testing.T) {
