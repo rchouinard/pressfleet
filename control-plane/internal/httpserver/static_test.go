@@ -180,7 +180,7 @@ func TestUISecurityHeaders(t *testing.T) {
 				t.Errorf("X-Frame-Options = %q", got)
 			}
 			csp := hdr.Get("Content-Security-Policy")
-			for _, want := range []string{"default-src 'self'", "frame-ancestors 'none'", "object-src 'none'", "base-uri 'self'"} {
+			for _, want := range []string{"default-src 'self'", "frame-ancestors 'none'", "object-src 'none'", "base-uri 'self'", "form-action 'self' https: http:"} {
 				if !strings.Contains(csp, want) {
 					t.Errorf("CSP %q lacks %q", csp, want)
 				}

@@ -110,6 +110,11 @@ var inlineScript = regexp.MustCompile(`(?is)<script(\s[^>]*)?>(.*?)</script>`)
 // allowing 'unsafe-inline', the policy lists the hash of each, so only the
 // scripts that shipped in this build run.
 //
+// form-action allows http: and https: because the one-click WordPress login
+// POSTs a token form to the site's own domain, which is any host the operator
+// has attached. The token is single-use and short-lived, and the form is
+// built by the dashboard, not by page content.
+//
 // Styles allow 'unsafe-inline' because the component library positions
 // popovers and sets CSS variables through style attributes and elements.
 func contentSecurityPolicy(index []byte) string {
@@ -131,7 +136,7 @@ func contentSecurityPolicy(index []byte) string {
 		"img-src 'self' data:",
 		"object-src 'none'",
 		"base-uri 'self'",
-		"form-action 'self'",
+		"form-action 'self' https: http:",
 		"frame-ancestors 'none'",
 	}, "; ")
 }
