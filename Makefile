@@ -67,6 +67,11 @@ dev-up: build ## Install and start a local dev platform in ./.dev (settings in .
 	$(MAKE) image IMAGE=$(DEV_IMAGE)
 	PF_DEV_IMAGE=$(DEV_IMAGE) scripts/dev.sh up
 
+.PHONY: dev-update
+dev-update: build ## Rebuild the control plane image and recreate the dev platform's control plane on it
+	$(MAKE) image IMAGE=$(DEV_IMAGE)
+	PF_DEV_IMAGE=$(DEV_IMAGE) scripts/dev.sh update
+
 .PHONY: dev-down
 dev-down: ## Remove the local dev platform, its sites and data (PURGE_CERTS=1 also drops its certificates)
 	PURGE_CERTS=$(PURGE_CERTS) scripts/dev.sh down

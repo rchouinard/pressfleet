@@ -44,6 +44,8 @@ See [docs/configuration.md](docs/configuration.md) for all settings.
 3. `cp .env.example .env` and set `PF_DEV_DOMAIN` and `CF_DNS_API_TOKEN`.
 4. `make dev-up`, then open `https://<PF_DEV_DOMAIN>/`. The admin login is printed at the end.
 
+After changing the control plane or the dashboard, `make dev-update` rebuilds the image and recreates the control plane container on it, keeping sites, data, and the other services; it does nothing if the build didn't change.
+
 Traefik takes ports 80 and 443 on the host, so stop anything else using them. `make dev-down` keeps the certificate store, because Let's Encrypt allows only five certificates a week for the same names; `make dev-down PURGE_CERTS=1` drops it too. Set `PF_DEV_STAGING=1` while experimenting with repeated installs if you don't need browser-trusted certificates. Sites need the site images: run `make images` first, or let the platform pull them from GHCR.
 
 If the names don't resolve, your resolver may block public names that point at loopback (DNS rebinding protection, common in routers and Pi-hole); allow the domain or use a public resolver. Custom domains and go-live use HTTP-01 and can't get real certificates locally; use `skip_dns_check` or the Pebble harness in [docs/testing.md](docs/testing.md).

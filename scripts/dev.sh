@@ -2,6 +2,7 @@
 # Install or remove a throwaway local PressFleet platform for development.
 #
 #   scripts/dev.sh up      install the platform into ./.dev and start it
+#   scripts/dev.sh update  recreate the control plane on a rebuilt image
 #   scripts/dev.sh down    remove it: containers, sites, volumes, ./.dev
 #   scripts/dev.sh status  show what is running
 #
@@ -94,6 +95,34 @@ Tear it down with 'make dev-down'.
 EOF
 }
 
+# update recreates the control plane container on the image as it is now,
+# after 'make image' rebuilt it under the same tag. Sites, data, and the
+# other platform services are left alone; tasks pick up the new image as they
+# start, since they run the same tag.
+update() {
+	local compose="$data_dir/platform/compose.yaml"
+	[[ -f "$compose" ]] || die "no dev platform installed in $dev_dir; run 'make dev-up' first"
+	local installed
+	installed="$(docker compose -p "$project" -f "$compose" config --images control-plane)"
+	if [[ "$installed" != "$image" ]]; then
+		die "the platform runs $installed, not $image; rebuild that tag (make dev-update DEV_IMAGE=$installed)"
+	fi
+	docker image inspect "$image" >/dev/null 2>&1 || die "image $image not found; run 'make dev-update', which builds it"
+
+	local old new
+	old="$(docker inspect -f '{{.Image}}' "$(docker compose -p "$project" -f "$compose" ps -aq control-plane)" 2>/dev/null || true)"
+	new="$(docker image inspect -f '{{.Id}}' "$image")"
+	if [[ "$old" == "$new" ]]; then
+		echo "dev: the control plane already runs this build"
+		return
+	fi
+	# Compose recreates the container because the tag points at a new image.
+	docker compose -p "$project" -f "$compose" up -d --no-deps --wait control-plane
+	# The previous build lost its tag; remove it unless a task still uses it.
+	[[ -z "$old" ]] || docker image rm "$old" >/dev/null 2>&1 || true
+	echo "dev: control plane updated to ${new:7:12}"
+}
+
 # remove_sites deletes every container, network, and volume that belongs to a
 # site of this platform. Their Compose files live in the data directory, which
 # is about to go, so this works from labels instead.
@@ -166,7 +195,8 @@ status() {
 
 case "${1:-}" in
 up) up ;;
+update) update ;;
 down) down ;;
 status) status ;;
-*) die "usage: $0 up|down|status" ;;
+*) die "usage: $0 up|update|down|status" ;;
 esac
