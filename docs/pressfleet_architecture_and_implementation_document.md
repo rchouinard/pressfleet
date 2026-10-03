@@ -352,7 +352,7 @@ Each user has one platform-wide role. The roles are fixed in the MVP; there are 
 | :--- | :---: | :---: | :---: |
 | View sites, client groups, jobs, backups, metrics, logs, and alerts | ✓ | ✓ | ✓ |
 | Create and import sites; change site settings (PHP version, core branch hold, resources, preview password protection); go-live and domains; start/stop; maintenance mode; cache purge | ✓ | ✓ | |
-| Deploy code; connect over SFTP; export the database; open read-only database sessions (§5.8) | ✓ | ✓ | |
+| Deploy code; connect over SFTP; export the database or the whole site, also from a backup (§5.7); open read-only database sessions (§5.8) | ✓ | ✓ | |
 | Log in to a site's WordPress admin from the dashboard (§5.9) | ✓ | ✓ | |
 | Open read-write database sessions | ✓ | | |
 | Take backups, restore, and approve core updates | ✓ | ✓ | |
@@ -444,7 +444,7 @@ A go-live that fails before the URL update rolls back to the previous domains. O
 #### Repository Layout
 * One Restic repository per client group, each with its own encryption key.
 * Sites within a group deduplicate against each other (shared plugins, themes, and media are common).
-* Offboarding a client is a matter of handing over or deleting one repository and key.
+* Offboarding a client is a matter of handing over or deleting one repository and key, or of exporting its sites (§5.7).
 
 ### 5.4. Restore Workflow
 1. Takes an automatic **pre-restore snapshot** of the target site so the restore itself can be rolled back.
@@ -506,6 +506,12 @@ Existing sites are imported from a `wp-content` archive and a SQL dump (decided 
 5. **URLs and platform setup:** Runs `wp search-replace` from the source URL to the preview URL, applies the default plugin stack and platform configuration (§5.1 step 7), and purges the caches. The site is then on its preview domain and goes live like any other (§5.2).
 
 The source's `wp-config.php` is not imported: the platform generates it (§5.5). An import that fails permanently deletes the new site, as failed provisioning does.
+
+#### Export
+A site can be exported in the same two files import takes, so an export can be imported again here or moved to another host (decided 2026-10-02): `<slug>-wp-content.tar.gz` and `<slug>-database.sql.gz`. The archive leaves out the platform's host drop-ins, which point at its object cache and page cache. Agencies use it to hand a site to a client, move it, or offboard a client group without restic.
+* **From the live site:** a job dumps the database (`DatabaseManager.Dump`) and archives `wp-content` with a task running as the site's UID with the volume mounted read-only, holding the site's lock.
+* **From a backup snapshot:** a backup-worker task (§5.3) streams the snapshot's `wp-content` and dump out of the client group's repository, without touching the live site. This also works for sites that have been deleted, whose snapshots stay in the repository until the group's repository is deleted; they are listed under their client group.
+* Exports work like database exports (§5.8): the files wait in the data directory, can be downloaded (with resumable range requests) by the caller until they expire, and are then deleted. Starting an export and every download are audited.
 
 ### 5.8. Developer Access
 
