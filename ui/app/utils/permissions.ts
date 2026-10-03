@@ -30,6 +30,8 @@ export const permissions = {
   'site.maintenance.set': 'operator',
   'site.cache.purge': 'operator',
   'site.credentials.retrieve': 'operator',
+  // One-click wp-admin login, and the list of administrators to pick from (§5.9).
+  'site.admin_login': 'operator',
 
   // Deploy code; export the database; read-only database sessions.
   'site.code.deploy': 'operator',

@@ -148,6 +148,21 @@ async function closeCredentials() {
   await refreshSite()
 }
 
+// One-click wp-admin login (§5.9). The component owns the tab and the form;
+// these are only the two API calls. The token is never kept here.
+async function createAdminLogin(user?: string) {
+  const { data } = await api.POST('/api/v1/sites/{site_id}/admin-login', {
+    params: { path: { site_id: id.value } },
+    body: user === undefined ? undefined : { user },
+  })
+  if (!data) throw new Error('The login response was empty')
+  return data
+}
+async function listAdministrators() {
+  const { data } = await api.GET('/api/v1/sites/{site_id}/administrators', { params: { path: { site_id: id.value } } })
+  return data?.items ?? []
+}
+
 async function onDomainsChanged() {
   await Promise.all([refreshSite(), refreshJobs()])
 }
@@ -182,7 +197,10 @@ function when(iso: string): string {
             <a v-if="site.url" :href="site.url" target="_blank" rel="noopener noreferrer" class="break-all text-primary underline">{{ site.url }}</a>
           </p>
         </div>
-        <div class="flex flex-wrap gap-2">
+        <div class="flex flex-wrap items-start gap-2">
+          <IfCan action="site.admin_login">
+            <SiteAdminLogin v-if="site.status !== 'deleting'" :site="site" :create-login="createAdminLogin" :list-administrators="listAdministrators" />
+          </IfCan>
           <IfCan action="site.start">
             <UButton v-if="canStartSite(site)" icon="i-lucide-play" :loading="powerBusy" @click="power('start')">Start</UButton>
           </IfCan>

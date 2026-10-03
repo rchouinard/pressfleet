@@ -17,6 +17,8 @@ const matrix: Record<Role, Action[]> = {
     // "Create and import sites; change site settings; go-live and domains; start/stop; maintenance mode; cache purge"
     'site.create', 'site.import', 'site.update', 'site.domains.manage', 'site.start', 'site.stop',
     'site.maintenance.set', 'site.cache.purge', 'site.credentials.retrieve',
+    // §5.9: log in to wp-admin from the dashboard
+    'site.admin_login',
     // "Deploy code; connect over SFTP; export the database; open read-only database sessions"
     'site.code.deploy', 'site.database.export', 'site.database.session.create',
     // "Take backups, restore, and approve core updates"
