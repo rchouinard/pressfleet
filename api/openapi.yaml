@@ -2934,18 +2934,18 @@ paths:
             $ref: "#/components/schemas/ID"
         - name: kind
           in: query
-          description: Only return exports of these kinds.
-          style: form
-          explode: false
+          description: |
+            Only return exports of these kinds; repeat the parameter to
+            select several (`kind=site&kind=snapshot`).
           schema:
             type: array
             items:
               $ref: "#/components/schemas/ExportKind"
         - name: status
           in: query
-          description: Only return exports with these statuses.
-          style: form
-          explode: false
+          description: |
+            Only return exports with these statuses; repeat the parameter to
+            select several (`status=ready&status=failed`).
           schema:
             type: array
             items:

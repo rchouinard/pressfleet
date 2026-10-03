@@ -151,7 +151,7 @@ func TestSiteExportEndpoints(t *testing.T) {
 			got.Source.SiteURL != "https://"+site.PreviewDomain || got.Source.PhpVersion != "8.4" || got.BackupID != nil || got.SizeBytes == nil {
 			t.Errorf("export = %s", w.Body)
 		}
-		w = do(t, h, request{authed: true, method: http.MethodGet, target: "/api/v1/exports?site_id=" + site.ID + "&kind=site,snapshot"})
+		w = do(t, h, request{authed: true, method: http.MethodGet, target: "/api/v1/exports?site_id=" + site.ID + "&kind=site&kind=snapshot&status=ready"})
 		if list := decodeJSON[gen.ExportList](t, w.Body.Bytes()); w.Code != http.StatusOK || len(list.Items) != 1 || list.Items[0].ID != res.ExportID {
 			t.Errorf("list: %d %s", w.Code, w.Body)
 		}

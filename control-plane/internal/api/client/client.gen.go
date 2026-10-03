@@ -4023,10 +4023,12 @@ type ListExportsParams struct {
 	SiteID        *ID `form:"site_id,omitempty" json:"site_id,omitempty"`
 	ClientGroupID *ID `form:"client_group_id,omitempty" json:"client_group_id,omitempty"`
 
-	// Kind Only return exports of these kinds.
+	// Kind Only return exports of these kinds; repeat the parameter to
+	// select several (`kind=site&kind=snapshot`).
 	Kind *[]ExportKind `form:"kind,omitempty" json:"kind,omitempty"`
 
-	// Status Only return exports with these statuses.
+	// Status Only return exports with these statuses; repeat the parameter to
+	// select several (`status=ready&status=failed`).
 	Status *[]ExportStatus `form:"status,omitempty" json:"status,omitempty"`
 
 	// Limit Maximum number of items to return.
@@ -12030,7 +12032,7 @@ func NewListExportsRequest(server string, params *ListExportsParams) (*http.Requ
 
 		if params.Kind != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "kind", *params.Kind, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "kind", *params.Kind, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -12042,7 +12044,7 @@ func NewListExportsRequest(server string, params *ListExportsParams) (*http.Requ
 
 		if params.Status != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {

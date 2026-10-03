@@ -4024,10 +4024,12 @@ type ListExportsParams struct {
 	SiteID        *ID `form:"site_id,omitempty" json:"site_id,omitempty"`
 	ClientGroupID *ID `form:"client_group_id,omitempty" json:"client_group_id,omitempty"`
 
-	// Kind Only return exports of these kinds.
+	// Kind Only return exports of these kinds; repeat the parameter to
+	// select several (`kind=site&kind=snapshot`).
 	Kind *[]ExportKind `form:"kind,omitempty" json:"kind,omitempty"`
 
-	// Status Only return exports with these statuses.
+	// Status Only return exports with these statuses; repeat the parameter to
+	// select several (`status=ready&status=failed`).
 	Status *[]ExportStatus `form:"status,omitempty" json:"status,omitempty"`
 
 	// Limit Maximum number of items to return.
@@ -6100,7 +6102,7 @@ func (siw *ServerInterfaceWrapper) ListExports(w http.ResponseWriter, r *http.Re
 
 	// ------------- Optional query parameter "kind" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", false, false, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {
@@ -6113,7 +6115,7 @@ func (siw *ServerInterfaceWrapper) ListExports(w http.ResponseWriter, r *http.Re
 
 	// ------------- Optional query parameter "status" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", false, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {

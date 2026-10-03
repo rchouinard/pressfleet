@@ -6719,9 +6719,15 @@ export interface operations {
             query?: {
                 site_id?: components["schemas"]["ID"];
                 client_group_id?: components["schemas"]["ID"];
-                /** @description Only return exports of these kinds. */
+                /**
+                 * @description Only return exports of these kinds; repeat the parameter to
+                 *     select several (`kind=site&kind=snapshot`).
+                 */
                 kind?: components["schemas"]["ExportKind"][];
-                /** @description Only return exports with these statuses. */
+                /**
+                 * @description Only return exports with these statuses; repeat the parameter to
+                 *     select several (`status=ready&status=failed`).
+                 */
                 status?: components["schemas"]["ExportStatus"][];
                 /** @description Maximum number of items to return. */
                 limit?: components["parameters"]["Limit"];
