@@ -17,26 +17,31 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
-	"github.com/rchouinard/pressfleet/control-plane/internal/dbexport"
+	"github.com/rchouinard/pressfleet/control-plane/internal/export"
 	"github.com/rchouinard/pressfleet/control-plane/internal/id"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
 )
 
-// newDatabaseExports returns a database export service on the site
-// environment's fake databases, with its job handlers registered on the
-// environment's pool.
-func newDatabaseExports(t *testing.T, db *store.DB, e *siteEnv) *dbexport.Service {
+// newExports returns an export service on the site environment's fakes,
+// with its job handlers registered on the environment's pool.
+func newExports(t *testing.T, db *store.DB, e *siteEnv) *export.Service {
 	t.Helper()
-	svc, _ := newDatabaseExportsAt(t, db, e, time.Now)
+	svc, _ := newExportsAt(t, db, e, time.Now, nil)
 	return svc
 }
 
-func newDatabaseExportsAt(t *testing.T, db *store.DB, e *siteEnv, now func() time.Time) (*dbexport.Service, string) {
+// newExportsAt is newExports with a clock and snapshots.
+func newExportsAt(t *testing.T, db *store.DB, e *siteEnv, now func() time.Time, snaps export.Snapshots) (*export.Service, string) {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "exports")
-	svc, err := dbexport.New(dbexport.Options{DB: db, Databases: e.dbs, Dir: dir, Now: now, Logger: storetest.Logger()})
+	if snaps == nil {
+		snaps = &fakeSnapshots{}
+	}
+	svc, err := export.New(export.Options{
+		DB: db, Databases: e.dbs, Tasks: e.prov, Snapshots: snaps, Dir: dir, Now: now, Logger: storetest.Logger(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,8 +58,8 @@ func TestDatabaseExportEndpoints(t *testing.T) {
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
 		e := newSiteEnv(t, db, testPreviewBase)
 		clock := &testClock{t: time.Now()}
-		exports, dir := newDatabaseExportsAt(t, db, e, clock.now)
-		opts := api.Options{DB: db, Authenticator: &fakeAuth{}, Sites: e.svc, DatabaseExports: exports}
+		exports, dir := newExportsAt(t, db, e, clock.now, nil)
+		opts := api.Options{DB: db, Authenticator: &fakeAuth{}, Sites: e.svc, Exports: exports}
 		h := newHandler(t, opts)
 		// Jobs record the user who started them: fakeAuth's admin.
 		now := time.Now()
@@ -70,9 +75,9 @@ func TestDatabaseExportEndpoints(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		export := "/api/v1/sites/" + site.ID + "/database/export"
+		exportPath := "/api/v1/sites/" + site.ID + "/database/export"
 		// Still provisioning: no database yet.
-		if w := do(t, h, request{authed: true, method: http.MethodPost, target: export}); w.Code != http.StatusConflict {
+		if w := do(t, h, request{authed: true, method: http.MethodPost, target: exportPath}); w.Code != http.StatusConflict {
 			t.Errorf("export while provisioning: %d %s", w.Code, w.Body)
 		}
 		e.runJobs(t)
@@ -80,12 +85,12 @@ func TestDatabaseExportEndpoints(t *testing.T) {
 		e.dbs.SetData(site.ID, data)
 
 		// Export: 202 with the job, whose result links to the download.
-		w := do(t, h, request{authed: true, method: http.MethodPost, target: export})
+		w := do(t, h, request{authed: true, method: http.MethodPost, target: exportPath})
 		if w.Code != http.StatusAccepted {
 			t.Fatalf("export: %d %s", w.Code, w.Body)
 		}
 		job := decodeJSON[gen.JobAccepted](t, w.Body.Bytes()).Job
-		if job.Type != dbexport.JobType || job.Target.ID != site.ID || job.Target.Type != gen.JobTargetTypeSite || job.CreatedBy == nil {
+		if job.Type != export.JobType || job.Target.ID != site.ID || job.Target.Type != gen.JobTargetTypeSite || job.CreatedBy == nil {
 			t.Errorf("job = %s", w.Body)
 		}
 		if loc := w.Header().Get("Location"); loc != "/api/v1/jobs/"+job.ID {
@@ -138,7 +143,7 @@ func TestDatabaseExportEndpoints(t *testing.T) {
 			o := opts
 			o.Authenticator = &fakeAuth{principal: &p}
 			hh := newHandler(t, o)
-			for _, req := range []request{{method: http.MethodPost, target: export}, {method: http.MethodGet, target: download}} {
+			for _, req := range []request{{method: http.MethodPost, target: exportPath}, {method: http.MethodGet, target: download}} {
 				req.authed = true
 				if w := do(t, hh, req); w.Code != http.StatusForbidden {
 					t.Errorf("%s %s as %s/%s: %d %s", req.method, req.target, p.Role, p.Scope, w.Code, w.Body)
@@ -167,7 +172,7 @@ func TestDatabaseExportEndpoints(t *testing.T) {
 		}
 
 		// Once expired, the download is 404 and the file is gone.
-		clock.add(dbexport.DefaultTTL)
+		clock.add(export.DefaultTTL)
 		w = do(t, h, request{authed: true, method: http.MethodGet, target: download})
 		if w.Code != http.StatusNotFound {
 			t.Errorf("expired download: %d %s", w.Code, w.Body)
@@ -178,7 +183,7 @@ func TestDatabaseExportEndpoints(t *testing.T) {
 		if left, err := os.ReadDir(dir); err != nil || len(left) != 0 {
 			t.Errorf("exports directory after expiry = %v, %v", left, err)
 		}
-		if got, err := store.NewDatabaseExports(db).Get(ctx, result.ExportID); err != nil || got.Status != store.DatabaseExportExpired {
+		if got, err := store.NewExports(db).Get(ctx, result.ExportID); err != nil || got.Status != store.ExportExpired {
 			t.Errorf("expired export = %+v, %v", got, err)
 		}
 

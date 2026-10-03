@@ -64,6 +64,8 @@ type Snapshot struct {
 	BackupID      string
 	// Tags are all of the snapshot's tags.
 	Tags []string
+	// Paths are the paths the snapshot holds, as restic lists them.
+	Paths []string
 	// SizeBytes is the size of the files backed up, AddedBytes what the
 	// backup added to the repository after deduplication and compression,
 	// and FileCount the number of files.

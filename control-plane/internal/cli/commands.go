@@ -29,10 +29,10 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
-	"github.com/rchouinard/pressfleet/control-plane/internal/dbexport"
 	"github.com/rchouinard/pressfleet/control-plane/internal/dbsession"
 	"github.com/rchouinard/pressfleet/control-plane/internal/deploy"
 	"github.com/rchouinard/pressfleet/control-plane/internal/domains"
+	"github.com/rchouinard/pressfleet/control-plane/internal/export"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
 	"github.com/rchouinard/pressfleet/control-plane/internal/metrics"
@@ -319,9 +319,10 @@ func (a *app) serveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			dbExports, err := dbexport.New(dbexport.Options{
-				DB: db, Databases: siteDBs, Dir: layout.DatabaseExportsDir(), TTL: a.cfg.DatabaseExport.TTL(),
-				Logger: a.log.With("component", "database_export"),
+			exports, err := export.New(export.Options{
+				DB: db, Databases: siteDBs, DatabaseSizes: siteDBs, Tasks: prov, Snapshots: engine,
+				Dir: layout.ExportsDir(), TTL: a.cfg.DatabaseExport.TTL(), SiteTTL: a.cfg.SiteExport.TTL(),
+				Logger: a.log.With("component", "export"),
 			})
 			if err != nil {
 				return err
@@ -399,7 +400,7 @@ func (a *app) serveCommand() *cobra.Command {
 				Sites:            siteSvc,
 				Backups:          backups,
 				Uploads:          uploadSvc,
-				DatabaseExports:  dbExports,
+				Exports:          exports,
 				DatabaseSessions: dbSessions,
 				Deployments:      deploys,
 				Logs:             prov,
@@ -444,7 +445,7 @@ func (a *app) serveCommand() *cobra.Command {
 			if err := pool.Register(audit.CleanupHandler(db, a.cfg.Audit.Retention(), nil)); err != nil {
 				return err
 			}
-			for _, h := range slices.Concat(siteSvc.Handlers(), []jobs.Handler{backups.Handler(), uploadSvc.CleanupHandler()}, repoMaint.Handlers(), dbExports.Handlers(), []jobs.Handler{deploys.Handler()}, dbSessions.Handlers()) {
+			for _, h := range slices.Concat(siteSvc.Handlers(), []jobs.Handler{backups.Handler(), uploadSvc.CleanupHandler()}, repoMaint.Handlers(), exports.Handlers(), []jobs.Handler{deploys.Handler()}, dbSessions.Handlers()) {
 				if err := pool.Register(h); err != nil {
 					return err
 				}
@@ -485,7 +486,7 @@ func (a *app) serveCommand() *cobra.Command {
 			if err := uploads.EnsureCleanupSchedule(cmd.Context(), db); err != nil && cmd.Context().Err() == nil {
 				return err
 			}
-			if err := dbexport.EnsureCleanupSchedule(cmd.Context(), db); err != nil && cmd.Context().Err() == nil {
+			if err := export.EnsureCleanupSchedule(cmd.Context(), db); err != nil && cmd.Context().Err() == nil {
 				return err
 			}
 			if err := dbsession.EnsureSweepSchedule(cmd.Context(), db); err != nil && cmd.Context().Err() == nil {

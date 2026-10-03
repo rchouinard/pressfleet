@@ -215,6 +215,12 @@ type Task struct {
 	BackupNetwork bool
 	// Timeout bounds the task's run time; zero means no limit beyond ctx.
 	Timeout time.Duration
+	// Stdout, if set, receives the task's standard output as it is
+	// written, without a size limit, instead of TaskResult.Stdout: data
+	// such as an archive of wp-content, streamed to the control plane
+	// without a copy in the transfer directory. A write error stops the
+	// task.
+	Stdout io.Writer
 }
 
 // Paths inside a task container.

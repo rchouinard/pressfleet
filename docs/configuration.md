@@ -112,6 +112,8 @@ alerts:                          # see "Alerts"
   webhook_allow_local_targets: false
 database_export:
   ttl_seconds: 3600              # see "Database exports"
+site_export:
+  ttl_seconds: 86400             # see "Site exports"
 ```
 
 ## Settings
@@ -182,6 +184,7 @@ database_export:
 | `alerts.webhook_timeout_seconds` | `PRESSFLEET_ALERTS_WEBHOOK_TIMEOUT_SECONDS` | | `10` | Seconds one delivery to an [alert channel](#alert-channels) may take: a webhook request, or an SMTP conversation. From 1 to 60. |
 | `alerts.webhook_allow_local_targets` | `PRESSFLEET_ALERTS_WEBHOOK_ALLOW_LOCAL_TARGETS` | | `false` | Lets alert channels connect to loopback, link-local, and cloud metadata addresses (`127.0.0.1`, `169.254.169.254`, and the like). Off, a webhook URL or per-channel SMTP server that resolves to one is refused. Turn it on to deliver to a service on the host itself. |
 | `database_export.ttl_seconds` | `PRESSFLEET_DATABASE_EXPORT_TTL_SECONDS` | | `3600` | How long a database export can be downloaded once it is ready, from 10 seconds to a day (86400); then its file is deleted. See [Database exports](#database-exports). |
+| `site_export.ttl_seconds` | `PRESSFLEET_SITE_EXPORT_TTL_SECONDS` | | `86400` | How long a site export (live or from a backup) can be downloaded once it is ready, from 10 seconds to a week (604800); then its files are deleted. Its files take room in the data directory until then. See [Site exports](#site-exports). |
 | `sftp.port` | `PRESSFLEET_SFTP_PORT` | | `2222` | Host port of the SFTP gateway, which `pressfleet init` publishes and `pressfleet doctor` checks is free. Not 80 or 443. See [SFTP gateway](#sftp-gateway). |
 | `sftp.listen` | `PRESSFLEET_SFTP_LISTEN` | | `:2222` | The gateway's listen address inside the control plane container. Empty turns the gateway off. |
 | `sftp.host_key_file` | `PRESSFLEET_SFTP_HOST_KEY_FILE` | | `/run/secrets/ssh_host_key` | The gateway's SSH host key. `pressfleet init` generates it once, keeps it in `<data_dir>/platform/secrets/ssh_host_key`, and mounts it here. If the file doesn't exist, the gateway is off and the control plane logs a warning. |
@@ -596,8 +599,9 @@ The DNS checks are skipped until `dashboard_domain` and `preview_base_domain` ar
                       the client group's Restic repository (backup.backend local;
                       mode 2770, group 60000; see "Backup repositories")
   uploads/<upload-id> files sent through the upload API (never backed up; see "Uploads")
-  exports/            database exports waiting to be downloaded, deleted when
-                      they expire (see "Database exports")
+  exports/            database and site exports waiting to be downloaded,
+                      <export-id>.<file>, deleted when they expire (see
+                      "Database exports" and "Site exports")
   tmp/                scratch space, e.g. database dumps during backups
 ```
 
@@ -823,11 +827,28 @@ Sites reach MariaDB as `pf-mariadb` on their own network: the control plane conn
 
 ## Database exports
 
-Agencies get a copy of a site's database without its password (design doc §5.8). Operators and Admins export it with `POST /api/v1/sites/{id}/database/export`, which queues a job. The job dumps the database with `mariadb-dump` as the site's own user (a consistent snapshot that doesn't lock the site's tables, so the site keeps serving, stopped sites included), compresses it with gzip into `<data_dir>/exports/<export ID>.sql.gz`, and puts the export's `download_url`, `size_bytes`, and `expires_at` in its result. The dump has no `CREATE DATABASE` or `USE` statement, so it imports into whichever database you choose: `gunzip < dump.sql.gz | mariadb mydb`.
+Agencies get a copy of a site's database without its password (design doc §5.8). Operators and Admins export it with `POST /api/v1/sites/{id}/database/export`, which queues a job. The job dumps the database with `mariadb-dump` as the site's own user (a consistent snapshot that doesn't lock the site's tables, so the site keeps serving, stopped sites included), compresses it with gzip into `<data_dir>/exports/<export ID>.database.sql.gz`, and puts the export's `download_url`, `size_bytes`, and `expires_at` in its result. The dump has no `CREATE DATABASE` or `USE` statement, so it imports into whichever database you choose: `gunzip < dump.sql.gz | mariadb mydb`.
 
-Download it from `download_url` (`GET /api/v1/sites/{id}/database/exports/{export ID}/download`) with a session or a full API token; read-only tokens and Viewers can't. The export is downloadable, as often as needed, for `database_export.ttl_seconds` after it is ready (an hour by default). Then its file is deleted and its link returns `404`: a download that finds it expired deletes it at once, and a job every five minutes deletes the rest. That job also deletes files left behind by exports that failed or were interrupted. Every export and every download, successful or not, is recorded in the [audit log](#audit-log).
+Download it from `download_url` (`GET /api/v1/sites/{id}/database/exports/{export ID}/download`) with a session or a full API token; read-only tokens and Viewers can't. An interrupted download can be resumed with a `Range` request (`curl -C -`). The export is downloadable, as often as needed, for `database_export.ttl_seconds` after it is ready (an hour by default). Then its file is deleted and its link returns `404`: a download that finds it expired deletes it at once, and a job every five minutes deletes the rest. That job also deletes files left behind by exports that failed or were interrupted. Every export and every download, successful or not, is recorded in the [audit log](#audit-log).
 
 To replace a site's database, restore a backup (see [Site restores](#site-restores)).
+
+## Site exports
+
+A whole site can be exported in the two files [site import](#site-import) takes, to import it again here, move it to another host, or hand it to a client (design doc §5.7). Operators and Admins start one from the site's page in the dashboard, or with the API:
+
+- `POST /api/v1/sites/{id}/export` exports the live site. The job holds the site's lock, so it waits for other jobs on the site. It estimates the export's size first (the database's size plus `wp-content`'s, uncompressed) and fails, before writing anything, if the data directory has less free space. It dumps the database as a [database export](#database-exports) does, and reads `wp-content` with `tar` in a short-lived container that runs as the site's user with the volume mounted read-only. The site keeps serving, and stopped sites can be exported; a file that changes while it is read is exported as it was then, with a warning in the job's log.
+- `POST /api/v1/sites/{id}/backups/{backup ID}/export` exports the site as it was in one of its backups, without touching the live site: the control plane reads the snapshot out of the client group's repository with `restic dump`, waiting for a prune or check that holds the repository's lock. Any backup that could be restored can be exported.
+- A deleted site's backups stay in its client group's repository until the group is deleted. `GET /api/v1/client-groups/{id}/backups?deleted=true` lists them (the client group's page in the dashboard shows them), and `POST /api/v1/client-groups/{id}/backups/{backup ID}/export` exports one.
+
+An export holds:
+
+- `wp-content.tar.gz`: the site's `wp-content`, every path starting with `wp-content/`. The platform's drop-ins (`object-cache.php`, `advanced-cache.php`, `db.php`) are left out: they point at the platform's object cache and page cache and would break the site elsewhere. So are symbolic links and other special files, which site import skips too, and file owners; permissions and modification times are kept.
+- `database.sql.gz`: the database dump, as for a database export: no `CREATE DATABASE`, `USE`, or `DEFINER`, and no password but those of the site's own WordPress users.
+
+WordPress core and `wp-config.php` aren't part of an export: the platform generates both, and so does any other host. Constants set through the platform must be set again elsewhere.
+
+When the job has succeeded, `GET /api/v1/exports/{export ID}` (also linked from the job's result) shows the export: its files with their `download_url`s, when they expire, and what they hold (the site's URL, table prefix, WordPress and PHP versions, and when the content was read). Download the files with a session or a full API token before they expire, `site_export.ttl_seconds` after the export is ready (a day by default). Downloads support `Range` requests, so a large file can be fetched in pieces or resumed after an interruption (`curl -C -`, or a browser's resume). Expired exports are deleted like database exports. Every export and every download is recorded in the [audit log](#audit-log).
 
 ## Database sessions
 

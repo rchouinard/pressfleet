@@ -1567,6 +1567,236 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sites/{site_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export a site
+         * @description Queues a job that exports the whole site in the two files a site
+         *     import takes (design doc §5.7), so it can be imported again here or
+         *     moved to another host:
+         *
+         *     * `wp-content.tar.gz`: the site's `wp-content` (every path starts
+         *       with `wp-content/`), without the platform's drop-ins
+         *       (`object-cache.php`, `advanced-cache.php`, `db.php`), which point
+         *       at its object cache and page cache and would break the site
+         *       elsewhere, and without symbolic links and other special files,
+         *       which import skips too. Owners are left out; permissions and
+         *       modification times are kept.
+         *     * `database.sql.gz`: the database, dumped as for a database export.
+         *
+         *     WordPress core and `wp-config.php` aren't exported: the platform
+         *     generates both, and so does any other host. The site keeps serving
+         *     throughout, and stopped sites can be exported too; a file that
+         *     changes while it is read is exported as it was then, with a warning
+         *     on the job. The job runs after any other job working on the site.
+         *
+         *     Before writing anything, the job estimates the export's size (the
+         *     database plus `wp-content`, uncompressed) and fails if the data
+         *     directory has less free space; the estimate is in its result as
+         *     `estimated_size_bytes`. When it has succeeded, its result also holds
+         *     `export_id`, `export_url` (`GET /api/v1/exports/{export_id}`),
+         *     `files` (each with `name`, `size_bytes`, and `download_url`),
+         *     `size_bytes`, and `expires_at`. Download the files with the same
+         *     session or API token before they expire, a day after they are ready
+         *     by default (`site_export.ttl_seconds`). Every export and every
+         *     download is recorded in the audit log.
+         *
+         *     A site that is `provisioning` or `deleting`, or whose provisioning
+         *     failed, returns `409`.
+         */
+        post: operations["exportSite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sites/{site_id}/backups/{backup_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteID"];
+                /** @description The `id` of a backup. */
+                backup_id: components["parameters"]["BackupID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export a site from a backup
+         * @description Queues a job that exports the site as it was in one of its backups,
+         *     in the same two files as `POST /api/v1/sites/{site_id}/export`,
+         *     ready for a site import. It recovers an earlier version of a site
+         *     without restoring over the live one, and works whatever the site's
+         *     state: it reads the snapshot from the client group's backup
+         *     repository and never touches the site. The job takes no lock on the
+         *     site; it waits for a repository prune or check that is running.
+         *
+         *     The job's result is as for a live export, with `backup_id`; the
+         *     export (`GET /api/v1/exports/{export_id}`) has `source.taken_at`,
+         *     when the snapshot was taken, and the site's URL and table prefix as
+         *     its database had them. A backup that isn't the site's returns `404`;
+         *     one that is running or failed, or whose snapshot was removed by the
+         *     retention policy (`expired_at`), returns `409`.
+         */
+        post: operations["exportSiteBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/client-groups/{client_group_id}/backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_group_id: components["parameters"]["ClientGroupID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List a client group's backups
+         * @description The platform's record of every backup of the group's sites, newest
+         *     first, like `GET /api/v1/sites/{site_id}/backups`. With
+         *     `deleted=true`, only the backups of sites that have been deleted:
+         *     their snapshots stay in the group's backup repository until the
+         *     group is deleted, and can still be exported
+         *     (`POST /api/v1/client-groups/{client_group_id}/backups/{backup_id}/export`).
+         *     Each backup keeps the name and slug its site had when it was taken.
+         */
+        get: operations["listClientGroupBackups"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/client-groups/{client_group_id}/backups/{backup_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_group_id: components["parameters"]["ClientGroupID"];
+                /** @description The `id` of a backup. */
+                backup_id: components["parameters"]["BackupID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export a site from a client group's backup
+         * @description `POST /api/v1/sites/{site_id}/backups/{backup_id}/export` for any
+         *     backup in the group, including those of sites that have been
+         *     deleted, so a deleted site can still be recovered or handed over
+         *     while its group's backup repository exists. A backup that isn't the
+         *     group's returns `404`.
+         */
+        post: operations["exportClientGroupBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/exports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List exports
+         * @description Exports of a site (`site_id`) or of a client group's sites
+         *     (`client_group_id`), newest first: database exports, site exports,
+         *     and exports from backups, including those that failed or have
+         *     expired. One of the two filters is required (`400` otherwise).
+         */
+        get: operations["listExports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/exports/{export_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The `export_id` from the export job's result. */
+                export_id: components["parameters"]["ExportID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Get an export
+         * @description An export, its files once it is ready, and what they hold. An
+         *     export whose expiry has passed is `expired`, and its files are
+         *     gone.
+         */
+        get: operations["getExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/exports/{export_id}/files/{file_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The `export_id` from the export job's result. */
+                export_id: components["parameters"]["ExportID"];
+                /** @description One of the export's files. */
+                file_name: components["schemas"]["ExportFileName"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Download an export's file
+         * @description Returns one file of a ready export as `application/gzip`, named for
+         *     the site in `Content-Disposition` (`<site slug>-wp-content.tar.gz`,
+         *     `<site slug>-database.sql.gz`, or for a database export
+         *     `<site slug>-<export ID>.sql.gz`). It supports `Range` requests
+         *     (`Accept-Ranges: bytes`), so a large download that was interrupted
+         *     can be resumed: send `Range: bytes=<bytes received>-`, with
+         *     `If-Range` set to the `ETag` of the first response so a different
+         *     file is never spliced in. It needs the same permission as starting
+         *     an export (Operators and Admins; not `read-only` tokens), and each
+         *     download, partial or not, is recorded in the audit log. An export
+         *     that doesn't exist, isn't ready, has no such file, or has expired
+         *     returns `404`.
+         */
+        get: operations["downloadExportFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sites/{site_id}/core": {
         parameters: {
             query?: never;
@@ -2555,6 +2785,14 @@ export interface components {
         Backup: {
             id: components["schemas"]["ID"];
             site_id: components["schemas"]["ID"];
+            /**
+             * @description The site's name when the backup was taken, so the backups of a
+             *     deleted site can be told apart. Empty for backups taken before
+             *     backups kept it, of sites deleted since.
+             */
+            site_name: string;
+            /** @description The site's slug when the backup was taken; empty like `site_name`. */
+            site_slug: string;
             /** @description The client group whose backup repository holds the snapshot. */
             client_group_id: components["schemas"]["ID"];
             kind: components["schemas"]["BackupKind"];
@@ -2779,6 +3017,87 @@ export interface components {
         SiteJobLogList: {
             /** @description The page's lines, newest first. */
             items: components["schemas"]["SiteJobLogEntry"][];
+            next_cursor: components["schemas"]["NextCursor"];
+        };
+        /**
+         * @description What an export holds: `database`, a site's database
+         *     (`database.sql.gz`); `site`, a live site's `wp-content` and database
+         *     (`wp-content.tar.gz` and `database.sql.gz`, the files a site import
+         *     takes); `snapshot`, the same two files from a backup.
+         * @enum {string}
+         */
+        ExportKind: "database" | "site" | "snapshot";
+        /**
+         * @description `running` while the job writes the files; `ready` while they can be
+         *     downloaded; `failed` if the job failed (`message` says why);
+         *     `expired` once the files were deleted.
+         * @enum {string}
+         */
+        ExportStatus: "running" | "ready" | "failed" | "expired";
+        /** @enum {string} */
+        ExportFileName: "wp-content.tar.gz" | "database.sql.gz";
+        ExportFile: {
+            name: components["schemas"]["ExportFileName"];
+            /** Format: int64 */
+            size_bytes: number;
+            /**
+             * @description `GET /api/v1/exports/{export_id}/files/{file_name}`.
+             * @example /api/v1/exports/01j9z3k4m5n6p7q8r9s0t1v2w3/files/wp-content.tar.gz
+             */
+            download_url: string;
+        };
+        /** @description What the export holds, for whoever imports it. Empty strings are unknown. */
+        ExportSource: {
+            /**
+             * @description The site's URL; for an export from a backup, its `home` option then.
+             * @example https://www.acme.example
+             */
+            site_url: string;
+            /**
+             * @description The WordPress table prefix of the database.
+             * @example wp_
+             */
+            table_prefix: string;
+            /** @example 6.9.1 */
+            wp_core_version: string;
+            /**
+             * @description The site's PHP version; empty for an export from a backup.
+             * @example 8.4
+             */
+            php_version: string;
+            /** @description When the site's content was read, or when the backup's snapshot was taken. */
+            taken_at: components["schemas"]["Timestamp"] | null;
+        };
+        Export: {
+            id: components["schemas"]["ID"];
+            kind: components["schemas"]["ExportKind"];
+            /** @description The exported site, which may have been deleted since. */
+            site_id: components["schemas"]["ID"];
+            /** @description The site's slug when the export began (or the backup was taken), which names the files. */
+            site_slug: string;
+            client_group_id: components["schemas"]["ID"];
+            status: components["schemas"]["ExportStatus"];
+            /** @description The backup a `snapshot` export reads; null for other kinds. */
+            backup_id: components["schemas"]["ID"] | null;
+            /** @description The backup's Restic snapshot; null for other kinds. */
+            snapshot_id: string | null;
+            source: components["schemas"]["ExportSource"];
+            /** @description The export's files while it is ready; empty otherwise. */
+            files: components["schemas"]["ExportFile"][];
+            /** @description The size of all files; null until the export is ready. */
+            size_bytes: number | null;
+            /** @description Why the export failed; empty otherwise. */
+            message: string;
+            /** @description The export job; null once the job is gone. */
+            job_id: components["schemas"]["ID"] | null;
+            created_at: components["schemas"]["Timestamp"];
+            ready_at: components["schemas"]["Timestamp"] | null;
+            /** @description When the files stop being downloadable and are deleted. */
+            expires_at: components["schemas"]["Timestamp"] | null;
+            expired_at: components["schemas"]["Timestamp"] | null;
+        };
+        ExportList: {
+            items: components["schemas"]["Export"][];
             next_cursor: components["schemas"]["NextCursor"];
         };
         BackupList: {
@@ -4163,6 +4482,10 @@ export interface components {
         ClientGroupID: components["schemas"]["ID"];
         SiteID: components["schemas"]["ID"];
         JobID: components["schemas"]["ID"];
+        /** @description The `id` of a backup. */
+        BackupID: components["schemas"]["ID"];
+        /** @description The `export_id` from the export job's result. */
+        ExportID: components["schemas"]["ID"];
         UploadID: components["schemas"]["ID"];
     };
     requestBodies: never;
@@ -4171,6 +4494,8 @@ export interface components {
         Location: string;
         /** @description URL of the queued job (`/api/v1/jobs/{job_id}`). */
         JobLocation: string;
+        /** @description `attachment` with the file name for the user, e.g. `<site slug>-wp-content.tar.gz`. */
+        ExportContentDisposition: string;
     };
     pathItems: never;
 }
@@ -6161,6 +6486,249 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    exportSite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Export job queued. */
+            202: {
+                headers: {
+                    Location: components["headers"]["JobLocation"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobAccepted"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    exportSiteBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteID"];
+                /** @description The `id` of a backup. */
+                backup_id: components["parameters"]["BackupID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Export job queued. */
+            202: {
+                headers: {
+                    Location: components["headers"]["JobLocation"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobAccepted"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listClientGroupBackups: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of items to return. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Only return backups with this status. */
+                status?: components["schemas"]["BackupStatus"];
+                /** @description Only return the backups of sites that have been deleted. */
+                deleted?: boolean;
+            };
+            header?: never;
+            path: {
+                client_group_id: components["parameters"]["ClientGroupID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of backups. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    exportClientGroupBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_group_id: components["parameters"]["ClientGroupID"];
+                /** @description The `id` of a backup. */
+                backup_id: components["parameters"]["BackupID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Export job queued. */
+            202: {
+                headers: {
+                    Location: components["headers"]["JobLocation"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobAccepted"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listExports: {
+        parameters: {
+            query?: {
+                site_id?: components["schemas"]["ID"];
+                client_group_id?: components["schemas"]["ID"];
+                /** @description Only return exports of these kinds. */
+                kind?: components["schemas"]["ExportKind"][];
+                /** @description Only return exports with these statuses. */
+                status?: components["schemas"]["ExportStatus"][];
+                /** @description Maximum number of items to return. */
+                limit?: components["parameters"]["Limit"];
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor?: components["parameters"]["Cursor"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of exports. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The `export_id` from the export job's result. */
+                export_id: components["parameters"]["ExportID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The export. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Export"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    downloadExportFile: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description A byte range, e.g. `bytes=1048576-`. */
+                Range?: string;
+                /** @description The `ETag` the range must have been taken from. */
+                "If-Range"?: string;
+            };
+            path: {
+                /** @description The `export_id` from the export job's result. */
+                export_id: components["parameters"]["ExportID"];
+                /** @description One of the export's files. */
+                file_name: components["schemas"]["ExportFileName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The whole file. */
+            200: {
+                headers: {
+                    "Content-Disposition": components["headers"]["ExportContentDisposition"];
+                    "Accept-Ranges"?: "bytes";
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/gzip": string;
+                };
+            };
+            /** @description The requested range of the file (`Content-Range`). */
+            206: {
+                headers: {
+                    "Content-Disposition": components["headers"]["ExportContentDisposition"];
+                    "Content-Range"?: string;
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/gzip": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The range lies outside the file. */
+            416: {
+                headers: {
+                    "Content-Range"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             default: components["responses"]["Error"];
         };
     };

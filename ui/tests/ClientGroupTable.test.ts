@@ -6,6 +6,7 @@ import type { ClientGroup } from '../app/utils/client-group'
 
 // UButton is a Nuxt UI auto-import; a plain button keeps the attributes we assert on.
 const UButton = defineComponent({ template: '<button type="button"><slot /></button>' })
+const NuxtLink = defineComponent({ props: ['to'], template: '<a :href="to"><slot /></a>' })
 
 const groups: ClientGroup[] = [
   { id: 'g1', name: 'Acme', notes: 'VIP', site_count: 2, created_at: '2026-01-02T00:00:00Z', updated_at: '2026-01-02T00:00:00Z' },
@@ -15,7 +16,7 @@ const groups: ClientGroup[] = [
 function render(canUpdate: boolean, canDelete: boolean) {
   return mount(ClientGroupTable, {
     props: { groups, canUpdate, canDelete },
-    global: { stubs: { UButton } },
+    global: { stubs: { UButton, NuxtLink } },
   })
 }
 
@@ -26,6 +27,7 @@ describe('ClientGroupTable', () => {
     expect(w.text()).toContain('2 sites')
     expect(w.text()).toContain('1 site')
     expect(w.text()).toContain('VIP')
+    expect(w.find('a[href="/client-groups/g1"]').text()).toBe('Acme')
   })
 
   it('shows no actions column for a viewer', () => {

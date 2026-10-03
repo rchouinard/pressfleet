@@ -83,6 +83,11 @@ const (
 	// dashboard (§5.9), and list those administrators.
 	AdminLogin Action = "site.admin_login"
 
+	// Export a site, live or from a backup snapshot, and download its
+	// exports (§5.7). Exports of deleted sites' snapshots are their client
+	// group's.
+	ExportSite Action = "site.export"
+
 	// Deploy code; connect over SFTP; export the database; open read-only
 	// database sessions (§5.8).
 	ConnectSFTP            Action = "site.sftp.connect"
@@ -203,6 +208,8 @@ var rules = map[Action]rule{
 	UploadForDeploy: {store.RoleOperator, true}, // as DeployCode
 
 	ExportDatabase: {store.RoleOperator, true},
+	// Hands out the site's files and database, like a database export.
+	ExportSite: {store.RoleOperator, true},
 	// Reading a download changes nothing, but it hands out the site's
 	// whole database, which a read-only token must not reach: it couldn't
 	// start the export either.
@@ -313,6 +320,9 @@ const (
 	// TargetAlertChannel is an alert channel (#76), a platform setting
 	// that belongs to no client group.
 	TargetAlertChannel TargetType = "alert_channel"
+	// TargetExport is an export (§5.7), which belongs to the client group
+	// of its site when it began.
+	TargetExport TargetType = "export"
 )
 
 // Target is what an action applies to.
@@ -363,6 +373,9 @@ func AlertRule(id string) Target { return Target{Type: TargetAlertRule, ID: id} 
 // Alert returns the target for an alert, which belongs to the client group
 // of its site.
 func Alert(id string) Target { return Target{Type: TargetAlert, ID: id} }
+
+// Export returns the target for an export.
+func Export(id string) Target { return Target{Type: TargetExport, ID: id} }
 
 // AlertChannel returns the target for an alert channel.
 func AlertChannel(id string) Target { return Target{Type: TargetAlertChannel, ID: id} }

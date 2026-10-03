@@ -224,6 +224,24 @@ func TestRunTask(t *testing.T) {
 	}
 }
 
+func TestRunTaskStdout(t *testing.T) {
+	prov, f, _ := newTaskProvisioner(t, testTaskImage)
+	f.stdout, f.stderr = strings.Repeat("x", 9<<20), "tar: warning\n"
+	var out strings.Builder
+	res, err := prov.RunTask(context.Background(), testSiteID, provisioner.Task{
+		Command:   []string{"tar", "--create", "--file", "-", provisioner.TaskWPContentPath},
+		WPContent: provisioner.MountReadOnly,
+		Stdout:    &out,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Streamed whole, past the limit on kept output, and not kept.
+	if out.String() != f.stdout || res.Stdout != "" || res.Stderr != f.stderr {
+		t.Errorf("streamed %d bytes, result = %d bytes, %q", out.Len(), len(res.Stdout), res.Stderr)
+	}
+}
+
 func TestRunTaskImage(t *testing.T) {
 	for _, tc := range []struct {
 		name, configured, task, want string

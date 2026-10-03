@@ -13,7 +13,7 @@ import { uiStubs } from './stubs'
 
 function backup(over: Partial<Backup> = {}): Backup {
   return {
-    id: 'b1', site_id: 's1', client_group_id: 'g1', kind: 'manual', status: 'succeeded',
+    id: 'b1', site_id: 's1', site_name: 'Site', site_slug: 'site', client_group_id: 'g1', kind: 'manual', status: 'succeeded',
     snapshot_id: 'abcdef0123456789', wp_core_version: '6.9.1', size_bytes: 5 * 1024 * 1024, added_bytes: 1024,
     file_count: 10, message: '', job_id: 'j1', created_at: '2026-01-02T00:00:00Z',
     started_at: '2026-01-02T00:00:00Z', finished_at: '2026-01-02T00:01:00Z', expired_at: null,
@@ -134,8 +134,11 @@ describe('schedule', () => {
 describe('BackupTable', () => {
   const rows = [backup(), backup({ id: 'b2', status: 'failed', snapshot_id: null, message: 'disk full' }), backup({ id: 'b3', expired_at: '2026-02-01T00:00:00Z' })]
   const UBadge = defineComponent({ template: '<span><slot /></span>' })
-  function render(canRestore: boolean) {
-    return mount(BackupTable, { props: { backups: rows, canRestore }, global: { stubs: { UButton: uiStubs.UButton, UBadge } } })
+  function render(canRestore: boolean, more: { canExport?: boolean, showSite?: boolean, backups?: typeof rows } = {}) {
+    return mount(BackupTable, {
+      props: { backups: rows, canRestore, ...more },
+      global: { stubs: { UButton: uiStubs.UButton, UBadge } },
+    })
   }
 
   it('lists status, size and failure messages', () => {
@@ -159,5 +162,25 @@ describe('BackupTable', () => {
     expect(buttons).toHaveLength(1)
     await buttons[0]!.trigger('click')
     expect(w.emitted('restore')![0]).toEqual([rows[0]])
+  })
+
+  it('offers export for the same backups as restore, on its own', async () => {
+    const w = render(false, { canExport: true })
+    const buttons = w.findAll('button')
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0]!.attributes('aria-label')).toMatch(/^Export the backup from /)
+    await buttons[0]!.trigger('click')
+    expect(w.emitted('export')![0]).toEqual([rows[0]])
+    expect(w.emitted('restore')).toBeUndefined()
+  })
+
+  it('names the site of each backup for a client group', () => {
+    const gone = backup({ id: 'g1', site_id: '01deleted', site_name: '', site_slug: '' })
+    const w = render(false, { canExport: true, showSite: true, backups: [backup({ site_name: 'Acme Blog', site_slug: 'acme-blog' }), gone] })
+    expect(w.text()).toContain('Site')
+    expect(w.text()).toContain('Acme Blog')
+    expect(w.text()).toContain('acme-blog')
+    expect(w.text()).toContain('01deleted')
+    expect(w.findAll('button')[0]!.attributes('aria-label')).toMatch(/^Export Acme Blog from the backup of /)
   })
 })

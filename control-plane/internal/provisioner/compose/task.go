@@ -124,7 +124,8 @@ func streamAdapter(docker ExecFunc) StreamExecFunc {
 // The task's container is removed afterwards whatever happened, including
 // when ctx ends or Timeout passes, which kill the task. A non-zero exit
 // yields a *provisioner.ExecError; standard output beyond 8 MiB is dropped
-// and reported with ErrOutputTruncated, together with the result.
+// and reported with ErrOutputTruncated, together with the result, unless
+// Task.Stdout takes it.
 func (p *Provisioner) RunTask(ctx context.Context, siteID string, task provisioner.Task) (*provisioner.TaskResult, error) {
 	if err := validSiteID(siteID); err != nil {
 		return nil, fmt.Errorf("run task: %w", err)
@@ -171,7 +172,14 @@ func (p *Provisioner) RunTask(ctx context.Context, siteID string, task provision
 	}
 	stdout := &headBuffer{max: taskMaxOutput + 1}
 	stderr := &tailBuffer{max: taskMaxStderr}
-	runErr := p.taskDocker(ctx, stdout, stderr, "container", "start", "--attach", "--", name)
+	var out io.Writer = stdout
+	if task.Stdout != nil {
+		// Streamed: the result's Stdout stays empty. If the writer fails,
+		// the CLI's writes fail and it exits; the container, still
+		// running, is then reported as not run to completion and removed.
+		out = task.Stdout
+	}
+	runErr := p.taskDocker(ctx, out, stderr, "container", "start", "--attach", "--", name)
 	res, err := p.taskResult(ctx, siteID, name, stdout, stderr, runErr)
 	if err != nil {
 		p.log.WarnContext(ctx, "task failed", "site_id", siteID, "container", name,

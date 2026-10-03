@@ -39,9 +39,9 @@ func (l Layout) SitesDir() string { return filepath.Join(l.Root, "sites") }
 // per upload (package uploads). Nothing backs it up.
 func (l Layout) UploadsDir() string { return filepath.Join(l.Root, "uploads") }
 
-// DatabaseExportsDir holds database exports waiting to be downloaded
-// (§5.8), which are deleted when they expire.
-func (l Layout) DatabaseExportsDir() string { return filepath.Join(l.Root, "exports") }
+// ExportsDir holds database and site exports waiting to be downloaded
+// (§5.7, §5.8), which are deleted when they expire.
+func (l Layout) ExportsDir() string { return filepath.Join(l.Root, "exports") }
 
 // TmpDir is scratch space that may be cleared on startup.
 func (l Layout) TmpDir() string { return filepath.Join(l.Root, "tmp") }

@@ -166,6 +166,27 @@ async function confirmRestore() {
   }
 }
 
+// Export a backup: the site as it was then, in the files a site import
+// takes, without touching the live site.
+const exportJobId = ref<string>()
+const exportingId = ref<string>()
+async function exportBackup(b: Backup) {
+  exportingId.value = b.id
+  try {
+    const { data } = await api.POST('/api/v1/sites/{site_id}/backups/{backup_id}/export', {
+      params: { path: { site_id: id.value, backup_id: b.id } },
+    })
+    if (data) {
+      notify.jobStarted(data.job)
+      exportJobId.value = data.job.id
+    }
+  } catch (e) {
+    notify.error(e)
+  } finally {
+    exportingId.value = undefined
+  }
+}
+
 const mayRestore = computed(() => can('backup.restore') && !!site.value && canRestoreSite(site.value) && !busyWithJob.value)
 const blockedReason = computed(() => (can('backup.restore') && site.value ? restoreBlockedReason(site.value) : undefined))
 const mayBackUp = computed(() => !!site.value && canBackUpSite(site.value) && !busyWithJob.value)
@@ -216,12 +237,30 @@ const mayBackUp = computed(() => !!site.value && canBackUpSite(site.value) && !b
         <p v-else-if="backups.items.value.length === 0 && !backups.loading.value" class="rounded-md border border-dashed border-default p-6 text-center text-sm text-muted">
           No backups yet.
         </p>
-        <BackupTable v-else :backups="backups.items.value" :can-restore="mayRestore" @restore="askRestore" />
+        <BackupTable
+          v-else
+          :backups="backups.items.value"
+          :can-restore="mayRestore"
+          :can-export="can('site.export') && !exportingId"
+          @restore="askRestore"
+          @export="exportBackup"
+        />
 
         <div v-if="backups.cursor.value" class="flex justify-center">
           <UButton color="neutral" variant="outline" size="sm" :loading="backups.loadingMore.value" @click="loadMore()">Load more</UButton>
         </div>
       </section>
+
+      <IfCan action="site.export">
+        <section class="space-y-3" aria-labelledby="backup-exports-heading">
+          <h2 id="backup-exports-heading" class="text-lg font-semibold">Exports from backups</h2>
+          <p class="text-sm text-muted">
+            Export a backup to get the site as it was then, in the two files a site import takes (<code>wp-content.tar.gz</code> and
+            <code>database.sql.gz</code>), without restoring over the live site. The files are deleted when they expire.
+          </p>
+          <ExportPanel v-model:job-id="exportJobId" :site-id="id" :kinds="['snapshot']" empty-text="No backup exports to download." />
+        </section>
+      </IfCan>
 
       <BackupRestoreDialog
         v-model:open="restoreOpen"

@@ -51,8 +51,13 @@ const (
 // BackupRecord is the platform's record of one backup of a site (design doc
 // §4.3). The snapshot itself lives in the client group's Restic repository.
 type BackupRecord struct {
-	ID            string
-	SiteID        string
+	ID     string
+	SiteID string
+	// SiteName and SiteSlug are the site's when the backup began, so a
+	// deleted site's backups can still be told apart; empty for backups
+	// of deleted sites taken before they were recorded.
+	SiteName      string
+	SiteSlug      string
 	ClientGroupID string
 	Kind          BackupKind
 	Status        BackupStatus
@@ -106,7 +111,7 @@ func NewBackupRecords(q Querier) BackupRecords {
 	return BackupRecords{q: q}
 }
 
-const backupRecordColumns = "id, site_id, client_group_id, kind, status, snapshot_id, wp_core_version, " +
+const backupRecordColumns = "id, site_id, site_name, site_slug, client_group_id, kind, status, snapshot_id, wp_core_version, " +
 	"size_bytes, added_bytes, file_count, message, job_id, created_at, started_at, finished_at, expired_at"
 
 func scanBackupRecord(s scanner) (BackupRecord, error) {
@@ -116,7 +121,7 @@ func scanBackupRecord(s scanner) (BackupRecord, error) {
 		size, added, files sql.NullInt64
 		finished, expired  sql.NullTime
 	)
-	err := s.Scan(&b.ID, &b.SiteID, &b.ClientGroupID, &b.Kind, &b.Status, &snapshot, &b.WPCoreVersion,
+	err := s.Scan(&b.ID, &b.SiteID, &b.SiteName, &b.SiteSlug, &b.ClientGroupID, &b.Kind, &b.Status, &snapshot, &b.WPCoreVersion,
 		&size, &added, &files, &b.Message, &job, &b.CreatedAt, &b.StartedAt, &finished, &expired)
 	b.SnapshotID, b.JobID = snapshot.String, job.String
 	b.SizeBytes, b.AddedBytes, b.FileCount = size.Int64, added.Int64, files.Int64
@@ -151,9 +156,9 @@ func (r BackupRecords) Create(ctx context.Context, b *BackupRecord) error {
 	created.CreatedAt = now()
 	created.StartedAt = created.CreatedAt
 	_, err := r.q.ExecContext(ctx,
-		"INSERT INTO backup_records (id, site_id, client_group_id, kind, status, wp_core_version, job_id, created_at, started_at) "+
-			"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		created.ID, created.SiteID, created.ClientGroupID, string(created.Kind), string(created.Status),
+		"INSERT INTO backup_records (id, site_id, site_name, site_slug, client_group_id, kind, status, wp_core_version, job_id, "+
+			"created_at, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		created.ID, created.SiteID, created.SiteName, created.SiteSlug, created.ClientGroupID, string(created.Kind), string(created.Status),
 		created.WPCoreVersion, nullString(created.JobID), created.CreatedAt, created.StartedAt)
 	if err != nil {
 		return fmt.Errorf("create backup record: %w", err)
@@ -171,10 +176,14 @@ func (r BackupRecords) Get(ctx context.Context, backupID string) (BackupRecord, 
 	return b, nil
 }
 
-// BackupRecordFilter selects a page of a site's backup records.
+// BackupRecordFilter selects a page of backup records: a site's, or a
+// client group's.
 type BackupRecordFilter struct {
-	SiteID string
-	Status BackupStatus
+	SiteID        string
+	ClientGroupID string
+	// DeletedSites keeps the backups of sites that no longer exist.
+	DeletedSites bool
+	Status       BackupStatus
 	// Before is a cursor: only records with a smaller ID (older ones) are
 	// returned. Pass the previous page's NextCursor.
 	Before string
@@ -190,11 +199,12 @@ type BackupRecordPage struct {
 	NextCursor string
 }
 
-// List returns the site's backup records, newest first (IDs are ULIDs, so
-// ID order is creation order), one page at a time.
+// List returns the backup records of a site or a client group (one of
+// them is required), newest first (IDs are ULIDs, so ID order is creation
+// order), one page at a time.
 func (r BackupRecords) List(ctx context.Context, f BackupRecordFilter) (BackupRecordPage, error) {
-	if f.SiteID == "" {
-		return BackupRecordPage{}, errors.New("list backup records: a site is required")
+	if f.SiteID == "" && f.ClientGroupID == "" {
+		return BackupRecordPage{}, errors.New("list backup records: a site or client group is required")
 	}
 	limit := f.Limit
 	switch {
@@ -203,8 +213,19 @@ func (r BackupRecords) List(ctx context.Context, f BackupRecordFilter) (BackupRe
 	case limit > 200:
 		limit = 200
 	}
-	query := "SELECT " + backupRecordColumns + " FROM backup_records WHERE site_id = ?"
-	args := []any{f.SiteID}
+	query := "SELECT " + backupRecordColumns + " FROM backup_records WHERE 1 = 1"
+	var args []any
+	if f.SiteID != "" {
+		query += " AND site_id = ?"
+		args = append(args, f.SiteID)
+	}
+	if f.ClientGroupID != "" {
+		query += " AND client_group_id = ?"
+		args = append(args, f.ClientGroupID)
+	}
+	if f.DeletedSites {
+		query += " AND NOT EXISTS (SELECT 1 FROM sites WHERE sites.id = backup_records.site_id)"
+	}
 	if f.Status != "" {
 		query += " AND status = ?"
 		args = append(args, string(f.Status))

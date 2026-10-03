@@ -78,6 +78,8 @@ const jobTypeLabels: Record<string, string> = {
   'site.import': 'Import site',
   'site.deploy': 'Deploy code',
   'site.database_export': 'Export database',
+  'site.export': 'Export site',
+  'backup.export': 'Export site from backup',
 }
 
 /** A readable job type. Unknown types are opaque (spec): shown as sent. */

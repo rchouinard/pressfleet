@@ -110,6 +110,11 @@ tags:
     description: Theme and plugin deployments for CI pipelines.
   - name: database
     description: Access to a site's database without its password (exports and temporary database sessions through the SFTP gateway).
+  - name: exports
+    description: |
+      Site exports (design doc §5.7): a site's `wp-content` and database, from
+      the live site or a backup, in the files a site import takes, to
+      download before they expire.
   - name: jobs
     description: Long-running operations.
   - name: logs
@@ -2632,6 +2637,363 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/sites/{site_id}/export:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    post:
+      operationId: exportSite
+      tags: [exports]
+      summary: Export a site
+      description: |
+        Queues a job that exports the whole site in the two files a site
+        import takes (design doc §5.7), so it can be imported again here or
+        moved to another host:
+
+        * `wp-content.tar.gz`: the site's `wp-content` (every path starts
+          with `wp-content/`), without the platform's drop-ins
+          (`object-cache.php`, `advanced-cache.php`, `db.php`), which point
+          at its object cache and page cache and would break the site
+          elsewhere, and without symbolic links and other special files,
+          which import skips too. Owners are left out; permissions and
+          modification times are kept.
+        * `database.sql.gz`: the database, dumped as for a database export.
+
+        WordPress core and `wp-config.php` aren't exported: the platform
+        generates both, and so does any other host. The site keeps serving
+        throughout, and stopped sites can be exported too; a file that
+        changes while it is read is exported as it was then, with a warning
+        on the job. The job runs after any other job working on the site.
+
+        Before writing anything, the job estimates the export's size (the
+        database plus `wp-content`, uncompressed) and fails if the data
+        directory has less free space; the estimate is in its result as
+        `estimated_size_bytes`. When it has succeeded, its result also holds
+        `export_id`, `export_url` (`GET /api/v1/exports/{export_id}`),
+        `files` (each with `name`, `size_bytes`, and `download_url`),
+        `size_bytes`, and `expires_at`. Download the files with the same
+        session or API token before they expire, a day after they are ready
+        by default (`site_export.ttl_seconds`). Every export and every
+        download is recorded in the audit log.
+
+        A site that is `provisioning` or `deleting`, or whose provisioning
+        failed, returns `409`.
+      responses:
+        "202":
+          description: Export job queued.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/sites/{site_id}/backups/{backup_id}/export:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+      - $ref: "#/components/parameters/BackupID"
+    post:
+      operationId: exportSiteBackup
+      tags: [exports]
+      summary: Export a site from a backup
+      description: |
+        Queues a job that exports the site as it was in one of its backups,
+        in the same two files as `POST /api/v1/sites/{site_id}/export`,
+        ready for a site import. It recovers an earlier version of a site
+        without restoring over the live one, and works whatever the site's
+        state: it reads the snapshot from the client group's backup
+        repository and never touches the site. The job takes no lock on the
+        site; it waits for a repository prune or check that is running.
+
+        The job's result is as for a live export, with `backup_id`; the
+        export (`GET /api/v1/exports/{export_id}`) has `source.taken_at`,
+        when the snapshot was taken, and the site's URL and table prefix as
+        its database had them. A backup that isn't the site's returns `404`;
+        one that is running or failed, or whose snapshot was removed by the
+        retention policy (`expired_at`), returns `409`.
+      responses:
+        "202":
+          description: Export job queued.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/client-groups/{client_group_id}/backups:
+    parameters:
+      - $ref: "#/components/parameters/ClientGroupID"
+    get:
+      operationId: listClientGroupBackups
+      tags: [backups]
+      summary: List a client group's backups
+      description: |
+        The platform's record of every backup of the group's sites, newest
+        first, like `GET /api/v1/sites/{site_id}/backups`. With
+        `deleted=true`, only the backups of sites that have been deleted:
+        their snapshots stay in the group's backup repository until the
+        group is deleted, and can still be exported
+        (`POST /api/v1/client-groups/{client_group_id}/backups/{backup_id}/export`).
+        Each backup keeps the name and slug its site had when it was taken.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: status
+          in: query
+          description: Only return backups with this status.
+          schema:
+            $ref: "#/components/schemas/BackupStatus"
+        - name: deleted
+          in: query
+          description: Only return the backups of sites that have been deleted.
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: A page of backups.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/client-groups/{client_group_id}/backups/{backup_id}/export:
+    parameters:
+      - $ref: "#/components/parameters/ClientGroupID"
+      - $ref: "#/components/parameters/BackupID"
+    post:
+      operationId: exportClientGroupBackup
+      tags: [exports]
+      summary: Export a site from a client group's backup
+      description: |
+        `POST /api/v1/sites/{site_id}/backups/{backup_id}/export` for any
+        backup in the group, including those of sites that have been
+        deleted, so a deleted site can still be recovered or handed over
+        while its group's backup repository exists. A backup that isn't the
+        group's returns `404`.
+      responses:
+        "202":
+          description: Export job queued.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/exports:
+    get:
+      operationId: listExports
+      tags: [exports]
+      summary: List exports
+      description: |
+        Exports of a site (`site_id`) or of a client group's sites
+        (`client_group_id`), newest first: database exports, site exports,
+        and exports from backups, including those that failed or have
+        expired. One of the two filters is required (`400` otherwise).
+      parameters:
+        - name: site_id
+          in: query
+          schema:
+            $ref: "#/components/schemas/ID"
+        - name: client_group_id
+          in: query
+          schema:
+            $ref: "#/components/schemas/ID"
+        - name: kind
+          in: query
+          description: Only return exports of these kinds.
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/ExportKind"
+        - name: status
+          in: query
+          description: Only return exports with these statuses.
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/ExportStatus"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of exports.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/exports/{export_id}:
+    parameters:
+      - $ref: "#/components/parameters/ExportID"
+    get:
+      operationId: getExport
+      tags: [exports]
+      summary: Get an export
+      description: |
+        An export, its files once it is ready, and what they hold. An
+        export whose expiry has passed is `expired`, and its files are
+        gone.
+      responses:
+        "200":
+          description: The export.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Export"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/exports/{export_id}/files/{file_name}:
+    parameters:
+      - $ref: "#/components/parameters/ExportID"
+      - name: file_name
+        in: path
+        required: true
+        description: One of the export's files.
+        schema:
+          $ref: "#/components/schemas/ExportFileName"
+    get:
+      operationId: downloadExportFile
+      tags: [exports]
+      summary: Download an export's file
+      description: |
+        Returns one file of a ready export as `application/gzip`, named for
+        the site in `Content-Disposition` (`<site slug>-wp-content.tar.gz`,
+        `<site slug>-database.sql.gz`, or for a database export
+        `<site slug>-<export ID>.sql.gz`). It supports `Range` requests
+        (`Accept-Ranges: bytes`), so a large download that was interrupted
+        can be resumed: send `Range: bytes=<bytes received>-`, with
+        `If-Range` set to the `ETag` of the first response so a different
+        file is never spliced in. It needs the same permission as starting
+        an export (Operators and Admins; not `read-only` tokens), and each
+        download, partial or not, is recorded in the audit log. An export
+        that doesn't exist, isn't ready, has no such file, or has expired
+        returns `404`.
+      parameters:
+        - name: Range
+          in: header
+          required: false
+          description: A byte range, e.g. `bytes=1048576-`.
+          schema:
+            type: string
+        - name: If-Range
+          in: header
+          required: false
+          description: The `ETag` the range must have been taken from.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The whole file.
+          headers:
+            Content-Disposition:
+              $ref: "#/components/headers/ExportContentDisposition"
+            Accept-Ranges:
+              schema:
+                type: string
+                enum: [bytes]
+            ETag:
+              schema:
+                type: string
+          content:
+            application/gzip:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: The requested range of the file (`Content-Range`).
+          headers:
+            Content-Disposition:
+              $ref: "#/components/headers/ExportContentDisposition"
+            Content-Range:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+          content:
+            application/gzip:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "416":
+          description: The range lies outside the file.
+          headers:
+            Content-Range:
+              schema:
+                type: string
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/sites/{site_id}/core:
     parameters:
       - $ref: "#/components/parameters/SiteID"
@@ -3929,6 +4291,20 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/ID"
+    BackupID:
+      name: backup_id
+      in: path
+      required: true
+      description: The `id` of a backup.
+      schema:
+        $ref: "#/components/schemas/ID"
+    ExportID:
+      name: export_id
+      in: path
+      required: true
+      description: The `export_id` from the export job's result.
+      schema:
+        $ref: "#/components/schemas/ID"
     UploadID:
       name: upload_id
       in: path
@@ -3947,6 +4323,10 @@ components:
       schema:
         type: string
         format: uri-reference
+    ExportContentDisposition:
+      description: '`attachment` with the file name for the user, e.g. `<site slug>-wp-content.tar.gz`.'
+      schema:
+        type: string
 
   responses:
     BadRequest:
@@ -4525,13 +4905,22 @@ components:
 
     Backup:
       type: object
-      required: [id, site_id, client_group_id, kind, status, snapshot_id, wp_core_version, size_bytes, added_bytes,
-        file_count, message, job_id, created_at, started_at, finished_at, expired_at]
+      required: [id, site_id, site_name, site_slug, client_group_id, kind, status, snapshot_id, wp_core_version, size_bytes,
+        added_bytes, file_count, message, job_id, created_at, started_at, finished_at, expired_at]
       properties:
         id:
           $ref: "#/components/schemas/ID"
         site_id:
           $ref: "#/components/schemas/ID"
+        site_name:
+          type: string
+          description: |
+            The site's name when the backup was taken, so the backups of a
+            deleted site can be told apart. Empty for backups taken before
+            backups kept it, of sites deleted since.
+        site_slug:
+          type: string
+          description: The site's slug when the backup was taken; empty like `site_name`.
         client_group_id:
           description: The client group whose backup repository holds the snapshot.
           allOf:
@@ -4898,6 +5287,147 @@ components:
           description: The page's lines, newest first.
           items:
             $ref: "#/components/schemas/SiteJobLogEntry"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+
+    ExportKind:
+      type: string
+      description: |
+        What an export holds: `database`, a site's database
+        (`database.sql.gz`); `site`, a live site's `wp-content` and database
+        (`wp-content.tar.gz` and `database.sql.gz`, the files a site import
+        takes); `snapshot`, the same two files from a backup.
+      enum: [database, site, snapshot]
+
+    ExportStatus:
+      type: string
+      description: |
+        `running` while the job writes the files; `ready` while they can be
+        downloaded; `failed` if the job failed (`message` says why);
+        `expired` once the files were deleted.
+      enum: [running, ready, failed, expired]
+
+    ExportFileName:
+      type: string
+      enum: [wp-content.tar.gz, database.sql.gz]
+
+    ExportFile:
+      type: object
+      required: [name, size_bytes, download_url]
+      properties:
+        name:
+          $ref: "#/components/schemas/ExportFileName"
+        size_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+        download_url:
+          type: string
+          description: "`GET /api/v1/exports/{export_id}/files/{file_name}`."
+          examples: ["/api/v1/exports/01j9z3k4m5n6p7q8r9s0t1v2w3/files/wp-content.tar.gz"]
+
+    ExportSource:
+      type: object
+      description: What the export holds, for whoever imports it. Empty strings are unknown.
+      required: [site_url, table_prefix, wp_core_version, php_version, taken_at]
+      properties:
+        site_url:
+          type: string
+          description: The site's URL; for an export from a backup, its `home` option then.
+          examples: ["https://www.acme.example"]
+        table_prefix:
+          type: string
+          description: The WordPress table prefix of the database.
+          examples: ["wp_"]
+        wp_core_version:
+          type: string
+          examples: ["6.9.1"]
+        php_version:
+          type: string
+          description: The site's PHP version; empty for an export from a backup.
+          examples: ["8.4"]
+        taken_at:
+          description: When the site's content was read, or when the backup's snapshot was taken.
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+
+    Export:
+      type: object
+      required: [id, kind, site_id, site_slug, client_group_id, status, backup_id, snapshot_id, source, files,
+        size_bytes, message, job_id, created_at, ready_at, expires_at, expired_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/ID"
+        kind:
+          $ref: "#/components/schemas/ExportKind"
+        site_id:
+          description: The exported site, which may have been deleted since.
+          allOf:
+            - $ref: "#/components/schemas/ID"
+        site_slug:
+          type: string
+          description: The site's slug when the export began (or the backup was taken), which names the files.
+        client_group_id:
+          $ref: "#/components/schemas/ID"
+        status:
+          $ref: "#/components/schemas/ExportStatus"
+        backup_id:
+          description: The backup a `snapshot` export reads; null for other kinds.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        snapshot_id:
+          description: The backup's Restic snapshot; null for other kinds.
+          oneOf:
+            - type: string
+            - type: "null"
+        source:
+          $ref: "#/components/schemas/ExportSource"
+        files:
+          description: The export's files while it is ready; empty otherwise.
+          type: array
+          items:
+            $ref: "#/components/schemas/ExportFile"
+        size_bytes:
+          description: The size of all files; null until the export is ready.
+          oneOf:
+            - type: integer
+              format: int64
+              minimum: 0
+            - type: "null"
+        message:
+          type: string
+          description: Why the export failed; empty otherwise.
+        job_id:
+          description: The export job; null once the job is gone.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        ready_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        expires_at:
+          description: When the files stop being downloadable and are deleted.
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        expired_at:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+
+    ExportList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Export"
         next_cursor:
           $ref: "#/components/schemas/NextCursor"
 

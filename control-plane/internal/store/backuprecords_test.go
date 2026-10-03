@@ -29,7 +29,7 @@ func TestBackupRecords(t *testing.T) {
 		// Create fills in the running state, keeping a given ID.
 		before := time.Now().Add(-time.Second)
 		rec := &store.BackupRecord{
-			ID: id.New(), SiteID: siteID, ClientGroupID: group.ID, Kind: store.BackupManual,
+			ID: id.New(), SiteID: siteID, SiteName: "Acme Blog", SiteSlug: "acme-blog", ClientGroupID: group.ID, Kind: store.BackupManual,
 			WPCoreVersion: "6.9.1", JobID: job.ID,
 			// Ignored: a new record is running and has no result.
 			Status: store.BackupSucceeded, SnapshotID: "abc", SizeBytes: 5, Message: "x",
@@ -143,7 +143,40 @@ func TestBackupRecords(t *testing.T) {
 			t.Errorf("List of a site without backups = %+v, %v", page, err)
 		}
 		if _, err := records.List(ctx, store.BackupRecordFilter{}); err == nil {
-			t.Error("List without a site succeeded")
+			t.Error("List without a site or group succeeded")
+		}
+
+		// A client group's records, and those of its deleted sites: a
+		// site that exists keeps its records out of the latter.
+		live := newTestSite(group.ID, "live", 70001)
+		live.ID = other.SiteID
+		if err := store.NewSites(db).Create(ctx, live); err != nil {
+			t.Fatal(err)
+		}
+		recordIDs := func(f store.BackupRecordFilter) []string {
+			t.Helper()
+			page, err := records.List(ctx, f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ids []string
+			for _, r := range page.Records {
+				ids = append(ids, r.ID)
+			}
+			slices.Sort(ids)
+			return ids
+		}
+		if got, want := recordIDs(store.BackupRecordFilter{ClientGroupID: group.ID}), slices.Sorted(slices.Values([]string{rec.ID, failed.ID, other.ID})); !slices.Equal(got, want) {
+			t.Errorf("group's records = %v, want %v", got, want)
+		}
+		if got, want := recordIDs(store.BackupRecordFilter{ClientGroupID: group.ID, DeletedSites: true}), slices.Sorted(slices.Values([]string{rec.ID, failed.ID})); !slices.Equal(got, want) {
+			t.Errorf("deleted sites' records = %v, want %v", got, want)
+		}
+		if page, err := records.List(ctx, store.BackupRecordFilter{ClientGroupID: id.New()}); err != nil || len(page.Records) != 0 {
+			t.Errorf("List of another group = %+v, %v", page, err)
+		}
+		if _, err := store.NewSites(db).Delete(ctx, live.ID); err != nil {
+			t.Fatal(err)
 		}
 
 		if g, err := records.SiteClientGroup(ctx, siteID); err != nil || g != group.ID {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -65,6 +66,9 @@ type Repositories interface {
 	// Restic runs restic against the group's repository in the control
 	// plane process.
 	Restic(ctx context.Context, clientGroupID string, args ...string) ([]byte, error)
+	// ResticTo is Restic for commands with large output, which it writes
+	// to stdout.
+	ResticTo(ctx context.Context, clientGroupID string, stdout io.Writer, args ...string) error
 }
 
 // Databases dumps and imports site databases; sitedb.Manager implements
@@ -337,6 +341,7 @@ type resticSnapshot struct {
 	ID      string    `json:"id"`
 	Time    time.Time `json:"time"`
 	Tags    []string  `json:"tags"`
+	Paths   []string  `json:"paths"`
 	Summary *struct {
 		TotalFilesProcessed int64 `json:"total_files_processed"`
 		TotalBytesProcessed int64 `json:"total_bytes_processed"`
@@ -354,7 +359,7 @@ func parseSnapshots(out []byte) ([]backup.Snapshot, error) {
 		if r.ID == "" {
 			return nil, errors.New("reading restic's snapshot list: a snapshot without an ID")
 		}
-		s := backup.Snapshot{ID: backup.SnapshotID(r.ID), Time: r.Time.UTC(), Tags: r.Tags}
+		s := backup.Snapshot{ID: backup.SnapshotID(r.ID), Time: r.Time.UTC(), Tags: r.Tags, Paths: r.Paths}
 		for _, t := range r.Tags {
 			switch {
 			case strings.HasPrefix(t, TagSite):

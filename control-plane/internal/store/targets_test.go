@@ -51,9 +51,16 @@ func TestTargetClientGroup(t *testing.T) {
 			}
 		}
 
+		exp := store.Export{Kind: store.ExportSnapshot, SiteID: id.New(), ClientGroupID: group.ID}
+		if err := store.NewExports(db).Create(ctx, &exp); err != nil {
+			t.Fatal(err)
+		}
+
 		tests := []struct {
 			typ, id, want string
 		}{
+			{"export", exp.ID, group.ID},
+			{"export", id.New(), ""},
 			{"alert_rule", limited.ID, group.ID},
 			{"alert_rule", global.ID, ""},
 			{"alert_rule", id.New(), ""},

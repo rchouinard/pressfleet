@@ -101,6 +101,8 @@ type Config struct {
 	Alerts AlertsConfig `yaml:"alerts"`
 	// DatabaseExport configures database exports (§5.8).
 	DatabaseExport DatabaseExportConfig `yaml:"database_export"`
+	// SiteExport configures site exports (§5.7).
+	SiteExport SiteExportConfig `yaml:"site_export"`
 	// SFTP configures the SFTP gateway (§5.8).
 	SFTP SFTPConfig `yaml:"sftp"`
 	// Updates configures how new site images roll out (§5.5).
@@ -451,6 +453,27 @@ const (
 	MaxDatabaseExportTTLSeconds = 86400
 )
 
+// SiteExportConfig configures site exports (§5.7): a site's wp-content
+// and database, from the live site or a backup snapshot.
+type SiteExportConfig struct {
+	// TTLSeconds is how long an export can be downloaded once it is ready;
+	// then its files are deleted.
+	TTLSeconds int `yaml:"ttl_seconds"`
+}
+
+// TTL returns TTLSeconds as a duration.
+func (s SiteExportConfig) TTL() time.Duration {
+	return time.Duration(s.TTLSeconds) * time.Second
+}
+
+// Bounds of site_export.ttl_seconds: short enough to test expiry, and at
+// most a week. A site can take long to download, but its files take room
+// in the data directory until they expire.
+const (
+	MinSiteExportTTLSeconds = 10
+	MaxSiteExportTTLSeconds = 7 * 86400
+)
+
 // MariaDBConfig configures the control plane's admin connection to the
 // shared MariaDB server.
 type MariaDBConfig struct {
@@ -577,6 +600,7 @@ func Default() Config {
 		Uploads:           DefaultUploads(),
 		Alerts:            DefaultAlerts(),
 		DatabaseExport:    DatabaseExportConfig{TTLSeconds: 3600},
+		SiteExport:        SiteExportConfig{TTLSeconds: 86400},
 		SFTP:              DefaultSFTP(),
 		Updates:           DefaultUpdates(),
 		Metrics:           DefaultMetrics(),
@@ -603,6 +627,7 @@ var intEnvVars = []struct {
 	{"PRESSFLEET_ALERTS_EVALUATION_INTERVAL_SECONDS", func(c *Config) *int { return &c.Alerts.EvaluationIntervalSeconds }},
 	{"PRESSFLEET_ALERTS_WEBHOOK_TIMEOUT_SECONDS", func(c *Config) *int { return &c.Alerts.WebhookTimeoutSeconds }},
 	{"PRESSFLEET_DATABASE_EXPORT_TTL_SECONDS", func(c *Config) *int { return &c.DatabaseExport.TTLSeconds }},
+	{"PRESSFLEET_SITE_EXPORT_TTL_SECONDS", func(c *Config) *int { return &c.SiteExport.TTLSeconds }},
 	{"PRESSFLEET_SFTP_PORT", func(c *Config) *int { return &c.SFTP.Port }},
 	{"PRESSFLEET_SFTP_IDLE_TIMEOUT_MINUTES", func(c *Config) *int { return &c.SFTP.IdleTimeoutMinutes }},
 	{"PRESSFLEET_SFTP_MAX_SESSION_HOURS", func(c *Config) *int { return &c.SFTP.MaxSessionHours }},
@@ -874,6 +899,10 @@ func (c Config) Validate() error {
 	if t := c.DatabaseExport.TTLSeconds; t < MinDatabaseExportTTLSeconds || t > MaxDatabaseExportTTLSeconds {
 		errs = append(errs, fmt.Errorf("database_export.ttl_seconds must be between %d and %d, got %d",
 			MinDatabaseExportTTLSeconds, MaxDatabaseExportTTLSeconds, t))
+	}
+	if t := c.SiteExport.TTLSeconds; t < MinSiteExportTTLSeconds || t > MaxSiteExportTTLSeconds {
+		errs = append(errs, fmt.Errorf("site_export.ttl_seconds must be between %d and %d, got %d",
+			MinSiteExportTTLSeconds, MaxSiteExportTTLSeconds, t))
 	}
 	if host, port, err := net.SplitHostPort(c.MariaDB.Address); err != nil || host == "" || !validPort(port) {
 		errs = append(errs, fmt.Errorf("mariadb.address must be host:port, like mariadb:3306, got %q", c.MariaDB.Address))

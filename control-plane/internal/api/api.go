@@ -53,9 +53,9 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
 	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
-	"github.com/rchouinard/pressfleet/control-plane/internal/dbexport"
 	"github.com/rchouinard/pressfleet/control-plane/internal/dbsession"
 	"github.com/rchouinard/pressfleet/control-plane/internal/deploy"
+	"github.com/rchouinard/pressfleet/control-plane/internal/export"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/metricsapi"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
@@ -102,9 +102,9 @@ type Options struct {
 	// Uploads receives large files for site imports and deployments. If
 	// nil, the upload operations fail with 500.
 	Uploads *uploads.Service
-	// DatabaseExports exports site databases for download. If nil, the
-	// database export operations fail with 500.
-	DatabaseExports *dbexport.Service
+	// Exports exports site databases and whole sites for download. If
+	// nil, the export operations fail with 500.
+	Exports *export.Service
 	// Deployments deploys theme and plugin packages. If nil, the deploy
 	// operation fails with 500.
 	Deployments *deploy.Service
@@ -152,7 +152,7 @@ type Handlers struct {
 	sites         *sites.Service
 	backups       *sitebackup.Service
 	uploads       *uploads.Service
-	dbExports     *dbexport.Service
+	exports       *export.Service
 	deploys       *deploy.Service
 	dbSessions    *dbsession.Service
 	adminLogin    *adminlogin.Service
@@ -195,7 +195,7 @@ func NewHandler(opts Options) (http.Handler, error) {
 
 	h := &Handlers{log: opts.Logger, readiness: opts.Readiness, db: opts.DB, auth: opts.Auth, sites: opts.Sites, backups: opts.Backups,
 		uploads: opts.Uploads, secureCookies: opts.SecureCookies, sftp: opts.SFTP}
-	h.dbExports = opts.DatabaseExports
+	h.exports = opts.Exports
 	h.deploys = opts.Deployments
 	h.dbSessions = opts.DatabaseSessions
 	h.adminLogin = opts.AdminLogin
@@ -208,7 +208,7 @@ func NewHandler(opts Options) (http.Handler, error) {
 	if opts.DB != nil {
 		h.resolver = authz.NewResolver(opts.DB)
 	}
-	strict := gen.NewStrictHandlerWithOptions(h, nil, gen.StrictHTTPServerOptions{
+	strict := gen.NewStrictHandlerWithOptions(h, []gen.StrictMiddlewareFunc{withRequest}, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  requestErrorHandler(opts.Logger),
 		ResponseErrorHandlerFunc: responseErrorHandler(opts.Logger),
 	})

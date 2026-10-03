@@ -53,7 +53,7 @@ Each dependency has a reason (CLAUDE.md). Versions are in `package.json` and `pn
 - 2xx responses resolve as `{ data }`; every other response, and every network failure, **throws `ApiError`** (`app/utils/api-error.ts`).
 - `onUnauthorized` is the hook for 401s; `useApi()` wires it to the login redirect (see "Session and roles").
 
-**Not for streams or binary bodies.** The wrapper reads JSON. Server-sent events (the site log stream) are read with `fetch` by `utils/log-stream.ts` (see "Logs viewer"), not `EventSource`: `EventSource` hides HTTP statuses and Problem Details and can't be told when to stop retrying. The session cookie is sent (same origin); a GET needs no CSRF header. Uploads and downloads (site imports, deploy packages, database exports) use a plain `fetch` or an `<a href>` against `apiUrl(...)`, with the CSRF header added by hand for unsafe methods. Keep those uses small and in one composable each.
+**Not for streams or binary bodies.** The wrapper reads JSON. Server-sent events (the site log stream) are read with `fetch` by `utils/log-stream.ts` (see "Logs viewer"), not `EventSource`: `EventSource` hides HTTP statuses and Problem Details and can't be told when to stop retrying. The session cookie is sent (same origin); a GET needs no CSRF header. Uploads and downloads (site imports, deploy packages, database and site exports) use a plain `fetch` or an `<a href>` against `apiUrl(...)`, with the CSRF header added by hand for unsafe methods. Keep those uses small and in one composable each.
 
 ## Conventions
 

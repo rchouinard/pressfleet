@@ -185,6 +185,8 @@ func backupResponse(r store.BackupRecord) gen.Backup {
 	out := gen.Backup{
 		ID:            r.ID,
 		SiteID:        r.SiteID,
+		SiteName:      r.SiteName,
+		SiteSlug:      r.SiteSlug,
 		ClientGroupID: r.ClientGroupID,
 		Kind:          gen.BackupKind(r.Kind),
 		Status:        gen.BackupStatus(r.Status),

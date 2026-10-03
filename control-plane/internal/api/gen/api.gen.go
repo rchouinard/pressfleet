@@ -478,6 +478,69 @@ func (e DoctorResultStatus) Valid() bool {
 	}
 }
 
+// Defines values for ExportFileName.
+const (
+	DatabaseSQLGz  ExportFileName = "database.sql.gz"
+	WpContentTarGz ExportFileName = "wp-content.tar.gz"
+)
+
+// Valid indicates whether the value is a known member of the ExportFileName enum.
+func (e ExportFileName) Valid() bool {
+	switch e {
+	case DatabaseSQLGz:
+		return true
+	case WpContentTarGz:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ExportKind.
+const (
+	ExportKindDatabase ExportKind = "database"
+	ExportKindSite     ExportKind = "site"
+	ExportKindSnapshot ExportKind = "snapshot"
+)
+
+// Valid indicates whether the value is a known member of the ExportKind enum.
+func (e ExportKind) Valid() bool {
+	switch e {
+	case ExportKindDatabase:
+		return true
+	case ExportKindSite:
+		return true
+	case ExportKindSnapshot:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ExportStatus.
+const (
+	ExportStatusExpired ExportStatus = "expired"
+	ExportStatusFailed  ExportStatus = "failed"
+	ExportStatusReady   ExportStatus = "ready"
+	ExportStatusRunning ExportStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the ExportStatus enum.
+func (e ExportStatus) Valid() bool {
+	switch e {
+	case ExportStatusExpired:
+		return true
+	case ExportStatusFailed:
+		return true
+	case ExportStatusReady:
+		return true
+	case ExportStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatus.
 const (
 	HealthStatusOk HealthStatus = "ok"
@@ -1862,6 +1925,14 @@ type Backup struct {
 	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
 	SiteID ID `json:"site_id"`
 
+	// SiteName The site's name when the backup was taken, so the backups of a
+	// deleted site can be told apart. Empty for backups taken before
+	// backups kept it, of sites deleted since.
+	SiteName string `json:"site_name"`
+
+	// SiteSlug The site's slug when the backup was taken; empty like `site_name`.
+	SiteSlug string `json:"site_slug"`
+
 	// SizeBytes The size of the files backed up (the database dump and `wp-content`); null until the backup has succeeded.
 	SizeBytes *int64 `json:"size_bytes"`
 
@@ -2309,6 +2380,121 @@ type Domain = string
 
 // Email defines model for Email.
 type Email = openapi_types.Email
+
+// Export defines model for Export.
+type Export struct {
+	// BackupID The backup a `snapshot` export reads; null for other kinds.
+	BackupID *ID `json:"backup_id"`
+
+	// ClientGroupID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ClientGroupID ID `json:"client_group_id"`
+
+	// CreatedAt Examples: 2026-09-26T17:25:00Z
+	CreatedAt Timestamp  `json:"created_at"`
+	ExpiredAt *Timestamp `json:"expired_at"`
+
+	// ExpiresAt When the files stop being downloadable and are deleted.
+	ExpiresAt *Timestamp `json:"expires_at"`
+
+	// Files The export's files while it is ready; empty otherwise.
+	Files []ExportFile `json:"files"`
+
+	// ID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ID ID `json:"id"`
+
+	// JobID The export job; null once the job is gone.
+	JobID *ID `json:"job_id"`
+
+	// Kind What an export holds: `database`, a site's database
+	// (`database.sql.gz`); `site`, a live site's `wp-content` and database
+	// (`wp-content.tar.gz` and `database.sql.gz`, the files a site import
+	// takes); `snapshot`, the same two files from a backup.
+	Kind ExportKind `json:"kind"`
+
+	// Message Why the export failed; empty otherwise.
+	Message string     `json:"message"`
+	ReadyAt *Timestamp `json:"ready_at"`
+
+	// SiteID The exported site, which may have been deleted since.
+	SiteID ID `json:"site_id"`
+
+	// SiteSlug The site's slug when the export began (or the backup was taken), which names the files.
+	SiteSlug string `json:"site_slug"`
+
+	// SizeBytes The size of all files; null until the export is ready.
+	SizeBytes *int64 `json:"size_bytes"`
+
+	// SnapshotID The backup's Restic snapshot; null for other kinds.
+	SnapshotID *string `json:"snapshot_id"`
+
+	// Source What the export holds, for whoever imports it. Empty strings are unknown.
+	Source ExportSource `json:"source"`
+
+	// Status `running` while the job writes the files; `ready` while they can be
+	// downloaded; `failed` if the job failed (`message` says why);
+	// `expired` once the files were deleted.
+	Status ExportStatus `json:"status"`
+}
+
+// ExportFile defines model for ExportFile.
+type ExportFile struct {
+	// DownloadURL `GET /api/v1/exports/{export_id}/files/{file_name}`.
+	//
+	// Examples: /api/v1/exports/01j9z3k4m5n6p7q8r9s0t1v2w3/files/wp-content.tar.gz
+	DownloadURL string         `json:"download_url"`
+	Name        ExportFileName `json:"name"`
+	SizeBytes   int64          `json:"size_bytes"`
+}
+
+// ExportFileName defines model for ExportFileName.
+type ExportFileName string
+
+// ExportKind What an export holds: `database`, a site's database
+// (`database.sql.gz`); `site`, a live site's `wp-content` and database
+// (`wp-content.tar.gz` and `database.sql.gz`, the files a site import
+// takes); `snapshot`, the same two files from a backup.
+type ExportKind string
+
+// ExportList defines model for ExportList.
+type ExportList struct {
+	Items []Export `json:"items"`
+
+	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
+	NextCursor *NextCursor `json:"next_cursor"`
+}
+
+// ExportSource What the export holds, for whoever imports it. Empty strings are unknown.
+type ExportSource struct {
+	// PhpVersion The site's PHP version; empty for an export from a backup.
+	//
+	// Examples: 8.4
+	PhpVersion string `json:"php_version"`
+
+	// SiteURL The site's URL; for an export from a backup, its `home` option then.
+	//
+	// Examples: https://www.acme.example
+	SiteURL string `json:"site_url"`
+
+	// TablePrefix The WordPress table prefix of the database.
+	//
+	// Examples: wp_
+	TablePrefix string `json:"table_prefix"`
+
+	// TakenAt When the site's content was read, or when the backup's snapshot was taken.
+	TakenAt *Timestamp `json:"taken_at"`
+
+	// WpCoreVersion Examples: 6.9.1
+	WpCoreVersion string `json:"wp_core_version"`
+}
+
+// ExportStatus `running` while the job writes the files; `ready` while they can be
+// downloaded; `failed` if the job failed (`message` says why);
+// `expired` once the files were deleted.
+type ExportStatus string
 
 // FieldError defines model for FieldError.
 type FieldError struct {
@@ -3575,6 +3761,11 @@ type WebhookFormat string
 // Examples: 7.2
 type WordPressBranch = string
 
+// BackupID Opaque, server-assigned identifier.
+//
+// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+type BackupID = ID
+
 // ClientGroupID Opaque, server-assigned identifier.
 //
 // Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
@@ -3582,6 +3773,11 @@ type ClientGroupID = ID
 
 // Cursor defines model for Cursor.
 type Cursor = string
+
+// ExportID Opaque, server-assigned identifier.
+//
+// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+type ExportID = ID
 
 // JobID Opaque, server-assigned identifier.
 //
@@ -3800,6 +3996,48 @@ type ListClientGroupsParams struct {
 
 	// Cursor Opaque cursor from a previous page's `next_cursor`.
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListClientGroupBackupsParams defines parameters for ListClientGroupBackups.
+type ListClientGroupBackupsParams struct {
+	// Limit Maximum number of items to return.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Status Only return backups with this status.
+	Status *BackupStatus `form:"status,omitempty" json:"status,omitempty"`
+
+	// Deleted Only return the backups of sites that have been deleted.
+	Deleted *bool `form:"deleted,omitempty" json:"deleted,omitempty"`
+}
+
+// ListExportsParams defines parameters for ListExports.
+type ListExportsParams struct {
+	SiteID        *ID `form:"site_id,omitempty" json:"site_id,omitempty"`
+	ClientGroupID *ID `form:"client_group_id,omitempty" json:"client_group_id,omitempty"`
+
+	// Kind Only return exports of these kinds.
+	Kind *[]ExportKind `form:"kind,omitempty" json:"kind,omitempty"`
+
+	// Status Only return exports with these statuses.
+	Status *[]ExportStatus `form:"status,omitempty" json:"status,omitempty"`
+
+	// Limit Maximum number of items to return.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// DownloadExportFileParams defines parameters for DownloadExportFile.
+type DownloadExportFileParams struct {
+	// Range A byte range, e.g. `bytes=1048576-`.
+	Range *string `json:"Range,omitempty"`
+
+	// IfRange The `ETag` the range must have been taken from.
+	IfRange *string `json:"If-Range,omitempty"`
 }
 
 // ListJobsParams defines parameters for ListJobs.
@@ -4201,6 +4439,12 @@ type ServerInterface interface {
 	// UpdateClientGroup Update a client group
 	// (PATCH /api/v1/client-groups/{client_group_id})
 	UpdateClientGroup(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID)
+	// ListClientGroupBackups List a client group's backups
+	// (GET /api/v1/client-groups/{client_group_id}/backups)
+	ListClientGroupBackups(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID, params ListClientGroupBackupsParams)
+	// ExportClientGroupBackup Export a site from a client group's backup
+	// (POST /api/v1/client-groups/{client_group_id}/backups/{backup_id}/export)
+	ExportClientGroupBackup(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID, backupID BackupID)
 	// GetClientGroupCorePolicy Get a client group's core update policy
 	// (GET /api/v1/client-groups/{client_group_id}/core-policy)
 	GetClientGroupCorePolicy(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID)
@@ -4213,6 +4457,15 @@ type ServerInterface interface {
 	// ResumeCoreRollout Resume a halted core rollout
 	// (POST /api/v1/core-rollout/resume)
 	ResumeCoreRollout(w http.ResponseWriter, r *http.Request)
+	// ListExports List exports
+	// (GET /api/v1/exports)
+	ListExports(w http.ResponseWriter, r *http.Request, params ListExportsParams)
+	// GetExport Get an export
+	// (GET /api/v1/exports/{export_id})
+	GetExport(w http.ResponseWriter, r *http.Request, exportID ExportID)
+	// DownloadExportFile Download an export's file
+	// (GET /api/v1/exports/{export_id}/files/{file_name})
+	DownloadExportFile(w http.ResponseWriter, r *http.Request, exportID ExportID, fileName ExportFileName, params DownloadExportFileParams)
 	// GetImageRollout Get the platform image rollout
 	// (GET /api/v1/image-rollout)
 	GetImageRollout(w http.ResponseWriter, r *http.Request)
@@ -4285,6 +4538,9 @@ type ServerInterface interface {
 	// CreateSiteBackup Back up a site
 	// (POST /api/v1/sites/{site_id}/backups)
 	CreateSiteBackup(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// ExportSiteBackup Export a site from a backup
+	// (POST /api/v1/sites/{site_id}/backups/{backup_id}/export)
+	ExportSiteBackup(w http.ResponseWriter, r *http.Request, siteID SiteID, backupID BackupID)
 	// PurgeSiteCache Purge a site's caches
 	// (POST /api/v1/sites/{site_id}/cache/purge)
 	PurgeSiteCache(w http.ResponseWriter, r *http.Request, siteID SiteID)
@@ -4315,6 +4571,9 @@ type ServerInterface interface {
 	// DeploySiteCode Deploy a theme or plugin package
 	// (POST /api/v1/sites/{site_id}/deploy)
 	DeploySiteCode(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// ExportSite Export a site
+	// (POST /api/v1/sites/{site_id}/export)
+	ExportSite(w http.ResponseWriter, r *http.Request, siteID SiteID)
 	// GoLiveSite Switch a site to its primary domain
 	// (POST /api/v1/sites/{site_id}/go-live)
 	GoLiveSite(w http.ResponseWriter, r *http.Request, siteID SiteID)
@@ -5551,6 +5810,122 @@ func (siw *ServerInterfaceWrapper) UpdateClientGroup(w http.ResponseWriter, r *h
 	handler.ServeHTTP(w, r)
 }
 
+// ListClientGroupBackups operation middleware
+func (siw *ServerInterfaceWrapper) ListClientGroupBackups(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "client_group_id" -------------
+	var clientGroupID ClientGroupID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "client_group_id", r.PathValue("client_group_id"), &clientGroupID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "client_group_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListClientGroupBackupsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "status"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "deleted" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "deleted", r.URL.Query(), &params.Deleted, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "deleted"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "deleted", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListClientGroupBackups(w, r, clientGroupID, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ExportClientGroupBackup operation middleware
+func (siw *ServerInterfaceWrapper) ExportClientGroupBackup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "client_group_id" -------------
+	var clientGroupID ClientGroupID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "client_group_id", r.PathValue("client_group_id"), &clientGroupID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "client_group_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "backup_id" -------------
+	var backupID BackupID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "backup_id", r.PathValue("backup_id"), &backupID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "backup_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExportClientGroupBackup(w, r, clientGroupID, backupID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetClientGroupCorePolicy operation middleware
 func (siw *ServerInterfaceWrapper) GetClientGroupCorePolicy(w http.ResponseWriter, r *http.Request) {
 
@@ -5622,6 +5997,208 @@ func (siw *ServerInterfaceWrapper) ResumeCoreRollout(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ResumeCoreRollout(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListExports operation middleware
+func (siw *ServerInterfaceWrapper) ListExports(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListExportsParams
+
+	// ------------- Optional query parameter "site_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "site_id", r.URL.Query(), &params.SiteID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "site_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "client_group_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "client_group_id", r.URL.Query(), &params.ClientGroupID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "client_group_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "client_group_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "kind" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", false, false, "kind", r.URL.Query(), &params.Kind, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "kind"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", false, false, "status", r.URL.Query(), &params.Status, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "status"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListExports(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetExport operation middleware
+func (siw *ServerInterfaceWrapper) GetExport(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "export_id" -------------
+	var exportID ExportID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "export_id", r.PathValue("export_id"), &exportID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "export_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetExport(w, r, exportID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DownloadExportFile operation middleware
+func (siw *ServerInterfaceWrapper) DownloadExportFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "export_id" -------------
+	var exportID ExportID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "export_id", r.PathValue("export_id"), &exportID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "export_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "file_name" -------------
+	var fileName ExportFileName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "file_name", r.PathValue("file_name"), &fileName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "file_name", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DownloadExportFileParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "Range" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Range")]; found {
+		var Range string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Range", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Range", valueList[0], &Range, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Range", Err: err})
+			return
+		}
+
+		params.Range = &Range
+
+	}
+
+	// ------------- Optional header parameter "If-Range" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Range")]; found {
+		var IfRange string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Range", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Range", valueList[0], &IfRange, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Range", Err: err})
+			return
+		}
+
+		params.IfRange = &IfRange
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DownloadExportFile(w, r, exportID, fileName, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -6411,6 +6988,41 @@ func (siw *ServerInterfaceWrapper) CreateSiteBackup(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// ExportSiteBackup operation middleware
+func (siw *ServerInterfaceWrapper) ExportSiteBackup(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "backup_id" -------------
+	var backupID BackupID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "backup_id", r.PathValue("backup_id"), &backupID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "backup_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExportSiteBackup(w, r, siteID, backupID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PurgeSiteCache operation middleware
 func (siw *ServerInterfaceWrapper) PurgeSiteCache(w http.ResponseWriter, r *http.Request) {
 
@@ -6680,6 +7292,32 @@ func (siw *ServerInterfaceWrapper) DeploySiteCode(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeploySiteCode(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ExportSite operation middleware
+func (siw *ServerInterfaceWrapper) ExportSite(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ExportSite(w, r, siteID)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7971,6 +8609,13 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/deploy", wrapper.DeploySiteCode)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/database/export", wrapper.ExportSiteDatabase)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/database/exports/{export_id}/download", wrapper.DownloadSiteDatabaseExport)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/export", wrapper.ExportSite)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/backups/{backup_id}/export", wrapper.ExportSiteBackup)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/client-groups/{client_group_id}/backups", wrapper.ListClientGroupBackups)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/client-groups/{client_group_id}/backups/{backup_id}/export", wrapper.ExportClientGroupBackup)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/exports", wrapper.ListExports)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/exports/{export_id}", wrapper.GetExport)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/exports/{export_id}/files/{file_name}", wrapper.DownloadExportFile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/core", wrapper.GetSiteCore)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/sites/{site_id}/core/policy", wrapper.SetSiteCorePolicy)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/core/update", wrapper.UpdateSiteCore)
@@ -11265,6 +11910,224 @@ func (response UpdateClientGroupdefaultApplicationProblemPlusJSONResponse) Visit
 	return err
 }
 
+type ListClientGroupBackupsRequestObject struct {
+	ClientGroupID ClientGroupID `json:"client_group_id"`
+	Params        ListClientGroupBackupsParams
+}
+
+type ListClientGroupBackupsResponseObject interface {
+	VisitListClientGroupBackupsResponse(w http.ResponseWriter) error
+}
+
+type ListClientGroupBackups200JSONResponse BackupList
+
+func (response ListClientGroupBackups200JSONResponse) VisitListClientGroupBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListClientGroupBackups400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response ListClientGroupBackups400ApplicationProblemPlusJSONResponse) VisitListClientGroupBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListClientGroupBackups401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ListClientGroupBackups401ApplicationProblemPlusJSONResponse) VisitListClientGroupBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListClientGroupBackups403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ListClientGroupBackups403ApplicationProblemPlusJSONResponse) VisitListClientGroupBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListClientGroupBackups404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response ListClientGroupBackups404ApplicationProblemPlusJSONResponse) VisitListClientGroupBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListClientGroupBackupsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ListClientGroupBackupsdefaultApplicationProblemPlusJSONResponse) VisitListClientGroupBackupsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportClientGroupBackupRequestObject struct {
+	ClientGroupID ClientGroupID `json:"client_group_id"`
+	BackupID      BackupID      `json:"backup_id"`
+}
+
+type ExportClientGroupBackupResponseObject interface {
+	VisitExportClientGroupBackupResponse(w http.ResponseWriter) error
+}
+
+type ExportClientGroupBackup202ResponseHeaders struct {
+	Location *string
+}
+
+type ExportClientGroupBackup202JSONResponse struct {
+	Body    JobAccepted
+	Headers ExportClientGroupBackup202ResponseHeaders
+}
+
+func (response ExportClientGroupBackup202JSONResponse) VisitExportClientGroupBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportClientGroupBackup401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ExportClientGroupBackup401ApplicationProblemPlusJSONResponse) VisitExportClientGroupBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportClientGroupBackup403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ExportClientGroupBackup403ApplicationProblemPlusJSONResponse) VisitExportClientGroupBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportClientGroupBackup404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response ExportClientGroupBackup404ApplicationProblemPlusJSONResponse) VisitExportClientGroupBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportClientGroupBackup409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response ExportClientGroupBackup409ApplicationProblemPlusJSONResponse) VisitExportClientGroupBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportClientGroupBackupdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ExportClientGroupBackupdefaultApplicationProblemPlusJSONResponse) VisitExportClientGroupBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetClientGroupCorePolicyRequestObject struct {
 	ClientGroupID ClientGroupID `json:"client_group_id"`
 }
@@ -11601,6 +12464,343 @@ type ResumeCoreRolloutdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response ResumeCoreRolloutdefaultApplicationProblemPlusJSONResponse) VisitResumeCoreRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListExportsRequestObject struct {
+	Params ListExportsParams
+}
+
+type ListExportsResponseObject interface {
+	VisitListExportsResponse(w http.ResponseWriter) error
+}
+
+type ListExports200JSONResponse ExportList
+
+func (response ListExports200JSONResponse) VisitListExportsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListExports400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response ListExports400ApplicationProblemPlusJSONResponse) VisitListExportsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListExports401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ListExports401ApplicationProblemPlusJSONResponse) VisitListExportsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListExports403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ListExports403ApplicationProblemPlusJSONResponse) VisitListExportsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListExportsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ListExportsdefaultApplicationProblemPlusJSONResponse) VisitListExportsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetExportRequestObject struct {
+	ExportID ExportID `json:"export_id"`
+}
+
+type GetExportResponseObject interface {
+	VisitGetExportResponse(w http.ResponseWriter) error
+}
+
+type GetExport200JSONResponse Export
+
+func (response GetExport200JSONResponse) VisitGetExportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetExport401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetExport401ApplicationProblemPlusJSONResponse) VisitGetExportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetExport403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetExport403ApplicationProblemPlusJSONResponse) VisitGetExportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetExport404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response GetExport404ApplicationProblemPlusJSONResponse) VisitGetExportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetExportdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetExportdefaultApplicationProblemPlusJSONResponse) VisitGetExportResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadExportFileRequestObject struct {
+	ExportID ExportID       `json:"export_id"`
+	FileName ExportFileName `json:"file_name"`
+	Params   DownloadExportFileParams
+}
+
+type DownloadExportFileResponseObject interface {
+	VisitDownloadExportFileResponse(w http.ResponseWriter) error
+}
+
+type DownloadExportFile200ResponseHeaders struct {
+	AcceptRanges       *string
+	ContentDisposition *string
+	ETag               *string
+}
+
+type DownloadExportFile200ApplicationGzipResponse struct {
+	Body          io.Reader
+	Headers       DownloadExportFile200ResponseHeaders
+	ContentLength int64
+}
+
+func (response DownloadExportFile200ApplicationGzipResponse) VisitDownloadExportFileResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/gzip")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.AcceptRanges != nil {
+		w.Header().Set("Accept-Ranges", fmt.Sprint(*response.Headers.AcceptRanges))
+	}
+	if response.Headers.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
+	if response.Headers.ETag != nil {
+		w.Header().Set("ETag", fmt.Sprint(*response.Headers.ETag))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type DownloadExportFile206ResponseHeaders struct {
+	ContentDisposition *string
+	ContentRange       *string
+	ETag               *string
+}
+
+type DownloadExportFile206ApplicationGzipResponse struct {
+	Body          io.Reader
+	Headers       DownloadExportFile206ResponseHeaders
+	ContentLength int64
+}
+
+func (response DownloadExportFile206ApplicationGzipResponse) VisitDownloadExportFileResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/gzip")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
+	if response.Headers.ContentRange != nil {
+		w.Header().Set("Content-Range", fmt.Sprint(*response.Headers.ContentRange))
+	}
+	if response.Headers.ETag != nil {
+		w.Header().Set("ETag", fmt.Sprint(*response.Headers.ETag))
+	}
+	w.WriteHeader(206)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type DownloadExportFile401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response DownloadExportFile401ApplicationProblemPlusJSONResponse) VisitDownloadExportFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadExportFile403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response DownloadExportFile403ApplicationProblemPlusJSONResponse) VisitDownloadExportFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadExportFile404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response DownloadExportFile404ApplicationProblemPlusJSONResponse) VisitDownloadExportFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadExportFile416ResponseHeaders struct {
+	ContentRange *string
+}
+
+type DownloadExportFile416Response struct {
+	Headers DownloadExportFile416ResponseHeaders
+}
+
+func (response DownloadExportFile416Response) VisitDownloadExportFileResponse(w http.ResponseWriter) error {
+	if response.Headers.ContentRange != nil {
+		w.Header().Set("Content-Range", fmt.Sprint(*response.Headers.ContentRange))
+	}
+	w.WriteHeader(416)
+	return nil
+}
+
+type DownloadExportFiledefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response DownloadExportFiledefaultApplicationProblemPlusJSONResponse) VisitDownloadExportFileResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -14063,6 +15263,120 @@ func (response CreateSiteBackupdefaultApplicationProblemPlusJSONResponse) VisitC
 	return err
 }
 
+type ExportSiteBackupRequestObject struct {
+	SiteID   SiteID   `json:"site_id"`
+	BackupID BackupID `json:"backup_id"`
+}
+
+type ExportSiteBackupResponseObject interface {
+	VisitExportSiteBackupResponse(w http.ResponseWriter) error
+}
+
+type ExportSiteBackup202ResponseHeaders struct {
+	Location *string
+}
+
+type ExportSiteBackup202JSONResponse struct {
+	Body    JobAccepted
+	Headers ExportSiteBackup202ResponseHeaders
+}
+
+func (response ExportSiteBackup202JSONResponse) VisitExportSiteBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportSiteBackup401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ExportSiteBackup401ApplicationProblemPlusJSONResponse) VisitExportSiteBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportSiteBackup403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ExportSiteBackup403ApplicationProblemPlusJSONResponse) VisitExportSiteBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportSiteBackup404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response ExportSiteBackup404ApplicationProblemPlusJSONResponse) VisitExportSiteBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportSiteBackup409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response ExportSiteBackup409ApplicationProblemPlusJSONResponse) VisitExportSiteBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportSiteBackupdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ExportSiteBackupdefaultApplicationProblemPlusJSONResponse) VisitExportSiteBackupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type PurgeSiteCacheRequestObject struct {
 	SiteID SiteID `json:"site_id"`
 }
@@ -15135,6 +16449,119 @@ type DeploySiteCodedefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response DeploySiteCodedefaultApplicationProblemPlusJSONResponse) VisitDeploySiteCodeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportSiteRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+}
+
+type ExportSiteResponseObject interface {
+	VisitExportSiteResponse(w http.ResponseWriter) error
+}
+
+type ExportSite202ResponseHeaders struct {
+	Location *string
+}
+
+type ExportSite202JSONResponse struct {
+	Body    JobAccepted
+	Headers ExportSite202ResponseHeaders
+}
+
+func (response ExportSite202JSONResponse) VisitExportSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportSite401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ExportSite401ApplicationProblemPlusJSONResponse) VisitExportSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportSite403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ExportSite403ApplicationProblemPlusJSONResponse) VisitExportSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportSite404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response ExportSite404ApplicationProblemPlusJSONResponse) VisitExportSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportSite409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response ExportSite409ApplicationProblemPlusJSONResponse) VisitExportSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ExportSitedefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ExportSitedefaultApplicationProblemPlusJSONResponse) VisitExportSiteResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -18442,6 +19869,12 @@ type StrictServerInterface interface {
 	// UpdateClientGroup Update a client group
 	// (PATCH /api/v1/client-groups/{client_group_id})
 	UpdateClientGroup(ctx context.Context, request UpdateClientGroupRequestObject) (UpdateClientGroupResponseObject, error)
+	// ListClientGroupBackups List a client group's backups
+	// (GET /api/v1/client-groups/{client_group_id}/backups)
+	ListClientGroupBackups(ctx context.Context, request ListClientGroupBackupsRequestObject) (ListClientGroupBackupsResponseObject, error)
+	// ExportClientGroupBackup Export a site from a client group's backup
+	// (POST /api/v1/client-groups/{client_group_id}/backups/{backup_id}/export)
+	ExportClientGroupBackup(ctx context.Context, request ExportClientGroupBackupRequestObject) (ExportClientGroupBackupResponseObject, error)
 	// GetClientGroupCorePolicy Get a client group's core update policy
 	// (GET /api/v1/client-groups/{client_group_id}/core-policy)
 	GetClientGroupCorePolicy(ctx context.Context, request GetClientGroupCorePolicyRequestObject) (GetClientGroupCorePolicyResponseObject, error)
@@ -18454,6 +19887,15 @@ type StrictServerInterface interface {
 	// ResumeCoreRollout Resume a halted core rollout
 	// (POST /api/v1/core-rollout/resume)
 	ResumeCoreRollout(ctx context.Context, request ResumeCoreRolloutRequestObject) (ResumeCoreRolloutResponseObject, error)
+	// ListExports List exports
+	// (GET /api/v1/exports)
+	ListExports(ctx context.Context, request ListExportsRequestObject) (ListExportsResponseObject, error)
+	// GetExport Get an export
+	// (GET /api/v1/exports/{export_id})
+	GetExport(ctx context.Context, request GetExportRequestObject) (GetExportResponseObject, error)
+	// DownloadExportFile Download an export's file
+	// (GET /api/v1/exports/{export_id}/files/{file_name})
+	DownloadExportFile(ctx context.Context, request DownloadExportFileRequestObject) (DownloadExportFileResponseObject, error)
 	// GetImageRollout Get the platform image rollout
 	// (GET /api/v1/image-rollout)
 	GetImageRollout(ctx context.Context, request GetImageRolloutRequestObject) (GetImageRolloutResponseObject, error)
@@ -18526,6 +19968,9 @@ type StrictServerInterface interface {
 	// CreateSiteBackup Back up a site
 	// (POST /api/v1/sites/{site_id}/backups)
 	CreateSiteBackup(ctx context.Context, request CreateSiteBackupRequestObject) (CreateSiteBackupResponseObject, error)
+	// ExportSiteBackup Export a site from a backup
+	// (POST /api/v1/sites/{site_id}/backups/{backup_id}/export)
+	ExportSiteBackup(ctx context.Context, request ExportSiteBackupRequestObject) (ExportSiteBackupResponseObject, error)
 	// PurgeSiteCache Purge a site's caches
 	// (POST /api/v1/sites/{site_id}/cache/purge)
 	PurgeSiteCache(ctx context.Context, request PurgeSiteCacheRequestObject) (PurgeSiteCacheResponseObject, error)
@@ -18556,6 +20001,9 @@ type StrictServerInterface interface {
 	// DeploySiteCode Deploy a theme or plugin package
 	// (POST /api/v1/sites/{site_id}/deploy)
 	DeploySiteCode(ctx context.Context, request DeploySiteCodeRequestObject) (DeploySiteCodeResponseObject, error)
+	// ExportSite Export a site
+	// (POST /api/v1/sites/{site_id}/export)
+	ExportSite(ctx context.Context, request ExportSiteRequestObject) (ExportSiteResponseObject, error)
 	// GoLiveSite Switch a site to its primary domain
 	// (POST /api/v1/sites/{site_id}/go-live)
 	GoLiveSite(ctx context.Context, request GoLiveSiteRequestObject) (GoLiveSiteResponseObject, error)
@@ -19592,6 +21040,60 @@ func (sh *strictHandler) UpdateClientGroup(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// ListClientGroupBackups operation middleware
+func (sh *strictHandler) ListClientGroupBackups(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID, params ListClientGroupBackupsParams) {
+	var request ListClientGroupBackupsRequestObject
+
+	request.ClientGroupID = clientGroupID
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListClientGroupBackups(ctx, request.(ListClientGroupBackupsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListClientGroupBackups")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListClientGroupBackupsResponseObject); ok {
+		if err := validResponse.VisitListClientGroupBackupsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ExportClientGroupBackup operation middleware
+func (sh *strictHandler) ExportClientGroupBackup(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID, backupID BackupID) {
+	var request ExportClientGroupBackupRequestObject
+
+	request.ClientGroupID = clientGroupID
+	request.BackupID = backupID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ExportClientGroupBackup(ctx, request.(ExportClientGroupBackupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ExportClientGroupBackup")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ExportClientGroupBackupResponseObject); ok {
+		if err := validResponse.VisitExportClientGroupBackupResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetClientGroupCorePolicy operation middleware
 func (sh *strictHandler) GetClientGroupCorePolicy(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID) {
 	var request GetClientGroupCorePolicyRequestObject
@@ -19692,6 +21194,86 @@ func (sh *strictHandler) ResumeCoreRollout(w http.ResponseWriter, r *http.Reques
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ResumeCoreRolloutResponseObject); ok {
 		if err := validResponse.VisitResumeCoreRolloutResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListExports operation middleware
+func (sh *strictHandler) ListExports(w http.ResponseWriter, r *http.Request, params ListExportsParams) {
+	var request ListExportsRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListExports(ctx, request.(ListExportsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListExports")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListExportsResponseObject); ok {
+		if err := validResponse.VisitListExportsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetExport operation middleware
+func (sh *strictHandler) GetExport(w http.ResponseWriter, r *http.Request, exportID ExportID) {
+	var request GetExportRequestObject
+
+	request.ExportID = exportID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetExport(ctx, request.(GetExportRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetExport")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetExportResponseObject); ok {
+		if err := validResponse.VisitGetExportResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DownloadExportFile operation middleware
+func (sh *strictHandler) DownloadExportFile(w http.ResponseWriter, r *http.Request, exportID ExportID, fileName ExportFileName, params DownloadExportFileParams) {
+	var request DownloadExportFileRequestObject
+
+	request.ExportID = exportID
+	request.FileName = fileName
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DownloadExportFile(ctx, request.(DownloadExportFileRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DownloadExportFile")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DownloadExportFileResponseObject); ok {
+		if err := validResponse.VisitDownloadExportFileResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -20353,6 +21935,33 @@ func (sh *strictHandler) CreateSiteBackup(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// ExportSiteBackup operation middleware
+func (sh *strictHandler) ExportSiteBackup(w http.ResponseWriter, r *http.Request, siteID SiteID, backupID BackupID) {
+	var request ExportSiteBackupRequestObject
+
+	request.SiteID = siteID
+	request.BackupID = backupID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ExportSiteBackup(ctx, request.(ExportSiteBackupRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ExportSiteBackup")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ExportSiteBackupResponseObject); ok {
+		if err := validResponse.VisitExportSiteBackupResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // PurgeSiteCache operation middleware
 func (sh *strictHandler) PurgeSiteCache(w http.ResponseWriter, r *http.Request, siteID SiteID) {
 	var request PurgeSiteCacheRequestObject
@@ -20632,6 +22241,32 @@ func (sh *strictHandler) DeploySiteCode(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(DeploySiteCodeResponseObject); ok {
 		if err := validResponse.VisitDeploySiteCodeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ExportSite operation middleware
+func (sh *strictHandler) ExportSite(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request ExportSiteRequestObject
+
+	request.SiteID = siteID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ExportSite(ctx, request.(ExportSiteRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ExportSite")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ExportSiteResponseObject); ok {
+		if err := validResponse.VisitExportSiteResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

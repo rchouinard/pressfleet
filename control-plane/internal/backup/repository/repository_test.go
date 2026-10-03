@@ -390,10 +390,21 @@ func TestRestic(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		backupFile(t, access, t.TempDir())
+		src := t.TempDir()
+		if err := os.WriteFile(filepath.Join(src, "a.txt"), []byte("streamed\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		backupFile(t, access, src)
 		out, err := f.m.Restic(ctx, groupID, "snapshots", "--json")
 		if err != nil || !strings.Contains(string(out), `"site-1"`) {
 			t.Errorf("snapshots = %s, %v", out, err)
+		}
+		var dumped strings.Builder
+		if err := f.m.ResticTo(ctx, groupID, &dumped, "dump", "latest", filepath.Join(src, "a.txt")); err != nil || dumped.String() != "streamed\n" {
+			t.Errorf("ResticTo dump = %q, %v", dumped.String(), err)
+		}
+		if err := f.m.ResticTo(ctx, groupID, &dumped, "dump", "latest", "/nonexistent"); err == nil {
+			t.Error("ResticTo of a failing command succeeded")
 		}
 		if _, err := f.m.Restic(ctx, groupID, "check"); err != nil {
 			t.Errorf("check: %v", err)

@@ -74,7 +74,8 @@ networks:
 // prunes, and checks the repository, and the backup and restore tasks,
 // which run on the site's network, reach it through the backup network.
 // The restores are restoreChecks, the same as TestSiteRestore's with the
-// local backend.
+// local backend, and the snapshot they restore is exported too, as
+// TestSiteExport exports one with the local backend.
 func TestSiteBackupS3(t *testing.T) {
 	projectDir := t.TempDir()
 	var siteProject compose.Project
@@ -149,6 +150,8 @@ func TestSiteBackupS3(t *testing.T) {
 	snapshot := rc.setUp(t)
 	t.Run("restore", func(t *testing.T) { rc.sameSite(t, snapshot) })
 	t.Run("rollback", rc.rollback)
+	// Site export from a snapshot (#134), with the snapshot in the bucket.
+	t.Run("snapshot export", func(t *testing.T) { snapshotExportChecks(t, p, site.ID, snapshot) })
 
 	t.Run("prune and check", func(t *testing.T) {
 		for _, command := range []string{"prune", "check"} {

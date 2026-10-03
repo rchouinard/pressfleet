@@ -254,6 +254,9 @@ function when(iso: string): string {
 
       <SiteCoreCard :site="site" @changed="onDomainsChanged" />
       <SiteSftpCard v-if="site.status !== 'deleting' && platform" :slug="site.slug" :host="platform.sftp.host" :port="platform.sftp.port" :enabled="platform.sftp.enabled" :can-connect="can('site.code.deploy')" />
+      <IfCan action="site.export">
+        <SiteExportCard v-if="site.status !== 'deleting'" :site="site" />
+      </IfCan>
 
       <section aria-labelledby="site-details-heading">
         <h2 id="site-details-heading" class="mb-2 text-lg font-semibold">Details</h2>

@@ -70,6 +70,8 @@ func newHandler(t *testing.T, opts api.Options) http.Handler {
 type request struct {
 	method, target, body, contentType string
 	authed                            bool
+	// header holds extra request headers.
+	header map[string]string
 }
 
 func do(t *testing.T, h http.Handler, req request) *httptest.ResponseRecorder {
@@ -88,6 +90,9 @@ func do(t *testing.T, h http.Handler, req request) *httptest.ResponseRecorder {
 	}
 	if req.authed {
 		r.Header.Set("X-Test-Auth", "ok")
+	}
+	for k, v := range req.header {
+		r.Header.Set(k, v)
 	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
@@ -117,10 +122,10 @@ func decodeProblem(t *testing.T, w *httptest.ResponseRecorder) problem {
 
 // samplePath fills in path parameters with a valid ID.
 func samplePath(path string) string {
-	for _, p := range []string{"{token_id}", "{user_id}", "{client_group_id}", "{site_id}", "{job_id}", "{upload_id}", "{export_id}", "{ssh_key_id}", "{session_id}", "{alert_rule_id}", "{alert_id}", "{alert_channel_id}"} {
+	for _, p := range []string{"{token_id}", "{user_id}", "{client_group_id}", "{site_id}", "{job_id}", "{upload_id}", "{export_id}", "{ssh_key_id}", "{session_id}", "{alert_rule_id}", "{alert_id}", "{alert_channel_id}", "{backup_id}"} {
 		path = strings.ReplaceAll(path, p, "abc123")
 	}
-	return path
+	return strings.ReplaceAll(path, "{file_name}", "database.sql.gz")
 }
 
 // sampleBodies are minimal valid request bodies for operations that take one.
@@ -221,7 +226,7 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 	env := newSiteEnv(t, db, testPreviewBase)
 	up := newUploadService(t, db)
 	h := newHandler(t, api.Options{Authenticator: fa, Auth: svc, DB: db, Sites: env.svc, Backups: env.backups, Uploads: up, Logs: env.prov,
-		DatabaseExports: newDatabaseExports(t, db, env), Deployments: newDeployments(t, db, env, up),
+		Exports: newExports(t, db, env), Deployments: newDeployments(t, db, env, up),
 		DatabaseSessions: newDatabaseSessions(t, db, env, nil), AdminLogin: newAdminLogin(t, db, env), AlertChannels: newAlertChannels(t, db),
 		Doctor: func(context.Context) doctor.Report { return doctor.Report{} }})
 	for _, op := range ops {

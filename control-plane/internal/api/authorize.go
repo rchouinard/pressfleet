@@ -70,7 +70,16 @@ var operationActions = map[string]authz.Action{
 	"createSiteAdminLogin":   authz.AdminLogin,
 	"listSiteAdministrators": authz.AdminLogin,
 
-	"exportSiteDatabase":         authz.ExportDatabase,
+	"exportSiteDatabase": authz.ExportDatabase,
+	// Site exports (§5.7): starting one and downloading its files hand
+	// out the site's data; listing and reading them show none.
+	"exportSite":                 authz.ExportSite,
+	"exportSiteBackup":           authz.ExportSite,
+	"exportClientGroupBackup":    authz.ExportSite,
+	"downloadExportFile":         authz.ExportSite,
+	"listExports":                authz.ViewSites,
+	"getExport":                  authz.ViewSites,
+	"listClientGroupBackups":     authz.ViewBackups,
 	"downloadSiteDatabaseExport": authz.DownloadDatabaseExport,
 	// Listing sessions shows no credentials.
 	"listSiteDatabaseSessions":  authz.ViewSites,

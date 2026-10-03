@@ -36,6 +36,8 @@ export const permissions = {
   // Deploy code; export the database; read-only database sessions.
   'site.code.deploy': 'operator',
   'site.database.export': 'operator',
+  // Export a site, live or from a backup, and download it (§5.7).
+  'site.export': 'operator',
   'site.database.session.create': 'operator',
   // Read-write database sessions.
   'site.database.session.create_read_write': 'admin',

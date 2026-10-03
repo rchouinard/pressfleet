@@ -107,21 +107,28 @@ func (e *Engine) Restore(ctx context.Context, siteID string, snap backup.Snapsho
 // resolveSnapshot returns the full ID of the site's snapshot snap, which
 // may be a unique prefix, or ErrSnapshotNotFound.
 func (e *Engine) resolveSnapshot(ctx context.Context, groupID, siteID string, snap backup.SnapshotID) (backup.SnapshotID, error) {
+	s, err := e.findSnapshot(ctx, groupID, siteID, snap)
+	return s.ID, err
+}
+
+// findSnapshot returns the site's snapshot snap, whose ID may be a unique
+// prefix, or ErrSnapshotNotFound.
+func (e *Engine) findSnapshot(ctx context.Context, groupID, siteID string, snap backup.SnapshotID) (backup.Snapshot, error) {
 	snaps, err := e.snapshots(ctx, groupID, TagSite+siteID)
 	if err != nil {
-		return "", fmt.Errorf("listing the site's snapshots: %w", err)
+		return backup.Snapshot{}, fmt.Errorf("listing the site's snapshots: %w", err)
 	}
-	var found []backup.SnapshotID
+	var found []backup.Snapshot
 	for _, s := range snaps {
 		if s.ID == snap {
-			return s.ID, nil
+			return s, nil
 		}
 		if strings.HasPrefix(string(s.ID), string(snap)) {
-			found = append(found, s.ID)
+			found = append(found, s)
 		}
 	}
 	if len(found) != 1 {
-		return "", fmt.Errorf("snapshot %s of site %s: %w", snap, siteID, backup.ErrSnapshotNotFound)
+		return backup.Snapshot{}, fmt.Errorf("snapshot %s of site %s: %w", snap, siteID, backup.ErrSnapshotNotFound)
 	}
 	return found[0], nil
 }

@@ -38,7 +38,7 @@ func allEvents(t *testing.T, db *store.DB) []store.AuditEvent {
 }
 
 // auditedReads are the reads recorded like changes (auditRead).
-var auditedReads = map[string]bool{"downloadSiteDatabaseExport": true}
+var auditedReads = map[string]bool{"downloadSiteDatabaseExport": true, "downloadExportFile": true}
 
 func isUnsafe(method string) bool {
 	return method != http.MethodGet && method != http.MethodHead && method != http.MethodOptions

@@ -81,6 +81,7 @@ func TestLoadPrecedence(t *testing.T) {
 		Uploads:           config.DefaultUploads(),                       // default
 		Alerts:            config.DefaultAlerts(),                        // default
 		DatabaseExport:    config.DatabaseExportConfig{TTLSeconds: 3600}, // default
+		SiteExport:        config.SiteExportConfig{TTLSeconds: 86400},    // default
 		Updates:           config.DefaultUpdates(),                       // default
 		Metrics:           config.DefaultMetrics(),                       // default
 	}
@@ -329,6 +330,31 @@ func TestDatabaseExportSettings(t *testing.T) {
 		cfg := config.Default()
 		cfg.DatabaseExport.TTLSeconds = n
 		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "database_export.ttl_seconds") {
+			t.Errorf("TTL %d: Validate() = %v", n, err)
+		}
+	}
+}
+
+func TestSiteExportSettings(t *testing.T) {
+	if got := config.Default().SiteExport; got.TTLSeconds != 86400 || got.TTL() != 24*time.Hour {
+		t.Errorf("default site export config = %+v", got)
+	}
+	path := writeFile(t, "site_export:\n  ttl_seconds: 172800\n")
+	cfg, err := config.Load(path, env(nil))
+	if err != nil || cfg.SiteExport.TTL() != 48*time.Hour {
+		t.Fatalf("from file: %+v, %v", cfg.SiteExport, err)
+	}
+	cfg, err = config.Load(path, env(map[string]string{"PRESSFLEET_SITE_EXPORT_TTL_SECONDS": "30"}))
+	if err != nil || cfg.SiteExport.TTLSeconds != 30 {
+		t.Fatalf("from env: %+v, %v", cfg.SiteExport, err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v", err)
+	}
+	for _, n := range []int{0, config.MinSiteExportTTLSeconds - 1, config.MaxSiteExportTTLSeconds + 1} {
+		cfg := config.Default()
+		cfg.SiteExport.TTLSeconds = n
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "site_export.ttl_seconds") {
 			t.Errorf("TTL %d: Validate() = %v", n, err)
 		}
 	}

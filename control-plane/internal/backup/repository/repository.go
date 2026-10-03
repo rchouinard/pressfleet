@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -407,6 +408,21 @@ func (m *Manager) Restic(ctx context.Context, clientGroupID string, args ...stri
 		return nil, err
 	}
 	return m.run(ctx, rec, password, args...)
+}
+
+// ResticTo is Restic for commands with large output, such as `restic
+// dump`: it writes the command's standard output to stdout as restic
+// writes it.
+func (m *Manager) ResticTo(ctx context.Context, clientGroupID string, stdout io.Writer, args ...string) error {
+	rec, err := m.Get(ctx, clientGroupID)
+	if err != nil {
+		return err
+	}
+	password, err := m.password(ctx, rec)
+	if err != nil {
+		return err
+	}
+	return m.runTo(ctx, rec, password, stdout, args...)
 }
 
 // Delete removes the group's repository: first its data, then its record,

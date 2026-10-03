@@ -477,6 +477,69 @@ func (e DoctorResultStatus) Valid() bool {
 	}
 }
 
+// Defines values for ExportFileName.
+const (
+	DatabaseSQLGz  ExportFileName = "database.sql.gz"
+	WpContentTarGz ExportFileName = "wp-content.tar.gz"
+)
+
+// Valid indicates whether the value is a known member of the ExportFileName enum.
+func (e ExportFileName) Valid() bool {
+	switch e {
+	case DatabaseSQLGz:
+		return true
+	case WpContentTarGz:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ExportKind.
+const (
+	ExportKindDatabase ExportKind = "database"
+	ExportKindSite     ExportKind = "site"
+	ExportKindSnapshot ExportKind = "snapshot"
+)
+
+// Valid indicates whether the value is a known member of the ExportKind enum.
+func (e ExportKind) Valid() bool {
+	switch e {
+	case ExportKindDatabase:
+		return true
+	case ExportKindSite:
+		return true
+	case ExportKindSnapshot:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ExportStatus.
+const (
+	ExportStatusExpired ExportStatus = "expired"
+	ExportStatusFailed  ExportStatus = "failed"
+	ExportStatusReady   ExportStatus = "ready"
+	ExportStatusRunning ExportStatus = "running"
+)
+
+// Valid indicates whether the value is a known member of the ExportStatus enum.
+func (e ExportStatus) Valid() bool {
+	switch e {
+	case ExportStatusExpired:
+		return true
+	case ExportStatusFailed:
+		return true
+	case ExportStatusReady:
+		return true
+	case ExportStatusRunning:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthStatus.
 const (
 	HealthStatusOk HealthStatus = "ok"
@@ -1861,6 +1924,14 @@ type Backup struct {
 	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
 	SiteID ID `json:"site_id"`
 
+	// SiteName The site's name when the backup was taken, so the backups of a
+	// deleted site can be told apart. Empty for backups taken before
+	// backups kept it, of sites deleted since.
+	SiteName string `json:"site_name"`
+
+	// SiteSlug The site's slug when the backup was taken; empty like `site_name`.
+	SiteSlug string `json:"site_slug"`
+
 	// SizeBytes The size of the files backed up (the database dump and `wp-content`); null until the backup has succeeded.
 	SizeBytes *int64 `json:"size_bytes"`
 
@@ -2308,6 +2379,121 @@ type Domain = string
 
 // Email defines model for Email.
 type Email = openapi_types.Email
+
+// Export defines model for Export.
+type Export struct {
+	// BackupID The backup a `snapshot` export reads; null for other kinds.
+	BackupID *ID `json:"backup_id"`
+
+	// ClientGroupID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ClientGroupID ID `json:"client_group_id"`
+
+	// CreatedAt Examples: 2026-09-26T17:25:00Z
+	CreatedAt Timestamp  `json:"created_at"`
+	ExpiredAt *Timestamp `json:"expired_at"`
+
+	// ExpiresAt When the files stop being downloadable and are deleted.
+	ExpiresAt *Timestamp `json:"expires_at"`
+
+	// Files The export's files while it is ready; empty otherwise.
+	Files []ExportFile `json:"files"`
+
+	// ID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ID ID `json:"id"`
+
+	// JobID The export job; null once the job is gone.
+	JobID *ID `json:"job_id"`
+
+	// Kind What an export holds: `database`, a site's database
+	// (`database.sql.gz`); `site`, a live site's `wp-content` and database
+	// (`wp-content.tar.gz` and `database.sql.gz`, the files a site import
+	// takes); `snapshot`, the same two files from a backup.
+	Kind ExportKind `json:"kind"`
+
+	// Message Why the export failed; empty otherwise.
+	Message string     `json:"message"`
+	ReadyAt *Timestamp `json:"ready_at"`
+
+	// SiteID The exported site, which may have been deleted since.
+	SiteID ID `json:"site_id"`
+
+	// SiteSlug The site's slug when the export began (or the backup was taken), which names the files.
+	SiteSlug string `json:"site_slug"`
+
+	// SizeBytes The size of all files; null until the export is ready.
+	SizeBytes *int64 `json:"size_bytes"`
+
+	// SnapshotID The backup's Restic snapshot; null for other kinds.
+	SnapshotID *string `json:"snapshot_id"`
+
+	// Source What the export holds, for whoever imports it. Empty strings are unknown.
+	Source ExportSource `json:"source"`
+
+	// Status `running` while the job writes the files; `ready` while they can be
+	// downloaded; `failed` if the job failed (`message` says why);
+	// `expired` once the files were deleted.
+	Status ExportStatus `json:"status"`
+}
+
+// ExportFile defines model for ExportFile.
+type ExportFile struct {
+	// DownloadURL `GET /api/v1/exports/{export_id}/files/{file_name}`.
+	//
+	// Examples: /api/v1/exports/01j9z3k4m5n6p7q8r9s0t1v2w3/files/wp-content.tar.gz
+	DownloadURL string         `json:"download_url"`
+	Name        ExportFileName `json:"name"`
+	SizeBytes   int64          `json:"size_bytes"`
+}
+
+// ExportFileName defines model for ExportFileName.
+type ExportFileName string
+
+// ExportKind What an export holds: `database`, a site's database
+// (`database.sql.gz`); `site`, a live site's `wp-content` and database
+// (`wp-content.tar.gz` and `database.sql.gz`, the files a site import
+// takes); `snapshot`, the same two files from a backup.
+type ExportKind string
+
+// ExportList defines model for ExportList.
+type ExportList struct {
+	Items []Export `json:"items"`
+
+	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
+	NextCursor *NextCursor `json:"next_cursor"`
+}
+
+// ExportSource What the export holds, for whoever imports it. Empty strings are unknown.
+type ExportSource struct {
+	// PhpVersion The site's PHP version; empty for an export from a backup.
+	//
+	// Examples: 8.4
+	PhpVersion string `json:"php_version"`
+
+	// SiteURL The site's URL; for an export from a backup, its `home` option then.
+	//
+	// Examples: https://www.acme.example
+	SiteURL string `json:"site_url"`
+
+	// TablePrefix The WordPress table prefix of the database.
+	//
+	// Examples: wp_
+	TablePrefix string `json:"table_prefix"`
+
+	// TakenAt When the site's content was read, or when the backup's snapshot was taken.
+	TakenAt *Timestamp `json:"taken_at"`
+
+	// WpCoreVersion Examples: 6.9.1
+	WpCoreVersion string `json:"wp_core_version"`
+}
+
+// ExportStatus `running` while the job writes the files; `ready` while they can be
+// downloaded; `failed` if the job failed (`message` says why);
+// `expired` once the files were deleted.
+type ExportStatus string
 
 // FieldError defines model for FieldError.
 type FieldError struct {
@@ -3574,6 +3760,11 @@ type WebhookFormat string
 // Examples: 7.2
 type WordPressBranch = string
 
+// BackupID Opaque, server-assigned identifier.
+//
+// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+type BackupID = ID
+
 // ClientGroupID Opaque, server-assigned identifier.
 //
 // Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
@@ -3581,6 +3772,11 @@ type ClientGroupID = ID
 
 // Cursor defines model for Cursor.
 type Cursor = string
+
+// ExportID Opaque, server-assigned identifier.
+//
+// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+type ExportID = ID
 
 // JobID Opaque, server-assigned identifier.
 //
@@ -3799,6 +3995,48 @@ type ListClientGroupsParams struct {
 
 	// Cursor Opaque cursor from a previous page's `next_cursor`.
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListClientGroupBackupsParams defines parameters for ListClientGroupBackups.
+type ListClientGroupBackupsParams struct {
+	// Limit Maximum number of items to return.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Status Only return backups with this status.
+	Status *BackupStatus `form:"status,omitempty" json:"status,omitempty"`
+
+	// Deleted Only return the backups of sites that have been deleted.
+	Deleted *bool `form:"deleted,omitempty" json:"deleted,omitempty"`
+}
+
+// ListExportsParams defines parameters for ListExports.
+type ListExportsParams struct {
+	SiteID        *ID `form:"site_id,omitempty" json:"site_id,omitempty"`
+	ClientGroupID *ID `form:"client_group_id,omitempty" json:"client_group_id,omitempty"`
+
+	// Kind Only return exports of these kinds.
+	Kind *[]ExportKind `form:"kind,omitempty" json:"kind,omitempty"`
+
+	// Status Only return exports with these statuses.
+	Status *[]ExportStatus `form:"status,omitempty" json:"status,omitempty"`
+
+	// Limit Maximum number of items to return.
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page's `next_cursor`.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// DownloadExportFileParams defines parameters for DownloadExportFile.
+type DownloadExportFileParams struct {
+	// Range A byte range, e.g. `bytes=1048576-`.
+	Range *string `json:"Range,omitempty"`
+
+	// IfRange The `ETag` the range must have been taken from.
+	IfRange *string `json:"If-Range,omitempty"`
 }
 
 // ListJobsParams defines parameters for ListJobs.
@@ -4583,6 +4821,30 @@ type ClientInterface interface {
 	// Corresponds with PATCH /api/v1/client-groups/{client_group_id} (the `UpdateClientGroup` operationId).
 	UpdateClientGroup(ctx context.Context, clientGroupID ClientGroupID, body UpdateClientGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListClientGroupBackups List a client group's backups
+	//
+	// The platform's record of every backup of the group's sites, newest
+	// first, like `GET /api/v1/sites/{site_id}/backups`. With
+	// `deleted=true`, only the backups of sites that have been deleted:
+	// their snapshots stay in the group's backup repository until the
+	// group is deleted, and can still be exported
+	// (`POST /api/v1/client-groups/{client_group_id}/backups/{backup_id}/export`).
+	// Each backup keeps the name and slug its site had when it was taken.
+	//
+	// Corresponds with GET /api/v1/client-groups/{client_group_id}/backups (the `ListClientGroupBackups` operationId).
+	ListClientGroupBackups(ctx context.Context, clientGroupID ClientGroupID, params *ListClientGroupBackupsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExportClientGroupBackup Export a site from a client group's backup
+	//
+	// `POST /api/v1/sites/{site_id}/backups/{backup_id}/export` for any
+	// backup in the group, including those of sites that have been
+	// deleted, so a deleted site can still be recovered or handed over
+	// while its group's backup repository exists. A backup that isn't the
+	// group's returns `404`.
+	//
+	// Corresponds with POST /api/v1/client-groups/{client_group_id}/backups/{backup_id}/export (the `ExportClientGroupBackup` operationId).
+	ExportClientGroupBackup(ctx context.Context, clientGroupID ClientGroupID, backupID BackupID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetClientGroupCorePolicy Get a client group's core update policy
 	//
 	// The policy the group's sites follow unless they have one of their own.
@@ -4628,6 +4890,43 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/core-rollout/resume (the `ResumeCoreRollout` operationId).
 	ResumeCoreRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListExports List exports
+	//
+	// Exports of a site (`site_id`) or of a client group's sites
+	// (`client_group_id`), newest first: database exports, site exports,
+	// and exports from backups, including those that failed or have
+	// expired. One of the two filters is required (`400` otherwise).
+	//
+	// Corresponds with GET /api/v1/exports (the `ListExports` operationId).
+	ListExports(ctx context.Context, params *ListExportsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetExport Get an export
+	//
+	// An export, its files once it is ready, and what they hold. An
+	// export whose expiry has passed is `expired`, and its files are
+	// gone.
+	//
+	// Corresponds with GET /api/v1/exports/{export_id} (the `GetExport` operationId).
+	GetExport(ctx context.Context, exportID ExportID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DownloadExportFile Download an export's file
+	//
+	// Returns one file of a ready export as `application/gzip`, named for
+	// the site in `Content-Disposition` (`<site slug>-wp-content.tar.gz`,
+	// `<site slug>-database.sql.gz`, or for a database export
+	// `<site slug>-<export ID>.sql.gz`). It supports `Range` requests
+	// (`Accept-Ranges: bytes`), so a large download that was interrupted
+	// can be resumed: send `Range: bytes=<bytes received>-`, with
+	// `If-Range` set to the `ETag` of the first response so a different
+	// file is never spliced in. It needs the same permission as starting
+	// an export (Operators and Admins; not `read-only` tokens), and each
+	// download, partial or not, is recorded in the audit log. An export
+	// that doesn't exist, isn't ready, has no such file, or has expired
+	// returns `404`.
+	//
+	// Corresponds with GET /api/v1/exports/{export_id}/files/{file_name} (the `DownloadExportFile` operationId).
+	DownloadExportFile(ctx context.Context, exportID ExportID, fileName ExportFileName, params *DownloadExportFileParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetImageRollout Get the platform image rollout
 	//
@@ -5164,6 +5463,26 @@ type ClientInterface interface {
 	// Corresponds with POST /api/v1/sites/{site_id}/backups (the `CreateSiteBackup` operationId).
 	CreateSiteBackup(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ExportSiteBackup Export a site from a backup
+	//
+	// Queues a job that exports the site as it was in one of its backups,
+	// in the same two files as `POST /api/v1/sites/{site_id}/export`,
+	// ready for a site import. It recovers an earlier version of a site
+	// without restoring over the live one, and works whatever the site's
+	// state: it reads the snapshot from the client group's backup
+	// repository and never touches the site. The job takes no lock on the
+	// site; it waits for a repository prune or check that is running.
+	//
+	// The job's result is as for a live export, with `backup_id`; the
+	// export (`GET /api/v1/exports/{export_id}`) has `source.taken_at`,
+	// when the snapshot was taken, and the site's URL and table prefix as
+	// its database had them. A backup that isn't the site's returns `404`;
+	// one that is running or failed, or whose snapshot was removed by the
+	// retention policy (`expired_at`), returns `409`.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/backups/{backup_id}/export (the `ExportSiteBackup` operationId).
+	ExportSiteBackup(ctx context.Context, siteID SiteID, backupID BackupID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// PurgeSiteCache Purge a site's caches
 	//
 	// Queues a job that empties the site's object cache (its database on
@@ -5446,6 +5765,44 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/deploy (the `DeploySiteCode` operationId).
 	DeploySiteCode(ctx context.Context, siteID SiteID, body DeploySiteCodeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExportSite Export a site
+	//
+	// Queues a job that exports the whole site in the two files a site
+	// import takes (design doc §5.7), so it can be imported again here or
+	// moved to another host:
+	//
+	// * `wp-content.tar.gz`: the site's `wp-content` (every path starts
+	//   with `wp-content/`), without the platform's drop-ins
+	//   (`object-cache.php`, `advanced-cache.php`, `db.php`), which point
+	//   at its object cache and page cache and would break the site
+	//   elsewhere, and without symbolic links and other special files,
+	//   which import skips too. Owners are left out; permissions and
+	//   modification times are kept.
+	// * `database.sql.gz`: the database, dumped as for a database export.
+	//
+	// WordPress core and `wp-config.php` aren't exported: the platform
+	// generates both, and so does any other host. The site keeps serving
+	// throughout, and stopped sites can be exported too; a file that
+	// changes while it is read is exported as it was then, with a warning
+	// on the job. The job runs after any other job working on the site.
+	//
+	// Before writing anything, the job estimates the export's size (the
+	// database plus `wp-content`, uncompressed) and fails if the data
+	// directory has less free space; the estimate is in its result as
+	// `estimated_size_bytes`. When it has succeeded, its result also holds
+	// `export_id`, `export_url` (`GET /api/v1/exports/{export_id}`),
+	// `files` (each with `name`, `size_bytes`, and `download_url`),
+	// `size_bytes`, and `expires_at`. Download the files with the same
+	// session or API token before they expire, a day after they are ready
+	// by default (`site_export.ttl_seconds`). Every export and every
+	// download is recorded in the audit log.
+	//
+	// A site that is `provisioning` or `deleting`, or whose provisioning
+	// failed, returns `409`.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/export (the `ExportSite` operationId).
+	ExportSite(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GoLiveSiteWithBody Switch a site to its primary domain
 	//
@@ -6954,6 +7311,50 @@ func (c *Client) UpdateClientGroup(ctx context.Context, clientGroupID ClientGrou
 	return c.Client.Do(req)
 }
 
+// ListClientGroupBackups List a client group's backups
+//
+// The platform's record of every backup of the group's sites, newest
+// first, like `GET /api/v1/sites/{site_id}/backups`. With
+// `deleted=true`, only the backups of sites that have been deleted:
+// their snapshots stay in the group's backup repository until the
+// group is deleted, and can still be exported
+// (`POST /api/v1/client-groups/{client_group_id}/backups/{backup_id}/export`).
+// Each backup keeps the name and slug its site had when it was taken.
+//
+// Corresponds with GET /api/v1/client-groups/{client_group_id}/backups (the `ListClientGroupBackups` operationId).
+func (c *Client) ListClientGroupBackups(ctx context.Context, clientGroupID ClientGroupID, params *ListClientGroupBackupsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListClientGroupBackupsRequest(c.Server, clientGroupID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExportClientGroupBackup Export a site from a client group's backup
+//
+// `POST /api/v1/sites/{site_id}/backups/{backup_id}/export` for any
+// backup in the group, including those of sites that have been
+// deleted, so a deleted site can still be recovered or handed over
+// while its group's backup repository exists. A backup that isn't the
+// group's returns `404`.
+//
+// Corresponds with POST /api/v1/client-groups/{client_group_id}/backups/{backup_id}/export (the `ExportClientGroupBackup` operationId).
+func (c *Client) ExportClientGroupBackup(ctx context.Context, clientGroupID ClientGroupID, backupID BackupID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExportClientGroupBackupRequest(c.Server, clientGroupID, backupID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetClientGroupCorePolicy Get a client group's core update policy
 //
 // The policy the group's sites follow unless they have one of their own.
@@ -7040,6 +7441,73 @@ func (c *Client) GetCoreRollout(ctx context.Context, reqEditors ...RequestEditor
 // Corresponds with POST /api/v1/core-rollout/resume (the `ResumeCoreRollout` operationId).
 func (c *Client) ResumeCoreRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewResumeCoreRolloutRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListExports List exports
+//
+// Exports of a site (`site_id`) or of a client group's sites
+// (`client_group_id`), newest first: database exports, site exports,
+// and exports from backups, including those that failed or have
+// expired. One of the two filters is required (`400` otherwise).
+//
+// Corresponds with GET /api/v1/exports (the `ListExports` operationId).
+func (c *Client) ListExports(ctx context.Context, params *ListExportsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListExportsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetExport Get an export
+//
+// An export, its files once it is ready, and what they hold. An
+// export whose expiry has passed is `expired`, and its files are
+// gone.
+//
+// Corresponds with GET /api/v1/exports/{export_id} (the `GetExport` operationId).
+func (c *Client) GetExport(ctx context.Context, exportID ExportID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetExportRequest(c.Server, exportID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DownloadExportFile Download an export's file
+//
+// Returns one file of a ready export as `application/gzip`, named for
+// the site in `Content-Disposition` (`<site slug>-wp-content.tar.gz`,
+// `<site slug>-database.sql.gz`, or for a database export
+// `<site slug>-<export ID>.sql.gz`). It supports `Range` requests
+// (`Accept-Ranges: bytes`), so a large download that was interrupted
+// can be resumed: send `Range: bytes=<bytes received>-`, with
+// `If-Range` set to the `ETag` of the first response so a different
+// file is never spliced in. It needs the same permission as starting
+// an export (Operators and Admins; not `read-only` tokens), and each
+// download, partial or not, is recorded in the audit log. An export
+// that doesn't exist, isn't ready, has no such file, or has expired
+// returns `404`.
+//
+// Corresponds with GET /api/v1/exports/{export_id}/files/{file_name} (the `DownloadExportFile` operationId).
+func (c *Client) DownloadExportFile(ctx context.Context, exportID ExportID, fileName ExportFileName, params *DownloadExportFileParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDownloadExportFileRequest(c.Server, exportID, fileName, params)
 	if err != nil {
 		return nil, err
 	}
@@ -7885,6 +8353,36 @@ func (c *Client) CreateSiteBackup(ctx context.Context, siteID SiteID, reqEditors
 	return c.Client.Do(req)
 }
 
+// ExportSiteBackup Export a site from a backup
+//
+// Queues a job that exports the site as it was in one of its backups,
+// in the same two files as `POST /api/v1/sites/{site_id}/export`,
+// ready for a site import. It recovers an earlier version of a site
+// without restoring over the live one, and works whatever the site's
+// state: it reads the snapshot from the client group's backup
+// repository and never touches the site. The job takes no lock on the
+// site; it waits for a repository prune or check that is running.
+//
+// The job's result is as for a live export, with `backup_id`; the
+// export (`GET /api/v1/exports/{export_id}`) has `source.taken_at`,
+// when the snapshot was taken, and the site's URL and table prefix as
+// its database had them. A backup that isn't the site's returns `404`;
+// one that is running or failed, or whose snapshot was removed by the
+// retention policy (`expired_at`), returns `409`.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/backups/{backup_id}/export (the `ExportSiteBackup` operationId).
+func (c *Client) ExportSiteBackup(ctx context.Context, siteID SiteID, backupID BackupID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExportSiteBackupRequest(c.Server, siteID, backupID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // PurgeSiteCache Purge a site's caches
 //
 // Queues a job that empties the site's object cache (its database on
@@ -8288,6 +8786,54 @@ func (c *Client) DeploySiteCodeWithBody(ctx context.Context, siteID SiteID, cont
 // Corresponds with POST /api/v1/sites/{site_id}/deploy (the `DeploySiteCode` operationId).
 func (c *Client) DeploySiteCode(ctx context.Context, siteID SiteID, body DeploySiteCodeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeploySiteCodeRequest(c.Server, siteID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExportSite Export a site
+//
+// Queues a job that exports the whole site in the two files a site
+// import takes (design doc §5.7), so it can be imported again here or
+// moved to another host:
+//
+//   - `wp-content.tar.gz`: the site's `wp-content` (every path starts
+//     with `wp-content/`), without the platform's drop-ins
+//     (`object-cache.php`, `advanced-cache.php`, `db.php`), which point
+//     at its object cache and page cache and would break the site
+//     elsewhere, and without symbolic links and other special files,
+//     which import skips too. Owners are left out; permissions and
+//     modification times are kept.
+//   - `database.sql.gz`: the database, dumped as for a database export.
+//
+// WordPress core and `wp-config.php` aren't exported: the platform
+// generates both, and so does any other host. The site keeps serving
+// throughout, and stopped sites can be exported too; a file that
+// changes while it is read is exported as it was then, with a warning
+// on the job. The job runs after any other job working on the site.
+//
+// Before writing anything, the job estimates the export's size (the
+// database plus `wp-content`, uncompressed) and fails if the data
+// directory has less free space; the estimate is in its result as
+// `estimated_size_bytes`. When it has succeeded, its result also holds
+// `export_id`, `export_url` (`GET /api/v1/exports/{export_id}`),
+// `files` (each with `name`, `size_bytes`, and `download_url`),
+// `size_bytes`, and `expires_at`. Download the files with the same
+// session or API token before they expire, a day after they are ready
+// by default (`site_export.ttl_seconds`). Every export and every
+// download is recorded in the audit log.
+//
+// A site that is `provisioning` or `deleting`, or whose provisioning
+// failed, returns `409`.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/export (the `ExportSite` operationId).
+func (c *Client) ExportSite(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExportSiteRequest(c.Server, siteID)
 	if err != nil {
 		return nil, err
 	}
@@ -10990,6 +11536,144 @@ func NewUpdateClientGroupRequestWithBody(server string, clientGroupID ClientGrou
 	return req, nil
 }
 
+// NewListClientGroupBackupsRequest constructs an http.Request for the ListClientGroupBackups method
+func NewListClientGroupBackupsRequest(server string, clientGroupID ClientGroupID, params *ListClientGroupBackupsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "client_group_id", clientGroupID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/client-groups/%s/backups", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Status != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Deleted != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "deleted", *params.Deleted, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewExportClientGroupBackupRequest constructs an http.Request for the ExportClientGroupBackup method
+func NewExportClientGroupBackupRequest(server string, clientGroupID ClientGroupID, backupID BackupID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "client_group_id", clientGroupID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "backup_id", backupID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/client-groups/%s/backups/%s/export", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetClientGroupCorePolicyRequest constructs an http.Request for the GetClientGroupCorePolicy method
 func NewGetClientGroupCorePolicyRequest(server string, clientGroupID ClientGroupID) (*http.Request, error) {
 	var err error
@@ -11120,6 +11804,221 @@ func NewResumeCoreRolloutRequest(server string) (*http.Request, error) {
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListExportsRequest constructs an http.Request for the ListExports method
+func NewListExportsRequest(server string, params *ListExportsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/exports")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.SiteID != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "site_id", *params.SiteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.ClientGroupID != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "client_group_id", *params.ClientGroupID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Kind != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "kind", *params.Kind, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Status != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetExportRequest constructs an http.Request for the GetExport method
+func NewGetExportRequest(server string, exportID ExportID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "export_id", exportID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/exports/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDownloadExportFileRequest constructs an http.Request for the DownloadExportFile method
+func NewDownloadExportFileRequest(server string, exportID ExportID, fileName ExportFileName, params *DownloadExportFileParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "export_id", exportID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "file_name", fileName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/exports/%s/files/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.Range != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Range", *params.Range, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Range", headerParam0)
+		}
+
+		if params.IfRange != nil {
+			var headerParam1 string
+
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Range", *params.IfRange, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-Range", headerParam1)
+		}
+
 	}
 
 	return req, nil
@@ -12262,6 +13161,47 @@ func NewCreateSiteBackupRequest(server string, siteID SiteID) (*http.Request, er
 	return req, nil
 }
 
+// NewExportSiteBackupRequest constructs an http.Request for the ExportSiteBackup method
+func NewExportSiteBackupRequest(server string, siteID SiteID, backupID BackupID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "backup_id", backupID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/backups/%s/export", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewPurgeSiteCacheRequest constructs an http.Request for the PurgeSiteCache method
 func NewPurgeSiteCacheRequest(server string, siteID SiteID) (*http.Request, error) {
 	var err error
@@ -12651,6 +13591,40 @@ func NewDeploySiteCodeRequestWithBody(server string, siteID SiteID, contentType 
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewExportSiteRequest constructs an http.Request for the ExportSite method
+func NewExportSiteRequest(server string, siteID SiteID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/export", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -14700,6 +15674,34 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /api/v1/client-groups/{client_group_id} (the `UpdateClientGroup` operationId).
 	UpdateClientGroupWithResponse(ctx context.Context, clientGroupID ClientGroupID, body UpdateClientGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateClientGroupResponse, error)
 
+	// ListClientGroupBackupsWithResponse List a client group's backups
+	//
+	// The platform's record of every backup of the group's sites, newest
+	// first, like `GET /api/v1/sites/{site_id}/backups`. With
+	// `deleted=true`, only the backups of sites that have been deleted:
+	// their snapshots stay in the group's backup repository until the
+	// group is deleted, and can still be exported
+	// (`POST /api/v1/client-groups/{client_group_id}/backups/{backup_id}/export`).
+	// Each backup keeps the name and slug its site had when it was taken.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/client-groups/{client_group_id}/backups (the `ListClientGroupBackups` operationId).
+	ListClientGroupBackupsWithResponse(ctx context.Context, clientGroupID ClientGroupID, params *ListClientGroupBackupsParams, reqEditors ...RequestEditorFn) (*ListClientGroupBackupsResponse, error)
+
+	// ExportClientGroupBackupWithResponse Export a site from a client group's backup
+	//
+	// `POST /api/v1/sites/{site_id}/backups/{backup_id}/export` for any
+	// backup in the group, including those of sites that have been
+	// deleted, so a deleted site can still be recovered or handed over
+	// while its group's backup repository exists. A backup that isn't the
+	// group's returns `404`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/client-groups/{client_group_id}/backups/{backup_id}/export (the `ExportClientGroupBackup` operationId).
+	ExportClientGroupBackupWithResponse(ctx context.Context, clientGroupID ClientGroupID, backupID BackupID, reqEditors ...RequestEditorFn) (*ExportClientGroupBackupResponse, error)
+
 	// GetClientGroupCorePolicyWithResponse Get a client group's core update policy
 	//
 	// The policy the group's sites follow unless they have one of their own.
@@ -14751,6 +15753,49 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/core-rollout/resume (the `ResumeCoreRollout` operationId).
 	ResumeCoreRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ResumeCoreRolloutResponse, error)
+
+	// ListExportsWithResponse List exports
+	//
+	// Exports of a site (`site_id`) or of a client group's sites
+	// (`client_group_id`), newest first: database exports, site exports,
+	// and exports from backups, including those that failed or have
+	// expired. One of the two filters is required (`400` otherwise).
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/exports (the `ListExports` operationId).
+	ListExportsWithResponse(ctx context.Context, params *ListExportsParams, reqEditors ...RequestEditorFn) (*ListExportsResponse, error)
+
+	// GetExportWithResponse Get an export
+	//
+	// An export, its files once it is ready, and what they hold. An
+	// export whose expiry has passed is `expired`, and its files are
+	// gone.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/exports/{export_id} (the `GetExport` operationId).
+	GetExportWithResponse(ctx context.Context, exportID ExportID, reqEditors ...RequestEditorFn) (*GetExportResponse, error)
+
+	// DownloadExportFileWithResponse Download an export's file
+	//
+	// Returns one file of a ready export as `application/gzip`, named for
+	// the site in `Content-Disposition` (`<site slug>-wp-content.tar.gz`,
+	// `<site slug>-database.sql.gz`, or for a database export
+	// `<site slug>-<export ID>.sql.gz`). It supports `Range` requests
+	// (`Accept-Ranges: bytes`), so a large download that was interrupted
+	// can be resumed: send `Range: bytes=<bytes received>-`, with
+	// `If-Range` set to the `ETag` of the first response so a different
+	// file is never spliced in. It needs the same permission as starting
+	// an export (Operators and Admins; not `read-only` tokens), and each
+	// download, partial or not, is recorded in the audit log. An export
+	// that doesn't exist, isn't ready, has no such file, or has expired
+	// returns `404`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/exports/{export_id}/files/{file_name} (the `DownloadExportFile` operationId).
+	DownloadExportFileWithResponse(ctx context.Context, exportID ExportID, fileName ExportFileName, params *DownloadExportFileParams, reqEditors ...RequestEditorFn) (*DownloadExportFileResponse, error)
 
 	// GetImageRolloutWithResponse Get the platform image rollout
 	//
@@ -15323,6 +16368,28 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /api/v1/sites/{site_id}/backups (the `CreateSiteBackup` operationId).
 	CreateSiteBackupWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*CreateSiteBackupResponse, error)
 
+	// ExportSiteBackupWithResponse Export a site from a backup
+	//
+	// Queues a job that exports the site as it was in one of its backups,
+	// in the same two files as `POST /api/v1/sites/{site_id}/export`,
+	// ready for a site import. It recovers an earlier version of a site
+	// without restoring over the live one, and works whatever the site's
+	// state: it reads the snapshot from the client group's backup
+	// repository and never touches the site. The job takes no lock on the
+	// site; it waits for a repository prune or check that is running.
+	//
+	// The job's result is as for a live export, with `backup_id`; the
+	// export (`GET /api/v1/exports/{export_id}`) has `source.taken_at`,
+	// when the snapshot was taken, and the site's URL and table prefix as
+	// its database had them. A backup that isn't the site's returns `404`;
+	// one that is running or failed, or whose snapshot was removed by the
+	// retention policy (`expired_at`), returns `409`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/backups/{backup_id}/export (the `ExportSiteBackup` operationId).
+	ExportSiteBackupWithResponse(ctx context.Context, siteID SiteID, backupID BackupID, reqEditors ...RequestEditorFn) (*ExportSiteBackupResponse, error)
+
 	// PurgeSiteCacheWithResponse Purge a site's caches
 	//
 	// Queues a job that empties the site's object cache (its database on
@@ -15619,6 +16686,46 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/deploy (the `DeploySiteCode` operationId).
 	DeploySiteCodeWithResponse(ctx context.Context, siteID SiteID, body DeploySiteCodeJSONRequestBody, reqEditors ...RequestEditorFn) (*DeploySiteCodeResponse, error)
+
+	// ExportSiteWithResponse Export a site
+	//
+	// Queues a job that exports the whole site in the two files a site
+	// import takes (design doc §5.7), so it can be imported again here or
+	// moved to another host:
+	//
+	// * `wp-content.tar.gz`: the site's `wp-content` (every path starts
+	//   with `wp-content/`), without the platform's drop-ins
+	//   (`object-cache.php`, `advanced-cache.php`, `db.php`), which point
+	//   at its object cache and page cache and would break the site
+	//   elsewhere, and without symbolic links and other special files,
+	//   which import skips too. Owners are left out; permissions and
+	//   modification times are kept.
+	// * `database.sql.gz`: the database, dumped as for a database export.
+	//
+	// WordPress core and `wp-config.php` aren't exported: the platform
+	// generates both, and so does any other host. The site keeps serving
+	// throughout, and stopped sites can be exported too; a file that
+	// changes while it is read is exported as it was then, with a warning
+	// on the job. The job runs after any other job working on the site.
+	//
+	// Before writing anything, the job estimates the export's size (the
+	// database plus `wp-content`, uncompressed) and fails if the data
+	// directory has less free space; the estimate is in its result as
+	// `estimated_size_bytes`. When it has succeeded, its result also holds
+	// `export_id`, `export_url` (`GET /api/v1/exports/{export_id}`),
+	// `files` (each with `name`, `size_bytes`, and `download_url`),
+	// `size_bytes`, and `expires_at`. Download the files with the same
+	// session or API token before they expire, a day after they are ready
+	// by default (`site_export.ttl_seconds`). Every export and every
+	// download is recorded in the audit log.
+	//
+	// A site that is `provisioning` or `deleting`, or whose provisioning
+	// failed, returns `409`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/export (the `ExportSite` operationId).
+	ExportSiteWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*ExportSiteResponse, error)
 
 	// GoLiveSiteWithBodyWithResponse Switch a site to its primary domain
 	//
@@ -18756,6 +19863,165 @@ func (r UpdateClientGroupResponse) ContentType() string {
 	return ""
 }
 
+type ListClientGroupBackupsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *BackupList
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListClientGroupBackupsResponse) GetJSON200() *BackupList {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListClientGroupBackupsResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListClientGroupBackupsResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListClientGroupBackupsResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ListClientGroupBackupsResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListClientGroupBackupsResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListClientGroupBackupsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListClientGroupBackupsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListClientGroupBackupsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListClientGroupBackupsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ExportClientGroupBackupResponse202Headers the declared response headers of an HTTP 202 response for ExportClientGroupBackup
+type ExportClientGroupBackupResponse202Headers struct {
+	Location *string
+}
+
+type ExportClientGroupBackupResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *JobAccepted
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *ExportClientGroupBackupResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r ExportClientGroupBackupResponse) GetJSON202() *JobAccepted {
+	return r.JSON202
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ExportClientGroupBackupResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ExportClientGroupBackupResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ExportClientGroupBackupResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ExportClientGroupBackupResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ExportClientGroupBackupResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ExportClientGroupBackupResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExportClientGroupBackupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExportClientGroupBackupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExportClientGroupBackupResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetClientGroupCorePolicyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -19026,6 +20292,231 @@ func (r ResumeCoreRolloutResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ResumeCoreRolloutResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListExportsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ExportList
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListExportsResponse) GetJSON200() *ExportList {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListExportsResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListExportsResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListExportsResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListExportsResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListExportsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListExportsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListExportsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListExportsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetExportResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Export
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetExportResponse) GetJSON200() *Export {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetExportResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetExportResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetExportResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetExportResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetExportResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetExportResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetExportResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetExportResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DownloadExportFileResponse200Headers the declared response headers of an HTTP 200 response for DownloadExportFile
+type DownloadExportFileResponse200Headers struct {
+	AcceptRanges       *string
+	ContentDisposition *string
+	ETag               *string
+}
+
+// DownloadExportFileResponse206Headers the declared response headers of an HTTP 206 response for DownloadExportFile
+type DownloadExportFileResponse206Headers struct {
+	ContentDisposition *string
+	ContentRange       *string
+	ETag               *string
+}
+
+// DownloadExportFileResponse416Headers the declared response headers of an HTTP 416 response for DownloadExportFile
+type DownloadExportFileResponse416Headers struct {
+	ContentRange *string
+}
+
+type DownloadExportFileResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *DownloadExportFileResponse200Headers
+	// Headers206 the parsed response headers for an HTTP 206 response
+	Headers206 *DownloadExportFileResponse206Headers
+	// Headers416 the parsed response headers for an HTTP 416 response
+	Headers416 *DownloadExportFileResponse416Headers
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DownloadExportFileResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DownloadExportFileResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DownloadExportFileResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DownloadExportFileResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DownloadExportFileResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DownloadExportFileResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DownloadExportFileResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DownloadExportFileResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -20884,6 +22375,89 @@ func (r CreateSiteBackupResponse) ContentType() string {
 	return ""
 }
 
+// ExportSiteBackupResponse202Headers the declared response headers of an HTTP 202 response for ExportSiteBackup
+type ExportSiteBackupResponse202Headers struct {
+	Location *string
+}
+
+type ExportSiteBackupResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *JobAccepted
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *ExportSiteBackupResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r ExportSiteBackupResponse) GetJSON202() *JobAccepted {
+	return r.JSON202
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ExportSiteBackupResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ExportSiteBackupResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ExportSiteBackupResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ExportSiteBackupResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ExportSiteBackupResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ExportSiteBackupResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExportSiteBackupResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExportSiteBackupResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExportSiteBackupResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // PurgeSiteCacheResponse202Headers the declared response headers of an HTTP 202 response for PurgeSiteCache
 type PurgeSiteCacheResponse202Headers struct {
 	Location *string
@@ -21659,6 +23233,89 @@ func (r DeploySiteCodeResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r DeploySiteCodeResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ExportSiteResponse202Headers the declared response headers of an HTTP 202 response for ExportSite
+type ExportSiteResponse202Headers struct {
+	Location *string
+}
+
+type ExportSiteResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *JobAccepted
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *ExportSiteResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r ExportSiteResponse) GetJSON202() *JobAccepted {
+	return r.JSON202
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ExportSiteResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ExportSiteResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ExportSiteResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ExportSiteResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ExportSiteResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ExportSiteResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExportSiteResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExportSiteResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExportSiteResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -24675,6 +26332,46 @@ func (c *ClientWithResponses) UpdateClientGroupWithResponse(ctx context.Context,
 	return ParseUpdateClientGroupResponse(rsp)
 }
 
+// ListClientGroupBackupsWithResponse List a client group's backups
+//
+// The platform's record of every backup of the group's sites, newest
+// first, like `GET /api/v1/sites/{site_id}/backups`. With
+// `deleted=true`, only the backups of sites that have been deleted:
+// their snapshots stay in the group's backup repository until the
+// group is deleted, and can still be exported
+// (`POST /api/v1/client-groups/{client_group_id}/backups/{backup_id}/export`).
+// Each backup keeps the name and slug its site had when it was taken.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/client-groups/{client_group_id}/backups (the `ListClientGroupBackups` operationId).
+func (c *ClientWithResponses) ListClientGroupBackupsWithResponse(ctx context.Context, clientGroupID ClientGroupID, params *ListClientGroupBackupsParams, reqEditors ...RequestEditorFn) (*ListClientGroupBackupsResponse, error) {
+	rsp, err := c.ListClientGroupBackups(ctx, clientGroupID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListClientGroupBackupsResponse(rsp)
+}
+
+// ExportClientGroupBackupWithResponse Export a site from a client group's backup
+//
+// `POST /api/v1/sites/{site_id}/backups/{backup_id}/export` for any
+// backup in the group, including those of sites that have been
+// deleted, so a deleted site can still be recovered or handed over
+// while its group's backup repository exists. A backup that isn't the
+// group's returns `404`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/client-groups/{client_group_id}/backups/{backup_id}/export (the `ExportClientGroupBackup` operationId).
+func (c *ClientWithResponses) ExportClientGroupBackupWithResponse(ctx context.Context, clientGroupID ClientGroupID, backupID BackupID, reqEditors ...RequestEditorFn) (*ExportClientGroupBackupResponse, error) {
+	rsp, err := c.ExportClientGroupBackup(ctx, clientGroupID, backupID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExportClientGroupBackupResponse(rsp)
+}
+
 // GetClientGroupCorePolicyWithResponse Get a client group's core update policy
 //
 // The policy the group's sites follow unless they have one of their own.
@@ -24755,6 +26452,67 @@ func (c *ClientWithResponses) ResumeCoreRolloutWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseResumeCoreRolloutResponse(rsp)
+}
+
+// ListExportsWithResponse List exports
+//
+// Exports of a site (`site_id`) or of a client group's sites
+// (`client_group_id`), newest first: database exports, site exports,
+// and exports from backups, including those that failed or have
+// expired. One of the two filters is required (`400` otherwise).
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/exports (the `ListExports` operationId).
+func (c *ClientWithResponses) ListExportsWithResponse(ctx context.Context, params *ListExportsParams, reqEditors ...RequestEditorFn) (*ListExportsResponse, error) {
+	rsp, err := c.ListExports(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListExportsResponse(rsp)
+}
+
+// GetExportWithResponse Get an export
+//
+// An export, its files once it is ready, and what they hold. An
+// export whose expiry has passed is `expired`, and its files are
+// gone.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/exports/{export_id} (the `GetExport` operationId).
+func (c *ClientWithResponses) GetExportWithResponse(ctx context.Context, exportID ExportID, reqEditors ...RequestEditorFn) (*GetExportResponse, error) {
+	rsp, err := c.GetExport(ctx, exportID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetExportResponse(rsp)
+}
+
+// DownloadExportFileWithResponse Download an export's file
+//
+// Returns one file of a ready export as `application/gzip`, named for
+// the site in `Content-Disposition` (`<site slug>-wp-content.tar.gz`,
+// `<site slug>-database.sql.gz`, or for a database export
+// `<site slug>-<export ID>.sql.gz`). It supports `Range` requests
+// (`Accept-Ranges: bytes`), so a large download that was interrupted
+// can be resumed: send `Range: bytes=<bytes received>-`, with
+// `If-Range` set to the `ETag` of the first response so a different
+// file is never spliced in. It needs the same permission as starting
+// an export (Operators and Admins; not `read-only` tokens), and each
+// download, partial or not, is recorded in the audit log. An export
+// that doesn't exist, isn't ready, has no such file, or has expired
+// returns `404`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/exports/{export_id}/files/{file_name} (the `DownloadExportFile` operationId).
+func (c *ClientWithResponses) DownloadExportFileWithResponse(ctx context.Context, exportID ExportID, fileName ExportFileName, params *DownloadExportFileParams, reqEditors ...RequestEditorFn) (*DownloadExportFileResponse, error) {
+	rsp, err := c.DownloadExportFile(ctx, exportID, fileName, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDownloadExportFileResponse(rsp)
 }
 
 // GetImageRolloutWithResponse Get the platform image rollout
@@ -25508,6 +27266,34 @@ func (c *ClientWithResponses) CreateSiteBackupWithResponse(ctx context.Context, 
 	return ParseCreateSiteBackupResponse(rsp)
 }
 
+// ExportSiteBackupWithResponse Export a site from a backup
+//
+// Queues a job that exports the site as it was in one of its backups,
+// in the same two files as `POST /api/v1/sites/{site_id}/export`,
+// ready for a site import. It recovers an earlier version of a site
+// without restoring over the live one, and works whatever the site's
+// state: it reads the snapshot from the client group's backup
+// repository and never touches the site. The job takes no lock on the
+// site; it waits for a repository prune or check that is running.
+//
+// The job's result is as for a live export, with `backup_id`; the
+// export (`GET /api/v1/exports/{export_id}`) has `source.taken_at`,
+// when the snapshot was taken, and the site's URL and table prefix as
+// its database had them. A backup that isn't the site's returns `404`;
+// one that is running or failed, or whose snapshot was removed by the
+// retention policy (`expired_at`), returns `409`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/backups/{backup_id}/export (the `ExportSiteBackup` operationId).
+func (c *ClientWithResponses) ExportSiteBackupWithResponse(ctx context.Context, siteID SiteID, backupID BackupID, reqEditors ...RequestEditorFn) (*ExportSiteBackupResponse, error) {
+	rsp, err := c.ExportSiteBackup(ctx, siteID, backupID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExportSiteBackupResponse(rsp)
+}
+
 // PurgeSiteCacheWithResponse Purge a site's caches
 //
 // Queues a job that empties the site's object cache (its database on
@@ -25881,6 +27667,52 @@ func (c *ClientWithResponses) DeploySiteCodeWithResponse(ctx context.Context, si
 		return nil, err
 	}
 	return ParseDeploySiteCodeResponse(rsp)
+}
+
+// ExportSiteWithResponse Export a site
+//
+// Queues a job that exports the whole site in the two files a site
+// import takes (design doc §5.7), so it can be imported again here or
+// moved to another host:
+//
+//   - `wp-content.tar.gz`: the site's `wp-content` (every path starts
+//     with `wp-content/`), without the platform's drop-ins
+//     (`object-cache.php`, `advanced-cache.php`, `db.php`), which point
+//     at its object cache and page cache and would break the site
+//     elsewhere, and without symbolic links and other special files,
+//     which import skips too. Owners are left out; permissions and
+//     modification times are kept.
+//   - `database.sql.gz`: the database, dumped as for a database export.
+//
+// WordPress core and `wp-config.php` aren't exported: the platform
+// generates both, and so does any other host. The site keeps serving
+// throughout, and stopped sites can be exported too; a file that
+// changes while it is read is exported as it was then, with a warning
+// on the job. The job runs after any other job working on the site.
+//
+// Before writing anything, the job estimates the export's size (the
+// database plus `wp-content`, uncompressed) and fails if the data
+// directory has less free space; the estimate is in its result as
+// `estimated_size_bytes`. When it has succeeded, its result also holds
+// `export_id`, `export_url` (`GET /api/v1/exports/{export_id}`),
+// `files` (each with `name`, `size_bytes`, and `download_url`),
+// `size_bytes`, and `expires_at`. Download the files with the same
+// session or API token before they expire, a day after they are ready
+// by default (`site_export.ttl_seconds`). Every export and every
+// download is recorded in the audit log.
+//
+// A site that is `provisioning` or `deleting`, or whose provisioning
+// failed, returns `409`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/export (the `ExportSite` operationId).
+func (c *ClientWithResponses) ExportSiteWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*ExportSiteResponse, error) {
+	rsp, err := c.ExportSite(ctx, siteID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExportSiteResponse(rsp)
 }
 
 // GoLiveSiteWithBodyWithResponse Switch a site to its primary domain
@@ -28814,6 +30646,141 @@ func ParseUpdateClientGroupResponse(rsp *http.Response) (*UpdateClientGroupRespo
 	return response, nil
 }
 
+// ParseListClientGroupBackupsResponse parses an HTTP response from a ListClientGroupBackupsWithResponse call
+func ParseListClientGroupBackupsResponse(rsp *http.Response) (*ListClientGroupBackupsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListClientGroupBackupsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BackupList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExportClientGroupBackupResponse parses an HTTP response from a ExportClientGroupBackupWithResponse call
+func ParseExportClientGroupBackupResponse(rsp *http.Response) (*ExportClientGroupBackupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExportClientGroupBackupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest JobAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers ExportClientGroupBackupResponse202Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseGetClientGroupCorePolicyResponse parses an HTTP response from a GetClientGroupCorePolicyWithResponse call
 func ParseGetClientGroupCorePolicyResponse(rsp *http.Response) (*GetClientGroupCorePolicyResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -29025,6 +30992,225 @@ func ParseResumeCoreRolloutResponse(rsp *http.Response) (*ResumeCoreRolloutRespo
 		}
 		response.ApplicationProblemJSONDefault = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseListExportsResponse parses an HTTP response from a ListExportsWithResponse call
+func ParseListExportsResponse(rsp *http.Response) (*ListExportsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListExportsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ExportList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetExportResponse parses an HTTP response from a GetExportWithResponse call
+func ParseGetExportResponse(rsp *http.Response) (*GetExportResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetExportResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Export
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDownloadExportFileResponse parses an HTTP response from a DownloadExportFileWithResponse call
+func ParseDownloadExportFileResponse(rsp *http.Response) (*DownloadExportFileResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DownloadExportFileResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case rsp.StatusCode == 416:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers DownloadExportFileResponse200Headers
+		if values := rsp.Header.Values("Accept-Ranges"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Accept-Ranges", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.AcceptRanges = &value
+		}
+		if values := rsp.Header.Values("Content-Disposition"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Content-Disposition", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ContentDisposition = &value
+		}
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 206:
+		var headers DownloadExportFileResponse206Headers
+		if values := rsp.Header.Values("Content-Disposition"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Content-Disposition", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ContentDisposition = &value
+		}
+		if values := rsp.Header.Values("Content-Range"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Content-Range", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ContentRange = &value
+		}
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers206 = &headers
+	case rsp.StatusCode == 416:
+		var headers DownloadExportFileResponse416Headers
+		if values := rsp.Header.Values("Content-Range"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Content-Range", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ContentRange = &value
+		}
+		response.Headers416 = &headers
 	}
 
 	return response, nil
@@ -30588,6 +32774,80 @@ func ParseCreateSiteBackupResponse(rsp *http.Response) (*CreateSiteBackupRespons
 	return response, nil
 }
 
+// ParseExportSiteBackupResponse parses an HTTP response from a ExportSiteBackupWithResponse call
+func ParseExportSiteBackupResponse(rsp *http.Response) (*ExportSiteBackupResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExportSiteBackupResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest JobAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers ExportSiteBackupResponse202Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
 // ParsePurgeSiteCacheResponse parses an HTTP response from a PurgeSiteCacheWithResponse call
 func ParsePurgeSiteCacheResponse(rsp *http.Response) (*PurgeSiteCacheResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -31239,6 +33499,80 @@ func ParseDeploySiteCodeResponse(rsp *http.Response) (*DeploySiteCodeResponse, e
 	switch {
 	case rsp.StatusCode == 202:
 		var headers DeploySiteCodeResponse202Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseExportSiteResponse parses an HTTP response from a ExportSiteWithResponse call
+func ParseExportSiteResponse(rsp *http.Response) (*ExportSiteResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExportSiteResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest JobAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers ExportSiteResponse202Headers
 		if values := rsp.Header.Values("Location"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {

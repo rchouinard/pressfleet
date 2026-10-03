@@ -114,7 +114,7 @@ func (s *Service) record(ctx context.Context, r *jobs.Run, kindOf kindFunc) erro
 		}
 	}
 	rec := store.BackupRecord{
-		ID: backupID, SiteID: siteID, ClientGroupID: site.ClientGroupID, Kind: kind,
+		ID: backupID, SiteID: siteID, SiteName: site.Name, SiteSlug: site.Slug, ClientGroupID: site.ClientGroupID, Kind: kind,
 		WPCoreVersion: site.WPCoreVersion, JobID: r.Job().ID,
 	}
 	err = store.NewBackupRecords(s.db).Create(ctx, &rec)

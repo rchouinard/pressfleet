@@ -29,7 +29,9 @@ function when(iso: string): string {
       </thead>
       <tbody class="divide-y divide-default">
         <tr v-for="g in groups" :key="g.id">
-          <th scope="row" class="px-3 py-2 font-medium">{{ g.name }}</th>
+          <th scope="row" class="px-3 py-2 font-medium">
+            <NuxtLink :to="`/client-groups/${g.id}`" class="rounded text-primary underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-primary">{{ g.name }}</NuxtLink>
+          </th>
           <td class="whitespace-nowrap px-3 py-2">{{ siteCountLabel(g.site_count) }}</td>
           <td class="max-w-xs truncate px-3 py-2 text-muted" :title="g.notes">{{ g.notes || '-' }}</td>
           <td class="whitespace-nowrap px-3 py-2"><time :datetime="g.created_at">{{ when(g.created_at) }}</time></td>

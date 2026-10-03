@@ -83,6 +83,8 @@ const dataSkipped = "skipped"
 var (
 	// ErrSiteNotFound means the site doesn't exist.
 	ErrSiteNotFound = errors.New("site not found")
+	// ErrClientGroupNotFound means the client group doesn't exist.
+	ErrClientGroupNotFound = errors.New("client group not found")
 	// ErrNotBackupable means the site has nothing to back up right now: it
 	// is being provisioned or deleted, or its provisioning failed.
 	ErrNotBackupable = errors.New("the site can't be backed up")
@@ -204,5 +206,19 @@ func (s *Service) List(ctx context.Context, f store.BackupRecordFilter) (store.B
 	} else if err != nil {
 		return store.BackupRecordPage{}, err
 	}
+	return store.NewBackupRecords(s.db).List(ctx, f)
+}
+
+// ListGroup returns a page of the client group's backup records, newest
+// first; with f.DeletedSites, those of its sites that have been deleted,
+// whose snapshots stay in the group's repository until it is deleted. It
+// returns ErrClientGroupNotFound if the group doesn't exist.
+func (s *Service) ListGroup(ctx context.Context, f store.BackupRecordFilter) (store.BackupRecordPage, error) {
+	if _, err := store.NewClientGroups(s.db).Get(ctx, f.ClientGroupID); errors.Is(err, store.ErrNotFound) {
+		return store.BackupRecordPage{}, fmt.Errorf("client group %s: %w", f.ClientGroupID, ErrClientGroupNotFound)
+	} else if err != nil {
+		return store.BackupRecordPage{}, err
+	}
+	f.SiteID = ""
 	return store.NewBackupRecords(s.db).List(ctx, f)
 }

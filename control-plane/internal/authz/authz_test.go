@@ -45,6 +45,7 @@ var designTable = map[authz.Action]struct {
 	authz.UploadForImport:        {true, true, false, true},
 	authz.UploadForDeploy:        {true, true, false, true},
 	authz.ExportDatabase:         {true, true, false, true},
+	authz.ExportSite:             {true, true, false, true},
 	authz.DownloadDatabaseExport: {true, true, false, true},
 	authz.OpenDatabaseSession:    {true, true, false, true},
 	authz.EndDatabaseSession:     {true, true, false, true},
