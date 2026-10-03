@@ -818,8 +818,37 @@ paths:
       operationId: deleteClientGroup
       tags: [client-groups]
       summary: Delete a client group
-      description: A client group that still has sites or a backup repository can't be deleted (`409`); offboarding exports or deletes the repository first.
+      description: |
+        A client group that still has sites can't be deleted (`409`). Nor
+        can one that still has a backup repository, unless
+        `delete_backup_repository` is true: offboarding exports the backups
+        it should keep first (`POST
+        /api/v1/client-groups/{client_group_id}/backups/{backup_id}/export`,
+        or `pressfleet repository export` for the whole repository).
+
+        With `delete_backup_repository`, a group that has a repository is
+        deleted by a job, as `DELETE
+        /api/v1/client-groups/{client_group_id}/backup-repository` would,
+        except that the group is deleted too once the repository is gone
+        (`202`). This takes the `client_group.offboard` permission. A group
+        without a repository is deleted at once either way (`204`).
+      parameters:
+        - name: delete_backup_repository
+          in: query
+          description: Also permanently delete the group's backup repository, every backup in it, and its password.
+          schema:
+            type: boolean
+            default: false
       responses:
+        "202":
+          description: The group has a backup repository; a job deleting it and then the group was queued.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
         "204":
           description: Client group deleted.
         "401":
@@ -2806,6 +2835,46 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/client-groups/{client_group_id}/backup-repository:
+    parameters:
+      - $ref: "#/components/parameters/ClientGroupID"
+    delete:
+      operationId: deleteClientGroupBackupRepository
+      tags: [backups]
+      summary: Delete a client group's backup repository
+      description: |
+        Queues a job that permanently deletes the group's backup repository
+        (its files or S3 objects), the records of the backups it held, its
+        password, and its maintenance schedules, so the group can then be
+        deleted. This is how a client is offboarded from the dashboard; it
+        takes the `client_group.offboard` permission. Export the backups
+        the client should keep first.
+
+        It is refused (`409`) while the group still has sites, has no
+        backup repository, or has an export from its backups queued or
+        running. The job waits for any prune or check of the repository to
+        finish.
+      responses:
+        "202":
+          description: Deletion job queued.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
         default:
           $ref: "#/components/responses/Error"
 

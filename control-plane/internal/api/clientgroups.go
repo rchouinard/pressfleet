@@ -10,6 +10,7 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/offboard"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/id"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
@@ -124,20 +125,33 @@ func (h *Handlers) UpdateClientGroup(ctx context.Context, req gen.UpdateClientGr
 	return gen.UpdateClientGroup200JSONResponse(clientGroup(g)), nil
 }
 
-// DeleteClientGroup deletes a client group that has no sites.
+// DeleteClientGroup deletes a client group that has no sites. A group that
+// still has a backup repository is refused unless delete_backup_repository
+// is set: then a job deletes the repository and the group (package
+// backup/offboard), and the caller gets 202 with it.
 //
 // The site check runs in the transaction that deletes the group, and the
 // sites table's foreign key backs it up: a site created concurrently either
 // commits first, and the delete fails with a conflict, or finds its group
 // gone and fails itself.
 func (h *Handlers) DeleteClientGroup(ctx context.Context, req gen.DeleteClientGroupRequestObject) (gen.DeleteClientGroupResponseObject, error) {
-	if _, err := h.authorize(ctx, authz.DeleteClientGroup, authz.ClientGroup(req.ClientGroupID)); err != nil {
+	withRepository := req.Params.DeleteBackupRepository != nil && *req.Params.DeleteBackupRepository
+	action := authz.DeleteClientGroup
+	if withRepository {
+		// Deleting the backups too is offboarding (design doc §4.6).
+		action = authz.OffboardClientGroup
+	}
+	p, err := h.authorize(ctx, action, authz.ClientGroup(req.ClientGroupID))
+	if err != nil {
 		return nil, err
 	}
 	if h.db == nil {
 		return nil, errNoDatabase
 	}
-	err := h.db.InTx(ctx, func(q store.Querier) error {
+	if withRepository {
+		setAuditDetails(ctx, map[string]string{"delete_backup_repository": "true"})
+	}
+	err = h.db.InTx(ctx, func(q store.Querier) error {
 		groups := store.NewClientGroups(q)
 		g, err := groups.Get(ctx, req.ClientGroupID)
 		if err != nil {
@@ -147,10 +161,24 @@ func (h *Handlers) DeleteClientGroup(ctx context.Context, req gen.DeleteClientGr
 			return errGroupHasSites(g.SiteCount)
 		}
 		if g.BackupRepository != "" {
-			return errGroupHasRepository
+			if withRepository {
+				return errRepositoryToDelete
+			}
+			return errGroupHasRepository(g.ID)
 		}
 		return groups.Delete(ctx, g.ID)
 	})
+	if errors.Is(err, errRepositoryToDelete) {
+		job, err := h.queueRepositoryDeletion(ctx, req.ClientGroupID, true, p.UserID)
+		if err != nil {
+			return nil, err
+		}
+		body, location, err := jobAccepted(job)
+		if err != nil {
+			return nil, err
+		}
+		return gen.DeleteClientGroup202JSONResponse{Body: body, Headers: gen.DeleteClientGroup202ResponseHeaders{Location: &location}}, nil
+	}
 	if errors.Is(err, store.ErrReference) {
 		// A site or the backup repository was created concurrently.
 		err = fmt.Errorf("%w: the client group still has sites or a backup repository", ErrConflict)
@@ -161,14 +189,69 @@ func (h *Handlers) DeleteClientGroup(ctx context.Context, req gen.DeleteClientGr
 	return gen.DeleteClientGroup204Response{}, nil
 }
 
+// DeleteClientGroupBackupRepository queues a job that deletes the group's
+// backup repository, so the group can be offboarded from the dashboard
+// (#139).
+func (h *Handlers) DeleteClientGroupBackupRepository(ctx context.Context, req gen.DeleteClientGroupBackupRepositoryRequestObject) (gen.DeleteClientGroupBackupRepositoryResponseObject, error) {
+	p, err := h.authorize(ctx, authz.OffboardClientGroup, authz.ClientGroup(req.ClientGroupID))
+	if err != nil {
+		return nil, err
+	}
+	job, err := h.queueRepositoryDeletion(ctx, req.ClientGroupID, false, p.UserID)
+	if err != nil {
+		return nil, err
+	}
+	body, location, err := jobAccepted(job)
+	if err != nil {
+		return nil, err
+	}
+	return gen.DeleteClientGroupBackupRepository202JSONResponse{
+		Body: body, Headers: gen.DeleteClientGroupBackupRepository202ResponseHeaders{Location: &location},
+	}, nil
+}
+
+// errNoOffboarding is a wiring bug: serve always passes the service.
+var errNoOffboarding = errors.New("api: no offboarding service configured")
+
+// errRepositoryToDelete makes DeleteClientGroup's transaction hand the
+// group over to the repository deletion job.
+var errRepositoryToDelete = errors.New("client group has a backup repository to delete")
+
+// queueRepositoryDeletion queues the deletion of the group's repository,
+// and of the group with deleteGroup, recording the job in the audit event.
+func (h *Handlers) queueRepositoryDeletion(ctx context.Context, groupID string, deleteGroup bool, userID string) (store.Job, error) {
+	if h.offboarding == nil {
+		return store.Job{}, errNoOffboarding
+	}
+	job, err := h.offboarding.Enqueue(ctx, groupID, deleteGroup, userID)
+	switch {
+	case errors.Is(err, offboard.ErrClientGroupNotFound):
+		return store.Job{}, fmt.Errorf("client group: %w", ErrNotFound)
+	case errors.Is(err, offboard.ErrGroupHasSites), errors.Is(err, offboard.ErrExportRunning),
+		errors.Is(err, offboard.ErrNoRepository):
+		// The wrapping says how many sites, or which export job.
+		return store.Job{}, fmt.Errorf("%w: %w", ErrConflict, err)
+	case err != nil:
+		return store.Job{}, err
+	}
+	setAuditDetails(ctx, map[string]string{"job_id": job.ID})
+	return job, nil
+}
+
 func errGroupHasSites(n int) error {
 	return fmt.Errorf("%w: the client group still has %d site(s); delete them first", ErrConflict, n)
 }
 
 // errGroupHasRepository refuses to delete a group whose backups still
-// exist: offboarding exports or deletes them deliberately first.
-var errGroupHasRepository = fmt.Errorf("%w: the client group still has a backup repository; export or delete it first "+
-	"(pressfleet repository export / delete in the control plane container)", ErrConflict)
+// exist: offboarding exports or deletes them deliberately first. The
+// message names the group's ID, which the commands need.
+func errGroupHasRepository(groupID string) error {
+	return fmt.Errorf("%w: the client group still has a backup repository. Delete it from the client group's page "+
+		"(export the backups to keep first), or delete the group with delete_backup_repository=true. "+
+		"From the platform directory, export it with `docker compose exec control-plane pressfleet repository export %s /var/lib/pressfleet/tmp/%s` "+
+		"and delete it with `docker compose exec control-plane pressfleet repository delete %s --yes`",
+		ErrConflict, groupID, groupID, groupID)
+}
 
 // clientGroupError maps store errors to API errors.
 func clientGroupError(err error, name string) error {

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import ClientGroupTable from '../app/components/client-group/ClientGroupTable.vue'
 import type { ClientGroup } from '../app/utils/client-group'
@@ -32,8 +32,19 @@ describe('ClientGroupTable', () => {
 
   it('shows no actions column for a viewer', () => {
     const w = render(false, false)
-    expect(w.findAll('button')).toHaveLength(0)
+    expect(w.findAll('button[aria-label^="Edit"], button[aria-label^="Delete"]')).toHaveLength(0)
     expect(w.text()).not.toContain('Actions')
+  })
+
+  it('shows each group ID with a copy button, for the repository commands', async () => {
+    const writeText = vi.fn(() => Promise.resolve())
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    const w = render(false, false)
+    expect(w.findAll('[data-testid=group-id]').map(c => c.text())).toEqual(['g1', 'g2'])
+    await w.find('[aria-label="Copy ID of Globex"]').trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenCalledWith('g2')
+    expect(w.text()).toContain('Copied.')
   })
 
   it('shows edit but not delete for an operator', () => {

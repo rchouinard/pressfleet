@@ -45,3 +45,26 @@ export function updatePayload(original: Pick<ClientGroup, 'name' | 'notes'>, v: 
 export function siteCountLabel(n: number): string {
   return n === 1 ? '1 site' : `${n} sites`
 }
+
+/**
+ * The commands that export and delete a group's backup repository from the
+ * platform directory (docs/configuration.md, "Backup repositories"). The
+ * export goes under the default data directory, which the control plane
+ * container shares with the host.
+ */
+export function repositoryCommands(groupId: string): { export: string, delete: string } {
+  return {
+    export: `docker compose exec control-plane pressfleet repository export ${groupId} /var/lib/pressfleet/tmp/${groupId}`,
+    delete: `docker compose exec control-plane pressfleet repository delete ${groupId} --yes`,
+  }
+}
+
+/** Whether the typed confirmation matches the group's name. */
+export function nameConfirmed(typed: string, name: string): boolean {
+  return name.trim() !== '' && typed.trim() === name.trim()
+}
+
+/** The query for deleting a group, with its backup repository or not. */
+export function deleteQuery(withRepository: boolean): { delete_backup_repository?: boolean } {
+  return withRepository ? { delete_backup_repository: true } : {}
+}

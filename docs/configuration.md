@@ -634,7 +634,16 @@ Where repositories are created is chosen at install time with `backup.backend`:
 - `local`: `<data_dir>/backups/repositories/<client group ID>`. The directory belongs to group 60000 with mode `2770`, and restic keeps new files group-readable, because backup tasks run as each site's own UID with that group added. Local repositories live on the same disk as the sites, so they don't protect against losing the host; copy them elsewhere, or use `s3`.
 - `s3`: `s3:<endpoint>/<bucket>/<prefix>/<client group ID>` on Amazon S3, MinIO, or another S3-compatible service, elsewhere or on the same host (see [Self-hosted S3](#self-hosted-s3)).
 
-A group's repository is created the first time the group needs one, i.e. on its first backup, or ahead of time with `pressfleet repository create`. A client group can't be deleted while its repository exists (`409`), so backups are never lost by accident. To offboard a client, delete its sites, then, inside the control plane container:
+A group's repository is created the first time the group needs one, i.e. on its first backup, or ahead of time with `pressfleet repository create`. A client group can't be deleted while its repository exists (`409`, whose detail gives the group's ID and the commands below), so backups are never lost by accident.
+
+To offboard a client from the dashboard, delete its sites, then, on the client group's page (which shows the group's ID with a copy button):
+
+1. Export the backups the client should keep from "Backups of deleted sites". Each export is a site in the two files a site import takes (see [Site exports](#site-exports)).
+2. Delete the backup repository, typing the group's name to confirm. Or delete the group itself and tick "Also permanently delete the backup repository", which deletes both.
+
+Both take the `client_group.offboard` permission (Admins) and are recorded in the audit log, with the job's ID. The API calls are `DELETE /api/v1/client-groups/{id}/backup-repository` and `DELETE /api/v1/client-groups/{id}?delete_backup_repository=true`; each returns `202` with a job of type `backup.repository_delete`, which deletes what `pressfleet repository delete` does, and then the group if asked. The job waits for a running prune or check of the repository. Deleting is refused while the group has sites, or while an export from its backups is queued or running; a job that finds a site added since it was queued fails before deleting anything.
+
+To hand over the whole repository instead, or without the dashboard, delete the group's sites, then, inside the control plane container:
 
 ```sh
 docker compose exec control-plane pressfleet repository export <client-group-id> /var/lib/pressfleet/tmp/acme

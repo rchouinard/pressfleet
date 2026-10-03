@@ -80,6 +80,7 @@ const jobTypeLabels: Record<string, string> = {
   'site.database_export': 'Export database',
   'site.export': 'Export site',
   'backup.export': 'Export site from backup',
+  'backup.repository_delete': 'Delete backup repository',
 }
 
 /** A readable job type. Unknown types are opaque (spec): shown as sent. */

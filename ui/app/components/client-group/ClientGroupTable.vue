@@ -4,6 +4,7 @@
 // keeps this component free of the Nuxt runtime and unit-testable. The table
 // scrolls sideways inside its own region on narrow screens.
 import { siteCountLabel, type ClientGroup } from '../../utils/client-group'
+import CopyButton from '../CopyButton.vue'
 
 defineProps<{ groups: readonly ClientGroup[], canUpdate: boolean, canDelete: boolean }>()
 defineEmits<{ edit: [group: ClientGroup], delete: [group: ClientGroup] }>()
@@ -16,11 +17,12 @@ function when(iso: string): string {
 
 <template>
   <div class="overflow-x-auto rounded-md border border-default" tabindex="0" role="region" aria-label="Client groups">
-    <table class="w-full min-w-[34rem] text-left text-sm">
+    <table class="w-full min-w-[48rem] text-left text-sm">
       <caption class="sr-only">Client groups</caption>
       <thead class="bg-elevated text-xs uppercase tracking-wide text-muted">
         <tr>
           <th scope="col" class="px-3 py-2 font-medium">Name</th>
+          <th scope="col" class="px-3 py-2 font-medium">ID</th>
           <th scope="col" class="px-3 py-2 font-medium">Sites</th>
           <th scope="col" class="px-3 py-2 font-medium">Notes</th>
           <th scope="col" class="px-3 py-2 font-medium">Created</th>
@@ -32,6 +34,10 @@ function when(iso: string): string {
           <th scope="row" class="px-3 py-2 font-medium">
             <NuxtLink :to="`/client-groups/${g.id}`" class="rounded text-primary underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-primary">{{ g.name }}</NuxtLink>
           </th>
+          <td class="whitespace-nowrap px-3 py-2">
+            <span class="font-mono text-xs text-muted" data-testid="group-id">{{ g.id }}</span>
+            <CopyButton :value="g.id" :label="`ID of ${g.name}`" />
+          </td>
           <td class="whitespace-nowrap px-3 py-2">{{ siteCountLabel(g.site_count) }}</td>
           <td class="max-w-xs truncate px-3 py-2 text-muted" :title="g.notes">{{ g.notes || '-' }}</td>
           <td class="whitespace-nowrap px-3 py-2"><time :datetime="g.created_at">{{ when(g.created_at) }}</time></td>

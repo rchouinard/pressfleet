@@ -362,7 +362,19 @@ export interface paths {
         post?: never;
         /**
          * Delete a client group
-         * @description A client group that still has sites or a backup repository can't be deleted (`409`); offboarding exports or deletes the repository first.
+         * @description A client group that still has sites can't be deleted (`409`). Nor
+         *     can one that still has a backup repository, unless
+         *     `delete_backup_repository` is true: offboarding exports the backups
+         *     it should keep first (`POST
+         *     /api/v1/client-groups/{client_group_id}/backups/{backup_id}/export`,
+         *     or `pressfleet repository export` for the whole repository).
+         *
+         *     With `delete_backup_repository`, a group that has a repository is
+         *     deleted by a job, as `DELETE
+         *     /api/v1/client-groups/{client_group_id}/backup-repository` would,
+         *     except that the group is deleted too once the repository is gone
+         *     (`202`). This takes the `client_group.offboard` permission. A group
+         *     without a repository is deleted at once either way (`204`).
          */
         delete: operations["deleteClientGroup"];
         options?: never;
@@ -1693,6 +1705,38 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/client-groups/{client_group_id}/backup-repository": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_group_id: components["parameters"]["ClientGroupID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a client group's backup repository
+         * @description Queues a job that permanently deletes the group's backup repository
+         *     (its files or S3 objects), the records of the backups it held, its
+         *     password, and its maintenance schedules, so the group can then be
+         *     deleted. This is how a client is offboarded from the dashboard; it
+         *     takes the `client_group.offboard` permission. Export the backups
+         *     the client should keep first.
+         *
+         *     It is refused (`409`) while the group still has sites, has no
+         *     backup repository, or has an export from its backups queued or
+         *     running. The job waits for any prune or check of the repository to
+         *     finish.
+         */
+        delete: operations["deleteClientGroupBackupRepository"];
         options?: never;
         head?: never;
         patch?: never;
@@ -5190,7 +5234,10 @@ export interface operations {
     };
     deleteClientGroup: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Also permanently delete the group's backup repository, every backup in it, and its password. */
+                delete_backup_repository?: boolean;
+            };
             header?: never;
             path: {
                 client_group_id: components["parameters"]["ClientGroupID"];
@@ -5199,6 +5246,16 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description The group has a backup repository; a job deleting it and then the group was queued. */
+            202: {
+                headers: {
+                    Location: components["headers"]["JobLocation"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobAccepted"];
+                };
+            };
             /** @description Client group deleted. */
             204: {
                 headers: {
@@ -6596,6 +6653,34 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteClientGroupBackupRepository: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                client_group_id: components["parameters"]["ClientGroupID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deletion job queued. */
+            202: {
+                headers: {
+                    Location: components["headers"]["JobLocation"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobAccepted"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             default: components["responses"]["Error"];
         };
     };

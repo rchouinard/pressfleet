@@ -23,6 +23,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/audit"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/offboard"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repomaint"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/restic"
@@ -319,6 +320,12 @@ func (a *app) serveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			offboarding, err := offboard.New(offboard.Options{
+				DB: db, Repositories: repos, Logger: a.log.With("component", "backup"),
+			})
+			if err != nil {
+				return err
+			}
 			exports, err := export.New(export.Options{
 				DB: db, Databases: siteDBs, DatabaseSizes: siteDBs, Tasks: prov, Snapshots: engine,
 				Dir: layout.ExportsDir(), TTL: a.cfg.DatabaseExport.TTL(), SiteTTL: a.cfg.SiteExport.TTL(),
@@ -401,6 +408,7 @@ func (a *app) serveCommand() *cobra.Command {
 				Backups:          backups,
 				Uploads:          uploadSvc,
 				Exports:          exports,
+				Offboarding:      offboarding,
 				DatabaseSessions: dbSessions,
 				Deployments:      deploys,
 				Logs:             prov,
@@ -445,7 +453,7 @@ func (a *app) serveCommand() *cobra.Command {
 			if err := pool.Register(audit.CleanupHandler(db, a.cfg.Audit.Retention(), nil)); err != nil {
 				return err
 			}
-			for _, h := range slices.Concat(siteSvc.Handlers(), []jobs.Handler{backups.Handler(), uploadSvc.CleanupHandler()}, repoMaint.Handlers(), exports.Handlers(), []jobs.Handler{deploys.Handler()}, dbSessions.Handlers()) {
+			for _, h := range slices.Concat(siteSvc.Handlers(), []jobs.Handler{backups.Handler(), uploadSvc.CleanupHandler(), offboarding.Handler()}, repoMaint.Handlers(), exports.Handlers(), []jobs.Handler{deploys.Handler()}, dbSessions.Handlers()) {
 				if err := pool.Register(h); err != nil {
 					return err
 				}

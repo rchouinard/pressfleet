@@ -3997,6 +3997,12 @@ type ListClientGroupsParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// DeleteClientGroupParams defines parameters for DeleteClientGroup.
+type DeleteClientGroupParams struct {
+	// DeleteBackupRepository Also permanently delete the group's backup repository, every backup in it, and its password.
+	DeleteBackupRepository *bool `form:"delete_backup_repository,omitempty" json:"delete_backup_repository,omitempty"`
+}
+
 // ListClientGroupBackupsParams defines parameters for ListClientGroupBackups.
 type ListClientGroupBackupsParams struct {
 	// Limit Maximum number of items to return.
@@ -4803,10 +4809,22 @@ type ClientInterface interface {
 
 	// DeleteClientGroup Delete a client group
 	//
-	// A client group that still has sites or a backup repository can't be deleted (`409`); offboarding exports or deletes the repository first.
+	// A client group that still has sites can't be deleted (`409`). Nor
+	// can one that still has a backup repository, unless
+	// `delete_backup_repository` is true: offboarding exports the backups
+	// it should keep first (`POST
+	// /api/v1/client-groups/{client_group_id}/backups/{backup_id}/export`,
+	// or `pressfleet repository export` for the whole repository).
+	//
+	// With `delete_backup_repository`, a group that has a repository is
+	// deleted by a job, as `DELETE
+	// /api/v1/client-groups/{client_group_id}/backup-repository` would,
+	// except that the group is deleted too once the repository is gone
+	// (`202`). This takes the `client_group.offboard` permission. A group
+	// without a repository is deleted at once either way (`204`).
 	//
 	// Corresponds with DELETE /api/v1/client-groups/{client_group_id} (the `DeleteClientGroup` operationId).
-	DeleteClientGroup(ctx context.Context, clientGroupID ClientGroupID, reqEditors ...RequestEditorFn) (*http.Response, error)
+	DeleteClientGroup(ctx context.Context, clientGroupID ClientGroupID, params *DeleteClientGroupParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetClientGroup Get a client group
 	//
@@ -4826,6 +4844,23 @@ type ClientInterface interface {
 	//
 	// Corresponds with PATCH /api/v1/client-groups/{client_group_id} (the `UpdateClientGroup` operationId).
 	UpdateClientGroup(ctx context.Context, clientGroupID ClientGroupID, body UpdateClientGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteClientGroupBackupRepository Delete a client group's backup repository
+	//
+	// Queues a job that permanently deletes the group's backup repository
+	// (its files or S3 objects), the records of the backups it held, its
+	// password, and its maintenance schedules, so the group can then be
+	// deleted. This is how a client is offboarded from the dashboard; it
+	// takes the `client_group.offboard` permission. Export the backups
+	// the client should keep first.
+	//
+	// It is refused (`409`) while the group still has sites, has no
+	// backup repository, or has an export from its backups queued or
+	// running. The job waits for any prune or check of the repository to
+	// finish.
+	//
+	// Corresponds with DELETE /api/v1/client-groups/{client_group_id}/backup-repository (the `DeleteClientGroupBackupRepository` operationId).
+	DeleteClientGroupBackupRepository(ctx context.Context, clientGroupID ClientGroupID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListClientGroupBackups List a client group's backups
 	//
@@ -7266,11 +7301,23 @@ func (c *Client) CreateClientGroup(ctx context.Context, body CreateClientGroupJS
 
 // DeleteClientGroup Delete a client group
 //
-// A client group that still has sites or a backup repository can't be deleted (`409`); offboarding exports or deletes the repository first.
+// A client group that still has sites can't be deleted (`409`). Nor
+// can one that still has a backup repository, unless
+// `delete_backup_repository` is true: offboarding exports the backups
+// it should keep first (`POST
+// /api/v1/client-groups/{client_group_id}/backups/{backup_id}/export`,
+// or `pressfleet repository export` for the whole repository).
+//
+// With `delete_backup_repository`, a group that has a repository is
+// deleted by a job, as `DELETE
+// /api/v1/client-groups/{client_group_id}/backup-repository` would,
+// except that the group is deleted too once the repository is gone
+// (`202`). This takes the `client_group.offboard` permission. A group
+// without a repository is deleted at once either way (`204`).
 //
 // Corresponds with DELETE /api/v1/client-groups/{client_group_id} (the `DeleteClientGroup` operationId).
-func (c *Client) DeleteClientGroup(ctx context.Context, clientGroupID ClientGroupID, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteClientGroupRequest(c.Server, clientGroupID)
+func (c *Client) DeleteClientGroup(ctx context.Context, clientGroupID ClientGroupID, params *DeleteClientGroupParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteClientGroupRequest(c.Server, clientGroupID, params)
 	if err != nil {
 		return nil, err
 	}
@@ -7320,6 +7367,33 @@ func (c *Client) UpdateClientGroupWithBody(ctx context.Context, clientGroupID Cl
 // Corresponds with PATCH /api/v1/client-groups/{client_group_id} (the `UpdateClientGroup` operationId).
 func (c *Client) UpdateClientGroup(ctx context.Context, clientGroupID ClientGroupID, body UpdateClientGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateClientGroupRequest(c.Server, clientGroupID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteClientGroupBackupRepository Delete a client group's backup repository
+//
+// Queues a job that permanently deletes the group's backup repository
+// (its files or S3 objects), the records of the backups it held, its
+// password, and its maintenance schedules, so the group can then be
+// deleted. This is how a client is offboarded from the dashboard; it
+// takes the `client_group.offboard` permission. Export the backups
+// the client should keep first.
+//
+// It is refused (`409`) while the group still has sites, has no
+// backup repository, or has an export from its backups queued or
+// running. The job waits for any prune or check of the repository to
+// finish.
+//
+// Corresponds with DELETE /api/v1/client-groups/{client_group_id}/backup-repository (the `DeleteClientGroupBackupRepository` operationId).
+func (c *Client) DeleteClientGroupBackupRepository(ctx context.Context, clientGroupID ClientGroupID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteClientGroupBackupRepositoryRequest(c.Server, clientGroupID)
 	if err != nil {
 		return nil, err
 	}
@@ -11454,7 +11528,7 @@ func NewCreateClientGroupRequestWithBody(server string, contentType string, body
 }
 
 // NewDeleteClientGroupRequest constructs an http.Request for the DeleteClientGroup method
-func NewDeleteClientGroupRequest(server string, clientGroupID ClientGroupID) (*http.Request, error) {
+func NewDeleteClientGroupRequest(server string, clientGroupID ClientGroupID, params *DeleteClientGroupParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -11477,6 +11551,33 @@ func NewDeleteClientGroupRequest(server string, clientGroupID ClientGroupID) (*h
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.DeleteBackupRepository != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "delete_backup_repository", *params.DeleteBackupRepository, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
@@ -11564,6 +11665,40 @@ func NewUpdateClientGroupRequestWithBody(server string, clientGroupID ClientGrou
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteClientGroupBackupRepositoryRequest constructs an http.Request for the DeleteClientGroupBackupRepository method
+func NewDeleteClientGroupBackupRepositoryRequest(server string, clientGroupID ClientGroupID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "client_group_id", clientGroupID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/client-groups/%s/backup-repository", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -15705,12 +15840,24 @@ type ClientWithResponsesInterface interface {
 
 	// DeleteClientGroupWithResponse Delete a client group
 	//
-	// A client group that still has sites or a backup repository can't be deleted (`409`); offboarding exports or deletes the repository first.
+	// A client group that still has sites can't be deleted (`409`). Nor
+	// can one that still has a backup repository, unless
+	// `delete_backup_repository` is true: offboarding exports the backups
+	// it should keep first (`POST
+	// /api/v1/client-groups/{client_group_id}/backups/{backup_id}/export`,
+	// or `pressfleet repository export` for the whole repository).
+	//
+	// With `delete_backup_repository`, a group that has a repository is
+	// deleted by a job, as `DELETE
+	// /api/v1/client-groups/{client_group_id}/backup-repository` would,
+	// except that the group is deleted too once the repository is gone
+	// (`202`). This takes the `client_group.offboard` permission. A group
+	// without a repository is deleted at once either way (`204`).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /api/v1/client-groups/{client_group_id} (the `DeleteClientGroup` operationId).
-	DeleteClientGroupWithResponse(ctx context.Context, clientGroupID ClientGroupID, reqEditors ...RequestEditorFn) (*DeleteClientGroupResponse, error)
+	DeleteClientGroupWithResponse(ctx context.Context, clientGroupID ClientGroupID, params *DeleteClientGroupParams, reqEditors ...RequestEditorFn) (*DeleteClientGroupResponse, error)
 
 	// GetClientGroupWithResponse Get a client group
 	//
@@ -15732,6 +15879,25 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PATCH /api/v1/client-groups/{client_group_id} (the `UpdateClientGroup` operationId).
 	UpdateClientGroupWithResponse(ctx context.Context, clientGroupID ClientGroupID, body UpdateClientGroupJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateClientGroupResponse, error)
+
+	// DeleteClientGroupBackupRepositoryWithResponse Delete a client group's backup repository
+	//
+	// Queues a job that permanently deletes the group's backup repository
+	// (its files or S3 objects), the records of the backups it held, its
+	// password, and its maintenance schedules, so the group can then be
+	// deleted. This is how a client is offboarded from the dashboard; it
+	// takes the `client_group.offboard` permission. Export the backups
+	// the client should keep first.
+	//
+	// It is refused (`409`) while the group still has sites, has no
+	// backup repository, or has an export from its backups queued or
+	// running. The job waits for any prune or check of the repository to
+	// finish.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v1/client-groups/{client_group_id}/backup-repository (the `DeleteClientGroupBackupRepository` operationId).
+	DeleteClientGroupBackupRepositoryWithResponse(ctx context.Context, clientGroupID ClientGroupID, reqEditors ...RequestEditorFn) (*DeleteClientGroupBackupRepositoryResponse, error)
 
 	// ListClientGroupBackupsWithResponse List a client group's backups
 	//
@@ -19707,9 +19873,16 @@ func (r CreateClientGroupResponse) ContentType() string {
 	return ""
 }
 
+// DeleteClientGroupResponse202Headers the declared response headers of an HTTP 202 response for DeleteClientGroup
+type DeleteClientGroupResponse202Headers struct {
+	Location *string
+}
+
 type DeleteClientGroupResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *JobAccepted
 	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationProblemJSON401 *Unauthorized
 	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
@@ -19720,6 +19893,13 @@ type DeleteClientGroupResponse struct {
 	ApplicationProblemJSON409 *Conflict
 	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *DeleteClientGroupResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r DeleteClientGroupResponse) GetJSON202() *JobAccepted {
+	return r.JSON202
 }
 
 // GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
@@ -19929,6 +20109,89 @@ func (r UpdateClientGroupResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r UpdateClientGroupResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DeleteClientGroupBackupRepositoryResponse202Headers the declared response headers of an HTTP 202 response for DeleteClientGroupBackupRepository
+type DeleteClientGroupBackupRepositoryResponse202Headers struct {
+	Location *string
+}
+
+type DeleteClientGroupBackupRepositoryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *JobAccepted
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *DeleteClientGroupBackupRepositoryResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r DeleteClientGroupBackupRepositoryResponse) GetJSON202() *JobAccepted {
+	return r.JSON202
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DeleteClientGroupBackupRepositoryResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DeleteClientGroupBackupRepositoryResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DeleteClientGroupBackupRepositoryResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r DeleteClientGroupBackupRepositoryResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r DeleteClientGroupBackupRepositoryResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteClientGroupBackupRepositoryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteClientGroupBackupRepositoryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteClientGroupBackupRepositoryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteClientGroupBackupRepositoryResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -26352,13 +26615,25 @@ func (c *ClientWithResponses) CreateClientGroupWithResponse(ctx context.Context,
 
 // DeleteClientGroupWithResponse Delete a client group
 //
-// A client group that still has sites or a backup repository can't be deleted (`409`); offboarding exports or deletes the repository first.
+// A client group that still has sites can't be deleted (`409`). Nor
+// can one that still has a backup repository, unless
+// `delete_backup_repository` is true: offboarding exports the backups
+// it should keep first (`POST
+// /api/v1/client-groups/{client_group_id}/backups/{backup_id}/export`,
+// or `pressfleet repository export` for the whole repository).
+//
+// With `delete_backup_repository`, a group that has a repository is
+// deleted by a job, as `DELETE
+// /api/v1/client-groups/{client_group_id}/backup-repository` would,
+// except that the group is deleted too once the repository is gone
+// (`202`). This takes the `client_group.offboard` permission. A group
+// without a repository is deleted at once either way (`204`).
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /api/v1/client-groups/{client_group_id} (the `DeleteClientGroup` operationId).
-func (c *ClientWithResponses) DeleteClientGroupWithResponse(ctx context.Context, clientGroupID ClientGroupID, reqEditors ...RequestEditorFn) (*DeleteClientGroupResponse, error) {
-	rsp, err := c.DeleteClientGroup(ctx, clientGroupID, reqEditors...)
+func (c *ClientWithResponses) DeleteClientGroupWithResponse(ctx context.Context, clientGroupID ClientGroupID, params *DeleteClientGroupParams, reqEditors ...RequestEditorFn) (*DeleteClientGroupResponse, error) {
+	rsp, err := c.DeleteClientGroup(ctx, clientGroupID, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -26402,6 +26677,31 @@ func (c *ClientWithResponses) UpdateClientGroupWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseUpdateClientGroupResponse(rsp)
+}
+
+// DeleteClientGroupBackupRepositoryWithResponse Delete a client group's backup repository
+//
+// Queues a job that permanently deletes the group's backup repository
+// (its files or S3 objects), the records of the backups it held, its
+// password, and its maintenance schedules, so the group can then be
+// deleted. This is how a client is offboarded from the dashboard; it
+// takes the `client_group.offboard` permission. Export the backups
+// the client should keep first.
+//
+// It is refused (`409`) while the group still has sites, has no
+// backup repository, or has an export from its backups queued or
+// running. The job waits for any prune or check of the repository to
+// finish.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v1/client-groups/{client_group_id}/backup-repository (the `DeleteClientGroupBackupRepository` operationId).
+func (c *ClientWithResponses) DeleteClientGroupBackupRepositoryWithResponse(ctx context.Context, clientGroupID ClientGroupID, reqEditors ...RequestEditorFn) (*DeleteClientGroupBackupRepositoryResponse, error) {
+	rsp, err := c.DeleteClientGroupBackupRepository(ctx, clientGroupID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteClientGroupBackupRepositoryResponse(rsp)
 }
 
 // ListClientGroupBackupsWithResponse List a client group's backups
@@ -30559,6 +30859,13 @@ func ParseDeleteClientGroupResponse(rsp *http.Response) (*DeleteClientGroupRespo
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest JobAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
 	case rsp.StatusCode == 204:
 		break // No content-type
 
@@ -30597,6 +30904,19 @@ func ParseDeleteClientGroupResponse(rsp *http.Response) (*DeleteClientGroupRespo
 		}
 		response.ApplicationProblemJSONDefault = &dest
 
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers DeleteClientGroupResponse202Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
 	}
 
 	return response, nil
@@ -30726,6 +31046,80 @@ func ParseUpdateClientGroupResponse(rsp *http.Response) (*UpdateClientGroupRespo
 		}
 		response.ApplicationProblemJSONDefault = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseDeleteClientGroupBackupRepositoryResponse parses an HTTP response from a DeleteClientGroupBackupRepositoryWithResponse call
+func ParseDeleteClientGroupBackupRepositoryResponse(rsp *http.Response) (*DeleteClientGroupBackupRepositoryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteClientGroupBackupRepositoryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest JobAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers DeleteClientGroupBackupRepositoryResponse202Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
 	}
 
 	return response, nil

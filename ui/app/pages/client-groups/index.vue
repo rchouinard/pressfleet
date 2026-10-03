@@ -5,9 +5,10 @@
 import { toApiError, type ApiError } from '../../utils/api-error'
 import { createPagedList } from '../../utils/paged-list'
 import {
-  createPayload, updatePayload,
+  createPayload, deleteQuery, updatePayload,
   type ClientGroup, type ClientGroupValues,
 } from '../../utils/client-group'
+import { isTerminal, type Job } from '../../utils/job'
 
 useHead({ title: 'Client groups' })
 useBreadcrumbs([{ label: 'Client groups' }])
@@ -55,32 +56,48 @@ async function save(values: ClientGroupValues) {
   await list.load()
 }
 
-// Delete.
+// Delete. A group with a backup repository is deleted with it by a job
+// (#139), whose progress shows above the list.
 const deleteOpen = ref(false)
 const deleting = ref<ClientGroup>()
 const deleteBusy = ref(false)
 const deleteError = ref<ApiError>()
+const offboardJobId = ref<string>()
 function askDelete(g: ClientGroup) {
   deleting.value = g
   deleteError.value = undefined
   deleteOpen.value = true
 }
-async function confirmDelete() {
+async function confirmDelete(withRepository: boolean) {
   const g = deleting.value
   if (!g) return
   deleteBusy.value = true
   deleteError.value = undefined
   try {
-    await api.DELETE('/api/v1/client-groups/{client_group_id}', { params: { path: { client_group_id: g.id } } })
+    const { data } = await api.DELETE('/api/v1/client-groups/{client_group_id}', {
+      params: { path: { client_group_id: g.id }, query: deleteQuery(withRepository) },
+    })
     deleteOpen.value = false
-    notify.success('Client group deleted', g.name)
-    await list.load()
+    if (data?.job) {
+      notify.jobStarted(data.job, `Deleting ${g.name} and its backups`)
+      offboardJobId.value = data.job.id
+    } else {
+      notify.success('Client group deleted', g.name)
+      await list.load()
+    }
   } catch (e) {
-    // 409 (the group still has sites) and 403 land here, with the server's wording.
+    // 409 (the group still has sites or a backup repository) and 403 land
+    // here, with the server's wording.
     deleteError.value = toApiError(e)
   } finally {
     deleteBusy.value = false
   }
+}
+const handledJobs = new Set<string>()
+async function onOffboardJob(job: Job) {
+  if (!isTerminal(job.state) || handledJobs.has(job.id)) return
+  handledJobs.add(job.id)
+  await list.load()
 }
 
 async function loadMore() {
@@ -99,6 +116,14 @@ async function loadMore() {
       <IfCan action="client_group.create">
         <UButton icon="i-lucide-plus" @click="openCreate()">New client group</UButton>
       </IfCan>
+    </div>
+
+    <div v-if="offboardJobId" class="space-y-2">
+      <div class="flex items-center justify-between gap-2">
+        <h2 class="text-sm font-semibold">Deleting a client group and its backups</h2>
+        <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-x" aria-label="Hide deletion progress" @click="offboardJobId = undefined" />
+      </div>
+      <JobProgress :job-id="offboardJobId" @update="onOffboardJob" />
     </div>
 
     <ProblemAlert v-if="list.error.value" :error="list.error.value" />
@@ -124,13 +149,13 @@ async function loadMore() {
 
     <ClientGroupFormModal v-model:open="formOpen" :group="editing" :submit="save" />
 
-    <ConfirmDialog
+    <ClientGroupDeleteDialog
       v-model:open="deleteOpen"
-      :title="`Delete ${deleting?.name ?? 'client group'}?`"
-      description="This can't be undone. A group that still has sites can't be deleted."
+      :group="deleting"
+      :can-offboard="can('client_group.offboard')"
       :busy="deleteBusy"
       :error="deleteError"
-      @confirm="confirmDelete()"
+      @confirm="confirmDelete"
     />
   </div>
 </template>

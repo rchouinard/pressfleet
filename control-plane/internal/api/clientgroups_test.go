@@ -142,7 +142,8 @@ func TestClientGroupsEndpoints(t *testing.T) {
 			t.Errorf("backup repository: %d %s", code, body)
 		}
 		w = do(t, h, request{authed: true, method: http.MethodDelete, target: "/api/v1/client-groups/" + acme.ID})
-		if p := decodeProblem(t, w); w.Code != http.StatusConflict || !strings.Contains(p.Detail, "backup repository") {
+		if p := decodeProblem(t, w); w.Code != http.StatusConflict || !strings.Contains(p.Detail, "backup repository") ||
+			!strings.Contains(p.Detail, "docker compose exec control-plane pressfleet repository delete "+acme.ID+" --yes") {
 			t.Fatalf("delete group with a backup repository: %d %+v", w.Code, p)
 		}
 		if err := groups.SetBackupRepository(ctx, acme.ID, ""); err != nil {

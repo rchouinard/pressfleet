@@ -3998,6 +3998,12 @@ type ListClientGroupsParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// DeleteClientGroupParams defines parameters for DeleteClientGroup.
+type DeleteClientGroupParams struct {
+	// DeleteBackupRepository Also permanently delete the group's backup repository, every backup in it, and its password.
+	DeleteBackupRepository *bool `form:"delete_backup_repository,omitempty" json:"delete_backup_repository,omitempty"`
+}
+
 // ListClientGroupBackupsParams defines parameters for ListClientGroupBackups.
 type ListClientGroupBackupsParams struct {
 	// Limit Maximum number of items to return.
@@ -4438,13 +4444,16 @@ type ServerInterface interface {
 	CreateClientGroup(w http.ResponseWriter, r *http.Request)
 	// DeleteClientGroup Delete a client group
 	// (DELETE /api/v1/client-groups/{client_group_id})
-	DeleteClientGroup(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID)
+	DeleteClientGroup(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID, params DeleteClientGroupParams)
 	// GetClientGroup Get a client group
 	// (GET /api/v1/client-groups/{client_group_id})
 	GetClientGroup(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID)
 	// UpdateClientGroup Update a client group
 	// (PATCH /api/v1/client-groups/{client_group_id})
 	UpdateClientGroup(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID)
+	// DeleteClientGroupBackupRepository Delete a client group's backup repository
+	// (DELETE /api/v1/client-groups/{client_group_id}/backup-repository)
+	DeleteClientGroupBackupRepository(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID)
 	// ListClientGroupBackups List a client group's backups
 	// (GET /api/v1/client-groups/{client_group_id}/backups)
 	ListClientGroupBackups(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID, params ListClientGroupBackupsParams)
@@ -5753,8 +5762,24 @@ func (siw *ServerInterfaceWrapper) DeleteClientGroup(w http.ResponseWriter, r *h
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteClientGroupParams
+
+	// ------------- Optional query parameter "delete_backup_repository" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "delete_backup_repository", r.URL.Query(), &params.DeleteBackupRepository, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "delete_backup_repository"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "delete_backup_repository", Err: err})
+		}
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteClientGroup(w, r, clientGroupID)
+		siw.Handler.DeleteClientGroup(w, r, clientGroupID, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -5807,6 +5832,32 @@ func (siw *ServerInterfaceWrapper) UpdateClientGroup(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateClientGroup(w, r, clientGroupID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteClientGroupBackupRepository operation middleware
+func (siw *ServerInterfaceWrapper) DeleteClientGroupBackupRepository(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "client_group_id" -------------
+	var clientGroupID ClientGroupID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "client_group_id", r.PathValue("client_group_id"), &clientGroupID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "client_group_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteClientGroupBackupRepository(w, r, clientGroupID)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -8634,6 +8685,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/export", wrapper.ExportSite)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/backups/{backup_id}/export", wrapper.ExportSiteBackup)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/client-groups/{client_group_id}/backups", wrapper.ListClientGroupBackups)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/client-groups/{client_group_id}/backup-repository", wrapper.DeleteClientGroupBackupRepository)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/client-groups/{client_group_id}/backups/{backup_id}/export", wrapper.ExportClientGroupBackup)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/exports", wrapper.ListExports)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/exports/{export_id}", wrapper.GetExport)
@@ -11614,10 +11666,35 @@ func (response CreateClientGroupdefaultApplicationProblemPlusJSONResponse) Visit
 
 type DeleteClientGroupRequestObject struct {
 	ClientGroupID ClientGroupID `json:"client_group_id"`
+	Params        DeleteClientGroupParams
 }
 
 type DeleteClientGroupResponseObject interface {
 	VisitDeleteClientGroupResponse(w http.ResponseWriter) error
+}
+
+type DeleteClientGroup202ResponseHeaders struct {
+	Location *string
+}
+
+type DeleteClientGroup202JSONResponse struct {
+	Body    JobAccepted
+	Headers DeleteClientGroup202ResponseHeaders
+}
+
+func (response DeleteClientGroup202JSONResponse) VisitDeleteClientGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
 }
 
 type DeleteClientGroup204Response struct {
@@ -11921,6 +11998,119 @@ type UpdateClientGroupdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response UpdateClientGroupdefaultApplicationProblemPlusJSONResponse) VisitUpdateClientGroupResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteClientGroupBackupRepositoryRequestObject struct {
+	ClientGroupID ClientGroupID `json:"client_group_id"`
+}
+
+type DeleteClientGroupBackupRepositoryResponseObject interface {
+	VisitDeleteClientGroupBackupRepositoryResponse(w http.ResponseWriter) error
+}
+
+type DeleteClientGroupBackupRepository202ResponseHeaders struct {
+	Location *string
+}
+
+type DeleteClientGroupBackupRepository202JSONResponse struct {
+	Body    JobAccepted
+	Headers DeleteClientGroupBackupRepository202ResponseHeaders
+}
+
+func (response DeleteClientGroupBackupRepository202JSONResponse) VisitDeleteClientGroupBackupRepositoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteClientGroupBackupRepository401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteClientGroupBackupRepository401ApplicationProblemPlusJSONResponse) VisitDeleteClientGroupBackupRepositoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteClientGroupBackupRepository403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteClientGroupBackupRepository403ApplicationProblemPlusJSONResponse) VisitDeleteClientGroupBackupRepositoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteClientGroupBackupRepository404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteClientGroupBackupRepository404ApplicationProblemPlusJSONResponse) VisitDeleteClientGroupBackupRepositoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteClientGroupBackupRepository409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteClientGroupBackupRepository409ApplicationProblemPlusJSONResponse) VisitDeleteClientGroupBackupRepositoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteClientGroupBackupRepositorydefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response DeleteClientGroupBackupRepositorydefaultApplicationProblemPlusJSONResponse) VisitDeleteClientGroupBackupRepositoryResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -19892,6 +20082,9 @@ type StrictServerInterface interface {
 	// UpdateClientGroup Update a client group
 	// (PATCH /api/v1/client-groups/{client_group_id})
 	UpdateClientGroup(ctx context.Context, request UpdateClientGroupRequestObject) (UpdateClientGroupResponseObject, error)
+	// DeleteClientGroupBackupRepository Delete a client group's backup repository
+	// (DELETE /api/v1/client-groups/{client_group_id}/backup-repository)
+	DeleteClientGroupBackupRepository(ctx context.Context, request DeleteClientGroupBackupRepositoryRequestObject) (DeleteClientGroupBackupRepositoryResponseObject, error)
 	// ListClientGroupBackups List a client group's backups
 	// (GET /api/v1/client-groups/{client_group_id}/backups)
 	ListClientGroupBackups(ctx context.Context, request ListClientGroupBackupsRequestObject) (ListClientGroupBackupsResponseObject, error)
@@ -20979,10 +21172,11 @@ func (sh *strictHandler) CreateClientGroup(w http.ResponseWriter, r *http.Reques
 }
 
 // DeleteClientGroup operation middleware
-func (sh *strictHandler) DeleteClientGroup(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID) {
+func (sh *strictHandler) DeleteClientGroup(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID, params DeleteClientGroupParams) {
 	var request DeleteClientGroupRequestObject
 
 	request.ClientGroupID = clientGroupID
+	request.Params = params
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
 		return sh.ssi.DeleteClientGroup(ctx, request.(DeleteClientGroupRequestObject))
@@ -21056,6 +21250,32 @@ func (sh *strictHandler) UpdateClientGroup(w http.ResponseWriter, r *http.Reques
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UpdateClientGroupResponseObject); ok {
 		if err := validResponse.VisitUpdateClientGroupResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteClientGroupBackupRepository operation middleware
+func (sh *strictHandler) DeleteClientGroupBackupRepository(w http.ResponseWriter, r *http.Request, clientGroupID ClientGroupID) {
+	var request DeleteClientGroupBackupRepositoryRequestObject
+
+	request.ClientGroupID = clientGroupID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteClientGroupBackupRepository(ctx, request.(DeleteClientGroupBackupRepositoryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteClientGroupBackupRepository")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteClientGroupBackupRepositoryResponseObject); ok {
+		if err := validResponse.VisitDeleteClientGroupBackupRepositoryResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

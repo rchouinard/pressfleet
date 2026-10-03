@@ -52,6 +52,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
 	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/offboard"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/dbsession"
 	"github.com/rchouinard/pressfleet/control-plane/internal/deploy"
@@ -99,6 +100,9 @@ type Options struct {
 	// Backups takes and lists site backups. If nil, the backup operations
 	// fail with 500.
 	Backups *sitebackup.Service
+	// Offboarding deletes client groups' backup repositories. If nil,
+	// those deletions fail with 500.
+	Offboarding *offboard.Service
 	// Uploads receives large files for site imports and deployments. If
 	// nil, the upload operations fail with 500.
 	Uploads *uploads.Service
@@ -151,6 +155,7 @@ type Handlers struct {
 	auth          *auth.Service
 	sites         *sites.Service
 	backups       *sitebackup.Service
+	offboarding   *offboard.Service
 	uploads       *uploads.Service
 	exports       *export.Service
 	deploys       *deploy.Service
@@ -196,6 +201,7 @@ func NewHandler(opts Options) (http.Handler, error) {
 	h := &Handlers{log: opts.Logger, readiness: opts.Readiness, db: opts.DB, auth: opts.Auth, sites: opts.Sites, backups: opts.Backups,
 		uploads: opts.Uploads, secureCookies: opts.SecureCookies, sftp: opts.SFTP}
 	h.exports = opts.Exports
+	h.offboarding = opts.Offboarding
 	h.deploys = opts.Deployments
 	h.dbSessions = opts.DatabaseSessions
 	h.adminLogin = opts.AdminLogin

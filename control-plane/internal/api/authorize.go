@@ -41,6 +41,8 @@ var operationActions = map[string]authz.Action{
 	"getClientGroup":    authz.ViewClientGroups,
 	"updateClientGroup": authz.UpdateClientGroup,
 	"deleteClientGroup": authz.DeleteClientGroup,
+	// Deleting a group's backups is offboarding (design doc §4.6).
+	"deleteClientGroupBackupRepository": authz.OffboardClientGroup,
 
 	"listSites":                    authz.ViewSites,
 	"createSite":                   authz.CreateSite,
@@ -169,8 +171,11 @@ var operationAltActions = map[string][]authz.Action{
 	"deleteUpload":              {authz.UploadForDeploy},
 
 	// Deleting a site's backups with it needs the permission to delete
-	// backups (#138).
+	// backups.
 	"deleteSite": {authz.DeleteSiteBackups},
+
+	// Deleting the group's backups with it is offboarding.
+	"deleteClientGroup": {authz.OffboardClientGroup},
 }
 
 // errActionMismatch is a programming error: a handler checked a different
