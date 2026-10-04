@@ -221,8 +221,9 @@ Done when: every Phase 1–4 operation can be performed from the UI. (Design doc
 | [#89](https://github.com/rchouinard/pressfleet/issues/89) | UI: logs viewer | P1 | M | #84, #78 |
 | [#90](https://github.com/rchouinard/pressfleet/issues/90) | UI: alerts, rules, and channels | P0 | M | #81, #76 |
 | [#91](https://github.com/rchouinard/pressfleet/issues/91) | UI: platform overview and capacity warnings | P1 | M | #81, #9, #72 |
-| [#92](https://github.com/rchouinard/pressfleet/issues/92) | Decision: plugin/theme update visibility | P2 | S | — |
-| [#93](https://github.com/rchouinard/pressfleet/issues/93) | UI end-to-end tests (Playwright) | P1 | L | #82, #85, #86, #87, #88, #89, #90, #91, #116, #130, #134 |
+| [#92](https://github.com/rchouinard/pressfleet/issues/92) | ~~Decision: plugin/theme update visibility~~ Resolved | P2 | S | — |
+| [#125](https://github.com/rchouinard/pressfleet/issues/125) | Report pending plugin and theme updates as part of site health | P1 | M | #92, #84 |
+| [#93](https://github.com/rchouinard/pressfleet/issues/93) | UI end-to-end tests (Playwright) | P1 | L | #82, #85, #86, #87, #88, #89, #90, #91, #116, #125, #130, #134 |
 | [#105](https://github.com/rchouinard/pressfleet/issues/105) | UI: audit log viewer | P1 | S | #81, #104 |
 | [#116](https://github.com/rchouinard/pressfleet/issues/116) | UI: site import, code deployment, SSH keys, and database access | P1 | M | #84, #82, #112, #113, #114, #115, #62 |
 | [#126](https://github.com/rchouinard/pressfleet/issues/126) | Design: one-click WordPress admin login from the dashboard | P1 | S | — |
@@ -291,7 +292,7 @@ These must be resolved before the work they block.
 | [#61](https://github.com/rchouinard/pressfleet/issues/61) | ~~database access for agencies~~ **Resolved:** database exports and temporary, read-only-by-default sessions through the SFTP gateway; no web UI (design doc §5.8) | M3: Backup Engine & File Management | P2 |
 | [#64](https://github.com/rchouinard/pressfleet/issues/64) | ~~confirm VictoriaMetrics + built-in collector~~ **Resolved:** confirmed (design doc §3, §7) | M4: Monitoring & Alerting | P0 |
 | [#65](https://github.com/rchouinard/pressfleet/issues/65) | ~~metrics retention period~~ **Resolved:** configurable, default 90 days (design doc §7) | M4: Monitoring & Alerting | P1 |
-| [#92](https://github.com/rchouinard/pressfleet/issues/92) | plugin/theme update visibility | M5: Dashboard | P2 |
+| [#92](https://github.com/rchouinard/pressfleet/issues/92) | ~~plugin/theme update visibility~~ **Resolved:** report only; pending plugin and theme updates count towards site health and show in the dashboard, and the platform never runs them or backs up around them (design doc §5.6, §9 Q2). Implemented in M5 ([#125](https://github.com/rchouinard/pressfleet/issues/125)) | M5: Dashboard | P2 |
 | [#94](https://github.com/rchouinard/pressfleet/issues/94) | ~~platform upgrade process~~ **Resolved:** forward-only migrations, CLI upgrades control plane to its own version, kubectl-style version skew (design doc §4.7) | MVP Release Gate | P0 |
 
 ## Gaps in the design document
