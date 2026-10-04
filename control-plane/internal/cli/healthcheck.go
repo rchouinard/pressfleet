@@ -26,7 +26,7 @@ func (a *app) healthcheckCommand() *cobra.Command {
 		Short: "Exit 0 if the local control plane reports healthy (for container healthchecks)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			url, err := healthzURL(a.cfg.Listen)
+			url, err := localURL(a.cfg.Listen, "/healthz")
 			if err != nil {
 				return err
 			}
@@ -35,9 +35,10 @@ func (a *app) healthcheckCommand() *cobra.Command {
 	}
 }
 
-// healthzURL derives the health endpoint from the listen address. A wildcard
-// listen address is reached over loopback.
-func healthzURL(listen string) (string, error) {
+// localURL derives the URL of a control plane endpoint, such as /healthz,
+// from the listen address. A wildcard listen address is reached over
+// loopback.
+func localURL(listen, path string) (string, error) {
 	host, port, err := net.SplitHostPort(listen)
 	if err != nil {
 		return "", fmt.Errorf("parsing listen address %q: %w", listen, err)
@@ -45,7 +46,7 @@ func healthzURL(listen string) (string, error) {
 	if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
 		host = "127.0.0.1"
 	}
-	return "http://" + net.JoinHostPort(host, port) + "/healthz", nil
+	return "http://" + net.JoinHostPort(host, port) + path, nil
 }
 
 func checkHealth(ctx context.Context, url string) error {

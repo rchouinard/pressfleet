@@ -29,7 +29,8 @@ each problem.
 
 Exit status is 0 when every check passes, 1 when a required check fails,
 and 2 when only recommended checks fail or some check warns.`,
-		Args: cobra.NoArgs,
+		Args:        cobra.NoArgs,
+		Annotations: map[string]string{checkSkew: "true"},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rep := doctor.Run(cmd.Context(), a.doctorOptions(), doctor.ScopeInstall, doctor.ScopeRuntime)
 			write := rep.WriteText

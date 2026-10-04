@@ -77,6 +77,8 @@ type initEnv struct {
 	host       *doctortest.Host
 	docker     *doctortest.Docker
 	platform   *fakePlatform
+	// controlPlane is none installed unless a test sets one up.
+	controlPlane *fakeControlPlane
 }
 
 func newInitEnv(t *testing.T) *initEnv {
@@ -87,14 +89,15 @@ func newInitEnv(t *testing.T) *initEnv {
 	host.DNS["fleet.example.com"] = ip
 	host.DNS["*.preview.example.com"] = ip
 	return &initEnv{
-		t:          t,
-		configPath: filepath.Join(root, "etc", "pressfleet.yaml"),
-		dataDir:    filepath.Join(root, "data"),
-		keyFile:    filepath.Join(root, "etc", "master.key"),
-		env:        map[string]string{},
-		host:       host,
-		docker:     doctortest.HealthyDocker(),
-		platform:   &fakePlatform{},
+		t:            t,
+		configPath:   filepath.Join(root, "etc", "pressfleet.yaml"),
+		dataDir:      filepath.Join(root, "data"),
+		keyFile:      filepath.Join(root, "etc", "master.key"),
+		env:          map[string]string{},
+		host:         host,
+		docker:       doctortest.HealthyDocker(),
+		platform:     &fakePlatform{},
+		controlPlane: &fakeControlPlane{},
 	}
 }
 
@@ -125,6 +128,7 @@ func (e *initEnv) run(stdin string, args ...string) result {
 		HostProbe:       e.host,
 		DockerProbe:     e.docker,
 		PlatformProject: e.platform.project,
+		ControlPlane:    e.controlPlane.probe,
 	})
 	return result{code, stdout.String(), stderr.String()}
 }
@@ -348,6 +352,7 @@ func TestInitConfirmWithKeyID(t *testing.T) {
 			Version: "v1.2.3-test", Stdin: pr, Stdout: out, Stderr: io.Discard,
 			Env:       func(string) (string, bool) { return "", false },
 			HostProbe: e.host, DockerProbe: e.docker, PlatformProject: e.platform.project,
+			ControlPlane: e.controlPlane.probe,
 		})
 	}()
 	stdout := <-out.ch

@@ -133,6 +133,28 @@ The master key is printed on standard output (the line starting with `pfmk1:`); 
 - Keeps the encrypted DNS provider credentials the same way unless `--dns-credentials-file` gives new ones, in which case it recreates Traefik so it reads them.
 - Leaves an existing admin user with the same email alone. To set a new password, run `pressfleet user reset-password` in the control plane container.
 
+## CLI and control plane versions
+
+The `pressfleet` binary on the host (the host CLI) and the control plane container must be compatible versions (design doc §4.7):
+
+- Patch versions of the same minor version are always compatible.
+- Before 1.0, the minor versions must match: a v0.4.x CLI manages only a v0.4.x control plane.
+- From 1.0, the CLI's minor version must be within one of the control plane's, in the same major version: a v1.5.x control plane works with v1.4.x, v1.5.x, and v1.6.x CLIs.
+
+`pressfleet version` prints both versions, and says what to do if they are incompatible:
+
+```console
+$ pressfleet version
+pressfleet v0.4.1 (commit 0123abcd4567, go1.27.1, linux/amd64)
+control plane: v0.4.0 (admin interface 1)
+```
+
+`pressfleet version --client` prints only the CLI's version.
+
+Host commands (`init`, `doctor`, `metrics-access`) check the installed control plane's version before they do anything, and refuse to run outside the policy. There is no override. If the CLI is newer, upgrade the control plane to the CLI's version with `pressfleet upgrade` (#95), or use a CLI that matches the control plane. If the CLI is older, install a matching CLI: the control plane can't be downgraded. `version` and `upgrade` are exempt, and so are the commands you run inside the control plane container, where the CLI is the control plane's own binary.
+
+The CLI asks the control plane for its version through a small admin interface: it runs `pressfleet admin info` in the control plane container, which prints its version and readiness as JSON. If the control plane doesn't answer, because it is stopped or failing, the CLI reads the version from the container's image instead (the `org.opencontainers.image.version` label, or else the image tag). If there is no control plane container, there is nothing to check. If the CLI can't reach Docker, or either side is a development build without a release version, the command runs with a warning; `doctor` is how such problems get diagnosed.
+
 ## DNS for custom domains
 
 Sites start on their preview domain. To go live on a client's own domain (`POST /api/v1/sites/{id}/go-live`, see [Custom domains](configuration.md#custom-domains)), the client's DNS must point the domain, and every alias, at this host first: A records to its public IPv4 address and, if it has one, AAAA records to its IPv6 address, and no records pointing anywhere else. A CNAME to the dashboard domain works too. Lower the records' TTL a day ahead to make the switch quick.

@@ -76,6 +76,15 @@ func runFull(t *testing.T, ctx context.Context, args []string, env map[string]st
 	host *doctortest.Host, docker *doctortest.Docker, stderr *syncBuffer,
 ) result {
 	t.Helper()
+	return runProbed(t, ctx, args, env, host, docker, stderr, &fakeControlPlane{})
+}
+
+// runProbed is runFull with a caller-supplied control plane; the others see
+// none installed.
+func runProbed(t *testing.T, ctx context.Context, args []string, env map[string]string,
+	host *doctortest.Host, docker *doctortest.Docker, stderr *syncBuffer, cp *fakeControlPlane,
+) result {
+	t.Helper()
 	emptyConfig := filepath.Join(t.TempDir(), "pressfleet.yaml")
 	if err := os.WriteFile(emptyConfig, nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -93,8 +102,9 @@ func runFull(t *testing.T, ctx context.Context, args []string, env map[string]st
 			v, ok := vars[k]
 			return v, ok
 		},
-		HostProbe:   host,
-		DockerProbe: docker,
+		HostProbe:    host,
+		DockerProbe:  docker,
+		ControlPlane: cp.probe,
 	})
 	return result{code, stdout.String(), stderr.String()}
 }

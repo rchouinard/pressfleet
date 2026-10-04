@@ -27,14 +27,13 @@ func (a *app) maintenancePageCommand() *cobra.Command {
 		Annotations: map[string]string{skipConfig: "true"},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if check {
-				url, err := healthzURL(listen)
+				url, err := localURL(listen, "/healthz")
 				if err != nil {
 					return err
 				}
 				ctx, cancel := context.WithTimeout(cmd.Context(), healthcheckTimeout)
 				defer cancel()
-				// Any path serves the page; the /healthz of healthzURL is as
-				// good as another.
+				// Any path serves the page; /healthz is as good as another.
 				return maintenance.Check(ctx, url)
 			}
 			log, err := logging.New(a.opts.Stderr, "info", "json")

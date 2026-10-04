@@ -85,5 +85,9 @@ COPY --from=build /out/pressfleet /usr/local/bin/pressfleet
 # the root-owned, 0700 data directory and 0600 secret files readable without
 # matching UIDs between host and container.
 USER root
+# The host CLI reads the version from this label when the control plane
+# doesn't answer, to enforce the version skew policy (design doc §4.7).
+ARG VERSION=dev
+LABEL org.opencontainers.image.version=${VERSION}
 ENTRYPOINT ["pressfleet"]
 CMD ["serve"]

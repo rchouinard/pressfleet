@@ -593,16 +593,34 @@ func (a *app) serveCommand() *cobra.Command {
 }
 
 func (a *app) versionCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:         "version",
-		Short:       "Print version information",
-		Args:        cobra.NoArgs,
+	var client bool
+	cmd := &cobra.Command{
+		Use:   "version",
+		Short: "Print the versions of this CLI and the installed control plane",
+		Long: `Print the version of this CLI and of the installed control plane, and
+whether the two are within the supported version skew (design doc §4.7).
+
+With --client, only the CLI's version is printed, which is all that makes
+sense inside the control plane container.`,
+		Args: cobra.NoArgs,
+		// Works with a broken configuration, so that an operator can still
+		// find out which versions are in play.
 		Annotations: map[string]string{skipConfig: "true"},
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, err := fmt.Fprintln(cmd.OutOrStdout(), versionString(a.opts.Version))
-			return err
+			out := cmd.OutOrStdout()
+			if _, err := fmt.Fprintln(out, versionString(a.opts.Version)); err != nil || client {
+				return err
+			}
+			// Best effort: the configuration only names the platform
+			// project; without it the defaults apply.
+			if cfg, err := config.Load(a.configPath, a.opts.Env); err == nil {
+				a.cfg = cfg
+			}
+			return a.writeControlPlaneVersion(cmd.Context(), out)
 		},
 	}
+	cmd.Flags().BoolVar(&client, "client", false, "print only this CLI's version")
+	return cmd
 }
 
 // versionString formats the version with VCS and toolchain details from the

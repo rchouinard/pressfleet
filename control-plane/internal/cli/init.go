@@ -246,7 +246,7 @@ Even then it never replaces an existing master key: it reuses it.
 
 See docs/installation.md.`,
 		Args:        cobra.NoArgs,
-		Annotations: map[string]string{skipConfig: "true"},
+		Annotations: map[string]string{skipConfig: "true", checkSkew: "true"},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			given := map[string]string{}
 			for name := range flagValues {

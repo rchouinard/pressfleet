@@ -34,6 +34,10 @@ type Options struct {
 	// starts; nil means the real one on the local Docker daemon. Tests
 	// inject fakes.
 	PlatformProject func(name, dir string) PlatformProject
+	// ControlPlane returns the probe the host CLI uses to find the control
+	// plane of the named platform project and ask its version; nil means
+	// the real platform on the local Docker daemon. Tests inject fakes.
+	ControlPlane func(project string) ControlPlaneProbe
 	// PlatformProjectName overrides the platform's Compose project name, so
 	// tests against real Docker don't touch an actual installation.
 	PlatformProjectName string
@@ -104,7 +108,7 @@ func (a *app) rootCommand() *cobra.Command {
 		SilenceUsage:      true,
 		SilenceErrors:     true,
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
-		PersistentPreRunE: a.loadConfig,
+		PersistentPreRunE: a.preRun,
 	}
 	pf := root.PersistentFlags()
 	pf.StringVar(&a.configPath, "config", "", fmt.Sprintf("config file (default $%s or %s)", config.EnvConfigPath, config.DefaultPath))
@@ -119,6 +123,7 @@ func (a *app) rootCommand() *cobra.Command {
 	root.AddCommand(a.userCommand())
 	root.AddCommand(a.repositoryCommand())
 	root.AddCommand(a.metricsAccessCommand())
+	root.AddCommand(a.adminCommand())
 	return root
 }
 
@@ -131,6 +136,18 @@ var flagOverrides = []struct {
 	{"log-level", func(c *config.Config) *string { return &c.Log.Level }},
 	{"log-format", func(c *config.Config) *string { return &c.Log.Format }},
 	{"listen", func(c *config.Config) *string { return &c.Listen }},
+}
+
+// preRun loads the configuration and, for host commands, checks that the
+// CLI can manage the installed control plane (§4.7).
+func (a *app) preRun(cmd *cobra.Command, args []string) error {
+	if err := a.loadConfig(cmd, args); err != nil {
+		return err
+	}
+	if requiresSkewCheck(cmd) {
+		return a.enforceSkew(cmd.Context())
+	}
+	return nil
 }
 
 // loadConfig loads and validates configuration, applies flag overrides, and

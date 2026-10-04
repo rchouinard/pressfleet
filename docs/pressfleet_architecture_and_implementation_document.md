@@ -401,7 +401,7 @@ PressFleet uses semantic versioning. Each release bundles the control plane imag
 * Patch versions within the same minor version are always compatible.
 * From 1.0, the host CLI's minor version must be within one of the control plane's (n−1, n, or n+1, where n is the control plane's minor version). Before 1.0, the minor versions must match.
 * Before every command, the CLI checks the control plane's version. Outside the policy it refuses to run and explains how to fix it; there is no override. `pressfleet version` and `pressfleet upgrade` are exempt.
-* The host CLI talks to the control plane only through a small, versioned admin interface. From 1.0, changes to that interface must stay backward compatible for at least one minor release, and CI tests the CLI against control planes at n−1, n, and n+1.
+* The host CLI talks to the control plane only through a small, versioned admin interface: it runs `pressfleet admin <command>` in the control plane container, which answers with JSON. Going through `docker exec` needs no network exposure or credentials of its own (Docker socket access is already root on the host) and works while Traefik is down. The interface version changes only on incompatible changes, and every version keeps reporting the control plane's version. If the control plane doesn't answer, the CLI reads its version from the container's image metadata. From 1.0, changes to that interface must stay backward compatible for at least one minor release, and CI tests the CLI against control planes at n−1, n, and n+1.
 
 ---
 

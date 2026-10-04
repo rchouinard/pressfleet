@@ -17,8 +17,9 @@ var errNoMetricsDomain = errors.New("metrics.public_domain is not set, so Victor
 
 func (a *app) metricsAccessCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "metrics-access",
-		Short: "Manage the credential for the public metrics API (run on the host)",
+		Use:         "metrics-access",
+		Short:       "Manage the credential for the public metrics API (run on the host)",
+		Annotations: map[string]string{checkSkew: "true"},
 	}
 	cmd.AddCommand(a.metricsAccessRotateCommand())
 	return cmd
