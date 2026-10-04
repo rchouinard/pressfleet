@@ -7,6 +7,7 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
+	"github.com/rchouinard/pressfleet/control-plane/internal/pluginupdates"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sitecron"
@@ -96,6 +97,9 @@ func (s *Service) failProvisioning(ctx context.Context, r *jobs.Run) error {
 			return err
 		}
 		if err := sitecron.RemoveSchedule(ctx, q, siteID); err != nil {
+			return err
+		}
+		if err := pluginupdates.RemoveSchedule(ctx, q, siteID); err != nil {
 			return err
 		}
 		if err := sitebackup.RemoveSchedule(ctx, q, siteID); err != nil {

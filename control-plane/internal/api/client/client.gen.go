@@ -2889,6 +2889,40 @@ type PasswordChange struct {
 	NewPassword     *Password `json:"new_password,omitempty"`
 }
 
+// PendingUpdate A plugin or theme with an update available.
+type PendingUpdate struct {
+	// Name The plugin's or theme's slug.
+	//
+	// Examples: woocommerce
+	Name string `json:"name"`
+
+	// Title Its display name; empty if it has none.
+	//
+	// Examples: WooCommerce
+	Title string `json:"title"`
+
+	// UpdateVersion The version available.
+	//
+	// Examples: 9.2.1
+	UpdateVersion string `json:"update_version"`
+
+	// Version The installed version.
+	//
+	// Examples: 9.1.0
+	Version string `json:"version"`
+}
+
+// PendingUpdateCounts How many plugins and themes of the site had an update available at
+// its latest update check (`GET /api/v1/sites/{site_id}/updates` lists
+// them). Returned when listing and getting sites; absent until the
+// site has been checked.
+type PendingUpdateCounts struct {
+	// CheckedAt Examples: 2026-09-26T17:25:00Z
+	CheckedAt Timestamp `json:"checked_at"`
+	Plugins   int       `json:"plugins"`
+	Themes    int       `json:"themes"`
+}
+
 // Platform defines model for Platform.
 type Platform struct {
 	// Build The build of the running control plane.
@@ -3110,6 +3144,12 @@ type Site struct {
 
 	// ParentSiteID Reserved for staging clones; always null in the MVP.
 	ParentSiteID *ID `json:"parent_site_id"`
+
+	// PendingUpdates How many plugins and themes of the site had an update available at
+	// its latest update check (`GET /api/v1/sites/{site_id}/updates` lists
+	// them). Returned when listing and getting sites; absent until the
+	// site has been checked.
+	PendingUpdates *PendingUpdateCounts `json:"pending_updates,omitempty"`
 
 	// PhpVersion A PHP version the platform publishes site images for.
 	//
@@ -3527,6 +3567,18 @@ type SiteUpdate struct {
 
 	// Resources Partial resource limits. Omitted fields keep their current value, or the platform default when creating a site.
 	Resources *ResourceLimitsUpdate `json:"resources,omitempty"`
+}
+
+// SiteUpdates defines model for SiteUpdates.
+type SiteUpdates struct {
+	// CheckedAt When the latest successful check ran; null if the site hasn't been checked yet.
+	CheckedAt *Timestamp `json:"checked_at"`
+
+	// Plugins Plugins with an update available, sorted by name.
+	Plugins []PendingUpdate `json:"plugins"`
+
+	// Themes Themes with an update available, sorted by name.
+	Themes []PendingUpdate `json:"themes"`
 }
 
 // SSHKey defines model for SshKey.
@@ -6311,6 +6363,34 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/stop (the `StopSite` operationId).
 	StopSite(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetSiteUpdates List a site's pending plugin and theme updates
+	//
+	// The plugins and themes of the site with an update available, as of
+	// the site's latest update check (design doc §5.6, §9 Q2). The
+	// control plane checks every site twice a day with WP-CLI (`wp plugin
+	// list --update=available`, and the same for themes); `POST
+	// /api/v1/sites/{site_id}/updates/check` checks now. The platform only
+	// reports these: WordPress applies plugin and theme updates itself,
+	// with auto-updates or from wp-admin. Pending updates count towards
+	// the site's health as a warning: the default alert rule `Plugin or
+	// theme updates pending` fires when they have been pending for 3 days.
+	// A site that hasn't been checked yet has a null `checked_at` and
+	// empty lists.
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/updates (the `GetSiteUpdates` operationId).
+	GetSiteUpdates(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CheckSiteUpdates Check a site for plugin and theme updates now
+	//
+	// Queues a check of the site's plugins and themes for updates, outside
+	// its regular schedule, for instance after updating them in wp-admin.
+	// If a check is already queued, returns that one. The check only
+	// lists updates, and never applies one. It replaces the site's report
+	// when it succeeds, and skips a site that isn't serving.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/updates/check (the `CheckSiteUpdates` operationId).
+	CheckSiteUpdates(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetTemplateRollout Get the site templates rollout
 	//
@@ -9559,6 +9639,54 @@ func (c *Client) StartSite(ctx context.Context, siteID SiteID, reqEditors ...Req
 // Corresponds with POST /api/v1/sites/{site_id}/stop (the `StopSite` operationId).
 func (c *Client) StopSite(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewStopSiteRequest(c.Server, siteID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetSiteUpdates List a site's pending plugin and theme updates
+//
+// The plugins and themes of the site with an update available, as of
+// the site's latest update check (design doc §5.6, §9 Q2). The
+// control plane checks every site twice a day with WP-CLI (`wp plugin
+// list --update=available`, and the same for themes); `POST
+// /api/v1/sites/{site_id}/updates/check` checks now. The platform only
+// reports these: WordPress applies plugin and theme updates itself,
+// with auto-updates or from wp-admin. Pending updates count towards
+// the site's health as a warning: the default alert rule `Plugin or
+// theme updates pending` fires when they have been pending for 3 days.
+// A site that hasn't been checked yet has a null `checked_at` and
+// empty lists.
+//
+// Corresponds with GET /api/v1/sites/{site_id}/updates (the `GetSiteUpdates` operationId).
+func (c *Client) GetSiteUpdates(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetSiteUpdatesRequest(c.Server, siteID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CheckSiteUpdates Check a site for plugin and theme updates now
+//
+// Queues a check of the site's plugins and themes for updates, outside
+// its regular schedule, for instance after updating them in wp-admin.
+// If a check is already queued, returns that one. The check only
+// lists updates, and never applies one. It replaces the site's report
+// when it succeeds, and skips a site that isn't serving.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/updates/check (the `CheckSiteUpdates` operationId).
+func (c *Client) CheckSiteUpdates(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCheckSiteUpdatesRequest(c.Server, siteID)
 	if err != nil {
 		return nil, err
 	}
@@ -14695,6 +14823,74 @@ func NewStopSiteRequest(server string, siteID SiteID) (*http.Request, error) {
 	return req, nil
 }
 
+// NewGetSiteUpdatesRequest constructs an http.Request for the GetSiteUpdates method
+func NewGetSiteUpdatesRequest(server string, siteID SiteID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/updates", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCheckSiteUpdatesRequest constructs an http.Request for the CheckSiteUpdates method
+func NewCheckSiteUpdatesRequest(server string, siteID SiteID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/updates/check", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetTemplateRolloutRequest constructs an http.Request for the GetTemplateRollout method
 func NewGetTemplateRolloutRequest(server string) (*http.Request, error) {
 	var err error
@@ -17558,6 +17754,38 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/stop (the `StopSite` operationId).
 	StopSiteWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*StopSiteResponse, error)
+
+	// GetSiteUpdatesWithResponse List a site's pending plugin and theme updates
+	//
+	// The plugins and themes of the site with an update available, as of
+	// the site's latest update check (design doc §5.6, §9 Q2). The
+	// control plane checks every site twice a day with WP-CLI (`wp plugin
+	// list --update=available`, and the same for themes); `POST
+	// /api/v1/sites/{site_id}/updates/check` checks now. The platform only
+	// reports these: WordPress applies plugin and theme updates itself,
+	// with auto-updates or from wp-admin. Pending updates count towards
+	// the site's health as a warning: the default alert rule `Plugin or
+	// theme updates pending` fires when they have been pending for 3 days.
+	// A site that hasn't been checked yet has a null `checked_at` and
+	// empty lists.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/sites/{site_id}/updates (the `GetSiteUpdates` operationId).
+	GetSiteUpdatesWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*GetSiteUpdatesResponse, error)
+
+	// CheckSiteUpdatesWithResponse Check a site for plugin and theme updates now
+	//
+	// Queues a check of the site's plugins and themes for updates, outside
+	// its regular schedule, for instance after updating them in wp-admin.
+	// If a check is already queued, returns that one. The check only
+	// lists updates, and never applies one. It replaces the site's report
+	// when it succeeds, and skips a site that isn't serving.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/updates/check (the `CheckSiteUpdates` operationId).
+	CheckSiteUpdatesWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*CheckSiteUpdatesResponse, error)
 
 	// GetTemplateRolloutWithResponse Get the site templates rollout
 	//
@@ -24825,6 +25053,151 @@ func (r StopSiteResponse) ContentType() string {
 	return ""
 }
 
+type GetSiteUpdatesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SiteUpdates
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetSiteUpdatesResponse) GetJSON200() *SiteUpdates {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetSiteUpdatesResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetSiteUpdatesResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetSiteUpdatesResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetSiteUpdatesResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetSiteUpdatesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetSiteUpdatesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetSiteUpdatesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetSiteUpdatesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CheckSiteUpdatesResponse202Headers the declared response headers of an HTTP 202 response for CheckSiteUpdates
+type CheckSiteUpdatesResponse202Headers struct {
+	Location *string
+}
+
+type CheckSiteUpdatesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *JobAccepted
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *CheckSiteUpdatesResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r CheckSiteUpdatesResponse) GetJSON202() *JobAccepted {
+	return r.JSON202
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CheckSiteUpdatesResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CheckSiteUpdatesResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r CheckSiteUpdatesResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CheckSiteUpdatesResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CheckSiteUpdatesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CheckSiteUpdatesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CheckSiteUpdatesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CheckSiteUpdatesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetTemplateRolloutResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -28943,6 +29316,50 @@ func (c *ClientWithResponses) StopSiteWithResponse(ctx context.Context, siteID S
 		return nil, err
 	}
 	return ParseStopSiteResponse(rsp)
+}
+
+// GetSiteUpdatesWithResponse List a site's pending plugin and theme updates
+//
+// The plugins and themes of the site with an update available, as of
+// the site's latest update check (design doc §5.6, §9 Q2). The
+// control plane checks every site twice a day with WP-CLI (`wp plugin
+// list --update=available`, and the same for themes); `POST
+// /api/v1/sites/{site_id}/updates/check` checks now. The platform only
+// reports these: WordPress applies plugin and theme updates itself,
+// with auto-updates or from wp-admin. Pending updates count towards
+// the site's health as a warning: the default alert rule `Plugin or
+// theme updates pending` fires when they have been pending for 3 days.
+// A site that hasn't been checked yet has a null `checked_at` and
+// empty lists.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/sites/{site_id}/updates (the `GetSiteUpdates` operationId).
+func (c *ClientWithResponses) GetSiteUpdatesWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*GetSiteUpdatesResponse, error) {
+	rsp, err := c.GetSiteUpdates(ctx, siteID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetSiteUpdatesResponse(rsp)
+}
+
+// CheckSiteUpdatesWithResponse Check a site for plugin and theme updates now
+//
+// Queues a check of the site's plugins and themes for updates, outside
+// its regular schedule, for instance after updating them in wp-admin.
+// If a check is already queued, returns that one. The check only
+// lists updates, and never applies one. It replaces the site's report
+// when it succeeds, and skips a site that isn't serving.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/updates/check (the `CheckSiteUpdates` operationId).
+func (c *ClientWithResponses) CheckSiteUpdatesWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*CheckSiteUpdatesResponse, error) {
+	rsp, err := c.CheckSiteUpdates(ctx, siteID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCheckSiteUpdatesResponse(rsp)
 }
 
 // GetTemplateRolloutWithResponse Get the site templates rollout
@@ -35294,6 +35711,127 @@ func ParseStopSiteResponse(rsp *http.Response) (*StopSiteResponse, error) {
 	switch {
 	case rsp.StatusCode == 202:
 		var headers StopSiteResponse202Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetSiteUpdatesResponse parses an HTTP response from a GetSiteUpdatesWithResponse call
+func ParseGetSiteUpdatesResponse(rsp *http.Response) (*GetSiteUpdatesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetSiteUpdatesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SiteUpdates
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCheckSiteUpdatesResponse parses an HTTP response from a CheckSiteUpdatesWithResponse call
+func ParseCheckSiteUpdatesResponse(rsp *http.Response) (*CheckSiteUpdatesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CheckSiteUpdatesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest JobAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers CheckSiteUpdatesResponse202Headers
 		if values := rsp.Header.Values("Location"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {

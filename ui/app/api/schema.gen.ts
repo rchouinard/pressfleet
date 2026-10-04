@@ -1948,6 +1948,64 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sites/{site_id}/updates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List a site's pending plugin and theme updates
+         * @description The plugins and themes of the site with an update available, as of
+         *     the site's latest update check (design doc §5.6, §9 Q2). The
+         *     control plane checks every site twice a day with WP-CLI (`wp plugin
+         *     list --update=available`, and the same for themes); `POST
+         *     /api/v1/sites/{site_id}/updates/check` checks now. The platform only
+         *     reports these: WordPress applies plugin and theme updates itself,
+         *     with auto-updates or from wp-admin. Pending updates count towards
+         *     the site's health as a warning: the default alert rule `Plugin or
+         *     theme updates pending` fires when they have been pending for 3 days.
+         *     A site that hasn't been checked yet has a null `checked_at` and
+         *     empty lists.
+         */
+        get: operations["getSiteUpdates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sites/{site_id}/updates/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check a site for plugin and theme updates now
+         * @description Queues a check of the site's plugins and themes for updates, outside
+         *     its regular schedule, for instance after updating them in wp-admin.
+         *     If a check is already queued, returns that one. The check only
+         *     lists updates, and never applies one. It replaces the site's report
+         *     when it succeeds, and skips a site that isn't serving.
+         */
+        post: operations["checkSiteUpdates"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/client-groups/{client_group_id}/core-policy": {
         parameters: {
             query?: never;
@@ -3411,8 +3469,51 @@ export interface components {
             parent_site_id: components["schemas"]["ID"] | null;
             /** @description Whether the initial WordPress admin credentials can still be retrieved. */
             admin_credentials_available: boolean;
+            pending_updates?: components["schemas"]["PendingUpdateCounts"];
             created_at: components["schemas"]["Timestamp"];
             updated_at: components["schemas"]["Timestamp"];
+        };
+        /**
+         * @description How many plugins and themes of the site had an update available at
+         *     its latest update check (`GET /api/v1/sites/{site_id}/updates` lists
+         *     them). Returned when listing and getting sites; absent until the
+         *     site has been checked.
+         */
+        PendingUpdateCounts: {
+            plugins: number;
+            themes: number;
+            checked_at: components["schemas"]["Timestamp"];
+        };
+        /** @description A plugin or theme with an update available. */
+        PendingUpdate: {
+            /**
+             * @description The plugin's or theme's slug.
+             * @example woocommerce
+             */
+            name: string;
+            /**
+             * @description Its display name; empty if it has none.
+             * @example WooCommerce
+             */
+            title: string;
+            /**
+             * @description The installed version.
+             * @example 9.1.0
+             */
+            version: string;
+            /**
+             * @description The version available.
+             * @example 9.2.1
+             */
+            update_version: string;
+        };
+        SiteUpdates: {
+            /** @description When the latest successful check ran; null if the site hasn't been checked yet. */
+            checked_at: components["schemas"]["Timestamp"] | null;
+            /** @description Plugins with an update available, sorted by name. */
+            plugins: components["schemas"]["PendingUpdate"][];
+            /** @description Themes with an update available, sorted by name. */
+            themes: components["schemas"]["PendingUpdate"][];
         };
         /**
          * @description A WordPress major branch (x.y).
@@ -7022,6 +7123,59 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getSiteUpdates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The site's pending updates. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteUpdates"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    checkSiteUpdates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The update check job. */
+            202: {
+                headers: {
+                    Location: components["headers"]["JobLocation"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobAccepted"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             default: components["responses"]["Error"];
         };
     };

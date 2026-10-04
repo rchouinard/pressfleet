@@ -381,6 +381,8 @@ func m4Scenarios() []m4Scenario {
 			}},
 		{rule: "Redis eviction spike", key: "redis_eviction_spike", clearBySeries: true, // more than 1 eviction per second: 2
 			samples: []m4Sample{{metric: alerts.MetricRedisEvictedKeys, bad: 10, counter: true}}},
+		{rule: "Plugin or theme updates pending", key: "updates_pending", site: true, // more than 0 updates
+			samples: []m4Sample{{metric: alerts.MetricSitePendingUpdates, labels: map[string]string{"kind": "plugin"}, bad: 2, good: 0}}},
 	}
 }
 

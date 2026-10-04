@@ -1,10 +1,12 @@
 <script setup lang="ts">
-// Sites as a table: name (links to the detail page), status, client group,
-// domain and creation date. Management actions live on the detail page, so
-// the list stays read-only and the same for every role. The table scrolls
-// sideways inside its own region on narrow screens.
+// Sites as a table: name (links to the detail page), status with pending
+// plugin and theme updates, client group, domain and creation date.
+// Management actions live on the detail page, so the list stays read-only
+// and the same for every role. The table scrolls sideways inside its own
+// region on narrow screens.
 import { groupLabel, type Site } from '../../utils/site'
 import SiteStatusBadge from './SiteStatusBadge.vue'
+import SiteUpdatesBadge from './SiteUpdatesBadge.vue'
 
 defineProps<{ sites: readonly Site[], groupNames: Readonly<Record<string, string>> }>()
 
@@ -32,7 +34,12 @@ function when(iso: string): string {
           <th scope="row" class="px-3 py-2 font-medium">
             <NuxtLink :to="`/sites/${s.id}`" class="rounded text-primary underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-primary">{{ s.name }}</NuxtLink>
           </th>
-          <td class="px-3 py-2"><SiteStatusBadge :status="s.status" /></td>
+          <td class="px-3 py-2">
+            <span class="flex flex-wrap items-center gap-1">
+              <SiteStatusBadge :status="s.status" />
+              <SiteUpdatesBadge :counts="s.pending_updates" />
+            </span>
+          </td>
           <td class="px-3 py-2">{{ groupLabel(groupNames, s.client_group_id) }}</td>
           <td class="max-w-[16rem] truncate px-3 py-2 text-muted" :title="s.primary_domain ?? s.preview_domain">
             {{ s.primary_domain ?? s.preview_domain }}

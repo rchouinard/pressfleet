@@ -3201,6 +3201,73 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/sites/{site_id}/updates:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    get:
+      operationId: getSiteUpdates
+      tags: [sites]
+      summary: List a site's pending plugin and theme updates
+      description: |
+        The plugins and themes of the site with an update available, as of
+        the site's latest update check (design doc §5.6, §9 Q2). The
+        control plane checks every site twice a day with WP-CLI (`wp plugin
+        list --update=available`, and the same for themes); `POST
+        /api/v1/sites/{site_id}/updates/check` checks now. The platform only
+        reports these: WordPress applies plugin and theme updates itself,
+        with auto-updates or from wp-admin. Pending updates count towards
+        the site's health as a warning: the default alert rule `Plugin or
+        theme updates pending` fires when they have been pending for 3 days.
+        A site that hasn't been checked yet has a null `checked_at` and
+        empty lists.
+      responses:
+        "200":
+          description: The site's pending updates.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteUpdates"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/sites/{site_id}/updates/check:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    post:
+      operationId: checkSiteUpdates
+      tags: [sites]
+      summary: Check a site for plugin and theme updates now
+      description: |
+        Queues a check of the site's plugins and themes for updates, outside
+        its regular schedule, for instance after updating them in wp-admin.
+        If a check is already queued, returns that one. The check only
+        lists updates, and never applies one. It replaces the site's report
+        when it succeeds, and skips a site that isn't serving.
+      responses:
+        "202":
+          description: The update check job.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/client-groups/{client_group_id}/core-policy:
     parameters:
       - $ref: "#/components/parameters/ClientGroupID"
@@ -5906,10 +5973,72 @@ components:
         admin_credentials_available:
           type: boolean
           description: Whether the initial WordPress admin credentials can still be retrieved.
+        pending_updates:
+          $ref: "#/components/schemas/PendingUpdateCounts"
         created_at:
           $ref: "#/components/schemas/Timestamp"
         updated_at:
           $ref: "#/components/schemas/Timestamp"
+
+    PendingUpdateCounts:
+      type: object
+      description: |
+        How many plugins and themes of the site had an update available at
+        its latest update check (`GET /api/v1/sites/{site_id}/updates` lists
+        them). Returned when listing and getting sites; absent until the
+        site has been checked.
+      required: [plugins, themes, checked_at]
+      properties:
+        plugins:
+          type: integer
+          minimum: 0
+        themes:
+          type: integer
+          minimum: 0
+        checked_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    PendingUpdate:
+      type: object
+      description: A plugin or theme with an update available.
+      required: [name, title, version, update_version]
+      properties:
+        name:
+          type: string
+          description: The plugin's or theme's slug.
+          examples: ["woocommerce"]
+        title:
+          type: string
+          description: Its display name; empty if it has none.
+          examples: ["WooCommerce"]
+        version:
+          type: string
+          description: The installed version.
+          examples: ["9.1.0"]
+        update_version:
+          type: string
+          description: The version available.
+          examples: ["9.2.1"]
+
+    SiteUpdates:
+      type: object
+      required: [checked_at, plugins, themes]
+      properties:
+        checked_at:
+          description: When the latest successful check ran; null if the site hasn't been checked yet.
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        plugins:
+          type: array
+          description: Plugins with an update available, sorted by name.
+          items:
+            $ref: "#/components/schemas/PendingUpdate"
+        themes:
+          type: array
+          description: Themes with an update available, sorted by name.
+          items:
+            $ref: "#/components/schemas/PendingUpdate"
 
     WordPressBranch:
       type: string

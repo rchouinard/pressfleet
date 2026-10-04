@@ -484,6 +484,7 @@ These default rules are created at the first start with the version that has the
 | Container restart loop | platform | a container restarted more than 3 times in 15 minutes | none | critical |
 | PHP-FPM worker saturation | site | more than 90% of a site's PHP-FPM workers are busy | 5 minutes | warning |
 | Redis eviction spike | platform | the object cache evicts more than 1 key per second | 5 minutes | warning |
+| Plugin or theme updates pending | site | a site has plugins or themes with an update available (one alert per kind) | 3 days | warning |
 
 Operators and Admins manage rules with `/api/v1/alert-rules` (list, create, get, update, delete, `enable`, and `disable`); every role can read rules and the alerts they raised with `GET /api/v1/alerts`, filtered by `state`, `rule_id`, `site_id`, `client_group_id`, and the time they started. Changes to rules are recorded in the [audit log](#audit-log) as `alert_rule.manage`. The expression's brackets and quotes are checked when a rule is saved, but its PromQL is only checked when VictoriaMetrics evaluates it, which is logged. One control plane process evaluates the rules.
 

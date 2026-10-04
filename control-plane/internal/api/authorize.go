@@ -88,12 +88,16 @@ var operationActions = map[string]authz.Action{
 	"createSiteDatabaseSession": authz.OpenDatabaseSession,
 	"endSiteDatabaseSession":    authz.EndDatabaseSession,
 	"getSiteCore":               authz.ViewSites,
-	"setSiteCorePolicy":         authz.ApproveCoreUpdate,
-	"updateSiteCore":            authz.ApproveCoreUpdate,
-	"getClientGroupCorePolicy":  authz.ViewClientGroups,
-	"setClientGroupCorePolicy":  authz.ApproveCoreUpdate,
-	"getCoreRollout":            authz.ViewSites,
-	"resumeCoreRollout":         authz.ApproveCoreUpdate,
+	// Pending plugin and theme updates (§9 Q2): checking now only reads
+	// the site, but queues a job on it, like changing a setting.
+	"getSiteUpdates":           authz.ViewSites,
+	"checkSiteUpdates":         authz.UpdateSite,
+	"setSiteCorePolicy":        authz.ApproveCoreUpdate,
+	"updateSiteCore":           authz.ApproveCoreUpdate,
+	"getClientGroupCorePolicy": authz.ViewClientGroups,
+	"setClientGroupCorePolicy": authz.ApproveCoreUpdate,
+	"getCoreRollout":           authz.ViewSites,
+	"resumeCoreRollout":        authz.ApproveCoreUpdate,
 	// Resuming a rollout is the same decision for images and templates as
 	// for core
 	// releases.

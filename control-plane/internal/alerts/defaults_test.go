@@ -50,6 +50,7 @@ func TestDefaultRules(t *testing.T) {
 			[]alerts.Sample{alertstest.Sample(1, "container", "pf-acme-php-1", "site_id", siteID)}, siteID, "pf-acme-php-1 keeps restarting"},
 		{alerts.KeyPHPFPMSaturation, []alerts.Sample{site(0.95)}, []alerts.Sample{site(0.4)}, siteID, "95.0% of PHP-FPM workers are busy"},
 		{alerts.KeyRedisEvictionSpike, []alerts.Sample{alertstest.Sample(12.5)}, []alerts.Sample{alertstest.Sample(0.2)}, "", "evicting 12.5 keys per second"},
+		{alerts.KeyUpdatesPending, []alerts.Sample{site(3, "kind", "plugin")}, []alerts.Sample{site(0, "kind", "plugin")}, siteID, "has 3 plugin updates pending"},
 	}
 
 	covered := map[string]bool{}

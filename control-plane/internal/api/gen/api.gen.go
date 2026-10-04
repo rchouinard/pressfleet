@@ -2890,6 +2890,40 @@ type PasswordChange struct {
 	NewPassword     *Password `json:"new_password,omitempty"`
 }
 
+// PendingUpdate A plugin or theme with an update available.
+type PendingUpdate struct {
+	// Name The plugin's or theme's slug.
+	//
+	// Examples: woocommerce
+	Name string `json:"name"`
+
+	// Title Its display name; empty if it has none.
+	//
+	// Examples: WooCommerce
+	Title string `json:"title"`
+
+	// UpdateVersion The version available.
+	//
+	// Examples: 9.2.1
+	UpdateVersion string `json:"update_version"`
+
+	// Version The installed version.
+	//
+	// Examples: 9.1.0
+	Version string `json:"version"`
+}
+
+// PendingUpdateCounts How many plugins and themes of the site had an update available at
+// its latest update check (`GET /api/v1/sites/{site_id}/updates` lists
+// them). Returned when listing and getting sites; absent until the
+// site has been checked.
+type PendingUpdateCounts struct {
+	// CheckedAt Examples: 2026-09-26T17:25:00Z
+	CheckedAt Timestamp `json:"checked_at"`
+	Plugins   int       `json:"plugins"`
+	Themes    int       `json:"themes"`
+}
+
 // Platform defines model for Platform.
 type Platform struct {
 	// Build The build of the running control plane.
@@ -3111,6 +3145,12 @@ type Site struct {
 
 	// ParentSiteID Reserved for staging clones; always null in the MVP.
 	ParentSiteID *ID `json:"parent_site_id"`
+
+	// PendingUpdates How many plugins and themes of the site had an update available at
+	// its latest update check (`GET /api/v1/sites/{site_id}/updates` lists
+	// them). Returned when listing and getting sites; absent until the
+	// site has been checked.
+	PendingUpdates *PendingUpdateCounts `json:"pending_updates,omitempty"`
 
 	// PhpVersion A PHP version the platform publishes site images for.
 	//
@@ -3528,6 +3568,18 @@ type SiteUpdate struct {
 
 	// Resources Partial resource limits. Omitted fields keep their current value, or the platform default when creating a site.
 	Resources *ResourceLimitsUpdate `json:"resources,omitempty"`
+}
+
+// SiteUpdates defines model for SiteUpdates.
+type SiteUpdates struct {
+	// CheckedAt When the latest successful check ran; null if the site hasn't been checked yet.
+	CheckedAt *Timestamp `json:"checked_at"`
+
+	// Plugins Plugins with an update available, sorted by name.
+	Plugins []PendingUpdate `json:"plugins"`
+
+	// Themes Themes with an update available, sorted by name.
+	Themes []PendingUpdate `json:"themes"`
 }
 
 // SSHKey defines model for SshKey.
@@ -4681,6 +4733,12 @@ type ServerInterface interface {
 	// StopSite Stop a running site
 	// (POST /api/v1/sites/{site_id}/stop)
 	StopSite(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// GetSiteUpdates List a site's pending plugin and theme updates
+	// (GET /api/v1/sites/{site_id}/updates)
+	GetSiteUpdates(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// CheckSiteUpdates Check a site for plugin and theme updates now
+	// (POST /api/v1/sites/{site_id}/updates/check)
+	CheckSiteUpdates(w http.ResponseWriter, r *http.Request, siteID SiteID)
 	// GetTemplateRollout Get the site templates rollout
 	// (GET /api/v1/template-rollout)
 	GetTemplateRollout(w http.ResponseWriter, r *http.Request)
@@ -8047,6 +8105,58 @@ func (siw *ServerInterfaceWrapper) StopSite(w http.ResponseWriter, r *http.Reque
 	handler.ServeHTTP(w, r)
 }
 
+// GetSiteUpdates operation middleware
+func (siw *ServerInterfaceWrapper) GetSiteUpdates(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSiteUpdates(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CheckSiteUpdates operation middleware
+func (siw *ServerInterfaceWrapper) CheckSiteUpdates(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CheckSiteUpdates(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetTemplateRollout operation middleware
 func (siw *ServerInterfaceWrapper) GetTemplateRollout(w http.ResponseWriter, r *http.Request) {
 
@@ -8786,6 +8896,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/core", wrapper.GetSiteCore)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/sites/{site_id}/core/policy", wrapper.SetSiteCorePolicy)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/core/update", wrapper.UpdateSiteCore)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}/updates", wrapper.GetSiteUpdates)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/updates/check", wrapper.CheckSiteUpdates)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/client-groups/{client_group_id}/core-policy", wrapper.GetClientGroupCorePolicy)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/v1/client-groups/{client_group_id}/core-policy", wrapper.SetClientGroupCorePolicy)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/core-rollout", wrapper.GetCoreRollout)
@@ -18269,6 +18381,190 @@ func (response StopSitedefaultApplicationProblemPlusJSONResponse) VisitStopSiteR
 	return err
 }
 
+type GetSiteUpdatesRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+}
+
+type GetSiteUpdatesResponseObject interface {
+	VisitGetSiteUpdatesResponse(w http.ResponseWriter) error
+}
+
+type GetSiteUpdates200JSONResponse SiteUpdates
+
+func (response GetSiteUpdates200JSONResponse) VisitGetSiteUpdatesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteUpdates401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetSiteUpdates401ApplicationProblemPlusJSONResponse) VisitGetSiteUpdatesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteUpdates403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetSiteUpdates403ApplicationProblemPlusJSONResponse) VisitGetSiteUpdatesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteUpdates404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response GetSiteUpdates404ApplicationProblemPlusJSONResponse) VisitGetSiteUpdatesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetSiteUpdatesdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetSiteUpdatesdefaultApplicationProblemPlusJSONResponse) VisitGetSiteUpdatesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CheckSiteUpdatesRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+}
+
+type CheckSiteUpdatesResponseObject interface {
+	VisitCheckSiteUpdatesResponse(w http.ResponseWriter) error
+}
+
+type CheckSiteUpdates202ResponseHeaders struct {
+	Location *string
+}
+
+type CheckSiteUpdates202JSONResponse struct {
+	Body    JobAccepted
+	Headers CheckSiteUpdates202ResponseHeaders
+}
+
+func (response CheckSiteUpdates202JSONResponse) VisitCheckSiteUpdatesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CheckSiteUpdates401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response CheckSiteUpdates401ApplicationProblemPlusJSONResponse) VisitCheckSiteUpdatesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CheckSiteUpdates403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response CheckSiteUpdates403ApplicationProblemPlusJSONResponse) VisitCheckSiteUpdatesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CheckSiteUpdates404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response CheckSiteUpdates404ApplicationProblemPlusJSONResponse) VisitCheckSiteUpdatesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CheckSiteUpdatesdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response CheckSiteUpdatesdefaultApplicationProblemPlusJSONResponse) VisitCheckSiteUpdatesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetTemplateRolloutRequestObject struct {
 }
 
@@ -20520,6 +20816,12 @@ type StrictServerInterface interface {
 	// StopSite Stop a running site
 	// (POST /api/v1/sites/{site_id}/stop)
 	StopSite(ctx context.Context, request StopSiteRequestObject) (StopSiteResponseObject, error)
+	// GetSiteUpdates List a site's pending plugin and theme updates
+	// (GET /api/v1/sites/{site_id}/updates)
+	GetSiteUpdates(ctx context.Context, request GetSiteUpdatesRequestObject) (GetSiteUpdatesResponseObject, error)
+	// CheckSiteUpdates Check a site for plugin and theme updates now
+	// (POST /api/v1/sites/{site_id}/updates/check)
+	CheckSiteUpdates(ctx context.Context, request CheckSiteUpdatesRequestObject) (CheckSiteUpdatesResponseObject, error)
 	// GetTemplateRollout Get the site templates rollout
 	// (GET /api/v1/template-rollout)
 	GetTemplateRollout(ctx context.Context, request GetTemplateRolloutRequestObject) (GetTemplateRolloutResponseObject, error)
@@ -23096,6 +23398,58 @@ func (sh *strictHandler) StopSite(w http.ResponseWriter, r *http.Request, siteID
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(StopSiteResponseObject); ok {
 		if err := validResponse.VisitStopSiteResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetSiteUpdates operation middleware
+func (sh *strictHandler) GetSiteUpdates(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request GetSiteUpdatesRequestObject
+
+	request.SiteID = siteID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetSiteUpdates(ctx, request.(GetSiteUpdatesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetSiteUpdates")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetSiteUpdatesResponseObject); ok {
+		if err := validResponse.VisitGetSiteUpdatesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CheckSiteUpdates operation middleware
+func (sh *strictHandler) CheckSiteUpdates(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request CheckSiteUpdatesRequestObject
+
+	request.SiteID = siteID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CheckSiteUpdates(ctx, request.(CheckSiteUpdatesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CheckSiteUpdates")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CheckSiteUpdatesResponseObject); ok {
+		if err := validResponse.VisitCheckSiteUpdatesResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

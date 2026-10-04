@@ -23,6 +23,7 @@ const (
 	MetricHostFilesystemSizeBytes = "pressfleet_host_filesystem_size_bytes"
 	MetricHostFilesystemAvail     = "pressfleet_host_filesystem_avail_bytes"
 	MetricRedisEvictedKeys        = "pressfleet_redis_evicted_keys_total"
+	MetricSitePendingUpdates      = "pressfleet_site_pending_updates"
 )
 
 // DefaultMetrics lists every metric the default rules use.
@@ -38,6 +39,7 @@ var DefaultMetrics = []string{
 	MetricHostFilesystemSizeBytes,
 	MetricHostFilesystemAvail,
 	MetricRedisEvictedKeys,
+	MetricSitePendingUpdates,
 }
 
 // Keys of the default rules. They are stored as the rules' BuiltinKey and
@@ -53,6 +55,7 @@ const (
 	KeyContainerRestartLoop = "container_restart_loop"
 	KeyPHPFPMSaturation     = "php_fpm_saturation"
 	KeyRedisEvictionSpike   = "redis_eviction_spike"
+	KeyUpdatesPending       = "updates_pending"
 )
 
 // Expressions and parts of them.
@@ -228,6 +231,27 @@ func DefaultRules() []store.AlertRule {
 			Annotations: summary(
 				"The object cache is evicting {{ printf \"%.1f\" .Value }} keys per second",
 				"The object cache has been evicting more than {{ printf \"%.1f\" .Threshold }} keys per second for at least 5 minutes; give it more memory."),
+		},
+		{
+			// Pending updates make a site's health a warning, never a
+			// failure (#125, design doc §9 Q2). The duration leaves
+			// WordPress's own auto-updates, which run twice a day, time to
+			// apply them, so only updates nobody is applying alert.
+			BuiltinKey: KeyUpdatesPending,
+			Name:       "Plugin or theme updates pending",
+			Description: "A site has had plugin or theme updates available for a while. WordPress applies them " +
+				"(auto-updates or wp-admin); the platform only reports them. The threshold is a number of updates.",
+			Scope:     store.AlertScopeSite,
+			Kind:      store.AlertKindThreshold,
+			Expr:      MetricSitePendingUpdates,
+			Operator:  store.OpGreater,
+			Threshold: 0,
+			For:       72 * time.Hour,
+			Severity:  store.SeverityWarning,
+			Annotations: summary(
+				"Site {{ .Labels.site_id }} has {{ printf \"%.0f\" .Value }} {{ .Labels.kind }} updates pending",
+				"Site {{ .Labels.site_id }} has had {{ .Labels.kind }} updates available for at least 3 days. "+
+					"The site's page in the dashboard lists them; apply them in wp-admin."),
 		},
 	}
 }

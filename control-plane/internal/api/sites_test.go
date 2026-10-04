@@ -38,6 +38,8 @@ const testTemplates = "r1-test"
 // implementedSiteOps are the site operations that no longer answer 501.
 var implementedSiteOps = map[string]bool{
 	"getSiteCore":                   true,
+	"getSiteUpdates":                true,
+	"checkSiteUpdates":              true,
 	"setSiteCorePolicy":             true,
 	"updateSiteCore":                true,
 	"getCoreRollout":                true,

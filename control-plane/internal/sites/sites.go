@@ -196,6 +196,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/domains"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
 	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache"
+	"github.com/rchouinard/pressfleet/control-plane/internal/pluginupdates"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
@@ -609,6 +610,9 @@ func (s *Service) create(ctx context.Context, site store.Site, req NewSite) (sto
 			return err
 		}
 		if err := sitecron.EnsureSchedule(ctx, q, site.ID); err != nil {
+			return err
+		}
+		if err := pluginupdates.EnsureSchedule(ctx, q, site.ID); err != nil {
 			return err
 		}
 		if err := sitebackup.EnsureSchedule(ctx, q, site.ID, s.backupWindow); err != nil {

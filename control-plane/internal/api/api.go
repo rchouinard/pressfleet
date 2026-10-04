@@ -60,6 +60,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/export"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/metricsapi"
+	"github.com/rchouinard/pressfleet/control-plane/internal/pluginupdates"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
@@ -157,6 +158,7 @@ type Handlers struct {
 	db            *store.DB
 	auth          *auth.Service
 	sites         *sites.Service
+	updates       *pluginupdates.Service
 	backups       *sitebackup.Service
 	offboarding   *offboard.Service
 	uploads       *uploads.Service
@@ -205,6 +207,9 @@ func NewHandler(opts Options) (http.Handler, error) {
 	h := &Handlers{log: opts.Logger, readiness: opts.Readiness, db: opts.DB, auth: opts.Auth, sites: opts.Sites, backups: opts.Backups,
 		uploads: opts.Uploads, secureCookies: opts.SecureCookies, sftp: opts.SFTP, build: opts.Build}
 	h.exports = opts.Exports
+	if opts.DB != nil {
+		h.updates = pluginupdates.NewService(opts.DB)
+	}
 	h.offboarding = opts.Offboarding
 	h.deploys = opts.Deployments
 	h.dbSessions = opts.DatabaseSessions

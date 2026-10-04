@@ -215,6 +215,7 @@ function when(iso: string): string {
           <h1 class="break-words text-2xl font-semibold tracking-tight">{{ site.name }}</h1>
           <p class="flex flex-wrap items-center gap-2 text-sm text-muted">
             <SiteStatusBadge :status="site.status" />
+            <SiteUpdatesBadge :counts="site.pending_updates" />
             <a v-if="site.url" :href="site.url" target="_blank" rel="noopener noreferrer" class="break-all text-primary underline">{{ site.url }}</a>
           </p>
         </div>
@@ -274,6 +275,7 @@ function when(iso: string): string {
       <SiteSettings :site="site" @changed="onDomainsChanged" />
 
       <SiteCoreCard :site="site" @changed="onDomainsChanged" />
+      <SiteUpdatesCard v-if="site.status !== 'deleting'" :site="site" @changed="onDomainsChanged" />
       <SiteSftpCard v-if="site.status !== 'deleting' && platform" :slug="site.slug" :host="platform.sftp.host" :port="platform.sftp.port" :enabled="platform.sftp.enabled" :can-connect="can('site.code.deploy')" />
       <IfCan action="site.export">
         <SiteExportCard v-if="site.status !== 'deleting'" :site="site" />

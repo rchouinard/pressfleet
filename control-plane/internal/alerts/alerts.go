@@ -76,6 +76,7 @@
 //	pressfleet_host_filesystem_size_bytes                        gauge    mountpoint                               disk_nearly_full
 //	pressfleet_host_filesystem_avail_bytes                       gauge    mountpoint                               disk_nearly_full
 //	pressfleet_redis_evicted_keys_total                          counter  (none)                                   redis_eviction_spike
+//	pressfleet_site_pending_updates                              gauge    site_id, client_group_id, kind           updates_pending
 //
 // What each one means:
 //
@@ -102,6 +103,10 @@
 //     about (the Docker data root and the PressFleet data directory).
 //   - pressfleet_redis_evicted_keys_total is the object cache server's
 //     evicted_keys counter.
+//   - pressfleet_site_pending_updates is the number of plugins (kind
+//     "plugin") or themes ("theme") of the site with an update available,
+//     as of its latest update check (package pluginupdates). Both are
+//     absent for a site that hasn't been checked yet.
 //
 // [DefaultMetrics] lists the same names in code, and a test checks that the
 // default rules use exactly those.

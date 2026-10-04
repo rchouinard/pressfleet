@@ -47,9 +47,14 @@ func (h *Handlers) ListSites(ctx context.Context, req gen.ListSitesRequestObject
 	if err != nil {
 		return nil, err
 	}
+	counts, err := h.updateCounts(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := gen.ListSites200JSONResponse{Items: make([]gen.Site, len(page.Sites))}
 	for i, s := range page.Sites {
 		out.Items[i] = siteResponse(s, aliases[s.ID])
+		out.Items[i].PendingUpdates = pendingUpdateCounts(counts, s.ID)
 	}
 	if page.NextCursor != "" {
 		out.NextCursor = &page.NextCursor
@@ -149,8 +154,13 @@ func (h *Handlers) GetSite(ctx context.Context, req gen.GetSiteRequestObject) (g
 	if err != nil {
 		return nil, siteError(err)
 	}
+	counts, err := h.updateCounts(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rt := h.sites.Runtime(ctx, site.ID)
 	out := siteResponse(site, aliases)
+	out.PendingUpdates = pendingUpdateCounts(counts, site.ID)
 	out.Runtime = &gen.SiteRuntime{Phase: gen.SiteRuntimePhase(rt.Phase)}
 	if rt.Message != "" {
 		out.Runtime.Message = &rt.Message

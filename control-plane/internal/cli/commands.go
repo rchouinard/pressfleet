@@ -38,6 +38,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/metrics"
 	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache/redis"
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
+	"github.com/rchouinard/pressfleet/control-plane/internal/pluginupdates"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
@@ -171,6 +172,9 @@ func (a *app) metricsService(db *store.DB, prov *compose.Provisioner, secretStor
 		}
 	}
 	if err := svc.Register(metrics.BackupJobsCollector{DB: db}); err != nil {
+		return nil, err
+	}
+	if err := svc.Register(metrics.UpdatesCollector{DB: db}); err != nil {
 		return nil, err
 	}
 	return svc, nil
@@ -465,6 +469,9 @@ func (a *app) serveCommand() *cobra.Command {
 			if err := sitecron.Register(pool, db, prov); err != nil {
 				return err
 			}
+			if err := pool.Register(pluginupdates.Handler(db, prov)); err != nil {
+				return err
+			}
 			// Existing sites pick up changed install-wide settings (the
 			// WordPress security set, §6.1) through one reconcile job per
 			// site. Queuing them is best effort: a failure must not keep
@@ -477,6 +484,10 @@ func (a *app) serveCommand() *cobra.Command {
 			// Best effort, like the reconcile jobs.
 			if err := sitebackup.ReconcileSchedules(cmd.Context(), db, backupWindow); err != nil && cmd.Context().Err() == nil {
 				a.log.Warn("reconciling backup schedules failed", "error", err)
+			}
+			// Likewise every site's plugin and theme update checks.
+			if err := pluginupdates.ReconcileSchedules(cmd.Context(), db); err != nil && cmd.Context().Err() == nil {
+				a.log.Warn("reconciling update check schedules failed", "error", err)
 			}
 			// Likewise every backup repository's prune and check schedules.
 			if err := repomaint.ReconcileSchedules(cmd.Context(), db, a.maintenanceTiming()); err != nil && cmd.Context().Err() == nil {

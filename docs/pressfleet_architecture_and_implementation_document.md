@@ -495,7 +495,7 @@ A go-live that fails before the URL update rolls back to the previous domains. O
 * The image matrix is kept small: for each supported PHP version, the latest WordPress core release, plus the latest release of every older branch a site is held on or awaiting approval for.
 
 ### 5.6. WordPress Runtime Defaults
-* **Plugin and theme updates:** Handled natively by WordPress (auto-updates or wp-admin), writing to the `wp-content` volume. The platform only reports pending updates, as part of site health (§9 Q2); it never runs them.
+* **Plugin and theme updates:** Handled natively by WordPress (auto-updates or wp-admin), writing to the `wp-content` volume. The platform only reports pending updates, as part of site health (§9 Q2); it never runs them. The control plane checks each site twice a day (`wp plugin list --update=available`, and the same for themes, staggered across sites like WP-Cron) and keeps the latest result; the dashboard shows the count on the site list and the updates on the site's page, and can check a site again on demand. Pending updates make a site's health a warning, never a failure: the default alert rule *plugin or theme updates pending* (warning) fires once they have been pending for 3 days, which leaves WordPress's own auto-updates time to apply them first.
 * **WP-Cron:** `DISABLE_WP_CRON` is set; cron is triggered by the control plane scheduler so it runs reliably on low-traffic sites.
 * **Cache purging:** Nginx Helper purges the FastCGI cache using file-based purging against the per-site cache volume shared between the `nginx` and `php` containers. Both containers run as the site's UID so the cache files can be deleted. The platform configures it that way at provisioning and whenever it reconciles the site. A full purge (`POST /api/v1/sites/{id}/cache/purge`, and the purges in go-live and restore) runs as a job in the control plane rather than inside WordPress, so it works on stopped or broken sites: it flushes the site's object cache database as the object cache admin, then deletes the page cache files through the driver (`Provisioner.PurgeCache`).
 * **Outbound email:** Sites send mail through a configurable SMTP relay.
@@ -608,6 +608,7 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
 | **Object cache** | Key count, memory used, hit ratio (per prefix where feasible) | Redis |
 | **TLS** | Certificate expiry per domain | Control plane checks |
 | **Backups** | Last successful backup time, backup size, duration | Backup jobs |
+| **Updates** | Pending plugin and theme updates | Control plane update checks (WP-CLI) |
 
 ### 7.2. Platform Metrics
 * Host CPU, memory, disk usage, and disk I/O.
@@ -617,7 +618,7 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
 * Restic repository size per client group.
 
 ### 7.3. Alerting
-* **Default alert rules:** site down, elevated 5xx rate, certificate expiring or failed to renew, backup failed or stale, disk nearly full, container restart loop, PHP-FPM worker saturation, Redis eviction spikes.
+* **Default alert rules:** site down, elevated 5xx rate, certificate expiring or failed to renew, backup failed or stale, disk nearly full, container restart loop, PHP-FPM worker saturation, Redis eviction spikes, plugin or theme updates pending (§5.6).
 * **Channels (MVP):** email (SMTP) and generic webhook (covers Slack, Teams, etc. via incoming webhooks).
 * **Limitation:** Uptime checks run from the PressFleet host itself and cannot detect a full host outage. External uptime checking is a future consideration.
 
