@@ -20,9 +20,9 @@ import JobStepLog from './JobStepLog.vue'
 
 const props = defineProps<{
   job: Job
-  /** The latest failed poll, if any. */
+  /** The latest failure to load the job (stream or poll), if any. */
   pollError?: ApiError
-  /** The poller is retrying after `pollError`. */
+  /** `pollError` is being retried. */
   retrying?: boolean
 }>()
 

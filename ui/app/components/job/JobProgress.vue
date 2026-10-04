@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// Live progress of any job: <JobProgress :job-id="id" />. Polls through
-// useJob and renders with JobProgressView. A failed load (404 for an unknown
+// Live progress of any job: <JobProgress :job-id="id" />. Follows the job
+// through useJob and renders with JobProgressView. A failed load (404 for an unknown
 // job, 403) shows in place with ProblemAlert.
 import type { Job } from '../../utils/job'
 import JobProgressView from './JobProgressView.vue'

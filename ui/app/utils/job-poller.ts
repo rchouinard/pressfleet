@@ -2,10 +2,10 @@ import { toApiError, type ApiError } from './api-error'
 import { isTerminal, type Job } from './job'
 
 /**
- * The job API has no streaming endpoint (only site logs have one), so job
- * progress is polled with `GET /api/v1/jobs/{id}`. This is the state machine,
- * kept free of Vue and the DOM so it is tested with a fake fetch and fake
- * timers; `useJob` wires it to a component.
+ * Polls job progress with `GET /api/v1/jobs/{id}`: `useJob`'s fallback when
+ * the job event stream (`utils/job-stream.ts`) can't be used. This is the
+ * state machine, kept free of Vue and the DOM so it is tested with a fake
+ * fetch and fake timers; `useJob` wires it to a component.
  *
  * Behaviour:
  * - Polls fast while the job is moving (1 s running or rolling back, 2 s
