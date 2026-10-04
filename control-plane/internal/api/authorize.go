@@ -94,12 +94,15 @@ var operationActions = map[string]authz.Action{
 	"setClientGroupCorePolicy":  authz.ApproveCoreUpdate,
 	"getCoreRollout":            authz.ViewSites,
 	"resumeCoreRollout":         authz.ApproveCoreUpdate,
-	// Resuming a rollout is the same decision for images as for core
+	// Resuming a rollout is the same decision for images and templates as
+	// for core
 	// releases.
-	"getImageRollout":    authz.ViewSites,
-	"getPlatform":        authz.ViewSites,
-	"listPHPVersions":    authz.ViewSites,
-	"resumeImageRollout": authz.ApproveCoreUpdate,
+	"getImageRollout":       authz.ViewSites,
+	"getPlatform":           authz.ViewSites,
+	"listPHPVersions":       authz.ViewSites,
+	"resumeImageRollout":    authz.ApproveCoreUpdate,
+	"getTemplateRollout":    authz.ViewSites,
+	"resumeTemplateRollout": authz.ApproveCoreUpdate,
 
 	"listJobs": authz.ViewJobs,
 	"getJob":   authz.ViewJobs,

@@ -14,8 +14,8 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
 
-// Rollouts (#57, design doc §5.5): moving every site to new images, one
-// site at a time.
+// Rollouts (#57, #95, design doc §5.5): moving every site to new images or
+// templates, one site at a time.
 //
 // A rollout is a series of passes, each a [RolloutJobType] job with the
 // lock key rollout:<name>, so passes of one rollout never overlap. A pass:
@@ -39,15 +39,19 @@ import (
 // ([EnsureRolloutSchedule], every RolloutInterval) picks it up again after
 // a window closes and opens, and the control plane queues a pass when it
 // starts ([Service.EnqueueRollout]), which is how new images in the
-// version manifest are detected.
+// version manifest, and new templates after an upgrade, are detected.
 //
-// There are two rollouts. The core rollout ("core") moves sites to newer
+// There are three rollouts. The core rollout ("core") moves sites to newer
 // WordPress releases: its candidates are the running sites whose core
 // update plan has a target (coreupdate.Decide). The image rollout
 // ("images", imageupdate.go) moves sites to new builds of the images they
 // already run: PHP patch releases, security fixes, and base OS updates.
-// Each runs one site at a time on its own; a site is only ever in one
-// update, since both need it running and set it updating.
+// The templates rollout ("templates", templateupdate.go) re-renders the
+// running sites that an earlier release rendered, after a platform upgrade
+// that changed how the driver renders sites; its fingerprint is the
+// driver's template fingerprint, so a release with other templates lifts a
+// halt. Each runs one site at a time on its own; a site is only ever in one
+// update, since all of them need it running and set it updating.
 
 // RolloutJobType runs one pass of a rollout. Its target is the platform,
 // with the ID rollout_<name>.
@@ -100,7 +104,9 @@ type rolloutSource struct {
 }
 
 // rolloutSources returns the rollouts the service runs: the core rollout
-// if it can take backups, and the image rollout if the driver pins images.
+// if it can take backups, the image rollout if the driver pins images, and
+// the templates rollout if the driver fingerprints and snapshots its
+// renders.
 func (s *Service) rolloutSources() map[string]rolloutSource {
 	out := map[string]rolloutSource{}
 	if s.coreUpdates() {
@@ -124,6 +130,19 @@ func (s *Service) rolloutSources() map[string]rolloutSource {
 			candidates:  s.imageCandidates,
 			enqueue: func(ctx context.Context, q store.Querier, c rolloutCandidate) (store.Job, error) {
 				return s.enqueueImageUpdate(ctx, q, c.site, c.images, imageRollout)
+			},
+		}
+	}
+	if s.templates != nil {
+		out[templateRollout] = rolloutSource{
+			name:    templateRollout,
+			jobType: TemplateUpdateJobType,
+			fingerprint: func(context.Context) (string, error) {
+				return s.templates.TemplateFingerprint(), nil
+			},
+			candidates: s.templateCandidates,
+			enqueue: func(ctx context.Context, q store.Querier, c rolloutCandidate) (store.Job, error) {
+				return s.enqueueTemplateUpdate(ctx, q, c.site, c.target, templateRollout)
 			},
 		}
 	}

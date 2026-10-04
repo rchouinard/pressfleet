@@ -1,0 +1,11 @@
+-- The fingerprint of the templates each site was last rendered with (#95,
+-- design doc §4.7, §5.5), written by package sites. Keep in sync with
+-- migrations/postgres/0028_site_template_fingerprint.sql.
+--
+-- The driver's provisioner.TemplateFingerprinter identifies its site
+-- templates and rendering code. A site whose fingerprint differs from the
+-- running release's, including every existing site after this migration
+-- (empty), was rendered by another release: the templates rollout
+-- re-renders it, one site at a time with a health check, and the startup
+-- reconciliation leaves it to the rollout.
+ALTER TABLE sites ADD COLUMN template_fingerprint TEXT NOT NULL DEFAULT '';

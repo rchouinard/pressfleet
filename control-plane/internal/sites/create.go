@@ -252,6 +252,9 @@ func (s *Service) startStack(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
+	if err := s.recordRender(ctx, site.ID); err != nil {
+		return err
+	}
 	r.Logf("Containers are up (%s).", st.Phase)
 	return nil
 }

@@ -316,6 +316,9 @@ type Options struct {
 	// ImageUpdates configures the image rollout (imageupdate.go), which
 	// runs when the Provisioner implements provisioner.ImagePinner.
 	ImageUpdates ImageUpdateOptions
+	// The templates rollout (templateupdate.go) needs no options: it runs
+	// when the Provisioner implements provisioner.TemplateFingerprinter
+	// and provisioner.RenderSnapshotter.
 }
 
 // Service runs the site workflows.
@@ -343,6 +346,7 @@ type Service struct {
 	core          CoreUpdateOptions
 	prober        provisioner.Prober
 	pinner        provisioner.ImagePinner
+	templates     templateDriver
 	images        *imageChecker
 }
 
@@ -395,6 +399,7 @@ func New(opts Options) (*Service, error) {
 		s.prober, _ = opts.Provisioner.(provisioner.Prober)
 	}
 	s.pinner, _ = opts.Provisioner.(provisioner.ImagePinner)
+	s.templates, _ = opts.Provisioner.(templateDriver)
 	s.images = &imageChecker{opts: opts.ImageUpdates, pulled: map[string]time.Time{}, latest: map[string]ImageBuild{}}
 	if s.core.MaxFailures <= 0 {
 		s.core.MaxFailures = 3
@@ -727,6 +732,9 @@ func (s *Service) Handlers() []jobs.Handler {
 	}
 	if s.pinner != nil {
 		handlers = append(handlers, s.imageUpdateHandler())
+	}
+	if s.templates != nil {
+		handlers = append(handlers, s.templateUpdateHandler())
 	}
 	if len(s.rolloutSources()) > 0 {
 		handlers = append(handlers, s.rolloutHandler())

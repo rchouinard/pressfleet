@@ -3504,6 +3504,61 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/template-rollout:
+    get:
+      operationId: getTemplateRollout
+      tags: [sites]
+      summary: Get the site templates rollout
+      description: |
+        After a platform upgrade that changes how sites are rendered (the
+        per-site Compose templates or the code that fills them in), the
+        rollout that re-renders the running sites rendered by an earlier
+        release. It updates one site at a time, checking each site's
+        health and putting its previous definition back if the check
+        fails, inside the maintenance window if one is set, and halts
+        after `max_failures` failed site updates in a row
+        (`updates.max_failures`), until it is resumed or a release with
+        other templates is installed. Sites whose update failed aren't
+        tried again with the same templates. 404 if the driver doesn't
+        fingerprint its templates.
+      responses:
+        "200":
+          description: The templates rollout.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TemplateRollout"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/template-rollout/resume:
+    post:
+      operationId: resumeTemplateRollout
+      tags: [sites]
+      summary: Resume a halted templates rollout
+      description: Lifts a halt, resets the failure count, and queues a rollout pass.
+      responses:
+        "200":
+          description: The templates rollout.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TemplateRollout"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/jobs:
     get:
       operationId: listJobs
@@ -6165,6 +6220,49 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ImageUpdateFailure"
+
+    TemplateRollout:
+      type: object
+      required: [halted, consecutive_failures, max_failures, templates, pending_sites, failures]
+      properties:
+        halted:
+          type: boolean
+        halted_at:
+          $ref: "#/components/schemas/Timestamp"
+        halt_reason:
+          type: string
+        consecutive_failures:
+          type: integer
+        max_failures:
+          type: integer
+        window:
+          $ref: "#/components/schemas/UpdateWindow"
+        templates:
+          type: string
+          description: The fingerprint of this release's site templates and rendering code.
+          example: r1-3f9a0c2e7b5d1844
+        pending_sites:
+          type: integer
+          description: The running sites rendered with other templates, which the rollout still has to update, including those whose update failed.
+        failures:
+          type: array
+          items:
+            $ref: "#/components/schemas/TemplateUpdateFailure"
+
+    TemplateUpdateFailure:
+      type: object
+      description: A site's failed update to the templates `target`, which the rollout doesn't retry.
+      required: [site_id, target, message, failed_at]
+      properties:
+        site_id:
+          $ref: "#/components/schemas/ID"
+        target:
+          type: string
+          description: The fingerprint of the templates the update moved the site to.
+        message:
+          type: string
+        failed_at:
+          $ref: "#/components/schemas/Timestamp"
 
     SiteCreate:
       type: object

@@ -316,7 +316,7 @@ func (s *Service) configureCreatedSitePlugins(ctx context.Context, r *jobs.Run) 
 // next control plane start after it runs again).
 func (s *Service) reconcilePlugins(ctx context.Context, r *jobs.Run) error {
 	site, ok, err := s.reconcileSite(ctx, r)
-	if err != nil || !ok {
+	if err != nil || !ok || s.leaveToTemplates(r, site) {
 		return err
 	}
 	if site.Status != store.SiteRunning {

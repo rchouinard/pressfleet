@@ -3585,6 +3585,42 @@ type SSHKeyList struct {
 	NextCursor *NextCursor `json:"next_cursor"`
 }
 
+// TemplateRollout defines model for TemplateRollout.
+type TemplateRollout struct {
+	ConsecutiveFailures int                     `json:"consecutive_failures"`
+	Failures            []TemplateUpdateFailure `json:"failures"`
+	HaltReason          *string                 `json:"halt_reason,omitempty"`
+	Halted              bool                    `json:"halted"`
+
+	// HaltedAt Examples: 2026-09-26T17:25:00Z
+	HaltedAt    *Timestamp `json:"halted_at,omitempty"`
+	MaxFailures int        `json:"max_failures"`
+
+	// PendingSites The running sites rendered with other templates, which the rollout still has to update, including those whose update failed.
+	PendingSites int `json:"pending_sites"`
+
+	// Templates The fingerprint of this release's site templates and rendering code.
+	Templates string `json:"templates"`
+
+	// Window The daily maintenance window, in UTC; absent if there is none.
+	Window *UpdateWindow `json:"window,omitempty"`
+}
+
+// TemplateUpdateFailure A site's failed update to the templates `target`, which the rollout doesn't retry.
+type TemplateUpdateFailure struct {
+	// FailedAt Examples: 2026-09-26T17:25:00Z
+	FailedAt Timestamp `json:"failed_at"`
+	Message  string    `json:"message"`
+
+	// SiteID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	SiteID ID `json:"site_id"`
+
+	// Target The fingerprint of the templates the update moved the site to.
+	Target string `json:"target"`
+}
+
 // Timestamp Examples: 2026-09-26T17:25:00Z
 type Timestamp = time.Time
 
@@ -6275,6 +6311,30 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/stop (the `StopSite` operationId).
 	StopSite(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetTemplateRollout Get the site templates rollout
+	//
+	// After a platform upgrade that changes how sites are rendered (the
+	// per-site Compose templates or the code that fills them in), the
+	// rollout that re-renders the running sites rendered by an earlier
+	// release. It updates one site at a time, checking each site's
+	// health and putting its previous definition back if the check
+	// fails, inside the maintenance window if one is set, and halts
+	// after `max_failures` failed site updates in a row
+	// (`updates.max_failures`), until it is resumed or a release with
+	// other templates is installed. Sites whose update failed aren't
+	// tried again with the same templates. 404 if the driver doesn't
+	// fingerprint its templates.
+	//
+	// Corresponds with GET /api/v1/template-rollout (the `GetTemplateRollout` operationId).
+	GetTemplateRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeTemplateRollout Resume a halted templates rollout
+	//
+	// Lifts a halt, resets the failure count, and queues a rollout pass.
+	//
+	// Corresponds with POST /api/v1/template-rollout/resume (the `ResumeTemplateRollout` operationId).
+	ResumeTemplateRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateUploadWithBody Start an upload
 	//
@@ -9499,6 +9559,50 @@ func (c *Client) StartSite(ctx context.Context, siteID SiteID, reqEditors ...Req
 // Corresponds with POST /api/v1/sites/{site_id}/stop (the `StopSite` operationId).
 func (c *Client) StopSite(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewStopSiteRequest(c.Server, siteID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetTemplateRollout Get the site templates rollout
+//
+// After a platform upgrade that changes how sites are rendered (the
+// per-site Compose templates or the code that fills them in), the
+// rollout that re-renders the running sites rendered by an earlier
+// release. It updates one site at a time, checking each site's
+// health and putting its previous definition back if the check
+// fails, inside the maintenance window if one is set, and halts
+// after `max_failures` failed site updates in a row
+// (`updates.max_failures`), until it is resumed or a release with
+// other templates is installed. Sites whose update failed aren't
+// tried again with the same templates. 404 if the driver doesn't
+// fingerprint its templates.
+//
+// Corresponds with GET /api/v1/template-rollout (the `GetTemplateRollout` operationId).
+func (c *Client) GetTemplateRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTemplateRolloutRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResumeTemplateRollout Resume a halted templates rollout
+//
+// Lifts a halt, resets the failure count, and queues a rollout pass.
+//
+// Corresponds with POST /api/v1/template-rollout/resume (the `ResumeTemplateRollout` operationId).
+func (c *Client) ResumeTemplateRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeTemplateRolloutRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -14591,6 +14695,60 @@ func NewStopSiteRequest(server string, siteID SiteID) (*http.Request, error) {
 	return req, nil
 }
 
+// NewGetTemplateRolloutRequest constructs an http.Request for the GetTemplateRollout method
+func NewGetTemplateRolloutRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/template-rollout")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewResumeTemplateRolloutRequest constructs an http.Request for the ResumeTemplateRollout method
+func NewResumeTemplateRolloutRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/template-rollout/resume")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewCreateUploadRequest calls the generic CreateUpload builder with application/json body
 func NewCreateUploadRequest(server string, body CreateUploadJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -17400,6 +17558,34 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/stop (the `StopSite` operationId).
 	StopSiteWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*StopSiteResponse, error)
+
+	// GetTemplateRolloutWithResponse Get the site templates rollout
+	//
+	// After a platform upgrade that changes how sites are rendered (the
+	// per-site Compose templates or the code that fills them in), the
+	// rollout that re-renders the running sites rendered by an earlier
+	// release. It updates one site at a time, checking each site's
+	// health and putting its previous definition back if the check
+	// fails, inside the maintenance window if one is set, and halts
+	// after `max_failures` failed site updates in a row
+	// (`updates.max_failures`), until it is resumed or a release with
+	// other templates is installed. Sites whose update failed aren't
+	// tried again with the same templates. 404 if the driver doesn't
+	// fingerprint its templates.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/template-rollout (the `GetTemplateRollout` operationId).
+	GetTemplateRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetTemplateRolloutResponse, error)
+
+	// ResumeTemplateRolloutWithResponse Resume a halted templates rollout
+	//
+	// Lifts a halt, resets the failure count, and queues a rollout pass.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/template-rollout/resume (the `ResumeTemplateRollout` operationId).
+	ResumeTemplateRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ResumeTemplateRolloutResponse, error)
 
 	// CreateUploadWithBodyWithResponse Start an upload
 	//
@@ -24639,6 +24825,144 @@ func (r StopSiteResponse) ContentType() string {
 	return ""
 }
 
+type GetTemplateRolloutResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TemplateRollout
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetTemplateRolloutResponse) GetJSON200() *TemplateRollout {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetTemplateRolloutResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetTemplateRolloutResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetTemplateRolloutResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetTemplateRolloutResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetTemplateRolloutResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetTemplateRolloutResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetTemplateRolloutResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetTemplateRolloutResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ResumeTemplateRolloutResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TemplateRollout
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ResumeTemplateRolloutResponse) GetJSON200() *TemplateRollout {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ResumeTemplateRolloutResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ResumeTemplateRolloutResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ResumeTemplateRolloutResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ResumeTemplateRolloutResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ResumeTemplateRolloutResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResumeTemplateRolloutResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResumeTemplateRolloutResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResumeTemplateRolloutResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // CreateUploadResponse201Headers the declared response headers of an HTTP 201 response for CreateUpload
 type CreateUploadResponse201Headers struct {
 	Location *string
@@ -28619,6 +28943,46 @@ func (c *ClientWithResponses) StopSiteWithResponse(ctx context.Context, siteID S
 		return nil, err
 	}
 	return ParseStopSiteResponse(rsp)
+}
+
+// GetTemplateRolloutWithResponse Get the site templates rollout
+//
+// After a platform upgrade that changes how sites are rendered (the
+// per-site Compose templates or the code that fills them in), the
+// rollout that re-renders the running sites rendered by an earlier
+// release. It updates one site at a time, checking each site's
+// health and putting its previous definition back if the check
+// fails, inside the maintenance window if one is set, and halts
+// after `max_failures` failed site updates in a row
+// (`updates.max_failures`), until it is resumed or a release with
+// other templates is installed. Sites whose update failed aren't
+// tried again with the same templates. 404 if the driver doesn't
+// fingerprint its templates.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/template-rollout (the `GetTemplateRollout` operationId).
+func (c *ClientWithResponses) GetTemplateRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetTemplateRolloutResponse, error) {
+	rsp, err := c.GetTemplateRollout(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetTemplateRolloutResponse(rsp)
+}
+
+// ResumeTemplateRolloutWithResponse Resume a halted templates rollout
+//
+// Lifts a halt, resets the failure count, and queues a rollout pass.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/template-rollout/resume (the `ResumeTemplateRollout` operationId).
+func (c *ClientWithResponses) ResumeTemplateRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ResumeTemplateRolloutResponse, error) {
+	rsp, err := c.ResumeTemplateRollout(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeTemplateRolloutResponse(rsp)
 }
 
 // CreateUploadWithBodyWithResponse Start an upload
@@ -34938,6 +35302,114 @@ func ParseStopSiteResponse(rsp *http.Response) (*StopSiteResponse, error) {
 			headers.Location = &value
 		}
 		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetTemplateRolloutResponse parses an HTTP response from a GetTemplateRolloutWithResponse call
+func ParseGetTemplateRolloutResponse(rsp *http.Response) (*GetTemplateRolloutResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetTemplateRolloutResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TemplateRollout
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseResumeTemplateRolloutResponse parses an HTTP response from a ResumeTemplateRolloutWithResponse call
+func ParseResumeTemplateRolloutResponse(rsp *http.Response) (*ResumeTemplateRolloutResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResumeTemplateRolloutResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TemplateRollout
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
 	}
 
 	return response, nil

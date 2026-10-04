@@ -83,8 +83,12 @@ type Site struct {
 	// Create fills in DefaultTablePrefix when it is empty. An imported site
 	// keeps its dump's prefix (§5.7).
 	TablePrefix string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// TemplateFingerprint identifies the driver templates the site was last
+	// rendered with (provisioner.TemplateFingerprinter); empty if unknown,
+	// such as for a site rendered before fingerprints were recorded.
+	TemplateFingerprint string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // Sites reads and writes sites.
@@ -102,7 +106,7 @@ const siteColumns = "id, client_group_id, name, slug, status, status_message, pr
 	"php_version, wp_core_version, enable_cache, cpu_limit, memory_reservation_mb, memory_limit_mb, " +
 	"uid, wp_salts_secret_ref, admin_username, admin_email, admin_password_secret_ref, " +
 	"preview_protection, preview_username, preview_password_hash, preview_password_secret_ref, maintenance, url_rewrite_from, " +
-	"table_prefix, created_at, updated_at"
+	"table_prefix, template_fingerprint, created_at, updated_at"
 
 func scanSite(s scanner) (Site, error) {
 	var (
@@ -115,7 +119,7 @@ func scanSite(s scanner) (Site, error) {
 		&site.CPULimit, &site.MemoryReservationMB, &site.MemoryLimitMB, &site.UID, &site.WPSaltsSecretRef,
 		&site.AdminUsername, &site.AdminEmail, &site.AdminPasswordSecretRef,
 		&site.PreviewProtection, &site.PreviewUsername, &site.PreviewPasswordHash, &site.PreviewPasswordSecretRef,
-		&site.Maintenance, &rewrite, &site.TablePrefix, &site.CreatedAt, &site.UpdatedAt)
+		&site.Maintenance, &rewrite, &site.TablePrefix, &site.TemplateFingerprint, &site.CreatedAt, &site.UpdatedAt)
 	site.PrimaryDomain = primary.String
 	if rewrite != "" {
 		site.URLRewriteFrom = strings.Fields(rewrite)
@@ -148,13 +152,14 @@ func (r Sites) Create(ctx context.Context, s *Site) error {
 	created.CreatedAt = now()
 	created.UpdatedAt = created.CreatedAt
 	_, err := r.q.ExecContext(ctx, "INSERT INTO sites ("+siteColumns+") VALUES "+
-		"("+placeholders(28)+")",
+		"("+placeholders(29)+")",
 		created.ID, created.ClientGroupID, created.Name, created.Slug, string(created.Status), created.StatusMessage,
 		created.PreviewDomain, nullString(created.PrimaryDomain), created.PHPVersion, created.WPCoreVersion,
 		created.EnableCache, created.CPULimit, created.MemoryReservationMB, created.MemoryLimitMB,
 		created.UID, created.WPSaltsSecretRef, created.AdminUsername, created.AdminEmail, created.AdminPasswordSecretRef,
 		created.PreviewProtection, created.PreviewUsername, created.PreviewPasswordHash, created.PreviewPasswordSecretRef,
-		created.Maintenance, strings.Join(created.URLRewriteFrom, " "), created.TablePrefix, created.CreatedAt, created.UpdatedAt)
+		created.Maintenance, strings.Join(created.URLRewriteFrom, " "), created.TablePrefix, created.TemplateFingerprint,
+		created.CreatedAt, created.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create site: %w", err)
 	}
@@ -391,6 +396,15 @@ func (r Sites) SetWPCoreVersion(ctx context.Context, siteID, version string, fro
 		args = append(args, from[0])
 	}
 	return r.exec(ctx, "set WordPress core version of site "+siteID, query, args...)
+}
+
+// SetTemplateFingerprint records the fingerprint of the templates the site
+// was just rendered with. It leaves updated_at alone: rendering doesn't
+// change the site's settings, and every site is re-rendered at startup. It
+// reports whether the fingerprint changed; a missing site is not an error.
+func (r Sites) SetTemplateFingerprint(ctx context.Context, siteID, fingerprint string) (bool, error) {
+	return r.exec(ctx, "set template fingerprint of site "+siteID,
+		"UPDATE sites SET template_fingerprint = ? WHERE id = ? AND template_fingerprint <> ?", fingerprint, siteID, fingerprint)
 }
 
 // SiteDomains are a site's custom domains (§5.2): its primary domain, empty

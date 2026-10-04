@@ -32,6 +32,9 @@ import (
 
 const testPreviewBase = "preview.example.test"
 
+// testTemplates is the template fingerprint of the test driver.
+const testTemplates = "r1-test"
+
 // implementedSiteOps are the site operations that no longer answer 501.
 var implementedSiteOps = map[string]bool{
 	"getSiteCore":                   true,
@@ -43,6 +46,8 @@ var implementedSiteOps = map[string]bool{
 	"getPlatform":                   true,
 	"listPHPVersions":               true,
 	"resumeImageRollout":            true,
+	"getTemplateRollout":            true,
+	"resumeTemplateRollout":         true,
 	"listSites":                     true,
 	"createSite":                    true,
 	"getSite":                       true,
@@ -90,9 +95,11 @@ func orEmpty(s *string) string {
 // siteEnv is a site service and a backup service on fakes, with a job pool
 // to run their jobs.
 type siteEnv struct {
-	dns     *fakeDNS
-	svc     *sites.Service
-	prov    *provisionertest.Fake
+	dns  *fakeDNS
+	svc  *sites.Service
+	prov *provisionertest.Fake
+	// tmpl wraps prov with template fingerprints (the service's driver).
+	tmpl    *provisionertest.Templates
 	dbs     *sitedbtest.Fake
 	engine  *backuptest.Fake
 	backups *sitebackup.Service
@@ -108,6 +115,7 @@ func newSiteEnv(t *testing.T, db *store.DB, previewBase string) *siteEnv {
 	}
 	sec := secrets.NewStore(db, secretstest.Keyring(t, 1))
 	e := &siteEnv{prov: provisionertest.New(), dbs: sitedbtest.New(), dns: &fakeDNS{wrong: map[string]string{}}}
+	e.tmpl = provisionertest.NewTemplates(e.prov, testTemplates)
 	installed := map[string]bool{}
 	e.prov.WPCLI = func(siteID string, args []string) (string, error) {
 		if slices.Equal(args, []string{"core", "is-installed"}) && !installed[siteID] {
@@ -126,7 +134,7 @@ func newSiteEnv(t *testing.T, db *store.DB, previewBase string) *siteEnv {
 	e.uploads = newUploadService(t, db)
 	e.svc, err = sites.New(sites.Options{
 		DB: db, Secrets: sec, Catalog: cat, PreviewBaseDomain: previewBase,
-		Provisioner: e.prov, Databases: e.dbs, ObjectCaches: objectcachetest.New(), Logger: storetest.Logger(),
+		Provisioner: e.tmpl, Databases: e.dbs, ObjectCaches: objectcachetest.New(), Logger: storetest.Logger(),
 		DNSChecker: e.dns, Backups: e.backups, BackupEngine: e.engine,
 		Uploads: e.uploads, Tasks: e.prov, TmpDir: t.TempDir(),
 	})

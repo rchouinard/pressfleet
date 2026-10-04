@@ -23,7 +23,9 @@ import (
 
 // The Compose provisioner implements the Provisioner, TaskRunner, Prober,
 // ImagePinner, SessionRunner, LogReader, and StatsReader parts of the
-// driver: all of provisioner.Driver.
+// driver: all of provisioner.Driver. It also implements the optional
+// provisioner.TemplateFingerprinter and provisioner.RenderSnapshotter
+// (templates.go).
 var (
 	_ provisioner.Driver        = (*Provisioner)(nil)
 	_ provisioner.StatsReader   = (*Provisioner)(nil)
@@ -334,10 +336,31 @@ func (p *Provisioner) converge(ctx context.Context, cfg *provisioner.SiteConfig,
 		}
 	}
 
-	proj := p.project(cfg.ID)
-	stale, err := p.phpStale(ctx, proj, dir, res.WPConfigChanged)
-	if err != nil {
+	if err := p.bringUp(ctx, cfg.ID, p.project(cfg.ID), dir, res.WPConfigChanged, start); err != nil {
+		return err
+	}
+	// Custom domains follow the file alone (domains.go), so changing them
+	// never recreates a container.
+	if _, err := p.applyDomains(cfg.ID, cfg.PrimaryDomain != ""); err != nil {
 		return fmt.Errorf("site %s: %w", cfg.ID, err)
+	}
+	if !cfg.Maintenance {
+		if _, err := p.applyMaintenance(cfg.ID, false); err != nil {
+			return fmt.Errorf("site %s: %w", cfg.ID, err)
+		}
+	}
+	return nil
+}
+
+// bringUp applies the site's rendered project in dir: php is recreated
+// first if wp-config.php changed (wpConfigChanged, or newer than the
+// running container), then `up` recreates whatever else changed, and the
+// platform services are connected to the site's network. With start, the
+// containers are started and waited for; without, they are only created.
+func (p *Provisioner) bringUp(ctx context.Context, siteID string, proj Project, dir string, wpConfigChanged, start bool) error {
+	stale, err := p.phpStale(ctx, proj, dir, wpConfigChanged)
+	if err != nil {
+		return fmt.Errorf("site %s: %w", siteID, err)
 	}
 	if stale {
 		// Recreate php alone, so nginx keeps serving.
@@ -350,18 +373,8 @@ func (p *Provisioner) converge(ctx context.Context, cfg *provisioner.SiteConfig,
 	}
 	// The network exists now. php's health check doesn't need the database,
 	// so connecting after the wait is fine.
-	if err := p.attachShared(ctx, cfg.ID); err != nil {
-		return fmt.Errorf("site %s: %w", cfg.ID, err)
-	}
-	// Custom domains follow the file alone (domains.go), so changing them
-	// never recreates a container.
-	if _, err := p.applyDomains(cfg.ID, cfg.PrimaryDomain != ""); err != nil {
-		return fmt.Errorf("site %s: %w", cfg.ID, err)
-	}
-	if !cfg.Maintenance {
-		if _, err := p.applyMaintenance(cfg.ID, false); err != nil {
-			return fmt.Errorf("site %s: %w", cfg.ID, err)
-		}
+	if err := p.attachShared(ctx, siteID); err != nil {
+		return fmt.Errorf("site %s: %w", siteID, err)
 	}
 	return nil
 }

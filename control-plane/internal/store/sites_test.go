@@ -361,3 +361,48 @@ func TestSitesMemoryReservations(t *testing.T) {
 		}
 	})
 }
+
+func TestSiteTemplateFingerprint(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		group := createGroup(ctx, t, db)
+		sites := store.NewSites(db)
+		s := newTestSite(group, "acme", 20000)
+		if err := sites.Create(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+		// A new site starts without one.
+		if got, err := sites.Get(ctx, s.ID); err != nil || got.TemplateFingerprint != "" {
+			t.Fatalf("new site's fingerprint = %q, %v", got.TemplateFingerprint, err)
+		}
+		for i, tt := range []struct {
+			fingerprint string
+			changed     bool
+		}{{"r1-aaaa", true}, {"r1-aaaa", false}, {"r2-bbbb", true}} {
+			changed, err := sites.SetTemplateFingerprint(ctx, s.ID, tt.fingerprint)
+			if err != nil || changed != tt.changed {
+				t.Errorf("%d: SetTemplateFingerprint(%q) = %v, %v; want %v", i, tt.fingerprint, changed, err, tt.changed)
+			}
+			got, err := sites.Get(ctx, s.ID)
+			if err != nil || got.TemplateFingerprint != tt.fingerprint {
+				t.Errorf("%d: fingerprint = %q, %v; want %q", i, got.TemplateFingerprint, err, tt.fingerprint)
+			}
+			// Rendering isn't a change to the site's settings.
+			if !got.UpdatedAt.Equal(s.UpdatedAt) {
+				t.Errorf("%d: updated_at moved from %v to %v", i, s.UpdatedAt, got.UpdatedAt)
+			}
+		}
+		if changed, err := sites.SetTemplateFingerprint(ctx, id.New(), "r1-aaaa"); err != nil || changed {
+			t.Errorf("SetTemplateFingerprint of a missing site = %v, %v", changed, err)
+		}
+		// Create keeps a given fingerprint, as it does any other column.
+		other := newTestSite(group, "other", 20001)
+		other.TemplateFingerprint = "r1-cccc"
+		if err := sites.Create(ctx, other); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := sites.Get(ctx, other.ID); err != nil || got.TemplateFingerprint != "r1-cccc" {
+			t.Errorf("created site's fingerprint = %q, %v", got.TemplateFingerprint, err)
+		}
+	})
+}

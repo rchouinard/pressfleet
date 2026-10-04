@@ -2185,6 +2185,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/template-rollout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the site templates rollout
+         * @description After a platform upgrade that changes how sites are rendered (the
+         *     per-site Compose templates or the code that fills them in), the
+         *     rollout that re-renders the running sites rendered by an earlier
+         *     release. It updates one site at a time, checking each site's
+         *     health and putting its previous definition back if the check
+         *     fails, inside the maintenance window if one is set, and halts
+         *     after `max_failures` failed site updates in a row
+         *     (`updates.max_failures`), until it is resumed or a release with
+         *     other templates is installed. Sites whose update failed aren't
+         *     tried again with the same templates. 404 if the driver doesn't
+         *     fingerprint its templates.
+         */
+        get: operations["getTemplateRollout"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/template-rollout/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume a halted templates rollout
+         * @description Lifts a halt, resets the failure count, and queues a rollout pass.
+         */
+        post: operations["resumeTemplateRollout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs": {
         parameters: {
             query?: never;
@@ -3551,6 +3601,30 @@ export interface components {
             window?: components["schemas"]["UpdateWindow"];
             images: components["schemas"]["ImageBuild"][];
             failures: components["schemas"]["ImageUpdateFailure"][];
+        };
+        TemplateRollout: {
+            halted: boolean;
+            halted_at?: components["schemas"]["Timestamp"];
+            halt_reason?: string;
+            consecutive_failures: number;
+            max_failures: number;
+            window?: components["schemas"]["UpdateWindow"];
+            /**
+             * @description The fingerprint of this release's site templates and rendering code.
+             * @example r1-3f9a0c2e7b5d1844
+             */
+            templates: string;
+            /** @description The running sites rendered with other templates, which the rollout still has to update, including those whose update failed. */
+            pending_sites: number;
+            failures: components["schemas"]["TemplateUpdateFailure"][];
+        };
+        /** @description A site's failed update to the templates `target`, which the rollout doesn't retry. */
+        TemplateUpdateFailure: {
+            site_id: components["schemas"]["ID"];
+            /** @description The fingerprint of the templates the update moved the site to. */
+            target: string;
+            message: string;
+            failed_at: components["schemas"]["Timestamp"];
         };
         SiteCreate: {
             client_group_id: components["schemas"]["ID"];
@@ -7227,6 +7301,54 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getTemplateRollout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The templates rollout. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateRollout"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    resumeTemplateRollout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The templates rollout. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateRollout"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             default: components["responses"]["Error"];
         };
     };

@@ -21,6 +21,17 @@ import (
 // when it starts ([Service.EnqueueReconcile]), and a change made to the
 // configuration reaches existing sites after a restart.
 //
+// A running site that an earlier release rendered, with other templates
+// (templateupdate.go), is the exception: re-rendering it here would put the
+// new templates on every such site at once, without a health check. The
+// apply and plugins steps leave it to the templates rollout, which
+// re-renders it with the current configuration one site at a time, checks
+// its health, converges its plugins, and puts the previous definition back
+// if it fails. Steps that don't re-render the site, such as the object
+// cache user, still run for it. Stopped sites are reconciled whatever
+// their templates: the rollout only takes running sites, whose health it
+// can check.
+//
 // Hooking in:
 //
 //   - A setting the driver renders into a site's files or containers (a
@@ -33,9 +44,14 @@ import (
 //     re-rendered wp-config.php.
 //   - State outside the site's containers that must be put back at startup
 //     (such as the site's object cache user) is a step of its own: add it to
-//     reconcileSteps, before apply if the containers depend on it. Steps must be idempotent and cheap when nothing changed, since
-//     they run for every site on every start, and they should skip sites
-//     reconcileSite says to leave alone.
+//     reconcileSteps, before apply if the containers depend on it.
+//   - A step that re-renders the site, or needs the re-rendered site, skips
+//     the sites leaveToTemplates leaves to the templates rollout, and the
+//     template update job (templateupdate.go) does its work instead.
+//
+// Steps must be idempotent and cheap when nothing changed, since they run
+// for every site on every start, and they should skip sites reconcileSite
+// says to leave alone.
 
 // ReconcileJobType converges one site with the install-wide configuration.
 const ReconcileJobType = "site.reconcile"
@@ -145,6 +161,19 @@ func (s *Service) reconcileSite(ctx context.Context, r *jobs.Run) (store.Site, b
 	return site, true, nil
 }
 
+// leaveToTemplates reports whether the templates rollout will re-render the
+// site (awaitsTemplates), in which case the steps that depend on a re-render
+// skip it; if so, it logs why. The rollout re-renders the site with the
+// current configuration and converges its plugins, with a health check.
+func (s *Service) leaveToTemplates(r *jobs.Run, site store.Site) bool {
+	if !s.awaitsTemplates(site) {
+		return false
+	}
+	r.Logf("The site was rendered by an earlier release, so it is waiting for the templates rollout, " +
+		"which re-renders it with the platform configuration and checks its health.")
+	return true
+}
+
 // reconcileObjectCache makes sure the site has its object cache user
 // (objectcache.Manager.CreateUser is idempotent, and cheap for a site that
 // has one), which gives sites provisioned before the object cache existed
@@ -174,7 +203,7 @@ func (s *Service) reconcileObjectCache(ctx context.Context, r *jobs.Run) error {
 // nothing to converge, and its status tells the operator already.
 func (s *Service) reconcileApply(ctx context.Context, r *jobs.Run) error {
 	site, ok, err := s.reconcileSite(ctx, r)
-	if err != nil || !ok {
+	if err != nil || !ok || s.leaveToTemplates(r, site) {
 		return err
 	}
 	st, err := s.converge(ctx, r, site)

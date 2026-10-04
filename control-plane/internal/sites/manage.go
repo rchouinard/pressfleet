@@ -399,7 +399,14 @@ func (s *Service) convergeWith(ctx context.Context, r *jobs.Run, site store.Site
 	if errors.Is(err, provisioner.ErrSiteNotFound) {
 		return nil, jobs.Permanent(err)
 	}
-	return st, err
+	if err != nil {
+		return nil, err
+	}
+	// Every render is with the current templates, whatever the job.
+	if err := s.recordRender(ctx, site.ID); err != nil {
+		return nil, err
+	}
+	return st, nil
 }
 
 // revertApply puts the previous settings back on the containers. If that

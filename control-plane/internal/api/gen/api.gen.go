@@ -3586,6 +3586,42 @@ type SSHKeyList struct {
 	NextCursor *NextCursor `json:"next_cursor"`
 }
 
+// TemplateRollout defines model for TemplateRollout.
+type TemplateRollout struct {
+	ConsecutiveFailures int                     `json:"consecutive_failures"`
+	Failures            []TemplateUpdateFailure `json:"failures"`
+	HaltReason          *string                 `json:"halt_reason,omitempty"`
+	Halted              bool                    `json:"halted"`
+
+	// HaltedAt Examples: 2026-09-26T17:25:00Z
+	HaltedAt    *Timestamp `json:"halted_at,omitempty"`
+	MaxFailures int        `json:"max_failures"`
+
+	// PendingSites The running sites rendered with other templates, which the rollout still has to update, including those whose update failed.
+	PendingSites int `json:"pending_sites"`
+
+	// Templates The fingerprint of this release's site templates and rendering code.
+	Templates string `json:"templates"`
+
+	// Window The daily maintenance window, in UTC; absent if there is none.
+	Window *UpdateWindow `json:"window,omitempty"`
+}
+
+// TemplateUpdateFailure A site's failed update to the templates `target`, which the rollout doesn't retry.
+type TemplateUpdateFailure struct {
+	// FailedAt Examples: 2026-09-26T17:25:00Z
+	FailedAt Timestamp `json:"failed_at"`
+	Message  string    `json:"message"`
+
+	// SiteID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	SiteID ID `json:"site_id"`
+
+	// Target The fingerprint of the templates the update moved the site to.
+	Target string `json:"target"`
+}
+
 // Timestamp Examples: 2026-09-26T17:25:00Z
 type Timestamp = time.Time
 
@@ -4645,6 +4681,12 @@ type ServerInterface interface {
 	// StopSite Stop a running site
 	// (POST /api/v1/sites/{site_id}/stop)
 	StopSite(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// GetTemplateRollout Get the site templates rollout
+	// (GET /api/v1/template-rollout)
+	GetTemplateRollout(w http.ResponseWriter, r *http.Request)
+	// ResumeTemplateRollout Resume a halted templates rollout
+	// (POST /api/v1/template-rollout/resume)
+	ResumeTemplateRollout(w http.ResponseWriter, r *http.Request)
 	// CreateUpload Start an upload
 	// (POST /api/v1/uploads)
 	CreateUpload(w http.ResponseWriter, r *http.Request)
@@ -8005,6 +8047,34 @@ func (siw *ServerInterfaceWrapper) StopSite(w http.ResponseWriter, r *http.Reque
 	handler.ServeHTTP(w, r)
 }
 
+// GetTemplateRollout operation middleware
+func (siw *ServerInterfaceWrapper) GetTemplateRollout(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetTemplateRollout(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ResumeTemplateRollout operation middleware
+func (siw *ServerInterfaceWrapper) ResumeTemplateRollout(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResumeTemplateRollout(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // CreateUpload operation middleware
 func (siw *ServerInterfaceWrapper) CreateUpload(w http.ResponseWriter, r *http.Request) {
 
@@ -8727,6 +8797,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/catalog/php-versions", wrapper.ListPHPVersions)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/image-rollout", wrapper.GetImageRollout)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/image-rollout/resume", wrapper.ResumeImageRollout)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/template-rollout", wrapper.GetTemplateRollout)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/template-rollout/resume", wrapper.ResumeTemplateRollout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs", wrapper.ListJobs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs/{job_id}", wrapper.GetJob)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit-events", wrapper.ListAuditEvents)
@@ -18197,6 +18269,178 @@ func (response StopSitedefaultApplicationProblemPlusJSONResponse) VisitStopSiteR
 	return err
 }
 
+type GetTemplateRolloutRequestObject struct {
+}
+
+type GetTemplateRolloutResponseObject interface {
+	VisitGetTemplateRolloutResponse(w http.ResponseWriter) error
+}
+
+type GetTemplateRollout200JSONResponse TemplateRollout
+
+func (response GetTemplateRollout200JSONResponse) VisitGetTemplateRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTemplateRollout401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetTemplateRollout401ApplicationProblemPlusJSONResponse) VisitGetTemplateRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTemplateRollout403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetTemplateRollout403ApplicationProblemPlusJSONResponse) VisitGetTemplateRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTemplateRollout404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response GetTemplateRollout404ApplicationProblemPlusJSONResponse) VisitGetTemplateRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTemplateRolloutdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetTemplateRolloutdefaultApplicationProblemPlusJSONResponse) VisitGetTemplateRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResumeTemplateRolloutRequestObject struct {
+}
+
+type ResumeTemplateRolloutResponseObject interface {
+	VisitResumeTemplateRolloutResponse(w http.ResponseWriter) error
+}
+
+type ResumeTemplateRollout200JSONResponse TemplateRollout
+
+func (response ResumeTemplateRollout200JSONResponse) VisitResumeTemplateRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResumeTemplateRollout401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ResumeTemplateRollout401ApplicationProblemPlusJSONResponse) VisitResumeTemplateRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResumeTemplateRollout403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ResumeTemplateRollout403ApplicationProblemPlusJSONResponse) VisitResumeTemplateRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResumeTemplateRollout404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response ResumeTemplateRollout404ApplicationProblemPlusJSONResponse) VisitResumeTemplateRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResumeTemplateRolloutdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ResumeTemplateRolloutdefaultApplicationProblemPlusJSONResponse) VisitResumeTemplateRolloutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type CreateUploadRequestObject struct {
 	Body *CreateUploadJSONRequestBody
 }
@@ -20276,6 +20520,12 @@ type StrictServerInterface interface {
 	// StopSite Stop a running site
 	// (POST /api/v1/sites/{site_id}/stop)
 	StopSite(ctx context.Context, request StopSiteRequestObject) (StopSiteResponseObject, error)
+	// GetTemplateRollout Get the site templates rollout
+	// (GET /api/v1/template-rollout)
+	GetTemplateRollout(ctx context.Context, request GetTemplateRolloutRequestObject) (GetTemplateRolloutResponseObject, error)
+	// ResumeTemplateRollout Resume a halted templates rollout
+	// (POST /api/v1/template-rollout/resume)
+	ResumeTemplateRollout(ctx context.Context, request ResumeTemplateRolloutRequestObject) (ResumeTemplateRolloutResponseObject, error)
 	// CreateUpload Start an upload
 	// (POST /api/v1/uploads)
 	CreateUpload(ctx context.Context, request CreateUploadRequestObject) (CreateUploadResponseObject, error)
@@ -22846,6 +23096,54 @@ func (sh *strictHandler) StopSite(w http.ResponseWriter, r *http.Request, siteID
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(StopSiteResponseObject); ok {
 		if err := validResponse.VisitStopSiteResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetTemplateRollout operation middleware
+func (sh *strictHandler) GetTemplateRollout(w http.ResponseWriter, r *http.Request) {
+	var request GetTemplateRolloutRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetTemplateRollout(ctx, request.(GetTemplateRolloutRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetTemplateRollout")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetTemplateRolloutResponseObject); ok {
+		if err := validResponse.VisitGetTemplateRolloutResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ResumeTemplateRollout operation middleware
+func (sh *strictHandler) ResumeTemplateRollout(w http.ResponseWriter, r *http.Request) {
+	var request ResumeTemplateRolloutRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ResumeTemplateRollout(ctx, request.(ResumeTemplateRolloutRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ResumeTemplateRollout")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ResumeTemplateRolloutResponseObject); ok {
+		if err := validResponse.VisitResumeTemplateRolloutResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
