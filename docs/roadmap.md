@@ -244,13 +244,14 @@ Done when: 50 sites on an 8 GiB host stay healthy under light traffic (§4.1), a
 | # | Issue | Priority | Size | Depends on |
 | --- | --- | --- | --- | --- |
 | [#94](https://github.com/rchouinard/pressfleet/issues/94) | ~~Decision: platform upgrade process~~ Resolved | P0 | S | — |
-| [#95](https://github.com/rchouinard/pressfleet/issues/95) | Platform upgrade command and procedure | P0 | L | #94, #8, #106, #58 |
+| [#95](https://github.com/rchouinard/pressfleet/issues/95) | Platform upgrade command and procedure | P0 | L | #94, #8, #106, #58, #100 |
 | [#96](https://github.com/rchouinard/pressfleet/issues/96) | Disaster recovery: restore control plane state on a new host | P1 | M | #52, #94 |
 | [#97](https://github.com/rchouinard/pressfleet/issues/97) | Security review: tenant isolation and secrets | P0 | M | #79 |
 | [#98](https://github.com/rchouinard/pressfleet/issues/98) | Capacity test: 50 sites on an 8 GiB host | P0 | L | #79 |
 | [#99](https://github.com/rchouinard/pressfleet/issues/99) | Installation and operator documentation | P0 | M | #95 |
 | [#100](https://github.com/rchouinard/pressfleet/issues/100) | Release pipeline: versioned binaries and images | P0 | M | #19, #80 |
 | [#106](https://github.com/rchouinard/pressfleet/issues/106) | Host CLI ↔ control plane admin interface and version skew enforcement | P0 | M | #12 |
+| [#140](https://github.com/rchouinard/pressfleet/issues/140) | Update-available check for new PressFleet releases | P1 | M | #100 |
 
 ### Post-MVP: Staging Clones
 
