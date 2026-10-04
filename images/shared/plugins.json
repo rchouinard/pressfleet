@@ -12,8 +12,8 @@
     },
     {
       "slug": "two-factor",
-      "version": "0.16.0",
-      "sha256": "449f004f43bcd87a5bdfa3d358758a4f301aa9fb7e8a46bf2f826d2e7463d0df"
+      "version": "0.17.0",
+      "sha256": "4d1b0f8e5d82e24876c2b4e86f119122e28a8dbaf76dfde495173226c3356f37"
     }
   ]
 }
