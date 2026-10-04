@@ -254,6 +254,8 @@ Done when: 50 sites on an 8 GiB host stay healthy under light traffic (§4.1), a
 | [#140](https://github.com/rchouinard/pressfleet/issues/140) | Update-available check for new PressFleet releases | P1 | M | #100 |
 | [#142](https://github.com/rchouinard/pressfleet/issues/142) | E2E: manual recovery from a failed platform upgrade | P0 | M | #95, #100 |
 
+**Progress (2026-10-03):** `pressfleet upgrade` is implemented (#95): forward-only, with the recovery steps printed on failure and shown in [upgrading.md](upgrading.md), site template changes rolled out one site at a time (the `templates` rollout), and renamed config keys accepted with warnings. `TestUpgrade` covers a control-plane-only upgrade in-tree. #95 stays open until an upgrade from the previous published release runs in CI, which needs the release pipeline (#100); #142 then tests the recovery steps.
+
 ### Post-MVP: Staging Clones
 
 Highest-priority follow-up after MVP (§1.1, §8). Do not implement before MVP ships.

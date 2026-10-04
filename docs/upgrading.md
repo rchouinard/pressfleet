@@ -23,6 +23,8 @@ Run it as root, like `init`. Upgrades are **forward-only**: there is no `--rollb
 
 The host CLI never opens the state database itself. Running `upgrade` again when nothing changed does nothing.
 
+Sites aren't part of the platform project. If the release changes how sites are rendered, the upgraded control plane moves them to the new rendering one at a time, with a health check and a revert on failure ([Site template updates](configuration.md#site-template-updates)); `GET /api/v1/template-rollout` shows its progress.
+
 ## PostgreSQL state databases
 
 PressFleet backs up an SQLite state database before migrating it, but not PostgreSQL (see [State database](configuration.md#state-database)). Take a backup of the PostgreSQL database right before upgrading: returning to the previous release after a failed upgrade needs it. `upgrade` asks you to confirm that, or takes `--yes`.

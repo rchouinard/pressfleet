@@ -849,6 +849,15 @@ The platform rebuilds the site images for PHP patch releases, security fixes, an
 
 Each pinned build is also tagged `<repository>:pin-<first 16 hex digits of its image ID>`, so Docker keeps it after the tag moves on and a site can be moved back to it. These tags are not removed yet; `docker image rm` the ones no site uses to reclaim space.
 
+## Site template updates
+
+A platform upgrade (see [Upgrading](upgrading.md)) can change how sites are rendered: the per-site Compose templates, or the code that fills them in. So that such a change never reaches every site at once, the control plane records which rendering each site was last rendered with (a fingerprint of the templates and a render version), and a third rollout, `templates`, moves running sites to the current one (design doc §4.7, §5.5):
+
+- One site at a time, inside the maintenance window if one is set (`updates.window_start`). Each update is a `site.template_update` job: the site's rendered files (`compose.yaml`, `wp-config.php`, and its Traefik route files) are copied into `<site_dir>/.previous/`, the site is re-rendered with the current templates and configuration (only containers whose definition changed are recreated), health-checked like an image update, and its default plugins converged.
+- If it fails, the copied files are put back and the containers brought up on them, and the site's `status_message` says so. The rollout doesn't try those templates on the site again; a release with other templates, or a site update, does.
+- After `updates.max_failures` failed updates in a row the rollout halts; `GET /api/v1/template-rollout` shows the current fingerprint, the sites still pending, and the failures, and `POST /api/v1/template-rollout/resume`, or a release with other templates, resumes it.
+- Until the rollout reaches a running site, the startup reconciliation (which applies install-wide settings such as the security set) leaves that site's containers as they are. Stopped sites are reconciled as before.
+
 ## Site databases
 
 Each site's database lives on the platform's shared MariaDB server. The control plane connects as `mariadb.admin_user` to create a database and a user for each site, both named `pf_<site-id>`. Each site user has a random password, stored encrypted in the state database, and privileges on its own database only. It is also limited to 20 simultaneous connections (`MAX_USER_CONNECTIONS`), so one site can't use up the server's 150 connections. With PHP-FPM's `ondemand` mode, idle sites hold no connections.
