@@ -110,6 +110,8 @@ var operationActions = map[string]authz.Action{
 
 	"listJobs": authz.ViewJobs,
 	"getJob":   authz.ViewJobs,
+	// Following a job reads it, as getJob does.
+	"streamJobEvents": authz.ViewJobs,
 
 	// Runtime logs are monitoring data; a site's job logs are job data.
 	"listSiteLogs":    authz.ViewMonitoring,

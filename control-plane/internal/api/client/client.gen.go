@@ -4174,6 +4174,13 @@ type ListJobsParams struct {
 	TargetID *ID `form:"target_id,omitempty" json:"target_id,omitempty"`
 }
 
+// StreamJobEventsParams defines parameters for StreamJobEvents.
+type StreamJobEventsParams struct {
+	// LastEventID The `id` of the last `log` event the client received. When
+	// present, the stream sends only the log lines after it.
+	LastEventID *string `json:"Last-Event-ID,omitempty"`
+}
+
 // QueryPlatformMetricsParams defines parameters for QueryPlatformMetrics.
 type QueryPlatformMetricsParams struct {
 	// Metric Metric ids from the catalog; repeat the parameter to select several
@@ -5113,6 +5120,42 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v1/jobs/{job_id} (the `GetJob` operationId).
 	GetJob(ctx context.Context, jobID JobID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StreamJobEvents Follow a job's progress
+	//
+	// Streams a job's progress as server-sent events (`text/event-stream`)
+	// instead of polling `GET /api/v1/jobs/{job_id}`: first the job as it
+	// is and its log so far, then each change, until the job reaches a
+	// terminal state (`succeeded`, `failed`, or `rollback_failed`), when
+	// the server ends the stream. A job that has already finished gets
+	// its snapshot and log, and the stream ends at once. As with the site
+	// log stream, the generated client doesn't wrap this operation; use
+	// `EventSource` or `fetch`.
+	//
+	// Event types:
+	//
+	// * `job`: `data` is the `Job` as JSON, without step logs (as in job
+	//   lists). Sent first, and again whenever the job or one of its
+	//   steps changes. Each event replaces the previous one. The events
+	//   are snapshots of what the server reads, so a step that starts
+	//   and finishes between two reads shows up as one change.
+	// * `log`: `data` is one `JobEventLogEntry`, a line of the step log,
+	//   and `id` is the line's ID. Lines come in the order they were
+	//   written, and all of them come before the `job` event that shows
+	//   the job finished.
+	// * `error`: `data` is a Problem Details document, sent once before
+	//   the stream ends because of a failure on the server (for example,
+	//   the job was deleted). Clients should not reconnect immediately.
+	// * Comment lines (`: keepalive`) are sent every 15 seconds so
+	//   proxies don't close an idle stream. Ignore them.
+	//
+	// A client that reconnects sends the `id` of the last `log` event it
+	// received as `Last-Event-ID` (a browser's `EventSource` does so on
+	// its own). The stream then starts with a fresh `job` snapshot and
+	// continues the log after that line instead of repeating it.
+	//
+	// Corresponds with GET /api/v1/jobs/{job_id}/events (the `StreamJobEvents` operationId).
+	StreamJobEvents(ctx context.Context, jobID JobID, params *StreamJobEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetMetricCatalog List the metrics that can be queried
 	//
@@ -7839,6 +7882,52 @@ func (c *Client) ListJobs(ctx context.Context, params *ListJobsParams, reqEditor
 // Corresponds with GET /api/v1/jobs/{job_id} (the `GetJob` operationId).
 func (c *Client) GetJob(ctx context.Context, jobID JobID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetJobRequest(c.Server, jobID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StreamJobEvents Follow a job's progress
+//
+// Streams a job's progress as server-sent events (`text/event-stream`)
+// instead of polling `GET /api/v1/jobs/{job_id}`: first the job as it
+// is and its log so far, then each change, until the job reaches a
+// terminal state (`succeeded`, `failed`, or `rollback_failed`), when
+// the server ends the stream. A job that has already finished gets
+// its snapshot and log, and the stream ends at once. As with the site
+// log stream, the generated client doesn't wrap this operation; use
+// `EventSource` or `fetch`.
+//
+// Event types:
+//
+//   - `job`: `data` is the `Job` as JSON, without step logs (as in job
+//     lists). Sent first, and again whenever the job or one of its
+//     steps changes. Each event replaces the previous one. The events
+//     are snapshots of what the server reads, so a step that starts
+//     and finishes between two reads shows up as one change.
+//   - `log`: `data` is one `JobEventLogEntry`, a line of the step log,
+//     and `id` is the line's ID. Lines come in the order they were
+//     written, and all of them come before the `job` event that shows
+//     the job finished.
+//   - `error`: `data` is a Problem Details document, sent once before
+//     the stream ends because of a failure on the server (for example,
+//     the job was deleted). Clients should not reconnect immediately.
+//   - Comment lines (`: keepalive`) are sent every 15 seconds so
+//     proxies don't close an idle stream. Ignore them.
+//
+// A client that reconnects sends the `id` of the last `log` event it
+// received as `Last-Event-ID` (a browser's `EventSource` does so on
+// its own). The stream then starts with a fresh `job` snapshot and
+// continues the log after that line instead of repeating it.
+//
+// Corresponds with GET /api/v1/jobs/{job_id}/events (the `StreamJobEvents` operationId).
+func (c *Client) StreamJobEvents(ctx context.Context, jobID JobID, params *StreamJobEventsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStreamJobEventsRequest(c.Server, jobID, params)
 	if err != nil {
 		return nil, err
 	}
@@ -12638,6 +12727,55 @@ func NewGetJobRequest(server string, jobID JobID) (*http.Request, error) {
 	return req, nil
 }
 
+// NewStreamJobEventsRequest constructs an http.Request for the StreamJobEvents method
+func NewStreamJobEventsRequest(server string, jobID JobID, params *StreamJobEventsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "job_id", jobID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/jobs/%s/events", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.LastEventID != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Last-Event-ID", *params.LastEventID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("Last-Event-ID", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewGetMetricCatalogRequest constructs an http.Request for the GetMetricCatalog method
 func NewGetMetricCatalogRequest(server string) (*http.Request, error) {
 	var err error
@@ -16442,6 +16580,44 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/v1/jobs/{job_id} (the `GetJob` operationId).
 	GetJobWithResponse(ctx context.Context, jobID JobID, reqEditors ...RequestEditorFn) (*GetJobResponse, error)
+
+	// StreamJobEventsWithResponse Follow a job's progress
+	//
+	// Streams a job's progress as server-sent events (`text/event-stream`)
+	// instead of polling `GET /api/v1/jobs/{job_id}`: first the job as it
+	// is and its log so far, then each change, until the job reaches a
+	// terminal state (`succeeded`, `failed`, or `rollback_failed`), when
+	// the server ends the stream. A job that has already finished gets
+	// its snapshot and log, and the stream ends at once. As with the site
+	// log stream, the generated client doesn't wrap this operation; use
+	// `EventSource` or `fetch`.
+	//
+	// Event types:
+	//
+	// * `job`: `data` is the `Job` as JSON, without step logs (as in job
+	//   lists). Sent first, and again whenever the job or one of its
+	//   steps changes. Each event replaces the previous one. The events
+	//   are snapshots of what the server reads, so a step that starts
+	//   and finishes between two reads shows up as one change.
+	// * `log`: `data` is one `JobEventLogEntry`, a line of the step log,
+	//   and `id` is the line's ID. Lines come in the order they were
+	//   written, and all of them come before the `job` event that shows
+	//   the job finished.
+	// * `error`: `data` is a Problem Details document, sent once before
+	//   the stream ends because of a failure on the server (for example,
+	//   the job was deleted). Clients should not reconnect immediately.
+	// * Comment lines (`: keepalive`) are sent every 15 seconds so
+	//   proxies don't close an idle stream. Ignore them.
+	//
+	// A client that reconnects sends the `id` of the last `log` event it
+	// received as `Last-Event-ID` (a browser's `EventSource` does so on
+	// its own). The stream then starts with a fresh `job` snapshot and
+	// continues the log after that line instead of repeating it.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/jobs/{job_id}/events (the `StreamJobEvents` operationId).
+	StreamJobEventsWithResponse(ctx context.Context, jobID JobID, params *StreamJobEventsParams, reqEditors ...RequestEditorFn) (*StreamJobEventsResponse, error)
 
 	// GetMetricCatalogWithResponse List the metrics that can be queried
 	//
@@ -21554,6 +21730,82 @@ func (r GetJobResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetJobResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// StreamJobEventsResponse200Headers the declared response headers of an HTTP 200 response for StreamJobEvents
+type StreamJobEventsResponse200Headers struct {
+	CacheControl *string
+}
+
+type StreamJobEventsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *StreamJobEventsResponse200Headers
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r StreamJobEventsResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r StreamJobEventsResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r StreamJobEventsResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r StreamJobEventsResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r StreamJobEventsResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r StreamJobEventsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StreamJobEventsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StreamJobEventsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StreamJobEventsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -27676,6 +27928,50 @@ func (c *ClientWithResponses) GetJobWithResponse(ctx context.Context, jobID JobI
 	return ParseGetJobResponse(rsp)
 }
 
+// StreamJobEventsWithResponse Follow a job's progress
+//
+// Streams a job's progress as server-sent events (`text/event-stream`)
+// instead of polling `GET /api/v1/jobs/{job_id}`: first the job as it
+// is and its log so far, then each change, until the job reaches a
+// terminal state (`succeeded`, `failed`, or `rollback_failed`), when
+// the server ends the stream. A job that has already finished gets
+// its snapshot and log, and the stream ends at once. As with the site
+// log stream, the generated client doesn't wrap this operation; use
+// `EventSource` or `fetch`.
+//
+// Event types:
+//
+//   - `job`: `data` is the `Job` as JSON, without step logs (as in job
+//     lists). Sent first, and again whenever the job or one of its
+//     steps changes. Each event replaces the previous one. The events
+//     are snapshots of what the server reads, so a step that starts
+//     and finishes between two reads shows up as one change.
+//   - `log`: `data` is one `JobEventLogEntry`, a line of the step log,
+//     and `id` is the line's ID. Lines come in the order they were
+//     written, and all of them come before the `job` event that shows
+//     the job finished.
+//   - `error`: `data` is a Problem Details document, sent once before
+//     the stream ends because of a failure on the server (for example,
+//     the job was deleted). Clients should not reconnect immediately.
+//   - Comment lines (`: keepalive`) are sent every 15 seconds so
+//     proxies don't close an idle stream. Ignore them.
+//
+// A client that reconnects sends the `id` of the last `log` event it
+// received as `Last-Event-ID` (a browser's `EventSource` does so on
+// its own). The stream then starts with a fresh `job` snapshot and
+// continues the log after that line instead of repeating it.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/jobs/{job_id}/events (the `StreamJobEvents` operationId).
+func (c *ClientWithResponses) StreamJobEventsWithResponse(ctx context.Context, jobID JobID, params *StreamJobEventsParams, reqEditors ...RequestEditorFn) (*StreamJobEventsResponse, error) {
+	rsp, err := c.StreamJobEvents(ctx, jobID, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStreamJobEventsResponse(rsp)
+}
+
 // GetMetricCatalogWithResponse List the metrics that can be queried
 //
 // Every metric of design doc §7.1 (per site) and §7.2 (platform) that
@@ -32700,6 +32996,73 @@ func ParseGetJobResponse(rsp *http.Response) (*GetJobResponse, error) {
 		}
 		response.ApplicationProblemJSONDefault = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseStreamJobEventsResponse parses an HTTP response from a StreamJobEventsWithResponse call
+func ParseStreamJobEventsResponse(rsp *http.Response) (*StreamJobEventsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StreamJobEventsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers StreamJobEventsResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers200 = &headers
 	}
 
 	return response, nil

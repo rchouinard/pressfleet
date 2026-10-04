@@ -403,6 +403,8 @@ func (a *app) serveCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("platform login key: %w", err)
 			}
+			// The pool tells job event streams when a job changes.
+			jobChanges := jobs.NewChanges()
 			handler, err := api.NewHandler(api.Options{
 				AdminLogin:       adminlogin.NewService(db, prov, loginSigner),
 				AlertChannels:    channels,
@@ -419,6 +421,7 @@ func (a *app) serveCommand() *cobra.Command {
 				DatabaseSessions: dbSessions,
 				Deployments:      deploys,
 				Logs:             prov,
+				JobChanges:       jobChanges,
 				Doctor:           a.platformDoctor,
 				Metrics:          metricsSvc,
 				TrustedProxies:   proxies,
@@ -457,6 +460,7 @@ func (a *app) serveCommand() *cobra.Command {
 				Concurrency: a.cfg.Jobs.Concurrency,
 				Logger:      a.log.With("component", "jobs"),
 				Secrets:     secretStore,
+				Changes:     jobChanges,
 			})
 			if err := pool.Register(audit.CleanupHandler(db, a.cfg.Audit.Retention(), nil)); err != nil {
 				return err

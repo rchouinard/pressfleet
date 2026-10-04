@@ -59,6 +59,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/deploy"
 	"github.com/rchouinard/pressfleet/control-plane/internal/export"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
+	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
 	"github.com/rchouinard/pressfleet/control-plane/internal/metricsapi"
 	"github.com/rchouinard/pressfleet/control-plane/internal/pluginupdates"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
@@ -130,6 +131,9 @@ type Options struct {
 	// AlertChannels manages alert channels and sends test notifications. If
 	// nil, the alert channel operations fail with 500.
 	AlertChannels *alertchannels.Service
+	// JobChanges wakes job event streams when the job pool records
+	// progress. If nil, the streams only notice changes by polling.
+	JobChanges *jobs.Changes
 	// Doctor runs the platform's preflight checks for GET
 	// /api/v1/platform/doctor. If nil, that operation fails with 500.
 	Doctor DoctorFunc
@@ -167,6 +171,8 @@ type Handlers struct {
 	dbSessions    *dbsession.Service
 	adminLogin    *adminlogin.Service
 	logs          provisioner.LogReader
+	jobChanges    *jobs.Changes
+	jobEventPoll  time.Duration
 	metrics       *metricsapi.Service
 	channels      *alertchannels.Service
 	doctor        DoctorFunc
@@ -215,6 +221,7 @@ func NewHandler(opts Options) (http.Handler, error) {
 	h.dbSessions = opts.DatabaseSessions
 	h.adminLogin = opts.AdminLogin
 	h.logs = opts.Logs
+	h.jobChanges, h.jobEventPoll = opts.JobChanges, jobEventPoll
 	if h.metrics = opts.Metrics; h.metrics == nil {
 		h.metrics = metricsapi.New(nil, nil)
 	}
@@ -253,9 +260,7 @@ func withOperation(ops operationTable) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if op, ok := ops.forRequest(r); ok {
 				r = r.WithContext(context.WithValue(r.Context(), operationKey{}, op))
-				if op.ID == "streamSiteLogs" {
-					// The server's write timeout is for responses that end;
-					// a followed log lasts as long as the client watches.
+				if streamingOperations[op.ID] {
 					// Keepalive comments make a vanished client's writes fail.
 					_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 				}

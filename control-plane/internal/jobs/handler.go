@@ -214,6 +214,7 @@ func (r *Run) put(m map[string]json.RawMessage, key string, v any, write func(co
 		}
 		return err
 	}
+	r.e.p.opts.Changes.Notify(r.e.job.ID)
 	return nil
 }
 

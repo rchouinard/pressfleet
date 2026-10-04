@@ -267,7 +267,7 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 				if w.Code != http.StatusOK {
 					t.Errorf("status = %d, want 200; body: %s", w.Code, w.Body)
 				}
-			case op.ID == "getJob":
+			case op.ID == "getJob" || op.ID == "streamJobEvents":
 				if w.Code != http.StatusNotFound {
 					t.Errorf("status = %d, want 404; body: %s", w.Code, w.Body)
 				}

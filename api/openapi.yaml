@@ -16,8 +16,9 @@ info:
     * Request and response bodies are JSON. Field names are `snake_case`.
       Timestamps are RFC 3339 strings in UTC.
     * Long-running operations return `202 Accepted` with the queued job in the
-      body and its URL in the `Location` header. Poll `GET /api/v1/jobs/{job_id}`
-      until the job reaches a terminal state (`succeeded`, `failed`, or
+      body and its URL in the `Location` header. Follow the job with
+      `GET /api/v1/jobs/{job_id}/events`, or poll `GET /api/v1/jobs/{job_id}`,
+      until it reaches a terminal state (`succeeded`, `failed`, or
       `rollback_failed`).
     * Every error response is an RFC 9457 Problem Details document
       (`application/problem+json`) that carries the request ID.
@@ -3689,6 +3690,91 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/jobs/{job_id}/events:
+    parameters:
+      - $ref: "#/components/parameters/JobID"
+    get:
+      operationId: streamJobEvents
+      tags: [jobs]
+      summary: Follow a job's progress
+      description: |
+        Streams a job's progress as server-sent events (`text/event-stream`)
+        instead of polling `GET /api/v1/jobs/{job_id}`: first the job as it
+        is and its log so far, then each change, until the job reaches a
+        terminal state (`succeeded`, `failed`, or `rollback_failed`), when
+        the server ends the stream. A job that has already finished gets
+        its snapshot and log, and the stream ends at once. As with the site
+        log stream, the generated client doesn't wrap this operation; use
+        `EventSource` or `fetch`.
+
+        Event types:
+
+        * `job`: `data` is the `Job` as JSON, without step logs (as in job
+          lists). Sent first (after the log, for a job that has already
+          finished), and again whenever the job or one of its steps
+          changes. Each event replaces the previous one. The events
+          are snapshots of what the server reads, so a step that starts
+          and finishes between two reads shows up as one change.
+        * `log`: `data` is one `JobEventLogEntry`, a line of the step log,
+          and `id` is the line's ID. Lines come in the order they were
+          written, and all of them come before the `job` event that shows
+          the job finished.
+        * `error`: `data` is a Problem Details document, sent once before
+          the stream ends because of a failure on the server (for example,
+          the job was deleted). Clients should not reconnect immediately.
+        * Comment lines (`: keepalive`) are sent every 15 seconds so
+          proxies don't close an idle stream. Ignore them.
+
+        A client that reconnects sends the `id` of the last `log` event it
+        received as `Last-Event-ID` (a browser's `EventSource` does so on
+        its own). The stream then starts with a fresh `job` snapshot and
+        continues the log after that line instead of repeating it.
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          description: |
+            The `id` of the last `log` event the client received. When
+            present, the stream sends only the log lines after it.
+          schema:
+            type: string
+            maxLength: 32
+      responses:
+        "200":
+          description: An open event stream.
+          headers:
+            Cache-Control:
+              description: Always `no-store`.
+              schema:
+                type: string
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  Server-sent events as described above. The `data` of a
+                  `job` event is a `Job` and that of a `log` event is a
+                  `JobEventLogEntry`.
+                examples:
+                  - |
+                    event: job
+                    data: {"id":"01J9Z3M4D8XQ6V2N7R5T0KJH1C","type":"site.create","target":{"type":"site","id":"01J9Z3M2Q7WB5E8C4A6Y1FNG0S"},"state":"running","attempts":1,"max_attempts":5,"result":{},"steps":[{"name":"create_database","state":"running","attempts":1,"started_at":"2026-10-01T12:00:00Z","finished_at":null}],"created_by":null,"created_at":"2026-10-01T11:59:59Z","updated_at":"2026-10-01T12:00:00Z","started_at":"2026-10-01T12:00:00Z","finished_at":null}
+
+                    id: 4182
+                    event: log
+                    data: {"time":"2026-10-01T12:00:00Z","level":"info","message":"Creating database","step":"create_database"}
+
+                    : keepalive
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/audit-events:
     get:
       operationId: listAuditEvents
@@ -6710,6 +6796,23 @@ components:
           enum: [info, warn, error]
         message:
           type: string
+
+    JobEventLogEntry:
+      type: object
+      description: A line of a job's step log, as `GET /api/v1/jobs/{job_id}/events` sends it.
+      required: [time, level, message, step]
+      properties:
+        time:
+          $ref: "#/components/schemas/Timestamp"
+        level:
+          type: string
+          enum: [info, warn, error]
+        message:
+          type: string
+        step:
+          type: string
+          description: The name of the step that wrote the line, as in the job's `steps`.
+          examples: ["create_database"]
 
     JobStep:
       type: object

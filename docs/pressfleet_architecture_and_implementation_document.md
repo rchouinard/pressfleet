@@ -411,7 +411,7 @@ PressFleet uses semantic versioning. Each release bundles the control plane imag
 
 ## 5. Core Operational Workflows
 
-All long-running operations run as **Jobs**. API endpoints that start them return `202 Accepted` with a job ID; clients poll `GET /api/v1/jobs/{id}` (or receive updates via the UI). Each job step must be idempotent so a failed job can be retried safely, and a job that fails permanently must roll back resources it created.
+All long-running operations run as **Jobs**. API endpoints that start them return `202 Accepted` with a job ID; clients follow `GET /api/v1/jobs/{id}/events`, a server-sent event stream of the job's state, steps, and log that ends when the job does, or poll `GET /api/v1/jobs/{id}`. Each job step must be idempotent so a failed job can be retried safely, and a job that fails permanently must roll back resources it created.
 
 ### 5.1. One-Click Provisioning Workflow
 1. **User Request:** Agency user calls `POST /api/v1/sites` with client group, site name, and admin email. Returns `202` + job ID.

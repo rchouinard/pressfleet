@@ -44,6 +44,9 @@ type Options struct {
 	Logger *slog.Logger
 	// Secrets stores secret results; nil disables Run.SetSecretResult.
 	Secrets SecretStore
+	// Changes is notified whenever the pool records progress on a job;
+	// nil notifies no one.
+	Changes *Changes
 }
 
 // DefaultBackoff doubles from 15 seconds, capped at 15 minutes.
@@ -235,6 +238,7 @@ func (p *Pool) lease(ctx context.Context) (store.Job, bool) {
 	job, err := store.NewJobs(p.db).Lease(lctx, types, p.newOwner(), now, now.Add(p.opts.LeaseDuration))
 	switch {
 	case err == nil:
+		p.opts.Changes.Notify(job.ID)
 		return job, true
 	case errors.Is(err, store.ErrNotFound):
 	default:

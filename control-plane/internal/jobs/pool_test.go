@@ -689,3 +689,52 @@ func must(t *testing.T, err error) {
 		t.Fatal(err)
 	}
 }
+
+func TestPoolNotifiesChanges(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		changes := jobs.NewChanges()
+		pool := jobs.NewPool(db, jobs.Options{Logger: storetest.Logger(), Changes: changes})
+		var watch <-chan struct{}
+		notified := func() bool {
+			select {
+			case <-watch:
+				return true
+			default:
+				return false
+			}
+		}
+		var during []string
+		check := func(what string) {
+			if !notified() {
+				during = append(during, what)
+			}
+		}
+		if err := pool.Register(jobs.Handler{Type: "test.notify", Steps: []jobs.Step{{Name: "a", Do: func(_ context.Context, r *jobs.Run) error {
+			check("starting the step")
+			r.Logf("hello")
+			check("a log line")
+			if err := r.SetResult("k", 1); err != nil {
+				return err
+			}
+			check("a result")
+			return nil
+		}}}}); err != nil {
+			t.Fatal(err)
+		}
+		job, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "test.notify", TargetType: "site", TargetID: id.New()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stop func()
+		watch, stop = changes.Watch(job.ID)
+		defer stop()
+		if ran, err := pool.RunNext(ctx); err != nil || !ran {
+			t.Fatalf("RunNext = %v, %v", ran, err)
+		}
+		check("finishing the job")
+		if len(during) > 0 {
+			t.Errorf("no notification after %v", during)
+		}
+	})
+}

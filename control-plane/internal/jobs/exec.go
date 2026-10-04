@@ -328,6 +328,7 @@ func (e *execution) write(fn func(ctx context.Context) error) bool {
 	err := fn(ctx)
 	switch {
 	case err == nil:
+		e.p.opts.Changes.Notify(e.job.ID)
 		return true
 	case errors.Is(err, store.ErrLeaseLost):
 		e.logger.Warn("job lease lost; another worker has taken over")
@@ -344,7 +345,9 @@ func (e *execution) writeLog(step int, level slog.Level, msg string) {
 	defer cancel()
 	if err := e.jobs.AppendLog(ctx, e.job.ID, step, levelName(level), msg, e.p.now()); err != nil {
 		e.logger.Warn("storing a job log line failed", "error", err)
+		return
 	}
+	e.p.opts.Changes.Notify(e.job.ID)
 }
 
 func levelName(l slog.Level) string {

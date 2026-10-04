@@ -4175,6 +4175,13 @@ type ListJobsParams struct {
 	TargetID *ID `form:"target_id,omitempty" json:"target_id,omitempty"`
 }
 
+// StreamJobEventsParams defines parameters for StreamJobEvents.
+type StreamJobEventsParams struct {
+	// LastEventID The `id` of the last `log` event the client received. When
+	// present, the stream sends only the log lines after it.
+	LastEventID *string `json:"Last-Event-ID,omitempty"`
+}
+
 // QueryPlatformMetricsParams defines parameters for QueryPlatformMetrics.
 type QueryPlatformMetricsParams struct {
 	// Metric Metric ids from the catalog; repeat the parameter to select several
@@ -4604,6 +4611,9 @@ type ServerInterface interface {
 	// GetJob Get a job, including its steps and step log
 	// (GET /api/v1/jobs/{job_id})
 	GetJob(w http.ResponseWriter, r *http.Request, jobID JobID)
+	// StreamJobEvents Follow a job's progress
+	// (GET /api/v1/jobs/{job_id}/events)
+	StreamJobEvents(w http.ResponseWriter, r *http.Request, jobID JobID, params StreamJobEventsParams)
 	// GetMetricCatalog List the metrics that can be queried
 	// (GET /api/v1/metrics/catalog)
 	GetMetricCatalog(w http.ResponseWriter, r *http.Request)
@@ -6518,6 +6528,56 @@ func (siw *ServerInterfaceWrapper) GetJob(w http.ResponseWriter, r *http.Request
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetJob(w, r, jobID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StreamJobEvents operation middleware
+func (siw *ServerInterfaceWrapper) StreamJobEvents(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "job_id" -------------
+	var jobID JobID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "job_id", r.PathValue("job_id"), &jobID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "job_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params StreamJobEventsParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "Last-Event-ID" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Last-Event-ID")]; found {
+		var LastEventID string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "Last-Event-ID", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Last-Event-ID", valueList[0], &LastEventID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "Last-Event-ID", Err: err})
+			return
+		}
+
+		params.LastEventID = &LastEventID
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StreamJobEvents(w, r, jobID, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -8913,6 +8973,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/template-rollout/resume", wrapper.ResumeTemplateRollout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs", wrapper.ListJobs)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs/{job_id}", wrapper.GetJob)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/jobs/{job_id}/events", wrapper.StreamJobEvents)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/audit-events", wrapper.ListAuditEvents)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/alert-rules", wrapper.ListAlertRules)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/alert-rules", wrapper.CreateAlertRule)
@@ -13534,6 +13595,147 @@ type GetJobdefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetJobdefaultApplicationProblemPlusJSONResponse) VisitGetJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StreamJobEventsRequestObject struct {
+	JobID  JobID `json:"job_id"`
+	Params StreamJobEventsParams
+}
+
+type StreamJobEventsResponseObject interface {
+	VisitStreamJobEventsResponse(w http.ResponseWriter) error
+}
+
+type StreamJobEvents200ResponseHeaders struct {
+	CacheControl *string
+}
+
+type StreamJobEvents200TextEventStreamResponse struct {
+	Body          io.Reader
+	Headers       StreamJobEvents200ResponseHeaders
+	ContentLength int64
+}
+
+func (response StreamJobEvents200TextEventStreamResponse) VisitStreamJobEventsResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		// If w doesn't support flushing, fall back to io.Copy.
+		_, err := io.Copy(w, response.Body)
+		return err
+	}
+	// text/event-stream messages are typically small; use a
+	// modest buffer and flush after each chunk so clients see
+	// events immediately instead of waiting on OS buffering.
+	buf := make([]byte, 4096)
+	for {
+		n, err := response.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				return writeErr
+			}
+			flusher.Flush()
+		}
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+	}
+}
+
+type StreamJobEvents400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response StreamJobEvents400ApplicationProblemPlusJSONResponse) VisitStreamJobEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StreamJobEvents401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response StreamJobEvents401ApplicationProblemPlusJSONResponse) VisitStreamJobEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StreamJobEvents403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response StreamJobEvents403ApplicationProblemPlusJSONResponse) VisitStreamJobEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StreamJobEvents404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response StreamJobEvents404ApplicationProblemPlusJSONResponse) VisitStreamJobEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StreamJobEventsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response StreamJobEventsdefaultApplicationProblemPlusJSONResponse) VisitStreamJobEventsResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -20687,6 +20889,9 @@ type StrictServerInterface interface {
 	// GetJob Get a job, including its steps and step log
 	// (GET /api/v1/jobs/{job_id})
 	GetJob(ctx context.Context, request GetJobRequestObject) (GetJobResponseObject, error)
+	// StreamJobEvents Follow a job's progress
+	// (GET /api/v1/jobs/{job_id}/events)
+	StreamJobEvents(ctx context.Context, request StreamJobEventsRequestObject) (StreamJobEventsResponseObject, error)
 	// GetMetricCatalog List the metrics that can be queried
 	// (GET /api/v1/metrics/catalog)
 	GetMetricCatalog(ctx context.Context, request GetMetricCatalogRequestObject) (GetMetricCatalogResponseObject, error)
@@ -22192,6 +22397,33 @@ func (sh *strictHandler) GetJob(w http.ResponseWriter, r *http.Request, jobID Jo
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetJobResponseObject); ok {
 		if err := validResponse.VisitGetJobResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StreamJobEvents operation middleware
+func (sh *strictHandler) StreamJobEvents(w http.ResponseWriter, r *http.Request, jobID JobID, params StreamJobEventsParams) {
+	var request StreamJobEventsRequestObject
+
+	request.JobID = jobID
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StreamJobEvents(ctx, request.(StreamJobEventsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StreamJobEvents")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StreamJobEventsResponseObject); ok {
+		if err := validResponse.VisitStreamJobEventsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

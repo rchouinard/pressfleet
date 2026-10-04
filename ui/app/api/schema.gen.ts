@@ -2332,6 +2332,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/jobs/{job_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: components["parameters"]["JobID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Follow a job's progress
+         * @description Streams a job's progress as server-sent events (`text/event-stream`)
+         *     instead of polling `GET /api/v1/jobs/{job_id}`: first the job as it
+         *     is and its log so far, then each change, until the job reaches a
+         *     terminal state (`succeeded`, `failed`, or `rollback_failed`), when
+         *     the server ends the stream. A job that has already finished gets
+         *     its snapshot and log, and the stream ends at once. As with the site
+         *     log stream, the generated client doesn't wrap this operation; use
+         *     `EventSource` or `fetch`.
+         *
+         *     Event types:
+         *
+         *     * `job`: `data` is the `Job` as JSON, without step logs (as in job
+         *       lists). Sent first, and again whenever the job or one of its
+         *       steps changes. Each event replaces the previous one. The events
+         *       are snapshots of what the server reads, so a step that starts
+         *       and finishes between two reads shows up as one change.
+         *     * `log`: `data` is one `JobEventLogEntry`, a line of the step log,
+         *       and `id` is the line's ID. Lines come in the order they were
+         *       written, and all of them come before the `job` event that shows
+         *       the job finished.
+         *     * `error`: `data` is a Problem Details document, sent once before
+         *       the stream ends because of a failure on the server (for example,
+         *       the job was deleted). Clients should not reconnect immediately.
+         *     * Comment lines (`: keepalive`) are sent every 15 seconds so
+         *       proxies don't close an idle stream. Ignore them.
+         *
+         *     A client that reconnects sends the `id` of the last `log` event it
+         *     received as `Last-Event-ID` (a browser's `EventSource` does so on
+         *     its own). The stream then starts with a fresh `job` snapshot and
+         *     continues the log after that line instead of repeating it.
+         */
+        get: operations["streamJobEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit-events": {
         parameters: {
             query?: never;
@@ -3919,6 +3970,18 @@ export interface components {
             /** @enum {string} */
             level: "info" | "warn" | "error";
             message: string;
+        };
+        /** @description A line of a job's step log, as `GET /api/v1/jobs/{job_id}/events` sends it. */
+        JobEventLogEntry: {
+            time: components["schemas"]["Timestamp"];
+            /** @enum {string} */
+            level: "info" | "warn" | "error";
+            message: string;
+            /**
+             * @description The name of the step that wrote the line, as in the job's `steps`.
+             * @example create_database
+             */
+            step: string;
         };
         JobStep: {
             /** @example create_database */
@@ -7561,6 +7624,41 @@ export interface operations {
                     "application/json": components["schemas"]["Job"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    streamJobEvents: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description The `id` of the last `log` event the client received. When
+                 *     present, the stream sends only the log lines after it.
+                 */
+                "Last-Event-ID"?: string;
+            };
+            path: {
+                job_id: components["parameters"]["JobID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description An open event stream. */
+            200: {
+                headers: {
+                    /** @description Always `no-store`. */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];

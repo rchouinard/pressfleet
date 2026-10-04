@@ -2,13 +2,11 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
@@ -26,9 +24,6 @@ const (
 	defaultLogLimit = 200
 	maxLogLimit     = 1000
 	defaultLogTail  = 100
-	// logKeepalive is how often an idle stream sends a comment, so proxies
-	// keep it open and a vanished client's writes fail.
-	logKeepalive = 15 * time.Second
 )
 
 // errNoLogs is a wiring bug: serve always passes the log reader.
@@ -230,29 +225,13 @@ func (h *Handlers) StreamSiteLogs(ctx context.Context, req gen.StreamSiteLogsReq
 	}
 	follow.Follow = true
 
-	ctx, cancel := context.WithCancel(ctx)
-	pr, pw := io.Pipe()
-	go func() {
-		defer cancel()
-		pw.CloseWithError(h.writeLogEvents(ctx, pw, req.SiteID, backlog, follow))
-	}()
+	body := newEventStream(ctx, func(ctx context.Context, w io.Writer) error {
+		return h.writeLogEvents(ctx, w, req.SiteID, backlog, follow)
+	})
 	return gen.StreamSiteLogs200TextEventStreamResponse{
-		Body:    &logStream{PipeReader: pr, cancel: cancel},
+		Body:    body,
 		Headers: gen.StreamSiteLogs200ResponseHeaders{CacheControl: new("no-store")},
 	}, nil
-}
-
-// logStream is the body of a followed log: closing it, which the response
-// does when the client is gone, stops the follow.
-type logStream struct {
-	*io.PipeReader
-	cancel context.CancelFunc
-	once   sync.Once
-}
-
-func (s *logStream) Close() error {
-	s.once.Do(s.cancel)
-	return s.PipeReader.Close()
 }
 
 // writeLogEvents writes the backlog and then the followed entries to w as
@@ -282,14 +261,14 @@ func (h *Handlers) writeLogEvents(ctx context.Context, w io.Writer, siteID strin
 			}
 		}
 	}()
-	keepalive := time.NewTicker(logKeepalive)
+	keepalive := time.NewTicker(streamKeepalive)
 	defer keepalive.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-keepalive.C:
-			if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+			if err := writeKeepalive(w); err != nil {
 				return err
 			}
 		case it, ok := <-items:
@@ -309,12 +288,7 @@ func (h *Handlers) writeLogEvents(ctx context.Context, w io.Writer, siteID strin
 // writeLogEvent writes one entry as a `log` event whose ID lets a
 // reconnecting client continue after it.
 func writeLogEvent(w io.Writer, e provisioner.LogEntry) error {
-	data, err := json.Marshal(siteLogEntry(e))
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(w, "id: %s\nevent: log\ndata: %s\n\n", formatLogCursor(e.Time), data)
-	return err
+	return writeEvent(w, "log", formatLogCursor(e.Time), siteLogEntry(e))
 }
 
 // writeLogError tells the client why the stream ends, as the Problem
@@ -328,14 +302,7 @@ func (h *Handlers) writeLogError(ctx context.Context, w io.Writer, siteID string
 		h.log.ErrorContext(ctx, "following site logs failed", "site_id", siteID, "error", cause)
 		p = httpserver.NewProblem(http.StatusInternalServerError, "")
 	}
-	data, err := json.Marshal(p)
-	if err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "event: error\ndata: %s\n\n", data); err != nil {
-		return err
-	}
-	return cause
+	return writeProblemEvent(w, p, cause)
 }
 
 // ListSiteJobLogs returns the log lines of the site's jobs, newest first.
