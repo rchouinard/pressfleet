@@ -112,6 +112,11 @@ type Config struct {
 	// plane, e.g. to roll out a WordPress security release before the
 	// PressFleet release that carries it, or in tests.
 	ImageManifestFile string `yaml:"image_manifest_file"`
+
+	// Warnings are deprecation warnings from loading: config keys and
+	// environment variables that were set under a name a release renamed
+	// or removed (see deprecatedKeys). The CLI shows them to the operator.
+	Warnings []string `yaml:"-"`
 }
 
 // SFTPConfig configures the SFTP gateway (§5.8).
@@ -737,6 +742,11 @@ func ApplyEnv(cfg *Config, env LookupEnv) error {
 	if env == nil {
 		env = os.LookupEnv
 	}
+	env, warnings, err := applyDeprecatedEnv(env)
+	if err != nil {
+		return err
+	}
+	cfg.Warnings = append(cfg.Warnings, warnings...)
 	for _, v := range envVars {
 		if val, ok := env(v.name); ok {
 			*v.field(cfg) = val
@@ -833,11 +843,28 @@ func loadFile(cfg *Config, path string) error {
 	if err != nil {
 		return fmt.Errorf("reading config: %w", err)
 	}
+	// Renamed and removed keys are rewritten on a parsed tree first. The
+	// tree is then encoded again because Node.Decode ignores KnownFields,
+	// and unknown keys must still be rejected.
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("parsing config %s: %w", path, err)
+	}
+	changed, warnings, err := applyDeprecatedKeys(&doc, path)
+	if err != nil {
+		return err
+	}
+	if changed {
+		if data, err = yaml.Marshal(&doc); err != nil {
+			return fmt.Errorf("parsing config %s: %w", path, err)
+		}
+	}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(cfg); err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("parsing config %s: %w", path, err)
 	}
+	cfg.Warnings = append(cfg.Warnings, warnings...)
 	return nil
 }
 

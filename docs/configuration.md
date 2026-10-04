@@ -116,6 +116,16 @@ site_export:
   ttl_seconds: 86400             # see "Site exports"
 ```
 
+### Renamed and removed settings
+
+When a release renames or removes a config key or a `PRESSFLEET_*` environment variable, the old name keeps working for a while, so an existing config doesn't stop `pressfleet upgrade` or the control plane after it:
+
+- A renamed key or variable is read under its new name. Each command prints a warning naming the old key, the new one, the release that renamed it, and the file to update; `pressfleet serve` logs it once at startup.
+- A removed key or variable is ignored, with a warning saying why it went away.
+- Setting both the old and the new name is an error that names both: remove the old one.
+
+Old names are accepted for at least one minor release after the change, and until the oldest release `pressfleet upgrade` can upgrade from already uses the new name. After that, the old name is an unknown key and is rejected. Update your config when you see the warning.
+
 ## Settings
 
 | Key | Environment variable | Flag | Default | Description |

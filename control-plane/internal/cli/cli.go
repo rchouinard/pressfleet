@@ -53,6 +53,10 @@ type Options struct {
 // skipConfig marks commands that must work without a valid configuration.
 const skipConfig = "pressfleet/skip-config"
 
+// logConfigWarnings marks a command that logs config deprecation warnings
+// itself instead of printing them, as `serve` does.
+const logConfigWarnings = "pressfleet/log-config-warnings"
+
 // app holds state shared by all commands during one invocation.
 type app struct {
 	opts       Options
@@ -166,6 +170,11 @@ func (a *app) loadConfig(cmd *cobra.Command, _ []string) error {
 	for _, o := range flagOverrides {
 		if f := cmd.Flags().Lookup(o.flag); f != nil && f.Changed {
 			*o.field(&cfg) = f.Value.String()
+		}
+	}
+	if cmd.Annotations[logConfigWarnings] == "" {
+		for _, w := range cfg.Warnings {
+			a.warnf("%s", w)
 		}
 	}
 	if err := cfg.Validate(); err != nil {

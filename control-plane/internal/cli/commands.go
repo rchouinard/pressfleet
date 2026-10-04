@@ -222,9 +222,10 @@ const envSkipPreflight = "PRESSFLEET_SKIP_PREFLIGHT"
 func (a *app) serveCommand() *cobra.Command {
 	var skipPreflight bool
 	cmd := &cobra.Command{
-		Use:   "serve",
-		Short: "Run the control plane (API, workers, dashboard)",
-		Args:  cobra.NoArgs,
+		Use:         "serve",
+		Short:       "Run the control plane (API, workers, dashboard)",
+		Args:        cobra.NoArgs,
+		Annotations: map[string]string{logConfigWarnings: "true"},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if v, ok := a.opts.Env(envSkipPreflight); ok && !cmd.Flags().Changed("skip-preflight") {
 				skip, err := strconv.ParseBool(v)
@@ -246,6 +247,9 @@ func (a *app) serveCommand() *cobra.Command {
 			}
 			a.log.Info("pressfleet starting",
 				"version", a.opts.Version, "listen", a.cfg.Listen, "data_dir", layout.Root)
+			for _, w := range a.cfg.Warnings {
+				a.log.Warn("deprecated configuration", "warning", w)
+			}
 
 			db, err := a.openStateDB(cmd.Context())
 			if err != nil {
