@@ -252,6 +252,7 @@ Done when: 50 sites on an 8 GiB host stay healthy under light traffic (§4.1), a
 | [#100](https://github.com/rchouinard/pressfleet/issues/100) | Release pipeline: versioned binaries and images | P0 | M | #19, #80 |
 | [#106](https://github.com/rchouinard/pressfleet/issues/106) | Host CLI ↔ control plane admin interface and version skew enforcement | P0 | M | #12 |
 | [#140](https://github.com/rchouinard/pressfleet/issues/140) | Update-available check for new PressFleet releases | P1 | M | #100 |
+| [#142](https://github.com/rchouinard/pressfleet/issues/142) | E2E: manual recovery from a failed platform upgrade | P0 | M | #95, #100 |
 
 ### Post-MVP: Staging Clones
 
@@ -268,6 +269,14 @@ KubernetesProvisioner using client-go (§4.2, §8). Do not implement before MVP 
 | # | Issue | Priority | Size | Depends on |
 | --- | --- | --- | --- | --- |
 | [#102](https://github.com/rchouinard/pressfleet/issues/102) | Kubernetes driver (tracking) | P2 | XL | #3 |
+
+### Post-MVP: Upgrade Rollback
+
+Automatic rollback of a failed platform upgrade, automating the manual recovery procedure that MVP upgrades rely on (§4.7, revised from #94). Do not implement before MVP ships.
+
+| # | Issue | Priority | Size | Depends on |
+| --- | --- | --- | --- | --- |
+| [#141](https://github.com/rchouinard/pressfleet/issues/141) | Automatic upgrade rollback and `pressfleet upgrade --rollback` | P2 | M | #95 |
 
 ### Post-MVP: MCP Server
 
@@ -294,7 +303,7 @@ These must be resolved before the work they block.
 | [#64](https://github.com/rchouinard/pressfleet/issues/64) | ~~confirm VictoriaMetrics + built-in collector~~ **Resolved:** confirmed (design doc §3, §7) | M4: Monitoring & Alerting | P0 |
 | [#65](https://github.com/rchouinard/pressfleet/issues/65) | ~~metrics retention period~~ **Resolved:** configurable, default 90 days (design doc §7) | M4: Monitoring & Alerting | P1 |
 | [#92](https://github.com/rchouinard/pressfleet/issues/92) | ~~plugin/theme update visibility~~ **Resolved:** report only; pending plugin and theme updates count towards site health and show in the dashboard, and the platform never runs them or backs up around them (design doc §5.6, §9 Q2). Implemented in M5 ([#125](https://github.com/rchouinard/pressfleet/issues/125)) | M5: Dashboard | P2 |
-| [#94](https://github.com/rchouinard/pressfleet/issues/94) | ~~platform upgrade process~~ **Resolved:** forward-only migrations, CLI upgrades control plane to its own version, kubectl-style version skew (design doc §4.7) | MVP Release Gate | P0 |
+| [#94](https://github.com/rchouinard/pressfleet/issues/94) | ~~platform upgrade process~~ **Resolved:** forward-only migrations, CLI upgrades control plane to its own version, kubectl-style version skew (design doc §4.7). **Revised 2026-10-03:** MVP upgrades are forward-only with a tested manual recovery procedure (#142); automatic rollback is post-MVP (#141); MariaDB series changes are refused | MVP Release Gate | P0 |
 
 ## Gaps in the design document
 

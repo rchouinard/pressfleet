@@ -391,10 +391,13 @@ PressFleet uses semantic versioning. Each release bundles the control plane imag
 * The host CLI upgrades the control plane to the CLI's own version. To upgrade, install the new CLI and run `pressfleet upgrade`.
 * Upgrading directly from any older version is supported, provided it is at or above the minimum version that release supports upgrading from.
 * Steps: run preflight checks; record the current platform definition and image digests; render the new platform Compose project; pull images; recreate only the services that changed; wait for the control plane (which migrates at startup) and platform services to report healthy.
-* If health checks fail, the upgrade rolls back automatically. It restores the recorded platform definition and images, then restores the pre-migration state backup using the previous control plane version. `pressfleet upgrade --rollback` does the same by hand.
-* Rollback is for failed or immediately regretted upgrades. Anything recorded in the state database after the upgrade (e.g. new sites) is lost on rollback.
+* Upgrades are forward-only in the MVP: a failed upgrade is fixed forward, by a patch release, or recovered by hand. The upgrade keeps what a manual rollback needs, namely the previous rendered platform project and the image digests it ran, alongside the control plane's pre-migration state backup. If health checks fail, `pressfleet upgrade` exits non-zero and prints the recovery steps with these paths and digests filled in: stop the control plane, restore the state backup with the previous control plane image (`pressfleet state restore`), put the previous platform project back, and start it. The operator guide documents the same procedure, and an end-to-end test runs it.
+* A failed control plane upgrade leaves sites serving: sites run in their own Compose projects and Traefik keeps routing to them. The dashboard, API, and jobs are unavailable until the control plane is fixed or rolled back.
+* Rolling back is for failed or immediately regretted upgrades. Anything recorded in the state database after the upgrade (e.g. new sites) is lost.
+* PressFleet doesn't back up PostgreSQL state databases (operators do), so with PostgreSQL the state restore step uses the operator's own pre-upgrade backup.
+* Automatic rollback and `pressfleet upgrade --rollback` are post-MVP.
 * Upgrading only the control plane doesn't interrupt site traffic. Recreating Traefik, MariaDB, or Redis briefly interrupts every site.
-* MariaDB major version upgrades are one-way. They only ship in major PressFleet releases, after a backup of every site database.
+* MariaDB major version upgrades (a change of the X.Y release series) are one-way. In the MVP the upgrade refuses them, and each release pins MariaDB to one series. Supporting them is future work, for a major PressFleet release: the upgrade would back up every site database and copy MariaDB's data volume so it can go back.
 * When site Compose templates change, sites are re-rendered and recreated one at a time with health checks, using the image rollout mechanism (§5.5).
 
 **Version skew between the host CLI and the control plane:**
@@ -667,12 +670,14 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
   * **Done when:** every Phase 1–4 operation can be performed from the UI.
 * **MVP Release Gate**
   * Capacity test: 50 sites on an 8 GiB host stay healthy under light traffic (§4.1).
-  * `pressfleet upgrade` with automatic rollback, and enforcement of the version skew policy between the host CLI and the control plane (§4.7).
+  * Forward-only `pressfleet upgrade` with a documented, tested manual recovery procedure, and enforcement of the version skew policy between the host CLI and the control plane (§4.7).
 * **Post-MVP (High Priority): Staging Clones**
   * Clone a production site to a linked staging site (on a preview domain), and push staging changes back to production.
 * **Post-MVP: Kubernetes Driver**
   * Implement `KubernetesProvisioner` using `client-go`, with templates in `/templates/k8s`.
   * Test against kind or k3d.
+* **Post-MVP: Upgrade Rollback**
+  * Automatic rollback of a failed `pressfleet upgrade`, and `pressfleet upgrade --rollback`, automating the manual recovery procedure (§4.7).
 * **Post-MVP: MCP Server**
   * A Model Context Protocol server built into the control plane (Streamable HTTP, off by default) whose tools are derived from the OpenAPI spec and cover the dashboard's operations.
   * Every tool goes through the API's authorization check and audit log; `tools/list` shows only what the caller's token and role allow.
@@ -691,7 +696,7 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
 8. ~~**Developer code deployment:** How do agency developers get custom themes/plugins onto a site: SFTP, git push, a CI deploy API endpoint, WP-CLI/SSH access? Currently only an optional SFTP/file browser is planned (Phase 3).~~ **Resolved (2026-09-28):** an SFTP gateway authenticated with platform users' SSH keys, plus a deploy API for CI. No git push or shell access. See §5.8.
 9. ~~**Importing existing sites:** Is an import workflow (upload an archive + DB dump, or pull from a remote host) part of the MVP?~~ **Resolved (2026-09-28):** yes, from a `wp-content` archive and SQL dump; other sources may follow after MVP. See §5.7.
 10. ~~**Database access:** Should agencies get a database UI (e.g. Adminer started on demand), WP-CLI only, or neither?~~ **Resolved (2026-09-28):** database exports through the platform, and temporary, read-only-by-default database sessions tunneled through the SFTP gateway. No web database UI in the MVP. See §5.8.
-11. ~~**Platform upgrades:** How does an existing install upgrade to a new PressFleet release (control plane migrations, platform service upgrades, rollback)?~~ **Resolved (2026-09-26):** forward-only migrations applied at startup after a state backup; the host CLI upgrades the control plane to its own version, with automatic rollback; kubectl-style version skew policy between the host CLI and the control plane. See §4.7.
+11. ~~**Platform upgrades:** How does an existing install upgrade to a new PressFleet release (control plane migrations, platform service upgrades, rollback)?~~ **Resolved (2026-09-26):** forward-only migrations applied at startup after a state backup; the host CLI upgrades the control plane to its own version; upgrades are forward-only with a documented manual rollback (automatic rollback revised to post-MVP on 2026-10-03); kubectl-style version skew policy between the host CLI and the control plane. See §4.7.
 
 ---
 
