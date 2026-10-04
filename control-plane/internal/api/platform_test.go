@@ -8,17 +8,31 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
+	"github.com/rchouinard/pressfleet/control-plane/internal/buildinfo"
 	"github.com/rchouinard/pressfleet/control-plane/internal/doctor"
 	"github.com/rchouinard/pressfleet/control-plane/internal/doctor/doctortest"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
 
 func TestGetPlatform(t *testing.T) {
-	h := newHandler(t, api.Options{Authenticator: &fakeAuth{}, SFTP: api.SFTPInfo{Enabled: true, Host: "fleet.example.com", Port: 2022}})
+	build := buildinfo.Info{Version: "v1.2.3", Commit: "0123456789abcdef", Modified: new(false), GoVersion: "go1.27.1", OS: "linux", Arch: "amd64"}
+	h := newHandler(t, api.Options{Authenticator: &fakeAuth{}, SFTP: api.SFTPInfo{Enabled: true, Host: "fleet.example.com", Port: 2022}, Build: build})
 	w := do(t, h, request{authed: true, method: http.MethodGet, target: "/api/v1/platform"})
 	got := decodeJSON[gen.Platform](t, w.Body.Bytes())
 	if w.Code != http.StatusOK || !got.Sftp.Enabled || got.Sftp.Host != "fleet.example.com" || got.Sftp.Port != 2022 {
 		t.Errorf("platform: %d %s", w.Code, w.Body)
+	}
+	b := got.Build
+	if b.Version != "v1.2.3" || b.Commit == nil || *b.Commit != "0123456789abcdef" || b.Modified == nil || *b.Modified ||
+		b.GoVersion != "go1.27.1" || b.Os != "linux" || b.Arch != "amd64" {
+		t.Errorf("build = %+v", b)
+	}
+
+	// An unknown commit is left out rather than sent empty.
+	h = newHandler(t, api.Options{Authenticator: &fakeAuth{}, Build: buildinfo.Info{Version: "dev"}})
+	w = do(t, h, request{authed: true, method: http.MethodGet, target: "/api/v1/platform"})
+	if got := decodeJSON[gen.Platform](t, w.Body.Bytes()); got.Build.Commit != nil || got.Build.Modified != nil {
+		t.Errorf("dev build = %s", w.Body)
 	}
 	if w := do(t, h, request{method: http.MethodGet, target: "/api/v1/platform"}); w.Code != http.StatusUnauthorized {
 		t.Errorf("unauthenticated: %d", w.Code)

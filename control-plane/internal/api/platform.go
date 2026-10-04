@@ -9,17 +9,28 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/doctor"
 )
 
-// GetPlatform reports the install's connection details (#123). Every role
-// that may see sites may read it: it only tells them where to connect.
+// GetPlatform reports the install's connection details (#123) and the build
+// of the running control plane. Every role that may see sites may read it:
+// it only tells them where to connect and what they are talking to.
 func (h *Handlers) GetPlatform(ctx context.Context, _ gen.GetPlatformRequestObject) (gen.GetPlatformResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ViewSites, authz.Platform()); err != nil {
 		return nil, err
 	}
-	return gen.GetPlatform200JSONResponse{Sftp: gen.PlatformSftp{
-		Enabled: h.sftp.Enabled,
-		Host:    h.sftp.Host,
-		Port:    h.sftp.Port,
-	}}, nil
+	build := gen.PlatformBuild{
+		Version: h.build.Version, GoVersion: h.build.GoVersion, Os: h.build.OS, Arch: h.build.Arch,
+		Modified: h.build.Modified,
+	}
+	if h.build.Commit != "" {
+		build.Commit = &h.build.Commit
+	}
+	return gen.GetPlatform200JSONResponse{
+		Sftp: gen.PlatformSftp{
+			Enabled: h.sftp.Enabled,
+			Host:    h.sftp.Host,
+			Port:    h.sftp.Port,
+		},
+		Build: build,
+	}, nil
 }
 
 // errNoDoctor is a wiring bug: serve always passes a doctor.

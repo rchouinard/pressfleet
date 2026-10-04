@@ -2892,8 +2892,29 @@ type PasswordChange struct {
 
 // Platform defines model for Platform.
 type Platform struct {
+	// Build The build of the running control plane.
+	Build PlatformBuild `json:"build"`
+
 	// Sftp Where developers reach the SFTP gateway (design doc §5.8).
 	Sftp PlatformSftp `json:"sftp"`
+}
+
+// PlatformBuild The build of the running control plane.
+type PlatformBuild struct {
+	Arch string `json:"arch"`
+
+	// Commit The full commit hash the binary was built from; absent when unknown.
+	Commit *string `json:"commit,omitempty"`
+
+	// GoVersion The Go toolchain that built the binary.
+	GoVersion string `json:"go_version"`
+
+	// Modified Whether the working tree had uncommitted changes at build time; absent when unknown.
+	Modified *bool  `json:"modified,omitempty"`
+	Os       string `json:"os"`
+
+	// Version The release version, or `dev` for an unversioned build.
+	Version string `json:"version"`
 }
 
 // PlatformCapacity defines model for PlatformCapacity.
@@ -4504,7 +4525,7 @@ type ServerInterface interface {
 	// GetPlatformMetricsSummary Current values of platform metrics
 	// (GET /api/v1/metrics/platform/summary)
 	GetPlatformMetricsSummary(w http.ResponseWriter, r *http.Request, params GetPlatformMetricsSummaryParams)
-	// GetPlatform Get the platform's connection details
+	// GetPlatform Get the platform's connection details and build
 	// (GET /api/v1/platform)
 	GetPlatform(w http.ResponseWriter, r *http.Request)
 	// GetPlatformCapacity Host memory capacity and site memory reservations
@@ -20135,7 +20156,7 @@ type StrictServerInterface interface {
 	// GetPlatformMetricsSummary Current values of platform metrics
 	// (GET /api/v1/metrics/platform/summary)
 	GetPlatformMetricsSummary(ctx context.Context, request GetPlatformMetricsSummaryRequestObject) (GetPlatformMetricsSummaryResponseObject, error)
-	// GetPlatform Get the platform's connection details
+	// GetPlatform Get the platform's connection details and build
 	// (GET /api/v1/platform)
 	GetPlatform(ctx context.Context, request GetPlatformRequestObject) (GetPlatformResponseObject, error)
 	// GetPlatformCapacity Host memory capacity and site memory reservations

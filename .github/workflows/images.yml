@@ -108,7 +108,9 @@ jobs:
           context: .
           file: control-plane/Dockerfile
           platforms: linux/amd64
-          build-args: VERSION=${{ needs.plan.outputs.version }}
+          build-args: |
+            VERSION=${{ needs.plan.outputs.version }}
+            COMMIT=${{ github.sha }}
           tags: ${{ needs.plan.outputs.registry }}/control-plane:${{ needs.plan.outputs.version }}
           cache-from: type=gha,scope=control-plane
 
@@ -133,7 +135,9 @@ jobs:
           context: .
           file: control-plane/Dockerfile
           platforms: linux/amd64
-          build-args: VERSION=${{ needs.plan.outputs.version }}
+          build-args: |
+            VERSION=${{ needs.plan.outputs.version }}
+            COMMIT=${{ github.sha }}
           tags: ${{ needs.plan.outputs.registry }}/control-plane:${{ needs.plan.outputs.version }}
           labels: |
             org.opencontainers.image.title=pressfleet control-plane

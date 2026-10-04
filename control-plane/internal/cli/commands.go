@@ -8,8 +8,6 @@ import (
 	"net"
 	"net/netip"
 	"path/filepath"
-	"runtime"
-	"runtime/debug"
 	"slices"
 	"strconv"
 	"sync"
@@ -28,6 +26,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/restic"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
+	"github.com/rchouinard/pressfleet/control-plane/internal/buildinfo"
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/dbsession"
@@ -415,6 +414,7 @@ func (a *app) serveCommand() *cobra.Command {
 				Doctor:           a.platformDoctor,
 				Metrics:          metricsSvc,
 				TrustedProxies:   proxies,
+				Build:            a.build(),
 				SFTP:             api.SFTPInfo{Enabled: a.cfg.SFTP.Enabled(), Host: a.cfg.DashboardDomain, Port: a.cfg.SFTP.Port},
 				SecureCookies:    a.cfg.HTTP.SecureCookies == config.SecureCookiesAlways,
 			})
@@ -608,7 +608,7 @@ sense inside the control plane container.`,
 		Annotations: map[string]string{skipConfig: "true"},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
-			if _, err := fmt.Fprintln(out, versionString(a.opts.Version)); err != nil || client {
+			if _, err := fmt.Fprintln(out, a.build()); err != nil || client {
 				return err
 			}
 			// Best effort: the configuration only names the platform
@@ -623,27 +623,7 @@ sense inside the control plane container.`,
 	return cmd
 }
 
-// versionString formats the version with VCS and toolchain details from the
-// embedded build info.
-func versionString(version string) string {
-	details := ""
-	if info, ok := debug.ReadBuildInfo(); ok {
-		var rev, modified string
-		for _, s := range info.Settings {
-			switch s.Key {
-			case "vcs.revision":
-				rev = s.Value
-			case "vcs.modified":
-				modified = s.Value
-			}
-		}
-		if rev != "" {
-			details = "commit " + rev[:min(len(rev), 12)]
-			if modified == "true" {
-				details += "-dirty"
-			}
-			details += ", "
-		}
-	}
-	return fmt.Sprintf("pressfleet %s (%s%s, %s/%s)", version, details, runtime.Version(), runtime.GOOS, runtime.GOARCH)
+// build describes the running binary.
+func (a *app) build() buildinfo.Info {
+	return buildinfo.Read(a.opts.Version, a.opts.Commit)
 }

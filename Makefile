@@ -1,4 +1,5 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT  ?= $(shell git rev-parse HEAD 2>/dev/null)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 BIN     := bin/pressfleet
 IMAGE   ?= ghcr.io/rchouinard/pressfleet/control-plane:$(VERSION)
@@ -58,7 +59,7 @@ test: ## Run tests with the race detector
 
 .PHONY: image
 image: ## Build the control plane container image (tag: IMAGE=...)
-	docker build -f control-plane/Dockerfile --build-arg VERSION=$(VERSION) -t $(IMAGE) .
+	docker build -f control-plane/Dockerfile --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMAGE) .
 
 DEV_IMAGE ?= pressfleet-control-plane:dev
 

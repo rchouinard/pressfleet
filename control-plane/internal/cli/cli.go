@@ -19,6 +19,9 @@ import (
 // Options configures a CLI invocation.
 type Options struct {
 	Version string
+	// Commit is the commit the binary was built from, when set at build
+	// time; otherwise the VCS stamp Go embeds is used.
+	Commit string
 	// Stdin is read by commands that accept secrets on standard input;
 	// nil means os.Stdin.
 	Stdin  io.Reader

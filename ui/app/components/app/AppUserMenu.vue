@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // The signed-in user's menu: who they are and their role, the theme choice,
-// and sign out. The trigger shows the role badge from `md` up; the menu
+// About PressFleet (the dialog lives in the layout), and sign out. The trigger shows the role badge from `md` up; the menu
 // always shows it.
 import type { DropdownMenuItem } from '@nuxt/ui'
 import { userLabel } from '../../utils/users'
@@ -8,6 +8,7 @@ import { userLabel } from '../../utils/users'
 const { user, logout } = useSession()
 const colorMode = useColorMode()
 const notify = useNotify()
+const about = useState<boolean>('about-open', () => false)
 
 const roleColor = { admin: 'primary', operator: 'info', viewer: 'neutral' } as const
 
@@ -34,6 +35,13 @@ const items = computed<DropdownMenuItem[][]>(() => [
   ],
   [
     { label: 'Account & tokens', icon: 'i-lucide-key-round', to: '/account' },
+    {
+      label: 'About PressFleet',
+      icon: 'i-lucide-info',
+      onSelect: () => {
+        about.value = true
+      },
+    },
     {
       label: 'Sign out',
       icon: 'i-lucide-log-out',

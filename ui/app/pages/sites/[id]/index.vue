@@ -197,14 +197,7 @@ async function onDomainsChanged() {
 
 // Where the SFTP gateway is, as configured. A failed lookup only hides the
 // card; the rest of the page doesn't depend on it.
-const { data: platform } = await useAsyncData('platform', async () => {
-  try {
-    const { data } = await api.GET('/api/v1/platform')
-    return data ?? null
-  } catch {
-    return null
-  }
-})
+const { data: platform } = await usePlatform()
 
 function when(iso: string): string {
   const d = new Date(iso)

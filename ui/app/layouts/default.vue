@@ -3,9 +3,18 @@
 // name and user menu, a sidebar on large screens that becomes a drawer below
 // `lg`, breadcrumbs, and the main region. Toasts are rendered by <UApp>.
 // Pages put their own <h1> in the slot and set crumbs with useBreadcrumbs().
+// The running version sits under the navigation; it and the user menu open
+// the About dialog.
 const route = useRoute()
 const crumbs = useState<Crumb[]>('breadcrumbs', () => [])
 const drawer = ref(false)
+const about = useState<boolean>('about-open', () => false)
+const { data: platform } = usePlatform()
+
+function showAbout() {
+  drawer.value = false
+  about.value = true
+}
 
 // Close the drawer after navigating from it.
 watch(() => route.fullPath, () => {
@@ -44,8 +53,9 @@ watch(() => route.fullPath, () => {
 
     <div class="flex flex-1">
       <aside class="hidden w-60 shrink-0 border-r border-default p-3 lg:block">
-        <div class="sticky top-[4.25rem] max-h-[calc(100dvh-5rem)] overflow-y-auto">
+        <div class="sticky top-[4.25rem] flex max-h-[calc(100dvh-5rem)] flex-col gap-4 overflow-y-auto">
           <AppNav />
+          <AppVersion :build="platform?.build" @about="showAbout" />
         </div>
       </aside>
 
@@ -59,6 +69,7 @@ watch(() => route.fullPath, () => {
       >
         <template #body>
           <AppNav />
+          <AppVersion class="mt-4" :build="platform?.build" @about="showAbout" />
         </template>
       </USlideover>
 
@@ -86,5 +97,7 @@ watch(() => route.fullPath, () => {
         </main>
       </div>
     </div>
+
+    <AppAbout v-if="platform" v-model:open="about" :build="platform.build" />
   </div>
 </template>

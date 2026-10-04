@@ -40,10 +40,13 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
 COPY --from=ui /src/ui/.output/public ui/.output/public
 ARG VERSION=dev
+# The commit the image is built from. Shown in the dashboard; the build
+# itself runs with -buildvcs=false, so Go doesn't stamp it.
+ARG COMMIT=
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -trimpath -buildvcs=false -tags webui -ldflags "-s -w -X main.version=${VERSION}" \
+    go build -trimpath -buildvcs=false -tags webui -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
       -o /out/pressfleet ./control-plane/cmd/pressfleet
 
 FROM ${DOCKER_CLI_IMAGE} AS docker-cli

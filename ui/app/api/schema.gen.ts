@@ -2097,9 +2097,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get the platform's connection details
+         * Get the platform's connection details and build
          * @description Facts about this install that clients need to build connection
-         *     strings, taken from its configuration. Every role can read.
+         *     strings, taken from its configuration, and the build of the running
+         *     control plane. Every role can read.
          */
         get: operations["getPlatform"];
         put?: never;
@@ -3474,6 +3475,31 @@ export interface components {
         };
         Platform: {
             sftp: components["schemas"]["PlatformSftp"];
+            build: components["schemas"]["PlatformBuild"];
+        };
+        /** @description The build of the running control plane. */
+        PlatformBuild: {
+            /**
+             * @description The release version, or `dev` for an unversioned build.
+             * @example v0.4.0
+             */
+            version: string;
+            /**
+             * @description The full commit hash the binary was built from; absent when unknown.
+             * @example adbf70e45beb349cc44022eebc2afaa2d55790e8
+             */
+            commit?: string;
+            /** @description Whether the working tree had uncommitted changes at build time; absent when unknown. */
+            modified?: boolean;
+            /**
+             * @description The Go toolchain that built the binary.
+             * @example go1.27.1
+             */
+            go_version: string;
+            /** @example linux */
+            os: string;
+            /** @example amd64 */
+            arch: string;
         };
         /** @description Where developers reach the SFTP gateway (design doc §5.8). */
         PlatformSftp: {
@@ -7121,7 +7147,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The platform's connection details. */
+            /** @description The platform's connection details and build. */
             200: {
                 headers: {
                     [name: string]: unknown;

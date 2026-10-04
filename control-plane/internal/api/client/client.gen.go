@@ -2891,8 +2891,29 @@ type PasswordChange struct {
 
 // Platform defines model for Platform.
 type Platform struct {
+	// Build The build of the running control plane.
+	Build PlatformBuild `json:"build"`
+
 	// Sftp Where developers reach the SFTP gateway (design doc §5.8).
 	Sftp PlatformSftp `json:"sftp"`
+}
+
+// PlatformBuild The build of the running control plane.
+type PlatformBuild struct {
+	Arch string `json:"arch"`
+
+	// Commit The full commit hash the binary was built from; absent when unknown.
+	Commit *string `json:"commit,omitempty"`
+
+	// GoVersion The Go toolchain that built the binary.
+	GoVersion string `json:"go_version"`
+
+	// Modified Whether the working tree had uncommitted changes at build time; absent when unknown.
+	Modified *bool  `json:"modified,omitempty"`
+	Os       string `json:"os"`
+
+	// Version The release version, or `dev` for an unversioned build.
+	Version string `json:"version"`
 }
 
 // PlatformCapacity defines model for PlatformCapacity.
@@ -5042,10 +5063,11 @@ type ClientInterface interface {
 	// Corresponds with GET /api/v1/metrics/platform/summary (the `GetPlatformMetricsSummary` operationId).
 	GetPlatformMetricsSummary(ctx context.Context, params *GetPlatformMetricsSummaryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetPlatform Get the platform's connection details
+	// GetPlatform Get the platform's connection details and build
 	//
 	// Facts about this install that clients need to build connection
-	// strings, taken from its configuration. Every role can read.
+	// strings, taken from its configuration, and the build of the running
+	// control plane. Every role can read.
 	//
 	// Corresponds with GET /api/v1/platform (the `GetPlatform` operationId).
 	GetPlatform(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -7754,10 +7776,11 @@ func (c *Client) GetPlatformMetricsSummary(ctx context.Context, params *GetPlatf
 	return c.Client.Do(req)
 }
 
-// GetPlatform Get the platform's connection details
+// GetPlatform Get the platform's connection details and build
 //
 // Facts about this install that clients need to build connection
-// strings, taken from its configuration. Every role can read.
+// strings, taken from its configuration, and the build of the running
+// control plane. Every role can read.
 //
 // Corresponds with GET /api/v1/platform (the `GetPlatform` operationId).
 func (c *Client) GetPlatform(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -16109,10 +16132,11 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/v1/metrics/platform/summary (the `GetPlatformMetricsSummary` operationId).
 	GetPlatformMetricsSummaryWithResponse(ctx context.Context, params *GetPlatformMetricsSummaryParams, reqEditors ...RequestEditorFn) (*GetPlatformMetricsSummaryResponse, error)
 
-	// GetPlatformWithResponse Get the platform's connection details
+	// GetPlatformWithResponse Get the platform's connection details and build
 	//
 	// Facts about this install that clients need to build connection
-	// strings, taken from its configuration. Every role can read.
+	// strings, taken from its configuration, and the build of the running
+	// control plane. Every role can read.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -27016,10 +27040,11 @@ func (c *ClientWithResponses) GetPlatformMetricsSummaryWithResponse(ctx context.
 	return ParseGetPlatformMetricsSummaryResponse(rsp)
 }
 
-// GetPlatformWithResponse Get the platform's connection details
+// GetPlatformWithResponse Get the platform's connection details and build
 //
 // Facts about this install that clients need to build connection
-// strings, taken from its configuration. Every role can read.
+// strings, taken from its configuration, and the build of the running
+// control plane. Every role can read.
 //
 // Returns a wrapper object for the known response body format(s).
 //

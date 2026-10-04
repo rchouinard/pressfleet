@@ -3409,13 +3409,14 @@ paths:
     get:
       operationId: getPlatform
       tags: [platform]
-      summary: Get the platform's connection details
+      summary: Get the platform's connection details and build
       description: |
         Facts about this install that clients need to build connection
-        strings, taken from its configuration. Every role can read.
+        strings, taken from its configuration, and the build of the running
+        control plane. Every role can read.
       responses:
         "200":
-          description: The platform's connection details.
+          description: The platform's connection details and build.
           content:
             application/json:
               schema:
@@ -6056,10 +6057,38 @@ components:
 
     Platform:
       type: object
-      required: [sftp]
+      required: [sftp, build]
       properties:
         sftp:
           $ref: "#/components/schemas/PlatformSftp"
+        build:
+          $ref: "#/components/schemas/PlatformBuild"
+    PlatformBuild:
+      type: object
+      description: The build of the running control plane.
+      required: [version, go_version, os, arch]
+      properties:
+        version:
+          type: string
+          description: The release version, or `dev` for an unversioned build.
+          example: v0.4.0
+        commit:
+          type: string
+          description: The full commit hash the binary was built from; absent when unknown.
+          example: adbf70e45beb349cc44022eebc2afaa2d55790e8
+        modified:
+          type: boolean
+          description: Whether the working tree had uncommitted changes at build time; absent when unknown.
+        go_version:
+          type: string
+          description: The Go toolchain that built the binary.
+          example: go1.27.1
+        os:
+          type: string
+          example: linux
+        arch:
+          type: string
+          example: amd64
     PlatformSftp:
       type: object
       description: Where developers reach the SFTP gateway (design doc §5.8).

@@ -54,6 +54,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/offboard"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
+	"github.com/rchouinard/pressfleet/control-plane/internal/buildinfo"
 	"github.com/rchouinard/pressfleet/control-plane/internal/dbsession"
 	"github.com/rchouinard/pressfleet/control-plane/internal/deploy"
 	"github.com/rchouinard/pressfleet/control-plane/internal/export"
@@ -137,6 +138,8 @@ type Options struct {
 	SecureCookies bool
 	// SFTP is what GET /api/v1/platform reports about the gateway.
 	SFTP SFTPInfo
+	// Build is what GET /api/v1/platform reports about the running binary.
+	Build buildinfo.Info
 }
 
 // SFTPInfo is where developers reach the SFTP gateway.
@@ -168,6 +171,7 @@ type Handlers struct {
 	resolver      authz.Resolver
 	secureCookies bool
 	sftp          SFTPInfo
+	build         buildinfo.Info
 }
 
 var _ gen.StrictServerInterface = (*Handlers)(nil)
@@ -199,7 +203,7 @@ func NewHandler(opts Options) (http.Handler, error) {
 	}
 
 	h := &Handlers{log: opts.Logger, readiness: opts.Readiness, db: opts.DB, auth: opts.Auth, sites: opts.Sites, backups: opts.Backups,
-		uploads: opts.Uploads, secureCookies: opts.SecureCookies, sftp: opts.SFTP}
+		uploads: opts.Uploads, secureCookies: opts.SecureCookies, sftp: opts.SFTP, build: opts.Build}
 	h.exports = opts.Exports
 	h.offboarding = opts.Offboarding
 	h.deploys = opts.Deployments
