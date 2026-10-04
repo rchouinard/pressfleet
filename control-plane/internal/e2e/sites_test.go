@@ -621,7 +621,8 @@ func TestSiteCreateDelete(t *testing.T) {
 			t.Fatal(err)
 		}
 		db := storetest.OpenUnmigrated(t, store.Config{Driver: store.SQLite, SQLitePath: filepath.Join(stateDir, "pressfleet.db")})
-		for _, table := range []string{"secrets", "site_databases", "site_object_caches", "sites", "site_aliases", "schedules WHERE target_type = 'site'"} {
+		// The platform's own keys (platform_keys) outlive every site.
+		for _, table := range []string{"secrets WHERE id NOT IN (SELECT secret_ref FROM platform_keys)", "site_databases", "site_object_caches", "sites", "site_aliases", "schedules WHERE target_type = 'site'"} {
 			var n int
 			if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table).Scan(&n); err != nil {
 				t.Fatal(err)
