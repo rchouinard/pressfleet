@@ -74,6 +74,12 @@ type Project struct {
 	// Dir is the absolute project directory holding compose.yaml. Relative
 	// paths in the file resolve against it.
 	Dir string
+	// Files are the absolute paths of the Compose files when they aren't
+	// Dir/compose.yaml and its compose.override.yaml, merged in order.
+	// Relative paths in them still resolve against Dir, which is how a
+	// platform upgrade inspects a newly rendered file in a staging directory
+	// as if it were the project's own.
+	Files []string
 	// Docker runs the docker CLI; nil means DockerExec.
 	Docker ExecFunc
 }
@@ -275,6 +281,11 @@ func (p Project) validate() error {
 	if !filepath.IsAbs(p.Dir) {
 		return fmt.Errorf("%w: directory %q must be absolute", ErrInvalidProject, p.Dir)
 	}
+	for _, f := range p.Files {
+		if !filepath.IsAbs(f) {
+			return fmt.Errorf("%w: file %q must be absolute", ErrInvalidProject, f)
+		}
+	}
 	return nil
 }
 
@@ -289,7 +300,11 @@ func (p Project) run(ctx context.Context, stdin io.Reader, args ...string) ([]by
 	if err := p.validate(); err != nil {
 		return nil, err
 	}
-	full := append([]string{"compose", "--project-name", p.Name, "--project-directory", p.Dir}, args...)
+	full := []string{"compose", "--project-name", p.Name, "--project-directory", p.Dir}
+	for _, f := range p.Files {
+		full = append(full, "--file", f)
+	}
+	full = append(full, args...)
 	out, err := p.docker()(ctx, stdin, full...)
 	if err != nil {
 		return out, fmt.Errorf("compose project %s: %w", p.Name, err)

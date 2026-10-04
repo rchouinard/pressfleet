@@ -45,7 +45,9 @@ docker compose -p pfe2e-<random> down --volumes
 docker compose -p pf-<site-id> down --volumes   # for each site it created
 ```
 
-`TestInit` doesn't use `e2e.Start`: it runs `pressfleet init --non-interactive --skip-preflight --acme-ca-server https://acme.invalid/directory` into a temporary root under the project name `pfinit-<random>`, then logs in as the admin init created. `e2e.Adopt` gives it the same teardown, and `e2e.WriteOverride` publishes the control plane and Traefik ports. Anything else that starts a platform in a test, like `TestPlatformUp` (`make test-platform`), must write the override too, or Traefik takes the host's ports 80 and 443.
+`TestInit` doesn't use `e2e.Start`: it runs `pressfleet init --non-interactive --skip-preflight --acme-ca-server https://acme.invalid/directory` into a temporary root under the project name `pfinit-<random>`, then logs in as the admin init created. `e2e.Adopt` gives it the same teardown, and `e2e.WriteOverride` publishes the control plane and Traefik ports. `TestUpgrade` installs the same way under `pfupgrade-<random>`, tags the control plane image under another name as a stand-in for the next release, and runs `pressfleet upgrade --skip-preflight --control-plane-image <that name>`: only the control plane and maintenance page containers may be recreated (MariaDB, the object cache, and Traefik keep their containers), the previous project must be saved, the admin must still log in, and a second run must do nothing. Upgrading from the previous published release, and recovering from a failed upgrade (#142), need published releases (#100).
+
+Anything else that starts a platform in a test, like `TestPlatformUp` (`make test-platform`), must write the override too, or Traefik takes the host's ports 80 and 443.
 
 #### Traefik
 

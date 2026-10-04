@@ -12,6 +12,9 @@ import (
 //	  state/              control plane database (SQLite)
 //	    backups/          pre-migration and pre-restore database backups
 //	  platform/           rendered platform services Compose project
+//	  upgrade/            the last platform upgrade (pressfleet upgrade):
+//	    upgrade.json      its versions, status, and the previous images
+//	    previous-platform/ the platform project before it, for recovery
 //	  sites/<site-id>/    rendered per-site Compose project and wp-config.php
 //	  backups/
 //	    repositories/<client-group-id>/
@@ -31,6 +34,11 @@ func (l Layout) StateBackupsDir() string { return filepath.Join(l.StateDir(), "b
 
 // PlatformDir holds the rendered platform services Compose project.
 func (l Layout) PlatformDir() string { return filepath.Join(l.Root, "platform") }
+
+// UpgradeDir holds what the last platform upgrade keeps for a manual
+// recovery: a record of the upgrade and a copy of the platform project from
+// before it (design doc §4.7).
+func (l Layout) UpgradeDir() string { return filepath.Join(l.Root, "upgrade") }
 
 // SitesDir holds one directory per site.
 func (l Layout) SitesDir() string { return filepath.Join(l.Root, "sites") }

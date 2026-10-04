@@ -41,6 +41,11 @@ type Options struct {
 	// plane of the named platform project and ask its version; nil means
 	// the real platform on the local Docker daemon. Tests inject fakes.
 	ControlPlane func(project string) ControlPlaneProbe
+	// UpgradeProject returns the platform Compose project `pressfleet
+	// upgrade` drives: the one in dir, read from files when they aren't
+	// dir's own (nil); nil means the real one on the local Docker daemon.
+	// Tests inject fakes.
+	UpgradeProject func(name, dir string, files []string) UpgradeProject
 	// PlatformProjectName overrides the platform's Compose project name, so
 	// tests against real Docker don't touch an actual installation.
 	PlatformProjectName string
@@ -123,7 +128,7 @@ func (a *app) rootCommand() *cobra.Command {
 	pf.String("log-level", "", "log level: debug, info, warn, error (overrides config)")
 	pf.String("log-format", "", "log format: text, json (overrides config)")
 
-	root.AddCommand(a.serveCommand(), a.initCommand(), a.doctorCommand(), a.versionCommand())
+	root.AddCommand(a.serveCommand(), a.initCommand(), a.upgradeCommand(), a.doctorCommand(), a.versionCommand())
 	root.AddCommand(a.healthcheckCommand(), a.maintenancePageCommand(), a.sftpServerCommand(), a.siteTaskCommand())
 	root.AddCommand(a.stateCommand())
 	root.AddCommand(a.keyCommand())

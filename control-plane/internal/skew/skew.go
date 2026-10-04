@@ -8,10 +8,12 @@
 package skew
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 // Sentinel errors.
@@ -121,4 +123,58 @@ func Check(cli, controlPlane Version) error {
 		return nil
 	}
 	return &Error{CLI: cli, ControlPlane: controlPlane}
+}
+
+// MinUpgradeFrom is the oldest release `pressfleet upgrade` of this release
+// upgrades from (design doc §4.7). Raise it when a release can no longer
+// upgrade older control planes directly, such as when it drops support for
+// state the oldest ones leave behind; operators then upgrade through an
+// intermediate release first. Release notes name it.
+const MinUpgradeFrom = "v0.1.0"
+
+// Compare orders two versions: -1 if v is older than w, 0 if they are the
+// same, and +1 if v is newer. A pre-release is older than the release it
+// precedes; pre-releases of one version are ordered by their identifiers as
+// semantic versioning defines.
+func (v Version) Compare(w Version) int {
+	if c := cmp.Compare(v.Major, w.Major); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(v.Minor, w.Minor); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(v.Patch, w.Patch); c != 0 {
+		return c
+	}
+	switch {
+	case v.Pre == w.Pre:
+		return 0
+	case v.Pre == "":
+		return 1
+	case w.Pre == "":
+		return -1
+	}
+	a, b := strings.Split(v.Pre, "."), strings.Split(w.Pre, ".")
+	for i := range min(len(a), len(b)) {
+		if c := comparePreID(a[i], b[i]); c != 0 {
+			return c
+		}
+	}
+	return cmp.Compare(len(a), len(b))
+}
+
+// comparePreID compares two pre-release identifiers: numeric ones
+// numerically and below alphanumeric ones, which compare in ASCII order.
+func comparePreID(a, b string) int {
+	an, aErr := strconv.Atoi(a)
+	bn, bErr := strconv.Atoi(b)
+	switch {
+	case aErr == nil && bErr == nil:
+		return cmp.Compare(an, bn)
+	case aErr == nil:
+		return -1
+	case bErr == nil:
+		return 1
+	}
+	return strings.Compare(a, b)
 }

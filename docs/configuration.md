@@ -277,7 +277,7 @@ A site's preview domain can ask for HTTP basic auth, for sensitive sites in deve
 
 `PUT /api/v1/sites/{id}/maintenance` with `{"enabled": true}` (Operators and Admins) puts every domain of a site on the platform's maintenance page: `503 Service Unavailable`, `Retry-After: 120`, `Cache-Control: no-store`, and a small self-contained page. Restores and core rollouts (M3) use the same mechanism. It takes effect a couple of seconds after the job has run, stays on across updates, restarts, and the control plane's startup reconciliation, and is turned off with `{"enabled": false}`. WP-CLI, and so WP-Cron, keeps working.
 
-The page is served by the platform's `maintenance` service: the control plane image running `pressfleet maintenance-page`, with no data directory, secrets, or Docker socket, a read-only filesystem, and a 24 MiB memory limit. For a site in maintenance mode, the control plane writes a file into Traefik's file provider directory, `<data_dir>/platform/traefik/dynamic/`, with a higher-priority router for each of the site's domains that points at that service; it removes the file to end maintenance mode. Because these routes don't come from the site's containers, the page stays up while they are stopped or recreated. Installs rendered before this directory existed need their platform re-rendered with this version (`pressfleet init --force` until `pressfleet upgrade` exists, #95) before maintenance mode works.
+The page is served by the platform's `maintenance` service: the control plane image running `pressfleet maintenance-page`, with no data directory, secrets, or Docker socket, a read-only filesystem, and a 24 MiB memory limit. For a site in maintenance mode, the control plane writes a file into Traefik's file provider directory, `<data_dir>/platform/traefik/dynamic/`, with a higher-priority router for each of the site's domains that points at that service; it removes the file to end maintenance mode. Because these routes don't come from the site's containers, the page stays up while they are stopped or recreated. Installs rendered before this directory existed need their platform re-rendered with this version (`pressfleet upgrade`) before maintenance mode works.
 
 ### Custom domains
 
@@ -293,7 +293,7 @@ From then on the preview domain and the aliases answer `301 Moved Permanently` t
 
 Going live again with another primary domain moves the site: the old primary domain's URLs are rewritten too, and it stops being served unless it is listed among the aliases (list it there to keep old links working). Going back to the preview domain alone isn't supported.
 
-**No downtime.** The custom domains' routes aren't container labels: the control plane writes them to a file in Traefik's file provider directory, `<data_dir>/platform/traefik/dynamic/pf-<site-id>-domains.yaml` (with a copy in the site's directory), which Traefik picks up within a couple of seconds. So going live and changing domains recreate no container. Like maintenance mode, this needs a platform rendered with that directory (`pressfleet init --force` on older installs).
+**No downtime.** The custom domains' routes aren't container labels: the control plane writes them to a file in Traefik's file provider directory, `<data_dir>/platform/traefik/dynamic/pf-<site-id>-domains.yaml` (with a copy in the site's directory), which Traefik picks up within a couple of seconds. So going live and changing domains recreate no container. Like maintenance mode, this needs a platform rendered with that directory (`pressfleet upgrade` on older installs).
 
 **Failures.** If the job fails before it starts rewriting URLs (for example, the site's database can't be reached), it rolls back: the previous domains and routes are put back, and the site's status message starts with `going live failed and was reverted`. Once the rewrite has started, the job doesn't roll back: undoing `wp search-replace` isn't safe, since it would also rewrite links to the new domain that were in the content before. The site keeps its new domains, which serve it, and its status message says the go-live didn't finish. Going live again with the same domains finishes it; the host names still to be rewritten are kept until a go-live has rewritten them all.
 
@@ -398,7 +398,7 @@ A certificate that fails verification (expired, wrong name, untrusted) makes the
 
 The control plane collects these itself (no extra service):
 
-- **Host CPU, memory, and disk I/O** come from the host's `/proc/stat`, `/proc/meminfo`, and `/proc/diskstats`. The platform project mounts the host's `/proc` read-only at `/host/proc` in the control plane container, and the control plane reads it there when it exists (otherwise its own `/proc`). Disk I/O counts physical disks only (`sd*`, `vd*`, `xvd*`, `hd*`, `nvme*`, `mmcblk*`, not their partitions, and not device-mapper, md, or loop devices, which would count the same bytes twice). Installs rendered before this mount existed need `pressfleet init --force` (until `pressfleet upgrade` exists, #95); until then the container's own `/proc`, which on a stock Docker host shows the same host-wide counters, is used.
+- **Host CPU, memory, and disk I/O** come from the host's `/proc/stat`, `/proc/meminfo`, and `/proc/diskstats`. The platform project mounts the host's `/proc` read-only at `/host/proc` in the control plane container, and the control plane reads it there when it exists (otherwise its own `/proc`). Disk I/O counts physical disks only (`sd*`, `vd*`, `xvd*`, `hd*`, `nvme*`, `mmcblk*`, not their partitions, and not device-mapper, md, or loop devices, which would count the same bytes twice). Installs rendered before this mount existed need `pressfleet upgrade`; until then the container's own `/proc`, which on a stock Docker host shows the same host-wide counters, is used.
 - **Host disk usage** is the filesystem holding `data_dir`, labeled `mountpoint="<data_dir>"`. Docker's own volumes are on a filesystem the control plane can't see; it is the same one on a default install.
 - **wp-content size** (`pressfleet_site_wp_content_size_bytes`) is measured every 10 minutes for running and stopped sites by a short-lived task container that runs `du -sk` on the volume, through the provisioner. It is disk usage in whole KiB.
 - **Restic repository size** (`pressfleet_restic_repository_size_bytes`, per client group) is measured every 30 minutes with `restic stats --mode raw-data`, for the client groups that have a site and a repository, for both the `local` and `s3` backends.
@@ -603,6 +603,9 @@ The DNS checks are skipped until `dashboard_domain` and `preview_base_domain` ar
   state/              control plane database (SQLite)
     backups/          state database backups taken before migrations and restores
   platform/           rendered platform services Compose project
+  upgrade/            kept by `pressfleet upgrade` for a manual recovery (see docs/upgrading.md):
+    upgrade.json      the last upgrade's versions, status, and previous images
+    previous-platform/ the platform project from before it
   sites/<site-id>/    rendered per-site Compose project and wp-config.php
   backups/
     repositories/<client-group-id>/

@@ -121,3 +121,43 @@ func TestErrorRule(t *testing.T) {
 		}
 	}
 }
+
+func TestCompare(t *testing.T) {
+	// Each version is older than the next.
+	ordered := []string{
+		"v0.1.0-alpha", "v0.1.0-alpha.1", "v0.1.0-alpha.beta", "v0.1.0-beta", "v0.1.0-beta.2",
+		"v0.1.0-beta.11", "v0.1.0-rc.1", "v0.1.0", "v0.1.1", "v0.2.0", "v1.0.0", "v1.10.0", "v2.0.0",
+	}
+	for i, s := range ordered {
+		v, err := skew.Parse(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for j, t2 := range ordered {
+			w, err := skew.Parse(t2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := v.Compare(w), cmpInt(i, j); got != want {
+				t.Errorf("%s.Compare(%s) = %d, want %d", s, t2, got, want)
+			}
+		}
+	}
+}
+
+func cmpInt(a, b int) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	}
+	return 0
+}
+
+func TestMinUpgradeFromIsARelease(t *testing.T) {
+	v, err := skew.Parse(skew.MinUpgradeFrom)
+	if err != nil || v.Pre != "" {
+		t.Errorf("MinUpgradeFrom %q must be a release version: %v", skew.MinUpgradeFrom, err)
+	}
+}

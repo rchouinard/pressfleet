@@ -82,6 +82,12 @@ func TestCommands(t *testing.T) {
 		}, []string{"exec", "--no-TTY", "control-plane", "pressfleet", "version"}},
 		{"logs", func(p compose.Project) error { _, err := p.Logs(context.Background()); return err },
 			[]string{"logs", "--no-color", "--timestamps"}},
+		{"pull", func(p compose.Project) error { return p.Pull(context.Background(), compose.PullOptions{}) },
+			[]string{"pull", "--quiet"}},
+		{"pull missing", func(p compose.Project) error { return p.Pull(context.Background(), compose.PullOptions{Missing: true}) },
+			[]string{"pull", "--quiet", "--policy", "missing"}},
+		{"config hashes", func(p compose.Project) error { _, err := p.ConfigHashes(context.Background()); return err },
+			[]string{"config", "--hash", "*"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -277,5 +283,79 @@ func TestDockerExec(t *testing.T) {
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 3 || ce.Stderr != "boom" {
 		t.Errorf("err = %v, want exit 3 with stderr", err)
+	}
+}
+
+func TestProjectFile(t *testing.T) {
+	r := &recorder{}
+	p := project(r)
+	p.Files = []string{"/data/upgrade/next/compose.yaml", "/data/sites/site1/compose.override.yaml"}
+	if err := p.Up(context.Background(), compose.UpOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	want := append(append([]string{}, prefix...), "--file", "/data/upgrade/next/compose.yaml", "--file", "/data/sites/site1/compose.override.yaml", "up", "--detach", "--remove-orphans")
+	if len(r.args) != 1 || !reflect.DeepEqual(r.args[0], want) {
+		t.Errorf("args = %q, want %q", r.args, want)
+	}
+	p.Files = []string{"relative/compose.yaml"}
+	if err := p.Up(context.Background(), compose.UpOptions{}); !errors.Is(err, compose.ErrInvalidProject) {
+		t.Errorf("relative file: err = %v, want ErrInvalidProject", err)
+	}
+}
+
+func TestConfigHashes(t *testing.T) {
+	r := &recorder{out: []byte("db 0e35158f\nweb d6ff400c\n\n")}
+	got, err := project(r).ConfigHashes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]string{"db": "0e35158f", "web": "d6ff400c"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("hashes = %v, want %v", got, want)
+	}
+	r.out = []byte("garbage\n")
+	if _, err := project(r).ConfigHashes(context.Background()); err == nil {
+		t.Error("malformed output: no error")
+	}
+}
+
+func TestFileMounts(t *testing.T) {
+	r := &recorder{out: []byte(`{
+		"services": {
+			"web": {
+				"volumes": [
+					{"type": "bind", "source": "/p/x.conf", "target": "/x.conf"},
+					{"type": "volume", "source": "data", "target": "/data"},
+					{"type": "bind", "source": "/p/x.conf", "target": "/y.conf"}
+				],
+				"secrets": [{"source": "s", "target": "/run/secrets/s"}]
+			},
+			"db": {}
+		},
+		"secrets": {"s": {"name": "t_s", "file": "/p/secrets/s"}}
+	}`)}
+	got, err := project(r).FileMounts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]string{"web": {"/p/secrets/s", "/p/x.conf"}, "db": nil}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("mounts = %v, want %v", got, want)
+	}
+	if want := append(append([]string{}, prefix...), "config", "--format", "json"); !reflect.DeepEqual(r.args[0], want) {
+		t.Errorf("args = %q, want %q", r.args[0], want)
+	}
+}
+
+func TestImageDigests(t *testing.T) {
+	r := &recorder{out: []byte(`["ghcr.io/x/cp@sha256:01"]` + "\n")}
+	got, err := compose.ImageDigests(context.Background(), r.exec, "sha256:abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, []string{"ghcr.io/x/cp@sha256:01"}) {
+		t.Errorf("digests = %q", got)
+	}
+	if want := []string{"image", "inspect", "--format", "{{json .RepoDigests}}", "--", "sha256:abc"}; !reflect.DeepEqual(r.args[0], want) {
+		t.Errorf("args = %q, want %q", r.args[0], want)
 	}
 }

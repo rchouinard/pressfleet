@@ -816,59 +816,21 @@ func (i *installer) startPlatform(ctx context.Context, a initAnswers) error {
 	if err := layout.Ensure(); err != nil {
 		return err
 	}
-	images, err := platform.DefaultImages(i.a.opts.Version)
+	images, err := i.a.platformImages(i.f.controlPlaneImage)
 	if err != nil {
 		return err
-	}
-	if i.f.controlPlaneImage != "" {
-		images.ControlPlane = i.f.controlPlaneImage
 	}
 	dir := layout.PlatformDir()
-	password, err := mariaDBRootPassword(dir)
-	if err != nil {
-		return err
-	}
-	redisPassword, err := redisAdminPassword(dir)
-	if err != nil {
-		return err
-	}
-	hostKey, err := sshHostKey(dir)
-	if err != nil {
-		return err
-	}
 	name := i.projectName()
-	acme := a.acmeConfig()
-	metricsHash, err := i.metricsAccessHash(dir)
+	// The answers hold the sealed secrets, which i.a.cfg doesn't yet.
+	i.metricsPassword, err = renderPlatform(dir, platformRender{
+		cfg:           a.config(i.a.cfg),
+		projectName:   name,
+		images:        images,
+		skipPreflight: i.f.skipPreflight,
+		secretsDir:    dir,
+	})
 	if err != nil {
-		return err
-	}
-	if err := platform.Render(dir, platform.Config{
-		ProjectName:          name,
-		DataDir:              a.DataDir,
-		Images:               images,
-		MariaDBRootPassword:  password,
-		RedisAdminPassword:   redisPassword,
-		SSHHostKey:           hostKey,
-		SFTPPort:             i.a.cfg.SFTP.Port,
-		MasterKeyFile:        a.MasterKeyFile,
-		SkipPreflight:        i.f.skipPreflight,
-		PreviewBaseDomain:    a.PreviewBaseDomain,
-		PublicIP:             a.PublicIP,
-		SMTP:                 a.smtpConfig(),
-		Backup:               a.backupConfig(),
-		DashboardDomain:      a.DashboardDomain,
-		MetricsRetentionDays: i.a.cfg.Metrics.RetentionDays,
-		MetricsPublicDomain:  i.a.cfg.Metrics.PublicDomain,
-		MetricsAccessHash:    metricsHash,
-		ACME: platform.ACMEConfig{
-			Email:          acme.Email,
-			CAServer:       acme.Directory(),
-			CACertificates: acme.CACertificates,
-			DNSProvider:    acme.DNSProvider,
-			DNSCredentials: acme.DNSCredentials,
-			DNSResolvers:   acme.DNSResolvers,
-		},
-	}); err != nil {
 		return err
 	}
 	i.printf("Rendered the platform project in %s.\n", dir)
@@ -880,25 +842,6 @@ func (i *installer) startPlatform(ctx context.Context, a initAnswers) error {
 	}
 	i.printf("The platform is running and healthy.\n")
 	return nil
-}
-
-// metricsAccessHash returns the credential hash of the public metrics route
-// (metrics.public_domain): the one already rendered into dir, so reinstalling
-// keeps Grafana working, or a new one whose password is kept in
-// i.metricsPassword for the summary. It is empty without a public domain.
-func (i *installer) metricsAccessHash(dir string) (string, error) {
-	if i.a.cfg.Metrics.PublicDomain == "" {
-		return "", nil
-	}
-	hash, err := platform.ReadMetricsAccessHash(dir)
-	if err == nil {
-		return hash, nil
-	}
-	if !errors.Is(err, platform.ErrNoMetricsAccess) {
-		return "", err
-	}
-	i.metricsPassword, hash, err = platform.NewMetricsAccess()
-	return hash, err
 }
 
 // platformProject returns the Compose project of the rendered platform.

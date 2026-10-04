@@ -22,5 +22,8 @@ victoria-metrics: docker.io/victoriametrics/victoria-metrics:v1.153.0@sha256:8d4
 # The control plane image is published by the same release as the host CLI,
 # so its digest can't be known when the CLI is built. It is referenced as
 # <repository>:<CLI version> instead; `pressfleet upgrade` records the digest
-# it actually pulled so it can roll back to exactly that image (§4.7).
+# each service ran before upgrading, for the manual recovery steps (§4.7).
+#
+# MariaDB stays in one release series (X.Y): upgrade refuses to change it, and
+# a test pins it (TestMariaDBSeriesPinned in control-plane/internal/cli).
 control-plane: ghcr.io/rchouinard/pressfleet/control-plane
