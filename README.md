@@ -8,6 +8,8 @@ A self-hostable, containerized application server for WordPress agencies: one-cl
 
 - [Architecture & implementation plan](docs/pressfleet_architecture_and_implementation_document.md)
 - [MVP roadmap](docs/roadmap.md)
+- [Installation](docs/installation.md) and [upgrading](docs/upgrading.md)
+- [Releasing](docs/releasing.md)
 - [Contributing](CONTRIBUTING.md)
 
 ## Repository layout

@@ -1,0 +1,151 @@
+name: Release
+
+# Publishes a release when a v* tag is pushed (docs/releasing.md):
+#
+#   1. The Images workflow pushes control-plane:<tag> and the site image matrix.
+#   2. The host CLI is built for linux/amd64 with the dashboard embedded. It
+#      embeds the release's platform templates and pinned image list
+#      (templates/), and installs control-plane:<tag> (design doc §4.7).
+#   3. The GitHub release gets the binary, SHA256SUMS, SPDX SBOMs of the
+#      binary and the control plane image, and notes that name the oldest
+#      release it upgrades from (scripts/release-notes.sh).
+#
+# The release is created only after the images are pushed, so a published
+# CLI never points at a control plane image that doesn't exist. Tags with a
+# pre-release suffix (v1.2.0-rc.1) become GitHub pre-releases.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check the tag
+    runs-on: ubuntu-latest
+    outputs:
+      prerelease: ${{ steps.tag.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ! grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$' <<<"$TAG"; then
+            echo "::error::$TAG is not a semantic version tag (vMAJOR.MINOR.PATCH[-PRERELEASE])"
+            exit 1
+          fi
+          # Releases are cut from main, which CI and E2E have already run on.
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$TAG ($GITHUB_SHA) is not on main"
+            exit 1
+          fi
+          if [[ "$TAG" == *-* ]]; then echo "prerelease=true"; else echo "prerelease=false"; fi >>"$GITHUB_OUTPUT"
+
+  images:
+    name: Images
+    needs: check
+    uses: ./.github/workflows/images.yml
+    permissions:
+      contents: read
+      packages: write
+
+  ui:
+    name: UI
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v4
+      - uses: ./.github/actions/pnpm-cache
+      - run: pnpm -C ui install --frozen-lockfile
+      - run: pnpm -C ui generate
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ui-dist
+          path: ui/.output/public
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    name: Publish the release
+    needs: [check, images, ui]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release
+      packages: read # inspect the control plane image
+    env:
+      TAG: ${{ github.ref_name }}
+      IMAGE: ghcr.io/rchouinard/pressfleet/control-plane:${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # for the version and the changelog
+      - uses: jdx/mise-action@v4
+      - uses: ./.github/actions/go-cache
+      - uses: actions/download-artifact@v8
+        with:
+          name: ui-dist
+          path: ui/.output/public
+      - name: Build the CLI
+        run: |
+          make build UI=prebuilt VERSION="$TAG"
+          got="$(./bin/pressfleet version --client)"
+          echo "$got"
+          # The CLI installs control-plane:<its version>, so the two must match.
+          [[ "$got" == "pressfleet $TAG "* ]] || { echo "::error::the binary reports a version other than $TAG"; exit 1; }
+          mkdir dist
+          cp bin/pressfleet dist/pressfleet-linux-amd64
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - id: image
+        name: Look up the control plane image
+        run: |
+          # Images publishes a single linux/amd64 manifest, so this digest is
+          # the one `pressfleet upgrade` records for the control plane.
+          digest="$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest}}' | jq -r .digest)"
+          [[ "$digest" == sha256:* ]] || { echo "::error::no digest for $IMAGE"; exit 1; }
+          echo "digest=$digest" >>"$GITHUB_OUTPUT"
+      - uses: anchore/sbom-action@v0
+        with:
+          file: dist/pressfleet-linux-amd64
+          format: spdx-json
+          output-file: dist/pressfleet-linux-amd64.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.image.outputs.digest }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ github.token }}
+          format: spdx-json
+          output-file: dist/control-plane.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Write checksums and notes
+        env:
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          (cd dist && sha256sum -- * >SHA256SUMS && cat SHA256SUMS)
+          scripts/release-notes.sh "$TAG" "$DIGEST" >notes.md
+          cat notes.md >>"$GITHUB_STEP_SUMMARY"
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ needs.check.outputs.prerelease }}
+        run: |
+          flags=()
+          if [[ "$PRERELEASE" == true ]]; then flags+=(--prerelease); else flags+=(--latest); fi
+          gh release create "$TAG" dist/* \
+            --verify-tag --title "PressFleet $TAG" --notes-file notes.md "${flags[@]}"

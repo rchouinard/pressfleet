@@ -256,6 +256,8 @@ Done when: 50 sites on an 8 GiB host stay healthy under light traffic (§4.1), a
 
 **Progress (2026-10-03):** `pressfleet upgrade` is implemented (#95): forward-only, with the recovery steps printed on failure and shown in [upgrading.md](upgrading.md), site template changes rolled out one site at a time (the `templates` rollout), and renamed config keys accepted with warnings. `TestUpgrade` covers a control-plane-only upgrade in-tree. #95 stays open until an upgrade from the previous published release runs in CI, which needs the release pipeline (#100); #142 then tests the recovery steps.
 
+**Progress (2026-10-04):** Pushing a `v*` tag publishes a release (#100, [releasing.md](releasing.md)): the images, the linux/amd64 CLI, `SHA256SUMS`, SPDX SBOMs, and notes naming the oldest release it upgrades from. `v0.1.0` is the first release and the baseline that #95 and #142 upgrade from; `v1.0.0` will be the first MVP release. The CI version skew matrix moved to #144 (from 1.0), and image signing is deferred while the repository is private.
+
 ### Post-MVP: Staging Clones
 
 Highest-priority follow-up after MVP (§1.1, §8). Do not implement before MVP ships.

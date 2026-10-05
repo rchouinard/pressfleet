@@ -12,6 +12,18 @@
 
 Run it as root (or a user in the `docker` group who can write `/etc/pressfleet` and the data directory).
 
+## Getting the CLI
+
+Each [release](https://github.com/rchouinard/pressfleet/releases) publishes the `pressfleet` binary for linux/amd64, the only supported host platform. Download `pressfleet-linux-amd64` and `SHA256SUMS` from the release, then:
+
+```sh
+sha256sum --check --ignore-missing SHA256SUMS
+install -m 0755 pressfleet-linux-amd64 /usr/local/bin/pressfleet
+pressfleet version --client
+```
+
+The binary carries the release's platform templates and pinned image list, and installs the control plane image of the same version (`ghcr.io/rchouinard/pressfleet/control-plane:<version>`). To change versions later, install the new binary and run [`pressfleet upgrade`](upgrading.md).
+
 ## Master key
 
 > **⚠️ Master key warning:** The master key is required to decrypt backup repository keys. If the host is lost and the master key was not saved elsewhere, **all backups are unrecoverable**. Setup requires the operator to download the key and confirm it has been stored somewhere safe (e.g. a password manager), separate from the host and its backups.

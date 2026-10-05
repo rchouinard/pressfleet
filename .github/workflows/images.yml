@@ -8,7 +8,9 @@ name: Images
 #                       the newest and oldest PHP branch on the latest WordPress
 #   push to main        push control-plane:sha-<short>; push the site matrix
 #                       when images/** or this workflow changed
-#   push of a v* tag    push control-plane:<tag> and the site matrix
+#   release (v* tag)    push control-plane:<tag> and the site matrix; the
+#                       Release workflow calls this one and publishes the
+#                       release once the images are pushed
 #   weekly schedule     rebuild (without cache) and push the site matrix, to
 #                       pick up base image and Debian security patches
 #   manual (on main)    push control-plane:sha-<short> and the site matrix
@@ -20,7 +22,7 @@ on:
   pull_request:
   push:
     branches: [main]
-    tags: ["v*"]
+  workflow_call: # from release.yml, for v* tags
   schedule:
     - cron: "23 4 * * 1" # Mondays 04:23 UTC
   workflow_dispatch:
