@@ -256,6 +256,43 @@ func TestUpgradeRecreatesOnlyChangedServices(t *testing.T) {
 	}
 }
 
+// A setting the platform project doesn't pass as an environment variable
+// reaches the control plane through the mounted config file: changing it and
+// running upgrade again, at the same version, recreates the control plane.
+func TestUpgradeAppliesChangedConfigFile(t *testing.T) {
+	e := newUpgradeEnv(t, "v1.2.2")
+	if r := e.upgrade(""); r.code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", r.code, r.stdout, r.stderr)
+	}
+	compose := readFile(t, e.path("platform", "compose.yaml"))
+	for _, want := range []string{"PRESSFLEET_CONFIG: " + `"` + platform.ConfigSecretPath + `"`, "pressfleet_config", platform.ConfigHashLabel} {
+		if !strings.Contains(compose, want) {
+			t.Errorf("compose.yaml lacks %q", want)
+		}
+	}
+
+	f, err := os.OpenFile(e.configPath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("audit:\n  retention_days: 30\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r := e.upgrade("")
+	if r.code != 0 {
+		t.Fatalf("exit %d\n%s\n%s", r.code, r.stdout, r.stderr)
+	}
+	if !strings.Contains(r.stdout, "Services to recreate: control-plane.") {
+		t.Errorf("output doesn't recreate only the control plane:\n%s", r.stdout)
+	}
+	if len(e.platform.ups) != 2 {
+		t.Errorf("ups = %+v, want a second up", e.platform.ups)
+	}
+}
+
 func TestUpgradeConfirmsInterruptingSites(t *testing.T) {
 	e := newUpgradeEnv(t, "v1.2.3-test")
 	// A changed Traefik configuration file changes no service hash, but

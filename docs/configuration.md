@@ -19,6 +19,8 @@ The config file is chosen in this order:
 
 If the file was chosen with `--config` or `PRESSFLEET_CONFIG`, it must exist. A missing file at the default location is fine: defaults and environment variables apply. Unknown keys are rejected, so a typo produces an error instead of being silently ignored.
 
+The control plane container reads the same file: the platform project mounts it read-only at `/run/secrets/pressfleet_config`. The project also passes the control plane some settings as environment variables (the domains, the SMTP relay, S3 backups, the DNS provider, and paths inside the container), which take precedence over the file; they are rendered from the file too, so the two agree. To change a setting, see [Changing settings](#changing-settings).
+
 ```yaml
 data_dir: /var/lib/pressfleet
 listen: ":8080"
@@ -222,6 +224,68 @@ Old names are accepted for at least one minor release after the change, and unti
 | `wordpress_security.two_factor` | `PRESSFLEET_WORDPRESS_SECURITY_TWO_FACTOR` | | `off` | The Two Factor plugin: `off`, `optional` (installed and activated; users opt in), or `required_for_admins` (also: every administrator must set up a second factor at their next login, including the one provisioning creates, and the plugin can't be deactivated). Reaches existing sites when the control plane restarts. Turning it off later stops requiring it but leaves the plugin installed. |
 | `wordpress_security.disable_application_passwords` | `PRESSFLEET_WORDPRESS_SECURITY_DISABLE_APPLICATION_PASSWORDS` | | `false` | Turn off WordPress application passwords. Off by default because integrations rely on them. |
 
+## Changing settings
+
+There is no settings page in the dashboard yet: settings are changed on the host, in the config file, as root.
+
+1. Edit the config file (`/etc/pressfleet/pressfleet.yaml` unless you chose another one at install). `init` saved its settings there; for any other setting, add its key from the [table above](#settings).
+2. Run `pressfleet upgrade` with the CLI of the release the platform runs. At the same release it upgrades nothing: it checks that the config file loads, re-renders the platform project from it, and recreates only the services whose definition changed. A changed config file always recreates the control plane, which reads the file when it starts; the sites keep serving meanwhile. If the change also touches Traefik, MariaDB, or the object cache, `upgrade` says so and asks first, since recreating them interrupts every site for up to a minute.
+
+Don't apply a change with `docker compose restart` or by recreating the control plane by hand. The control plane would read the new file, but the settings passed as environment variables would keep their old values until `upgrade` renders them again.
+
+Edit the file with care: it must stay valid YAML. `upgrade` refuses an invalid or unknown setting before it changes anything, and the previous file is what you go back to, so keep a copy (`cp pressfleet.yaml pressfleet.yaml.orig`) before larger edits.
+
+### When a change takes effect
+
+| Settings | Takes effect |
+| --- | --- |
+| Control plane settings: `jobs`, `audit`, `alerts`, `backup.schedule`, `backup.retention`, `backup.check`, `uploads`, `updates`, `database_export`, `site_export`, `sftp.idle_timeout_minutes`, `sftp.max_session_hours`, `metrics.enabled`, `metrics.interval_seconds`, `log`, `public_ip` | When the recreated control plane starts. Scheduled work (backups, retention, checks, audit cleanup) uses the new values from its next run. |
+| `wordpress_security`, `smtp` | When the control plane starts, it re-renders every site with the new values (see [WordPress security set](#wordpress-security-set)). |
+| `metrics.retention_days`, `metrics.public_domain`, `sftp.port`, `acme.email`, `acme.dns_resolvers` | When `upgrade` recreates the service they configure (VictoriaMetrics, Traefik, or the control plane, which publishes the SFTP port). |
+| `backup.backend`, `backup.s3` (other than the secret access key) | For backup repositories created afterwards. Existing repositories keep the location they were created with. |
+
+Secrets in the file are sealed with the master key, so they can't be edited by hand: see [Rotating secrets and credentials](#rotating-secrets-and-credentials).
+
+### Settings to leave alone
+
+These describe the installation itself. Changing them on an installed platform isn't supported:
+
+- `data_dir`, `master_key_file`, `platform_project`, `listen`, `task_image`, and the `mariadb` and `redis` connection settings.
+- `database`: moving the state database between SQLite and PostgreSQL needs a migration that PressFleet doesn't provide.
+- `dashboard_domain` and `preview_base_domain`: sites keep the preview domains they were created with, and the new domain needs DNS records and certificates first.
+- `image_manifest_file` and `metrics.url`, for tests and development. A path in the config file that the control plane reads, such as `image_manifest_file`, is a path inside the control plane container.
+
+### Rotating secrets and credentials
+
+The SMTP password, the S3 secret access key, and the DNS provider credentials are stored sealed with the master key (`pfenc1:...`), and a plaintext value in the config file is rejected. `pressfleet init --force` is how they are replaced: it seals the new value, writes it to the config file, and restarts what uses it. It asks the usual installation questions, prefilled from the current config file, and keeps everything you don't change (see [Reinstalling](installation.md#reinstalling)).
+
+Give each new secret in a file that only root can read, and delete the file afterwards:
+
+```sh
+install -m 600 /dev/null /root/new-secret
+editor /root/new-secret          # the secret on the first line
+pressfleet init --force --smtp-password-file /root/new-secret
+shred -u /root/new-secret
+```
+
+To rotate without downtime, create the new credential at the provider first, switch PressFleet to it, check that it works, and only then revoke the old one.
+
+| Credential | How to replace it | Check |
+| --- | --- | --- |
+| SMTP relay password | `pressfleet init --force --smtp-password-file <file>`; add `--smtp-username` if the login changes too. The control plane restarts and re-renders every site with it. | Send a test message from an [alert channel](#alert-channels) that uses the platform relay, or a password reset from a site. |
+| S3 secret access key | `pressfleet init --force --backup-s3-secret-access-key-file <file>`, with `--backup-s3-access-key-id <id>` when the key ID changes (it usually does). | Run a backup of one site and check that it succeeds. |
+| DNS provider credentials | `pressfleet init --force --dns-credentials-file <file>` (same `VARIABLE=value` format as at install). `init` recreates Traefik so it reads them, which interrupts every site until it is back, usually under a minute. | Traefik uses them at its next DNS-01 renewal; its log (`docker logs <project>-traefik-1`) shows any error. |
+| Public metrics API password | `pressfleet metrics-access rotate` (see [Connecting Grafana](#connecting-grafana)). No restart. | Update the Grafana data source. |
+| Alert channel credentials (per-channel SMTP password, webhook URL, signing secret) | Send the new value through the dashboard or the API (see [Alerts](#alerts)). | **Test** on the channel. |
+| Site preview password | `POST /api/v1/sites/{id}/preview-password` (see [Preview password protection](#preview-password-protection)). | |
+| User passwords and API tokens | In the dashboard, or `pressfleet user reset-password` in the control plane container, which also revokes the user's tokens (see [Users](#users)). | |
+
+These are generated once at install and can't be rotated yet:
+
+- **The master key** (see [Master key](#master-key)).
+- **The MariaDB root password** and **the object cache admin password**, in `<data_dir>/platform/secrets/`. `init --force` reuses them.
+- **The SFTP gateway's host key**, kept on purpose so developers' `known_hosts` entries stay valid.
+
 ## Outbound email
 
 Sites send email (password resets, notifications, form submissions) through one SMTP relay configured for the whole platform (design doc §5.6): a transactional email service such as Mailgun, Postmark, or Amazon SES, or your own mail server. `pressfleet init` collects the `smtp.*` settings and passes them to the control plane, which writes them into every site's generated `wp-config.php` as `PRESSFLEET_SMTP_*` constants. The platform must-use plugin `pressfleet-smtp.php` in the site images configures WordPress's mailer from them; without `smtp.host` it does nothing, and sites can't send email.
@@ -230,7 +294,7 @@ The relay password is encrypted with the master key everywhere PressFleet stores
 
 - **Sender.** With `smtp.from_email` set, messages WordPress would send as `wordpress@<site domain>` use it instead, and every message uses it as the envelope sender, so bounces go to the platform's domain. A From address chosen by a plugin (WooCommerce's store address, say) is kept; the relay must accept it.
 - **Per-site mail.** The plugin configures the mailer early, so a site that installs its own mail plugin, for example to use a client's own provider, overrides it.
-- **Changes.** The settings are read when the control plane starts. Rerun `pressfleet init --force` to change them; at startup the control plane re-renders every site (see [WordPress security set](#wordpress-security-set)), so running and stopped sites pick up the new settings.
+- **Changes.** The settings are read when the control plane starts. Change them in the config file and run `pressfleet upgrade` (see [Changing settings](#changing-settings)); a new password goes through `pressfleet init --force` (see [Rotating secrets and credentials](#rotating-secrets-and-credentials)). At startup the control plane re-renders every site (see [WordPress security set](#wordpress-security-set)), so running and stopped sites pick up the new settings.
 - **Failures.** A message the relay refuses is logged to the site's `php` container log (`docker logs`), with the relay's error.
 
 ## WordPress security set
@@ -246,7 +310,7 @@ The `wordpress_security` settings are the platform's WordPress hardening (design
 - **Two-factor authentication** (off): the WordPress.org Two Factor plugin, installed on new sites when not `off`.
 - **Disable application passwords** (off).
 
-**Changing a setting** takes effect when the control plane restarts. At startup it queues a `site.reconcile` job for every site (skipping sites being deleted, and not queuing a second one for a site whose job hasn't run yet). The job re-renders running and stopped sites with the current settings: `wp-config.php` and the site's Compose project are rewritten, and only containers whose configuration changed are recreated. A stopped site stays stopped and picks the change up when it starts. Sites that are failed are left alone and pick up the settings with their next update. If a job gives up, the error is recorded in the site's status message, and the site is marked failed only if its containers are no longer running.
+**Changing a setting** (in the config file, applied with `pressfleet upgrade`; see [Changing settings](#changing-settings)) takes effect when the control plane restarts. At startup it queues a `site.reconcile` job for every site (skipping sites being deleted, and not queuing a second one for a site whose job hasn't run yet). The job re-renders running and stopped sites with the current settings: `wp-config.php` and the site's Compose project are rewritten, and only containers whose configuration changed are recreated. A stopped site stays stopped and picks the change up when it starts. Sites that are failed are left alone and pick up the settings with their next update. If a job gives up, the error is recorded in the site's status message, and the site is marked failed only if its containers are no longer running.
 
 ## Edge router and certificates
 
@@ -329,7 +393,7 @@ The credentials are encrypted with the master key everywhere PressFleet stores t
 
 So the plaintext is never written to disk, never appears in a container's configuration or environment (`docker inspect` shows only the `_FILE` paths), and disappears when the platform stops. The trade-off: while the platform runs, anyone who can read the volume on the host (root) or get into the control plane or Traefik container can read them, as they could read the master key; and Traefik holds them in memory, where a compromised Traefik could use them.
 
-To change the provider or its credentials, rerun `pressfleet init --force` with `--dns-provider` and `--dns-credentials-file`; init recreates Traefik so it reads the new ones. If the control plane can't decrypt the credentials, it refuses to start, and Traefik starts without them after its wait: sites stay up with the certificates Traefik already has, but it can't get new wildcard certificates.
+To change the provider or its credentials, rerun `pressfleet init --force` with `--dns-provider` and `--dns-credentials-file`; init recreates Traefik so it reads the new ones (see [Rotating secrets and credentials](#rotating-secrets-and-credentials)). If the control plane can't decrypt the credentials, it refuses to start, and Traefik starts without them after its wait: sites stay up with the certificates Traefik already has, but it can't get new wildcard certificates.
 
 Testing against [Pebble](https://github.com/letsencrypt/pebble): point `acme.ca_server` at Pebble's directory and `acme.ca_certificates` at its `pebble.minica.pem`, and use a DNS provider that can write to Pebble's DNS server, such as lego's `exec` provider with a script that calls `pebble-challtestsrv`.
 
@@ -360,7 +424,7 @@ The control plane records every authenticated request that changes state, every 
 
 Downloads of database exports are the one kind of read that is recorded, whatever its result, since they hand out a site's data (see [Database exports](#database-exports)).
 
-Admins can list and filter the log with `GET /api/v1/audit-events`. A daily job deletes events older than `audit.retention_days`; a changed retention applies from the next run after the control plane restarts. Events outlive the users and tokens they name, so an event can refer to a user who has since been deleted.
+Admins can list and filter the log with `GET /api/v1/audit-events`. A daily job deletes events older than `audit.retention_days`; a changed retention applies from the next run after the control plane restarts (see [Changing settings](#changing-settings)). Events outlive the users and tokens they name, so an event can refer to a user who has since been deleted.
 
 Some events carry `details`, such as the SFTP gateway's sessions (see below). Every one-click WordPress login token (`POST /api/v1/sites/{site_id}/admin-login`) is an event with the action `site.admin_login` and the WordPress user (`wp_user`) and the token's ID (`jti`) in `details`, never the token itself.
 
@@ -722,7 +786,7 @@ docker compose exec control-plane pressfleet repository prune <client-group-id>
 docker compose exec control-plane pressfleet repository check <client-group-id>
 ```
 
-Each queues the job and prints its ID; follow it with `GET /api/v1/jobs/{id}`. Changed retention and check settings apply after the control plane restarts.
+Each queues the job and prints its ID; follow it with `GET /api/v1/jobs/{id}`. Changed retention and check settings apply after the control plane restarts (see [Changing settings](#changing-settings)).
 
 ## Site backups
 

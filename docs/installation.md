@@ -58,7 +58,7 @@ The binary carries the release's platform templates and pinned image list, and i
 | File with the DNS provider's credentials | `--dns-credentials-file` | | (unset) |
 | DNS servers for DNS-01 propagation checks (not prompted) | `--acme-dns-resolvers` | `PRESSFLEET_ACME_DNS_RESOLVERS` | the host's resolvers |
 
-The config file is written to `--config`, else `$PRESSFLEET_CONFIG`, else `/etc/pressfleet/pressfleet.yaml`. It holds the settings above; everything else keeps its [default](configuration.md#settings).
+The config file is written to `--config`, else `$PRESSFLEET_CONFIG`, else `/etc/pressfleet/pressfleet.yaml`. It holds the settings above; everything else keeps its [default](configuration.md#settings). The control plane reads the same file. To change a setting after installing, see [Changing settings](configuration.md#changing-settings).
 
 The dashboard and preview domains must already resolve to this host: the preflight checks look up the dashboard domain and a random name under the preview base domain. Ports 80 and 443 must be free, and reachable from the internet for Let's Encrypt. So must the SFTP gateway's port, 2222 unless `PRESSFLEET_SFTP_PORT` names another, for developers (see [SFTP gateway](configuration.md#sftp-gateway)); init generates the gateway's SSH host key and keeps it when reinstalling.
 

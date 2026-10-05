@@ -416,6 +416,7 @@ func TestRenderInvalidConfig(t *testing.T) {
 		"no master key":      func(c *platform.Config) { c.MasterKeyFile = "" },
 		"relative key file":  func(c *platform.Config) { c.MasterKeyFile = "master.key" },
 		"key in data dir":    func(c *platform.Config) { c.MasterKeyFile = "/var/lib/pressfleet/master.key" },
+		"relative config":    func(c *platform.Config) { c.ConfigFile = "pressfleet.yaml" },
 		"bad preview base":   func(c *platform.Config) { c.PreviewBaseDomain = "*.preview.example" },
 		"bad dashboard":      func(c *platform.Config) { c.DashboardDomain = "https://fleet.example" },
 		"bad public ip":      func(c *platform.Config) { c.PublicIP = "fleet.example" },
@@ -527,6 +528,86 @@ func TestRenderSMTP(t *testing.T) {
 	cfg.SMTP = config.SMTPConfig{Host: "smtp.example.com", Encryption: "starttls", Username: "relay", Password: "plaintext"}
 	if err := platform.Render(t.TempDir(), cfg); !errors.Is(err, platform.ErrInvalidConfig) {
 		t.Errorf("plaintext SMTP password: err = %v, want ErrInvalidConfig", err)
+	}
+}
+
+// The config file reaches the control plane as a secret, and a change to its
+// content changes the control plane's definition, so Compose recreates it.
+func TestRenderConfigFile(t *testing.T) {
+	type service struct {
+		Environment map[string]string
+		Labels      map[string]string
+		Secrets     []string
+	}
+	type composeFile struct {
+		Services map[string]service
+		Secrets  map[string]struct{ File string }
+	}
+	parse := func(cfg platform.Config) composeFile {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join(render(t, cfg), platform.ComposeFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var f composeFile
+		if err := yaml.Unmarshal(raw, &f); err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+
+	none := parse(testConfig()).Services["control-plane"]
+	if _, ok := none.Environment["PRESSFLEET_CONFIG"]; ok {
+		t.Error("PRESSFLEET_CONFIG rendered without a config file")
+	}
+	if slices.Contains(none.Secrets, "pressfleet_config") {
+		t.Error("config secret rendered without a config file")
+	}
+
+	path := filepath.Join(t.TempDir(), "pressfleet.yaml")
+	write := func(content string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := testConfig()
+	cfg.ConfigFile = path
+	write("audit:\n  retention_days: 30\n")
+	f := parse(cfg)
+	cp := f.Services["control-plane"]
+	if got := cp.Environment["PRESSFLEET_CONFIG"]; got != platform.ConfigSecretPath {
+		t.Errorf("PRESSFLEET_CONFIG = %q, want %q", got, platform.ConfigSecretPath)
+	}
+	if !slices.Contains(cp.Secrets, "pressfleet_config") {
+		t.Errorf("control plane secrets = %v, want pressfleet_config", cp.Secrets)
+	}
+	if got := f.Secrets["pressfleet_config"].File; got != path {
+		t.Errorf("config secret file = %q, want %q", got, path)
+	}
+	if cp.Labels["traefik.enable"] != "true" {
+		t.Errorf("dashboard labels lost next to the config hash: %v", cp.Labels)
+	}
+	first := cp.Labels[platform.ConfigHashLabel]
+	if len(first) != 64 {
+		t.Fatalf("config hash label = %q, want a SHA-256", first)
+	}
+	if again := parse(cfg).Services["control-plane"].Labels[platform.ConfigHashLabel]; again != first {
+		t.Errorf("config hash changed without a change to the file: %q, then %q", first, again)
+	}
+	write("audit:\n  retention_days: 60\n")
+	if changed := parse(cfg).Services["control-plane"].Labels[platform.ConfigHashLabel]; changed == first {
+		t.Error("config hash didn't change with the file's content")
+	}
+
+	cfg.DashboardDomain = ""
+	if got := parse(cfg).Services["control-plane"].Labels[platform.ConfigHashLabel]; got == "" {
+		t.Error("config hash label missing without a dashboard domain")
+	}
+
+	cfg.ConfigFile = filepath.Join(t.TempDir(), "missing.yaml")
+	if err := platform.Render(t.TempDir(), cfg); err == nil {
+		t.Error("rendered with a missing config file")
 	}
 }
 

@@ -317,6 +317,20 @@ func (a *app) resolveConfigPath() string {
 	return config.DefaultPath
 }
 
+// mountedConfigPath returns the config file the platform mounts into the
+// control plane: the one this command loaded, or empty if there is none (a
+// missing file at the default path).
+func (a *app) mountedConfigPath() string {
+	p := a.resolveConfigPath()
+	if !exists(p) {
+		return ""
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return p
+}
+
 func (i *installer) printf(format string, args ...any) {
 	_, _ = fmt.Fprintf(i.out, format, args...)
 }
@@ -846,6 +860,7 @@ func (i *installer) startPlatform(ctx context.Context, a initAnswers) error {
 		projectName:   name,
 		images:        images,
 		skipPreflight: i.f.skipPreflight,
+		configFile:    i.configPath,
 		secretsDir:    dir,
 	})
 	if err != nil {

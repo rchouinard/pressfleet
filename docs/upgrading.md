@@ -21,7 +21,7 @@ Run it as root, like `init`. Upgrades are **forward-only**: there is no `--rollb
 5. **Saves** what a recovery needs: a copy of the platform project in `<data_dir>/upgrade/previous-platform/`, and in `<data_dir>/upgrade/upgrade.json` the versions, the time the upgrade started, and the images the services ran (by digest).
 6. **Applies** the new project: renders it into `<data_dir>/platform/`, recreates the changed services, and waits until every service is healthy and the control plane reports ready at the new version. The control plane migrates the state database as it starts; with SQLite it first backs the database up into `<data_dir>/state/backups/pressfleet-<timestamp>-schema<NNNN>.db` (NNNN is the schema version before the migration).
 
-The host CLI never opens the state database itself. Running `upgrade` again when nothing changed does nothing.
+The host CLI never opens the state database itself. Running `upgrade` again when nothing changed does nothing. Run at the release the platform already runs, `upgrade` applies changes to the config file: see [Changing settings](configuration.md#changing-settings).
 
 Sites aren't part of the platform project. If the release changes how sites are rendered, the upgraded control plane moves them to the new rendering one at a time, with a health check and a revert on failure ([Site template updates](configuration.md#site-template-updates)); `GET /api/v1/template-rollout` shows its progress.
 

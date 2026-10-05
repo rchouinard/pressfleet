@@ -437,6 +437,7 @@ func (u *upgrader) renderConfig() platformRender {
 		projectName:   u.name,
 		images:        u.images,
 		skipPreflight: u.f.skipPreflight,
+		configFile:    u.a.mountedConfigPath(),
 		secretsDir:    u.platformDir,
 	}
 }

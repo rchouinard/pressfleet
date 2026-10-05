@@ -19,6 +19,9 @@ type platformRender struct {
 	images platform.Images
 	// skipPreflight starts the control plane even if its host checks fail.
 	skipPreflight bool
+	// configFile is the host path of the config file mounted into the
+	// control plane; empty mounts none.
+	configFile string
 	// secretsDir is the rendered platform project whose credentials are
 	// reused: the MariaDB root password, the object cache admin password, the
 	// SFTP host key, and the public metrics credential. Missing ones are
@@ -57,6 +60,7 @@ func renderPlatform(dir string, r platformRender) (redact.Secret, error) {
 		SSHHostKey:           hostKey,
 		SFTPPort:             cfg.SFTP.Port,
 		MasterKeyFile:        cfg.MasterKeyFile,
+		ConfigFile:           r.configFile,
 		SkipPreflight:        r.skipPreflight,
 		PreviewBaseDomain:    cfg.PreviewBaseDomain,
 		PublicIP:             cfg.PublicIP,

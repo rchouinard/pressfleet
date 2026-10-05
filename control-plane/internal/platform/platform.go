@@ -194,6 +194,12 @@ type Config struct {
 	// DataDir, which is backed up (§4.1). The key itself never passes
 	// through the rendered project.
 	MasterKeyFile string
+	// ConfigFile is the host path of the PressFleet config file. It is
+	// given to the control plane as a Compose secret, so the settings the
+	// project doesn't pass as environment variables reach it too. A hash of
+	// its content labels the control plane, so a changed file changes the
+	// service's configuration and Compose recreates it. Empty mounts none.
+	ConfigFile string
 	// SkipPreflight starts the control plane even if required host checks
 	// fail. Only for development machines and CI; never for real installs.
 	SkipPreflight bool
@@ -329,6 +335,9 @@ func (c Config) withDefaults() (Config, error) {
 	} else if rel, err := filepath.Rel(c.DataDir, c.MasterKeyFile); err == nil && filepath.IsLocal(rel) {
 		errs = append(errs, fmt.Errorf("master key file %s must not be inside the data directory", c.MasterKeyFile))
 	}
+	if c.ConfigFile != "" && (!filepath.IsAbs(c.ConfigFile) || filepath.Clean(c.ConfigFile) != c.ConfigFile) {
+		errs = append(errs, fmt.Errorf("config file must be a clean absolute path, got %q", c.ConfigFile))
+	}
 	if c.PublicIP != "" {
 		if _, err := netip.ParseAddr(c.PublicIP); err != nil {
 			errs = append(errs, fmt.Errorf("public IP must be an IP address, got %q", c.PublicIP))
@@ -424,6 +433,10 @@ type templateData struct {
 	SFTPContainerPort       int
 	MasterKeyFile           string
 	MasterKeySecretPath     string
+	ConfigFile              string
+	ConfigSecretPath        string
+	ConfigSHA256            string
+	ConfigHashLabel         string
 	SkipPreflight           bool
 	PreviewBaseDomain       string
 	PublicIP                string
@@ -477,6 +490,14 @@ type output struct {
 // key file.
 const MasterKeySecretPath = "/run/secrets/master_key" //nolint:gosec // G101: a path, not a credential
 
+// ConfigSecretPath is where the control plane container sees the config
+// file (Config.ConfigFile).
+const ConfigSecretPath = "/run/secrets/pressfleet_config"
+
+// ConfigHashLabel labels the control plane with the SHA-256 of the config
+// file it mounts.
+const ConfigHashLabel = "pressfleet.config-sha256"
+
 // Files rendered by Render, relative to the project directory.
 const (
 	ComposeFile               = "compose.yaml"
@@ -517,6 +538,15 @@ func Render(dir string, cfg Config) error {
 		return err
 	}
 	port, _ := listenPort(cfg.Listen) // validated by withDefaults
+	var configHash string
+	if cfg.ConfigFile != "" {
+		content, err := os.ReadFile(cfg.ConfigFile)
+		if err != nil {
+			return fmt.Errorf("reading the config file for the control plane: %w", err)
+		}
+		sum := sha256.Sum256(content)
+		configHash = hex.EncodeToString(sum[:])
+	}
 	data := templateData{
 		ProjectName:          cfg.ProjectName,
 		DataDir:              cfg.DataDir,
@@ -536,6 +566,10 @@ func Render(dir string, cfg Config) error {
 		SFTPContainerPort:       SFTPContainerPort,
 		MasterKeyFile:           cfg.MasterKeyFile,
 		MasterKeySecretPath:     MasterKeySecretPath,
+		ConfigFile:              cfg.ConfigFile,
+		ConfigSecretPath:        ConfigSecretPath,
+		ConfigSHA256:            configHash,
+		ConfigHashLabel:         ConfigHashLabel,
 		SkipPreflight:           cfg.SkipPreflight,
 		PreviewBaseDomain:       cfg.PreviewBaseDomain,
 		PublicIP:                cfg.PublicIP,

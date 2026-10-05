@@ -23,6 +23,11 @@ services:
       PRESSFLEET_DATA_DIR: {{ q .DataDir }}
       PRESSFLEET_LISTEN: {{ q .Listen }}
       PRESSFLEET_MASTER_KEY_FILE: {{ q .MasterKeySecretPath }}
+{{- if .ConfigFile }}
+      # The operator's config file, for the settings not passed here. The
+      # variables above and below take precedence over it.
+      PRESSFLEET_CONFIG: {{ q .ConfigSecretPath }}
+{{- end }}
       # Names the platform containers the control plane connects to site
       # networks, such as MariaDB.
       PRESSFLEET_PLATFORM_PROJECT: {{ q .ProjectName }}
@@ -118,6 +123,9 @@ services:
       - master_key
       - redis_admin_password
       - ssh_host_key
+{{- if .ConfigFile }}
+      - pressfleet_config
+{{- end }}
     # The SFTP gateway (§5.8) runs in the control plane. SSH can't be
     # routed by host name, so it gets its own host port; published
     # directly, it sees developers' real addresses for the audit log.
@@ -129,7 +137,16 @@ services:
       - backup
 {{- if .DashboardDomain }}
     # Traefik serves the dashboard and API on the dashboard domain.
+{{- end }}
+{{- if or .DashboardDomain .ConfigFile }}
     labels:
+{{- end }}
+{{- if .ConfigFile }}
+      # Compose doesn't see changes to a mounted file's content; this label
+      # changes with it, so a changed config file recreates the control plane.
+      {{ .ConfigHashLabel }}: {{ q .ConfigSHA256 }}
+{{- end }}
+{{- if .DashboardDomain }}
       {{ .PlatformLabel }}: {{ q .ProjectName }}
       traefik.enable: "true"
       traefik.docker.network: {{ q (printf "%s_platform" .ProjectName) }}
@@ -459,3 +476,9 @@ secrets:
   # data directory and its backups (§4.1); it is only mounted, never copied.
   master_key:
     file: {{ q .MasterKeyFile }}
+{{- if .ConfigFile }}
+  # The operator's config file stays where it is, like the master key. It
+  # holds secrets only sealed with the master key.
+  pressfleet_config:
+    file: {{ q .ConfigFile }}
+{{- end }}

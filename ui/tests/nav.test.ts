@@ -10,7 +10,7 @@ describe('navigation registry', () => {
   })
 
   it('covers every M5 area', () => {
-    for (const id of ['sites', 'client-groups', 'backups', 'metrics', 'logs', 'alerts', 'overview', 'account', 'users', 'audit', 'settings', 'jobs']) {
+    for (const id of ['sites', 'client-groups', 'backups', 'metrics', 'logs', 'alerts', 'overview', 'account', 'users', 'audit', 'jobs']) {
       expect(ids([...navRegistry])).toContain(id)
     }
   })

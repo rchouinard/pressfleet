@@ -121,7 +121,7 @@ async function save() {
           <UFormField label="Recipients" name="email.to" required help="Separate addresses with commas or new lines." :error="fieldError('/email/to')">
             <UTextarea v-model="form.emailTo" class="w-full" :rows="2" placeholder="ops@example.com" />
           </UFormField>
-          <UCheckbox v-model="form.usePlatformRelay" label="Send through the platform's SMTP relay" description="The usual choice. Configure it in platform settings." />
+          <UCheckbox v-model="form.usePlatformRelay" label="Send through the platform's SMTP relay" description="The usual choice. The relay is set up with pressfleet init (the smtp settings)." />
           <template v-if="!form.usePlatformRelay">
             <UFormField label="SMTP server" name="email.host" required :error="fieldError('/email/host')">
               <UInput v-model="form.host" class="w-full" maxlength="253" />
