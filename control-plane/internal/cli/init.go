@@ -56,6 +56,8 @@ var (
 	// errExistingInstall means init found an existing installation and
 	// --force wasn't given.
 	errExistingInstall = errors.New("PressFleet is already installed on this host")
+	// errProjectInUse means another platform uses the Compose project name.
+	errProjectInUse = errors.New("the platform's Compose project name is in use")
 	// errInputClosed means standard input ended while init was prompting.
 	errInputClosed = errors.New("standard input closed while waiting for an answer (use --non-interactive for automation)")
 	// errKeyNotConfirmed means the operator didn't confirm the master key
@@ -367,6 +369,9 @@ func (i *installer) run(ctx context.Context, given map[string]string) error {
 	found := existingInstall(answers, i.configPath)
 	if len(found) > 0 && !i.f.force {
 		return i.refuseExisting(found)
+	}
+	if err := i.checkProjectName(ctx, answers.DataDir); err != nil {
+		return err
 	}
 
 	cfg := answers.config(i.a.cfg)
@@ -713,6 +718,8 @@ type fileConfig struct {
 	PreviewBaseDomain string `yaml:"preview_base_domain"`
 	PublicIP          string `yaml:"public_ip,omitempty"`
 	MasterKeyFile     string `yaml:"master_key_file"`
+	// PlatformProject is only written for a name other than the default.
+	PlatformProject string `yaml:"platform_project,omitempty"`
 
 	// SMTP is only written when a relay is configured.
 	SMTP *fileSMTP       `yaml:"smtp,omitempty"`
@@ -745,6 +752,16 @@ func metricsFileConfig(m config.MetricsConfig) *fileMetrics {
 	return &f
 }
 
+// platformProjectFileConfig returns the platform's Compose project name
+// for the config file, or "" for the default, so that the commands run
+// later find the platform init started.
+func (i *installer) platformProjectFileConfig() string {
+	if name := i.projectName(); name != platform.ProjectName {
+		return name
+	}
+	return ""
+}
+
 const configHeader = `# PressFleet configuration, written by pressfleet init.
 # See docs/configuration.md for every setting.
 `
@@ -759,6 +776,7 @@ func (i *installer) writeConfig(a initAnswers) error {
 		PreviewBaseDomain: a.PreviewBaseDomain,
 		PublicIP:          a.PublicIP,
 		MasterKeyFile:     a.MasterKeyFile,
+		PlatformProject:   i.platformProjectFileConfig(),
 		SMTP:              a.smtpFileConfig(),
 		ACME:              a.acmeFileConfig(),
 		Backup:            a.backupFileConfig(),
@@ -943,10 +961,34 @@ func (i *installer) createAdmin(ctx context.Context, email string, password reda
 }
 
 func (i *installer) projectName() string {
-	if i.a.opts.PlatformProjectName != "" {
-		return i.a.opts.PlatformProjectName
+	return i.a.platformProjectName()
+}
+
+// composeWorkingDirLabel is the label in which Compose records the project
+// directory of a container's project.
+const composeWorkingDirLabel = "com.docker.compose.project.working_dir"
+
+// checkProjectName refuses to install under a Compose project name that a
+// platform in another directory already uses on this Docker host: starting
+// the new platform would recreate that one's services with this one's
+// configuration. A reinstall (--force) in the same data directory reuses
+// the name.
+func (i *installer) checkProjectName(ctx context.Context, dataDir string) error {
+	name := i.projectName()
+	dir := config.Layout{Root: dataDir}.PlatformDir()
+	c, err := i.a.controlPlaneProbe().ServiceContainer(ctx, controlPlaneService)
+	if errors.Is(err, compose.ErrNoContainer) {
+		return nil
 	}
-	return platform.ProjectName
+	if err != nil {
+		return fmt.Errorf("checking for another platform under the Compose project name %s: %w", name, err)
+	}
+	if other := c.Labels[composeWorkingDirLabel]; other != "" && filepath.Clean(other) != filepath.Clean(dir) {
+		return fmt.Errorf("%w: a platform in %s already runs under the Compose project name %s. "+
+			"Install this one under another name (platform_project, or PRESSFLEET_PLATFORM_PROJECT), or remove that platform first",
+			errProjectInUse, other, name)
+	}
+	return nil
 }
 
 // generatePassword returns a random password: 26 base32 characters, 130

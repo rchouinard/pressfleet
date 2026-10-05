@@ -464,6 +464,61 @@ func TestInitValidation(t *testing.T) {
 	}
 }
 
+// TestInitPlatformProject checks that init starts the platform under the
+// configured Compose project name, and keeps it in the config file for
+// the commands run later.
+func TestInitPlatformProject(t *testing.T) {
+	e := newInitEnv(t)
+	e.env = map[string]string{"PRESSFLEET_PLATFORM_PROJECT": "pf-other"}
+	r := e.run("", e.nonInteractiveArgs()...)
+	if r.code != 0 {
+		t.Fatalf("exit %d: %s", r.code, r.stderr)
+	}
+	if e.platform.name != "pf-other" {
+		t.Errorf("project = %s, want pf-other", e.platform.name)
+	}
+	cfg, err := config.Load(e.configPath, func(string) (string, bool) { return "", false })
+	if err != nil || cfg.PlatformProject != "pf-other" {
+		t.Errorf("platform_project = %q, %v", cfg.PlatformProject, err)
+	}
+	compose, err := os.ReadFile(filepath.Join(e.dataDir, "platform", platform.ComposeFile))
+	if err != nil || !strings.Contains(string(compose), `name: "pf-other"`) {
+		t.Errorf("compose.yaml doesn't name the project pf-other: %v", err)
+	}
+
+	// The default name isn't written.
+	e = newInitEnv(t)
+	e.assertInstalled(e.run("", e.nonInteractiveArgs()...))
+	if b, err := os.ReadFile(e.configPath); err != nil || strings.Contains(string(b), "platform_project") {
+		t.Errorf("config file:\n%s%v", b, err)
+	}
+}
+
+// TestInitRefusesProjectInUse checks that init doesn't start a platform
+// under a Compose project name that a platform in another directory runs
+// under, which would recreate that platform's services.
+func TestInitRefusesProjectInUse(t *testing.T) {
+	e := newInitEnv(t)
+	e.controlPlane = &fakeControlPlane{container: &compose.ContainerDetails{
+		Running: true,
+		Labels:  map[string]string{"com.docker.compose.project.working_dir": "/srv/other/platform"},
+	}}
+	r := e.run("", e.nonInteractiveArgs()...)
+	if r.code != 1 || !strings.Contains(r.stderr, "/srv/other/platform") || !strings.Contains(r.stderr, "PRESSFLEET_PLATFORM_PROJECT") {
+		t.Fatalf("exit %d, stderr: %s", r.code, r.stderr)
+	}
+	if len(e.platform.ups) != 0 || fileExists(e.keyFile) || fileExists(e.configPath) {
+		t.Error("init changed something before refusing")
+	}
+
+	// The platform's own containers, when reinstalling, are no conflict.
+	e = newInitEnv(t)
+	e.controlPlane = &fakeControlPlane{container: &compose.ContainerDetails{
+		Labels: map[string]string{"com.docker.compose.project.working_dir": filepath.Join(e.dataDir, "platform")},
+	}}
+	e.assertInstalled(e.run("", e.nonInteractiveArgs()...))
+}
+
 func TestInitRefusesExistingInstall(t *testing.T) {
 	tests := []struct {
 		name  string

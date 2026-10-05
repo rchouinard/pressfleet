@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
-	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/skew"
 )
@@ -113,13 +112,7 @@ type controlPlane struct {
 // controlPlaneProbe returns the probe for the installed platform's control
 // plane. Init runs without a configuration, so the defaults stand in.
 func (a *app) controlPlaneProbe() ControlPlaneProbe {
-	name := a.opts.PlatformProjectName
-	if name == "" {
-		name = a.cfg.PlatformProject
-	}
-	if name == "" {
-		name = platform.ProjectName
-	}
+	name := a.platformProjectName()
 	dataDir := a.cfg.DataDir
 	if dataDir == "" {
 		dataDir = config.Default().DataDir
