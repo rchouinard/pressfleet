@@ -144,12 +144,19 @@ func (f *jobFollower) update(ctx context.Context, w io.Writer) (done bool, err e
 			return false, err
 		}
 	}
-	for {
+	for pending := false; !pending; {
 		lines, err := jobs.Logs(ctx, f.jobID, f.after, jobEventLogPage)
 		if err != nil {
 			return false, f.fail(ctx, w, err)
 		}
 		for _, l := range lines {
+			// While the job runs, a worker can record its steps and log
+			// a line between the reads of the steps and of the log. Such
+			// a line waits for the next update, which knows its step.
+			if !done && l.StepSeq >= len(steps) {
+				pending = true
+				break
+			}
 			f.after = l.ID
 			// As in GetJob: workers only write step logs, and a line
 			// without a step would have nowhere to go.

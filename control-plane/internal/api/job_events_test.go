@@ -285,3 +285,53 @@ func TestStreamJobEventsPolls(t *testing.T) {
 		}
 	})
 }
+
+// A worker records a job's steps after leasing it, so a stream can read a
+// running job before its steps exist and then read a line those steps
+// logged. The line must still be sent once its step is known.
+func TestStreamJobEventsLogBeforeSteps(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		api.SetJobEventPoll(t, 20*time.Millisecond)
+		job, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "site.update", TargetType: "site", TargetID: id.New()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sj := store.NewJobs(db)
+		now := time.Now()
+		if _, err := sj.Lease(ctx, []string{"site.update"}, "worker", now, now.Add(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		if err := sj.AppendLog(ctx, job.ID, 0, "info", "early", now); err != nil {
+			t.Fatal(err)
+		}
+		srv := httptest.NewServer(newHandler(t, api.Options{DB: db, Authenticator: &fakeAuth{}}))
+		t.Cleanup(srv.Close)
+
+		_, events := openJobEvents(t, srv, job.ID, "")
+		if ev := parseJobEvent(t, nextEvent(t, events)); ev.job == nil || len(ev.job.Steps) != 0 {
+			t.Fatalf("first event = %+v, want the job without steps", ev)
+		}
+		if err := sj.InitSteps(ctx, job.ID, "worker", []string{"only"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := sj.Finish(ctx, job.ID, "worker", store.JobSucceeded, "", time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		var sawLog bool
+		for {
+			ev := parseJobEvent(t, nextEvent(t, events))
+			if ev.log != nil {
+				sawLog = sawLog || ev.log.Message == "early" && ev.log.Step == "only"
+				continue
+			}
+			if ev.job.State == gen.JobStateSucceeded {
+				break
+			}
+		}
+		streamEnds(t, events)
+		if !sawLog {
+			t.Error("the line logged before the steps were read was not sent")
+		}
+	})
+}

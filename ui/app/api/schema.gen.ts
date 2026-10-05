@@ -2355,8 +2355,9 @@ export interface paths {
          *     Event types:
          *
          *     * `job`: `data` is the `Job` as JSON, without step logs (as in job
-         *       lists). Sent first, and again whenever the job or one of its
-         *       steps changes. Each event replaces the previous one. The events
+         *       lists). Sent first (after the log, for a job that has already
+         *       finished), and again whenever the job or one of its steps
+         *       changes. Each event replaces the previous one. The events
          *       are snapshots of what the server reads, so a step that starts
          *       and finishes between two reads shows up as one change.
          *     * `log`: `data` is one `JobEventLogEntry`, a line of the step log,
