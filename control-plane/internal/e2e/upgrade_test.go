@@ -20,9 +20,8 @@ import (
 // with `pressfleet upgrade` to another control plane image, standing in for
 // the next release's: only the services running the control plane image are
 // recreated, MariaDB, the object cache, and Traefik keep running, and the
-// admin can still log in. Upgrading from the previous published release is
-// tested once releases exist (#95, #100), and recovering from a failed
-// upgrade in #142.
+// admin can still log in. TestUpgradeRecovery upgrades from the previous
+// published release, and recovers from a failed upgrade.
 func TestUpgrade(t *testing.T) {
 	image := e2e.Image(t)
 	root := t.TempDir()

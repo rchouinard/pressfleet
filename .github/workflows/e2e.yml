@@ -93,3 +93,7 @@ jobs:
         name: Build the site images the tests use
         run: make images SITE_PHP="$(images/matrix.sh php | head -n 2 | xargs)"
       - run: make test-e2e
+        env:
+          # TestUpgradeRecovery downloads the CLI of the minimum
+          # upgradable-from release, from a private repository for now.
+          GH_TOKEN: ${{ github.token }}
