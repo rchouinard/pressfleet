@@ -110,7 +110,7 @@ A user can't remove their last second factor while the setting requires one (`au
 | Open read-write database sessions | Direct write access to site data |
 | Delete sites, delete client groups, offboard client groups | Destructive, and can delete backups |
 
-  Password changes already ask for the current password, and one-click wp-admin login isn't on the list because it is frequent and already scoped to one site (§5.9). Both are easy to add to the list if wanted.
+  Password changes already ask for the current password, and one-click wp-admin login isn't on the list because it is frequent and already scoped to one site (§5.9).
 
 ### API token creation
 
@@ -208,8 +208,8 @@ Each issue updates the OpenAPI spec first and regenerates the Go and TypeScript 
 - **Authz:** table tests for restricted principals, sensitive actions with fresh and stale sessions, and token callers (refused token creation and factor management; allowed token revocation and SSH key management).
 - **End to end:** Playwright with Chromium's virtual authenticator (`WebAuthn.addVirtualAuthenticator` over CDP) for security keys and passkeys, and TOTP codes computed in the test. This fits with the UI tests in [#93](https://github.com/rchouinard/pressfleet/issues/93).
 
-## Open questions
+## Decision log
 
 1. ~~**MVP or post-MVP?**~~ **Resolved (2026-10-18):** MVP, in M5, ahead of the security review in [#97](https://github.com/rchouinard/pressfleet/issues/97).
 2. ~~**Token callers and credential-creating actions:**~~ **Resolved (2026-10-18):** API tokens can no longer create API tokens, whatever the settings; they can still manage SSH keys. See [API token creation](#api-token-creation).
-3. **Sensitive action list:** confirm the table, particularly whether one-click wp-admin login belongs on it.
+3. ~~**Sensitive action list:**~~ **Resolved (2026-10-18):** the table as written; one-click wp-admin login stays off it.
