@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/id"
@@ -348,8 +347,8 @@ func (r BackupRecords) Expire(ctx context.Context, backupIDs []string) (int, err
 			args = append(args, backupID)
 		}
 		res, err := r.q.ExecContext(ctx,
-			"UPDATE backup_records SET expired_at = ? WHERE status = ? AND expired_at IS NULL AND id IN (?"+
-				strings.Repeat(", ?", len(batch)-1)+")", args...)
+			"UPDATE backup_records SET expired_at = ? WHERE status = ? AND expired_at IS NULL AND id IN ("+
+				placeholders(len(batch))+")", args...)
 		if err != nil {
 			return total, fmt.Errorf("expire backups: %w", err)
 		}

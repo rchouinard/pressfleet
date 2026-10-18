@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -68,7 +68,7 @@ func (s Sample) appendLine(b []byte, now time.Time) []byte {
 		for k := range s.Labels {
 			keys = append(keys, k)
 		}
-		sort.Strings(keys)
+		slices.Sort(keys)
 		b = append(b, '{')
 		for i, k := range keys {
 			if i > 0 {

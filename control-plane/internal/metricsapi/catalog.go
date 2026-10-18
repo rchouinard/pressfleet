@@ -3,7 +3,6 @@ package metricsapi
 import (
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -118,7 +117,7 @@ func (e Entry) Metrics() []string {
 	for m := range seen {
 		out = append(out, m)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

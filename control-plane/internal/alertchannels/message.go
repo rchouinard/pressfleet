@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -133,7 +133,7 @@ func (m Message) sortedLabels() [][2]string {
 	for k := range m.Alert.Labels {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	out := make([][2]string, len(keys))
 	for i, k := range keys {
 		out[i] = [2]string{k, m.Alert.Labels[k]}

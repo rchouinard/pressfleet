@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"embed"
@@ -8,7 +9,7 @@ import (
 	"io/fs"
 	"path"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 )
 
@@ -45,7 +46,7 @@ func Migrations(d Dialect) ([]Migration, error) {
 		}
 		ms = append(ms, Migration{Version: version, Name: m[2], sql: string(body)})
 	}
-	sort.Slice(ms, func(i, j int) bool { return ms[i].Version < ms[j].Version })
+	slices.SortFunc(ms, func(a, b Migration) int { return cmp.Compare(a.Version, b.Version) })
 	for i, m := range ms {
 		if m.Version != i+1 {
 			return nil, fmt.Errorf("%s migrations: expected version %04d, found %04d", d, i+1, m.Version)

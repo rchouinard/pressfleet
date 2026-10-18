@@ -184,26 +184,27 @@ var (
 // would break the image's layout or the go-live workflow. Agency constants
 // can't use them. Names are compared case-insensitively so a look-alike such
 // as "db_password" is rejected too.
-var reservedConstants = map[string]bool{
-	"ABSPATH": true, "WPMU_PLUGIN_DIR": true, "WPMU_PLUGIN_URL": true, "FS_METHOD": true,
-	"WP_AUTO_UPDATE_CORE": true, "DISABLE_WP_CRON": true, "RT_WP_NGINX_HELPER_CACHE_PATH": true,
-	// The security set is install-wide, without per-site overrides (§6.1).
-	"DISALLOW_FILE_EDIT": true,
-	// Go-live changes the URLs in the database (§5.2); constants would pin them.
-	"WP_HOME": true, "WP_SITEURL": true,
-	// wp-content is the site volume at the image's fixed path.
-	"WP_CONTENT_DIR": true, "WP_PLUGIN_DIR": true,
-}
+var reservedConstants = func() map[string]bool {
+	m := map[string]bool{
+		"ABSPATH": true, "WPMU_PLUGIN_DIR": true, "WPMU_PLUGIN_URL": true, "FS_METHOD": true,
+		"WP_AUTO_UPDATE_CORE": true, "DISABLE_WP_CRON": true, "RT_WP_NGINX_HELPER_CACHE_PATH": true,
+		// The security set is install-wide, without per-site overrides (§6.1).
+		"DISALLOW_FILE_EDIT": true,
+		// Go-live changes the URLs in the database (§5.2); constants would pin them.
+		"WP_HOME": true, "WP_SITEURL": true,
+		// wp-content is the site volume at the image's fixed path.
+		"WP_CONTENT_DIR": true, "WP_PLUGIN_DIR": true,
+	}
+	// The salts are platform constants too.
+	for _, f := range (&Salts{}).fields() {
+		m[f.name] = true
+	}
+	return m
+}()
 
 // reservedPrefixes cover the database settings, the Redis Object Cache
 // plugin's settings, and the platform's own constants.
 var reservedPrefixes = []string{"DB_", "WP_REDIS_", "PRESSFLEET_"}
-
-func init() {
-	for _, f := range (&Salts{}).fields() {
-		reservedConstants[f.name] = true
-	}
-}
 
 // Render generates wp-config.php. The output contains the database password
 // and salts: write it only to files readable by the site, and never log it.

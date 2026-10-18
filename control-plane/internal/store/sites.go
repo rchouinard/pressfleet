@@ -108,6 +108,10 @@ const siteColumns = "id, client_group_id, name, slug, status, status_message, pr
 	"preview_protection, preview_username, preview_password_hash, preview_password_secret_ref, maintenance, url_rewrite_from, " +
 	"table_prefix, template_fingerprint, created_at, updated_at"
 
+// siteColumnCount is the number of siteColumns, so the INSERT's
+// placeholders follow the column list.
+var siteColumnCount = strings.Count(siteColumns, ",") + 1
+
 func scanSite(s scanner) (Site, error) {
 	var (
 		site    Site
@@ -152,7 +156,7 @@ func (r Sites) Create(ctx context.Context, s *Site) error {
 	created.CreatedAt = now()
 	created.UpdatedAt = created.CreatedAt
 	_, err := r.q.ExecContext(ctx, "INSERT INTO sites ("+siteColumns+") VALUES "+
-		"("+placeholders(29)+")",
+		"("+placeholders(siteColumnCount)+")",
 		created.ID, created.ClientGroupID, created.Name, created.Slug, string(created.Status), created.StatusMessage,
 		created.PreviewDomain, nullString(created.PrimaryDomain), created.PHPVersion, created.WPCoreVersion,
 		created.EnableCache, created.CPULimit, created.MemoryReservationMB, created.MemoryLimitMB,

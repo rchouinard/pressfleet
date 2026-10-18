@@ -175,7 +175,10 @@ type Server struct {
 	config *ssh.ServerConfig
 	log    *slog.Logger
 	// base is the context of Serve, for authentication callbacks, which
-	// get none from package ssh.
+	// get none from package ssh. Keeping a context in a struct goes against
+	// the usual rule (pass it, don't store it), but the callbacks have no
+	// other way to see Serve's cancellation; it is atomic because Serve
+	// sets it while earlier connections' callbacks may still read it.
 	base atomic.Pointer[context.Context]
 }
 

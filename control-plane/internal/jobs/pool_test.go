@@ -481,8 +481,8 @@ func TestGracefulShutdown(t *testing.T) {
 		<-started
 		cancel()
 		select {
-		case <-stopped:
-			t.Fatal("Run returned while a step was running")
+		case err := <-stopped:
+			t.Fatalf("Run returned while a step was running: %v", err)
 		case <-time.After(20 * time.Millisecond):
 		}
 		close(proceed)

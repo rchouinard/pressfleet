@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 
@@ -117,7 +117,7 @@ func (p *Pool) Register(h Handler) error {
 	}
 	p.handlers[h.Type] = h
 	p.types = append(p.types, h.Type)
-	sort.Strings(p.types)
+	slices.Sort(p.types)
 	return nil
 }
 

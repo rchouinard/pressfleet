@@ -1,12 +1,12 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"slices"
-	"sort"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/routers"
@@ -149,11 +149,8 @@ func Operations() ([]Operation, error) {
 	for _, o := range newOperationTable(doc) {
 		out = append(out, *o)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Path != out[j].Path {
-			return out[i].Path < out[j].Path
-		}
-		return out[i].Method < out[j].Method
+	slices.SortFunc(out, func(a, b Operation) int {
+		return cmp.Or(cmp.Compare(a.Path, b.Path), cmp.Compare(a.Method, b.Method))
 	})
 	return out, nil
 }
