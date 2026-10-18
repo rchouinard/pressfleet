@@ -13,18 +13,19 @@ This plan adds a second factor to dashboard logins: TOTP authenticator apps, and
 | Passkeys | Second factor first. Passwordless sign-in is planned (see [Passwordless sign-in](#passwordless-sign-in-later)), and the first release must not need a migration to support it. |
 | Enforcement | A platform setting can require a second factor. Any user can turn it on for themselves whatever the setting. |
 | Sensitive actions | Configurable. The default asks for a fresh check (a second factor, or the password for users without one) before sensitive actions. |
+| API tokens | API tokens can no longer create API tokens, whatever the settings; only dashboard sessions can. Tokens can still list and revoke tokens and manage SSH keys. |
 | Lockout recovery | Admins reset another user's second factors in the dashboard. `pressfleet user reset-two-factor`, run in the control plane container, covers a locked-out last Admin. |
 
 ## Scope
 
-**In scope:** TOTP, WebAuthn as a second factor, recovery codes, a required-two-factor setting with forced enrollment, reauthentication for sensitive actions, Admin and CLI resets, audit events, dashboard UI, and docs.
+**In scope:** TOTP, WebAuthn as a second factor, recovery codes, a required-two-factor setting with forced enrollment, reauthentication for sensitive actions, session-only API token creation, Admin and CLI resets, audit events, dashboard UI, and docs.
 
 **Out of scope:** passwordless sign-in (planned, below); SMS and email codes; WebAuthn attestation checks and authenticator allowlists (attestation is `none`); per-role or per-user settings beyond the platform setting; second factors for API tokens and SSH keys (below).
 
 ### What two-factor doesn't cover
 
-- **API tokens** stay bearer credentials. Tokens are created from a session, and with reauthentication on (the default), a token can only be created right after a fresh factor check.
-- **SSH keys** (SFTP gateway, database tunnels, §5.8) stay single-factor. Adding an SSH key is a sensitive action, so it needs a fresh factor check.
+- **API tokens** stay bearer credentials. Only a dashboard session can create one (see [API token creation](#api-token-creation)), so every token traces back to a login that passed two-factor. With reauthentication on (the default), creating one also needs a fresh factor check.
+- **SSH keys** (SFTP gateway, database tunnels, §5.8) stay single-factor. Adding one from a session is a sensitive action and needs a fresh factor check; full-scope API tokens can still add and remove them for automation, such as onboarding scripts and CI deploy keys.
 - **One-click wp-admin login** (§5.9) relies on the dashboard session. With dashboard two-factor, "the platform login stands in for the second factor" holds for users who have enrolled.
 
 Turning the required setting on doesn't break automation: tokens and SSH keys of users who haven't enrolled yet keep working. Only their dashboard sessions are restricted to enrollment.
@@ -98,18 +99,31 @@ A user can't remove their last second factor while the setting requires one (`au
 
 - `sessions` gets a `verified_at` column, set at login and by `POST /api/v1/auth/reauthenticate`. Reauthentication takes the user's second factor, or the password for users without one.
 - Actions in `authz` get a `sensitive` flag. With `two_factor.reauthentication: on`, the single authorization check refuses a sensitive action from a session whose `verified_at` is older than the max age, with `403` and problem type `reauthentication-required`. The UI shows a reauthentication dialog and retries the request.
-- API tokens aren't asked to reauthenticate; there is no one to ask. With reauthentication on, the credential-creating sensitive actions (creating API tokens, adding SSH keys, managing second factors) are refused for token callers, so a stolen token can't create credentials that outlive it. **This changes existing behavior** for automation that creates tokens or SSH keys with a token. It is the one decision here worth confirming before implementation.
+- API tokens aren't asked to reauthenticate; there is no one to ask. Sensitive actions a token's role and scope allow keep working for it, except creating API tokens (never, see below) and managing second factors (session-only, since WebAuthn needs a browser anyway).
 - Sensitive actions, as the authz table would mark them:
 
 | Action | Why |
 | --- | --- |
 | Add, remove, or reset second factors; regenerate recovery codes | Takeover of the account's protection |
-| Create API tokens; add SSH keys | Long-lived credentials that bypass two-factor |
+| Create API tokens (sessions only); add SSH keys | Long-lived credentials that bypass two-factor |
 | Create, update (including roles), and delete users; manage others' tokens and SSH keys | Privilege changes |
 | Open read-write database sessions | Direct write access to site data |
 | Delete sites, delete client groups, offboard client groups | Destructive, and can delete backups |
 
   Password changes already ask for the current password, and one-click wp-admin login isn't on the list because it is frequent and already scoped to one site (§5.9). Both are easy to add to the list if wanted.
+
+### API token creation
+
+Today any full-scope token can create more tokens. `authz.CheckNewToken` caps the new token's scope and expiry at the caller's, but a token without an expiry can still create any number of tokens without one. Someone with a stolen token can make tokens of their own, so revoking the stolen token doesn't end their access. Other platforms either don't allow it (GitHub has no API for creating personal access tokens) or make it a permission granted on purpose.
+
+- `createApiToken` is refused for token callers with `403`, in the authorization check, whatever the reauthentication setting. Only session callers can create tokens.
+- `CheckNewToken` is removed, since its caps only applied to token callers.
+- Token callers can still list and revoke their own tokens, and an Admin's token can still revoke other users' tokens. Revoking only removes access.
+- Token callers with full scope can still add and remove SSH keys, audited as now.
+- This changes existing behavior, so the API description of `createApiToken`, the release notes, and the API docs say so. Nothing in the repository creates tokens with a token: the dashboard creates them from a session.
+- If automation ever needs to create tokens, it can come back later as a separate, explicitly granted token scope, not as the default.
+
+This doesn't depend on the rest of the plan and can land first.
 
 ### Resets and session handling
 
@@ -172,14 +186,15 @@ Sizes and priorities follow the [roadmap](roadmap.md#conventions). Issue numbers
 | 11 | Doctor: WebAuthn credentials bound to a different relying party ID | S | 6 |
 | 12 | UI: login second step and reauthentication dialog | M | 5, 6, 8 |
 | 13 | UI: two-factor settings, forced enrollment, and Admin reset | M | 5, 6, 7, 9 |
-| 14 | Integration and end-to-end tests: two-factor | M | 10, 12, 13 |
+| 14 | Integration and end-to-end tests: two-factor | M | 10, 12, 13, 15 |
+| 15 | Authz: only sessions can create API tokens | S | — |
 | — | Post-MVP: passwordless passkey sign-in (tracking) | M | 6, 12 |
 
 Each issue updates the OpenAPI spec first and regenerates the Go and TypeScript code, and documents its user-facing behavior.
 
 ### Order
 
-1. **Foundation (1–4):** settles the design and lands storage and the two-step login, with nothing visible yet.
+1. **Foundation (15, 1–4):** 15 is independent and can land at any time. 1–4 settle the design and land storage and the two-step login, with nothing visible yet.
 2. **TOTP slice (5, 7, 9, 10, then the TOTP parts of 12–13):** a usable, shippable feature on its own, including enforcement and recovery.
 3. **WebAuthn (6, 11):** fits into the same login step and UI.
 4. **Reauthentication (8):** independent of the factors once 4 is in. Its UI dialog is part of 12.
@@ -190,11 +205,11 @@ Each issue updates the OpenAPI spec first and regenerates the Go and TypeScript 
 - **TOTP:** the RFC 6238 SHA-1 test vectors; skew and replay cases with the injected clock (`auth.Options.Now`).
 - **Store:** each repository on SQLite and PostgreSQL, as for existing tables.
 - **WebAuthn:** a software authenticator in an `authtest` fake (ECDSA P-256, `none` attestation) for registration and assertions, covering wrong origin, wrong relying party ID, replayed challenge, a counter going backwards, and missing user presence. No browser or Docker.
-- **Authz:** table tests for restricted principals, sensitive actions with fresh and stale sessions, and token callers.
+- **Authz:** table tests for restricted principals, sensitive actions with fresh and stale sessions, and token callers (refused token creation and factor management; allowed token revocation and SSH key management).
 - **End to end:** Playwright with Chromium's virtual authenticator (`WebAuthn.addVirtualAuthenticator` over CDP) for security keys and passkeys, and TOTP codes computed in the test. This fits with the UI tests in [#93](https://github.com/rchouinard/pressfleet/issues/93).
 
 ## Open questions
 
 1. ~~**MVP or post-MVP?**~~ **Resolved (2026-10-18):** MVP, in M5, ahead of the security review in [#97](https://github.com/rchouinard/pressfleet/issues/97).
-2. **Token callers and credential-creating actions:** confirm that, with reauthentication on, API tokens can no longer create API tokens or add SSH keys (see [Reauthentication](#reauthentication-for-sensitive-actions)).
+2. ~~**Token callers and credential-creating actions:**~~ **Resolved (2026-10-18):** API tokens can no longer create API tokens, whatever the settings; they can still manage SSH keys. See [API token creation](#api-token-creation).
 3. **Sensitive action list:** confirm the table, particularly whether one-click wp-admin login belongs on it.
