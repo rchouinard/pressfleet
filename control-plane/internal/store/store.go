@@ -174,17 +174,17 @@ func (db *DB) Close() error {
 }
 
 // InTx runs fn in a transaction, committing if it returns nil and rolling
-// back otherwise.
-func (db *DB) InTx(ctx context.Context, fn func(q Querier) error) (err error) {
+// back otherwise, including when fn panics.
+func (db *DB) InTx(ctx context.Context, fn func(q Querier) error) error {
 	tx, err := db.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", mapError(err))
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	// Unconditional, so a panic in fn (which the HTTP server and the job
+	// pool recover) doesn't leave the transaction holding SQLite's write
+	// lock until its context ends, which for some callers is never. After
+	// Commit it is a no-op.
+	defer func() { _ = tx.Rollback() }()
 	if err := fn(querier{ex: tx, dialect: db.dialect}); err != nil {
 		return err
 	}

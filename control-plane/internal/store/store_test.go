@@ -173,6 +173,43 @@ func TestInTx(t *testing.T) {
 	})
 }
 
+// A panic in fn must roll the transaction back even when its context is
+// never canceled: the HTTP server and the job pool recover panics, and an
+// open SQLite transaction would keep holding the write lock.
+func TestInTxRollsBackOnPanic(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		func() {
+			defer func() {
+				if p := recover(); p != "boom" {
+					t.Fatalf("recovered %v, want the panic from fn", p)
+				}
+			}()
+			_ = db.InTx(ctx, func(q store.Querier) error {
+				if err := store.NewClientGroups(q).Create(ctx, &store.ClientGroup{Name: "rolled back"}); err != nil {
+					t.Fatal(err)
+				}
+				panic("boom")
+			})
+		}()
+		wctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		err := db.InTx(wctx, func(q store.Querier) error {
+			return store.NewClientGroups(q).Create(wctx, &store.ClientGroup{Name: "committed"})
+		})
+		if err != nil {
+			t.Fatalf("write after a panicking transaction: %v", err)
+		}
+		groups, err := store.NewClientGroups(db).List(ctx, store.ClientGroupFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(groups) != 1 || groups[0].Name != "committed" {
+			t.Errorf("groups = %+v, want only the committed one", groups)
+		}
+	})
+}
+
 // TestSchemaConstraints checks the constraints later issues rely on.
 func TestSchemaConstraints(t *testing.T) {
 	ctx := context.Background()
