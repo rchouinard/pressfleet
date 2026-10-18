@@ -202,14 +202,14 @@ func (s *Service) runningSites(ctx context.Context) ([]store.Site, error) {
 }
 
 // imagesInUse returns the running sites and the tags they use, sorted.
-func (s *Service) imagesInUse(ctx context.Context) ([]store.Site, []string, error) {
-	running, err := s.runningSites(ctx)
+func (rt *Rollouts) imagesInUse(ctx context.Context) ([]store.Site, []string, error) {
+	running, err := rt.s.runningSites(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 	set := map[string]bool{}
 	for _, site := range running {
-		tags, err := s.siteImageTags(site)
+		tags, err := rt.s.siteImageTags(site)
 		if err != nil {
 			continue
 		}
@@ -223,11 +223,11 @@ func (s *Service) imagesInUse(ctx context.Context) ([]store.Site, []string, erro
 // latestBuilds returns the build each tag names now, pulling the tags whose
 // PullInterval has passed first. A failed pull leaves the build the driver
 // has; a tag the driver can't resolve is left out.
-func (s *Service) latestBuilds(ctx context.Context, images []string) map[string]string {
-	c := s.images
+func (rt *Rollouts) latestBuilds(ctx context.Context, images []string) map[string]string {
+	c := rt.images
 	out := map[string]string{}
 	for _, image := range images {
-		now := s.now()
+		now := rt.s.now()
 		c.mu.Lock()
 		pull := c.opts.PullInterval > 0 && now.Sub(c.pulled[image]) >= c.opts.PullInterval
 		if pull {
@@ -235,13 +235,13 @@ func (s *Service) latestBuilds(ctx context.Context, images []string) map[string]
 		}
 		c.mu.Unlock()
 		if pull {
-			if err := s.pinner.PullImage(ctx, image); err != nil {
-				s.log.WarnContext(ctx, "checking the registry for a new image build failed", "image", image, "error", err)
+			if err := rt.s.pinner.PullImage(ctx, image); err != nil {
+				rt.s.log.WarnContext(ctx, "checking the registry for a new image build failed", "image", image, "error", err)
 			}
 		}
-		build, err := s.pinner.PinImage(ctx, image)
+		build, err := rt.s.pinner.PinImage(ctx, image)
 		if err != nil {
-			s.log.WarnContext(ctx, "resolving an image's build failed", "image", image, "error", err)
+			rt.s.log.WarnContext(ctx, "resolving an image's build failed", "image", image, "error", err)
 			continue
 		}
 		c.mu.Lock()
@@ -259,23 +259,23 @@ func (s *Service) latestBuilds(ctx context.Context, images []string) map[string]
 
 // ImageBuilds returns the newest builds the image rollout knows of, by
 // tag; empty until its first pass.
-func (s *Service) ImageBuilds() []ImageBuild {
-	s.images.mu.Lock()
-	defer s.images.mu.Unlock()
+func (rt *Rollouts) ImageBuilds() []ImageBuild {
+	rt.images.mu.Lock()
+	defer rt.images.mu.Unlock()
 	out := []ImageBuild{}
-	for _, image := range slices.Sorted(maps.Keys(s.images.latest)) {
-		out = append(out, s.images.latest[image])
+	for _, image := range slices.Sorted(maps.Keys(rt.images.latest)) {
+		out = append(out, rt.images.latest[image])
 	}
 	return out
 }
 
 // imageFingerprint identifies the newest builds of the tags in use.
-func (s *Service) imageFingerprint(ctx context.Context) (string, error) {
-	_, images, err := s.imagesInUse(ctx)
+func (rt *Rollouts) imageFingerprint(ctx context.Context) (string, error) {
+	_, images, err := rt.imagesInUse(ctx)
 	if err != nil {
 		return "", err
 	}
-	latest := s.latestBuilds(ctx, images)
+	latest := rt.latestBuilds(ctx, images)
 	var parts []string
 	for _, image := range slices.Sorted(maps.Keys(latest)) {
 		parts = append(parts, image+"="+latest[image])
@@ -286,21 +286,21 @@ func (s *Service) imageFingerprint(ctx context.Context) (string, error) {
 // imageCandidates lists the running sites with a tag pinned to another
 // build than the newest, oldest site first. A tag the site has no pin for
 // yet is left alone: it gets one the next time the site is rendered.
-func (s *Service) imageCandidates(ctx context.Context) ([]rolloutCandidate, error) {
-	running, images, err := s.imagesInUse(ctx)
+func (rt *Rollouts) imageCandidates(ctx context.Context) ([]rolloutCandidate, error) {
+	running, images, err := rt.imagesInUse(ctx)
 	if err != nil {
 		return nil, err
 	}
-	pins, err := store.NewImagePins(s.db).All(ctx)
+	pins, err := store.NewImagePins(rt.s.db).All(ctx)
 	if err != nil {
 		return nil, err
 	}
-	latest := s.latestBuilds(ctx, images)
+	latest := rt.latestBuilds(ctx, images)
 	var out []rolloutCandidate
 	for _, site := range running {
-		tags, err := s.siteImageTags(site)
+		tags, err := rt.s.siteImageTags(site)
 		if err != nil {
-			s.log.WarnContext(ctx, "resolving a site's images failed", "site_id", site.ID, "error", err)
+			rt.s.log.WarnContext(ctx, "resolving a site's images failed", "site_id", site.ID, "error", err)
 			continue
 		}
 		var changes []imageChange
@@ -330,7 +330,7 @@ func imageTarget(changes []imageChange) string {
 
 // enqueueImageUpdate sets a running site's status to updating and queues
 // its image update, in q's transaction.
-func (s *Service) enqueueImageUpdate(ctx context.Context, q store.Querier, site store.Site, changes []imageChange, rollout string) (store.Job, error) {
+func (rt *Rollouts) enqueueImageUpdate(ctx context.Context, q store.Querier, site store.Site, changes []imageChange, rollout string) (store.Job, error) {
 	if site.Status != store.SiteRunning {
 		return store.Job{}, fmt.Errorf("%w (it is %s)", ErrNotRunning, site.Status)
 	}
@@ -350,12 +350,12 @@ func (s *Service) enqueueImageUpdate(ctx context.Context, q store.Querier, site 
 	})
 }
 
-func (s *Service) imageUpdateHandler() jobs.Handler {
+func (rt *Rollouts) imageUpdateHandler() jobs.Handler {
 	return jobs.Handler{Type: ImageUpdateJobType, Steps: []jobs.Step{
-		{Name: stepPrepareUpdate, Do: s.prepareImageUpdate, Undo: s.finishFailedImageUpdate},
-		{Name: stepRecreate, Do: s.recreateOnImages, Undo: s.revertImages},
-		{Name: stepHealthCheck, Do: s.checkImageHealth},
-		{Name: stepFinishImages, Do: s.finishImageUpdate},
+		{Name: stepPrepareUpdate, Do: rt.prepareImageUpdate, Undo: rt.finishFailedImageUpdate},
+		{Name: stepRecreate, Do: rt.recreateOnImages, Undo: rt.revertImages},
+		{Name: stepHealthCheck, Do: rt.checkImageHealth},
+		{Name: stepFinishImages, Do: rt.finishImageUpdate},
 	}}
 }
 
@@ -384,8 +384,8 @@ func (p imageUpdatePayload) components() string {
 	return strings.Join(names, " and ")
 }
 
-func (s *Service) prepareImageUpdate(ctx context.Context, r *jobs.Run) error {
-	site, err := s.managedSite(ctx, r)
+func (rt *Rollouts) prepareImageUpdate(ctx context.Context, r *jobs.Run) error {
+	site, err := rt.s.managedSite(ctx, r)
 	if err != nil {
 		return err
 	}
@@ -393,11 +393,11 @@ func (s *Service) prepareImageUpdate(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
-	tags, err := s.siteImageTags(site)
+	tags, err := rt.s.siteImageTags(site)
 	if err != nil {
 		return jobs.Permanent(err)
 	}
-	pins, err := store.NewImagePins(s.db).Site(ctx, site.ID)
+	pins, err := store.NewImagePins(rt.s.db).Site(ctx, site.ID)
 	if err != nil {
 		return err
 	}
@@ -418,8 +418,8 @@ func (s *Service) prepareImageUpdate(ctx context.Context, r *jobs.Run) error {
 
 // recreateOnImages records the new pins and recreates the containers on
 // them.
-func (s *Service) recreateOnImages(ctx context.Context, r *jobs.Run) error {
-	site, err := s.managedSite(ctx, r)
+func (rt *Rollouts) recreateOnImages(ctx context.Context, r *jobs.Run) error {
+	site, err := rt.s.managedSite(ctx, r)
 	if err != nil {
 		return err
 	}
@@ -431,10 +431,10 @@ func (s *Service) recreateOnImages(ctx context.Context, r *jobs.Run) error {
 	if err := r.Set(dataImagesChanged, true); err != nil {
 		return err
 	}
-	if err := s.setPins(ctx, site.ID, p, false); err != nil {
+	if err := rt.setPins(ctx, site.ID, p, false); err != nil {
 		return err
 	}
-	if _, err := s.converge(ctx, r, site); err != nil {
+	if _, err := rt.s.converge(ctx, r, site); err != nil {
 		return err
 	}
 	r.Logf("Recreated the site's %s on the new builds.", p.components())
@@ -443,8 +443,8 @@ func (s *Service) recreateOnImages(ctx context.Context, r *jobs.Run) error {
 
 // setPins moves the site's pins to the job's new builds, or back to the
 // previous ones.
-func (s *Service) setPins(ctx context.Context, siteID string, p imageUpdatePayload, previous bool) error {
-	pins := store.NewImagePins(s.db)
+func (rt *Rollouts) setPins(ctx context.Context, siteID string, p imageUpdatePayload, previous bool) error {
+	pins := store.NewImagePins(rt.s.db)
 	for _, c := range p.Images {
 		build := c.To
 		if previous {
@@ -460,14 +460,14 @@ func (s *Service) setPins(ctx context.Context, siteID string, p imageUpdatePaylo
 // revertImages moves the site back to the previous builds unless the update
 // succeeded. If that keeps failing, it gives up on its last attempt and
 // records why, so the final Undo marks the site failed.
-func (s *Service) revertImages(ctx context.Context, r *jobs.Run) error {
+func (rt *Rollouts) revertImages(ctx context.Context, r *jobs.Run) error {
 	if healthy, err := flag(r, dataHealthy); err != nil || healthy {
 		return err
 	}
 	if changed, err := flag(r, dataImagesChanged); err != nil || !changed {
 		return err
 	}
-	site, err := s.jobSite(ctx, r)
+	site, err := rt.s.jobSite(ctx, r)
 	if err != nil || site.Status != store.SiteUpdating {
 		return nil
 	}
@@ -475,10 +475,10 @@ func (s *Service) revertImages(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
-	if err := s.setPins(ctx, site.ID, p, true); err != nil {
+	if err := rt.setPins(ctx, site.ID, p, true); err != nil {
 		return err
 	}
-	if _, err := s.converge(ctx, r, site); err != nil {
+	if _, err := rt.s.converge(ctx, r, site); err != nil {
 		if !lastAttempt(r, err) {
 			return err
 		}
@@ -489,12 +489,12 @@ func (s *Service) revertImages(ctx context.Context, r *jobs.Run) error {
 	return nil
 }
 
-func (s *Service) checkImageHealth(ctx context.Context, r *jobs.Run) error {
-	site, err := s.managedSite(ctx, r)
+func (rt *Rollouts) checkImageHealth(ctx context.Context, r *jobs.Run) error {
+	site, err := rt.s.managedSite(ctx, r)
 	if err != nil {
 		return err
 	}
-	if err := s.CheckHealth(ctx, site, site.WPCoreVersion); err != nil {
+	if err := rt.s.CheckHealth(ctx, site, site.WPCoreVersion); err != nil {
 		return jobs.Permanent(err)
 	}
 	if err := r.Set(dataHealthy, true); err != nil {
@@ -506,8 +506,8 @@ func (s *Service) checkImageHealth(ctx context.Context, r *jobs.Run) error {
 
 // finishImageUpdate sets the status from the live phase, records the
 // success, and puts the new builds in the job's result.
-func (s *Service) finishImageUpdate(ctx context.Context, r *jobs.Run) error {
-	if err := s.finishUpdate(ctx, r); err != nil {
+func (rt *Rollouts) finishImageUpdate(ctx context.Context, r *jobs.Run) error {
+	if err := rt.s.finishUpdate(ctx, r); err != nil {
 		return err
 	}
 	p, err := imageJobPayload(r)
@@ -519,13 +519,13 @@ func (s *Service) finishImageUpdate(ctx context.Context, r *jobs.Run) error {
 			return err
 		}
 	}
-	return s.recordRolloutOutcome(ctx, r, imageRollout, p.Rollout, imageTarget(p.Images), "")
+	return rt.recordRolloutOutcome(ctx, r, imageRollout, p.Rollout, imageTarget(p.Images), "")
 }
 
 // finishFailedImageUpdate is the last Undo of a failed site.image_update
 // job: it sets the site's status, says in its status message what the
 // failed update left behind, and records the failure.
-func (s *Service) finishFailedImageUpdate(ctx context.Context, r *jobs.Run) error {
+func (rt *Rollouts) finishFailedImageUpdate(ctx context.Context, r *jobs.Run) error {
 	siteID := r.Job().TargetID
 	p, err := imageJobPayload(r)
 	if err != nil {
@@ -543,7 +543,7 @@ func (s *Service) finishFailedImageUpdate(ctx context.Context, r *jobs.Run) erro
 	if err != nil {
 		return err
 	}
-	status := s.observedStatus(ctx, siteID)
+	status := rt.s.observedStatus(ctx, siteID)
 	var prefix string
 	switch {
 	case healthy:
@@ -557,7 +557,7 @@ func (s *Service) finishFailedImageUpdate(ctx context.Context, r *jobs.Run) erro
 		prefix = "the image update failed before changing the site"
 	}
 	msg := statusMessage(prefix, r.Job().Error)
-	changedStatus, err := store.NewSites(s.db).SetStatus(ctx, siteID, status, msg, store.SiteUpdating)
+	changedStatus, err := store.NewSites(rt.s.db).SetStatus(ctx, siteID, status, msg, store.SiteUpdating)
 	if err != nil {
 		return err
 	}
@@ -565,9 +565,9 @@ func (s *Service) finishFailedImageUpdate(ctx context.Context, r *jobs.Run) erro
 		r.Warnf("The site is %s: %s.", status, prefix)
 	}
 	if healthy {
-		return s.recordRolloutOutcome(ctx, r, imageRollout, p.Rollout, imageTarget(p.Images), "")
+		return rt.recordRolloutOutcome(ctx, r, imageRollout, p.Rollout, imageTarget(p.Images), "")
 	}
-	return s.recordRolloutOutcome(ctx, r, imageRollout, p.Rollout, imageTarget(p.Images), msg)
+	return rt.recordRolloutOutcome(ctx, r, imageRollout, p.Rollout, imageTarget(p.Images), msg)
 }
 
 // PHPCatalog returns every PHP branch in the version manifest, newest first,

@@ -124,7 +124,10 @@
 // a [CoreUpdateJobType] job that takes a pre-update backup, recreates both
 // containers on the new images, upgrades the database, checks the site's
 // health, and reverts if anything fails; see coreupdate.go, rollout.go, and
-// corepolicy.go.
+// corepolicy.go. The core, image, and template rollouts are a [Rollouts],
+// which [Service.Rollouts] returns; they share the Service's toolkit for
+// site jobs and its driver capabilities ([Options] Prober, ImagePinner,
+// and Templates).
 //
 // Updating, going live, starting, stopping, and purging are refused with ErrBusy while
 // a job is provisioning, updating, or deleting the site, and with
@@ -311,15 +314,17 @@ type Options struct {
 	// (coreupdate.go, rollout.go), which also need Backups and
 	// BackupEngine.
 	CoreUpdates CoreUpdateOptions
-	// Prober sends the HTTP request of health checks; nil means the
-	// Provisioner, if it implements provisioner.Prober, or no HTTP check.
+	// Prober sends the HTTP request of health checks; nil means health
+	// checks only ask WP-CLI.
 	Prober provisioner.Prober
-	// ImageUpdates configures the image rollout (imageupdate.go), which
-	// runs when the Provisioner implements provisioner.ImagePinner.
+	// ImagePinner pins site images to builds (§5.5); nil turns off image
+	// pinning and the image rollout (imageupdate.go).
+	ImagePinner provisioner.ImagePinner
+	// ImageUpdates configures the image rollout.
 	ImageUpdates ImageUpdateOptions
-	// The templates rollout (templateupdate.go) needs no options: it runs
-	// when the Provisioner implements provisioner.TemplateFingerprinter
-	// and provisioner.RenderSnapshotter.
+	// Templates re-renders sites with new templates and undoes it; nil
+	// turns off the templates rollout (templateupdate.go).
+	Templates TemplateDriver
 }
 
 // Service runs the site workflows.
@@ -344,11 +349,40 @@ type Service struct {
 	now          func() time.Time
 
 	statusTimeout time.Duration
-	core          CoreUpdateOptions
-	prober        provisioner.Prober
-	pinner        provisioner.ImagePinner
-	templates     templateDriver
-	images        *imageChecker
+	// healthTimeout and healthInterval time CheckHealth's tries.
+	healthTimeout, healthInterval time.Duration
+	// Capabilities of the driver beyond provisioner.Provisioner; nil turns
+	// off what needs them.
+	prober    provisioner.Prober
+	pinner    provisioner.ImagePinner
+	templates TemplateDriver
+	rollouts  *Rollouts
+}
+
+// Rollouts returns the rollouts that move the service's running sites to
+// new WordPress releases, image builds, and templates.
+func (s *Service) Rollouts() *Rollouts { return s.rollouts }
+
+// Disabled lists the optional workflows that are off and why, for the
+// control plane to log at startup.
+func (s *Service) Disabled() []string {
+	var off []string
+	if !s.restores() {
+		off = append(off, "restores and WordPress core updates: no backup service or engine")
+	}
+	if !s.imports() {
+		off = append(off, "site imports: no upload service, task runner, or temporary directory")
+	}
+	if s.prober == nil {
+		off = append(off, "HTTP health checks: the driver can't probe sites")
+	}
+	if s.pinner == nil {
+		off = append(off, "image pinning and the image rollout: the driver can't pin images")
+	}
+	if s.templates == nil {
+		off = append(off, "the templates rollout: the driver can't snapshot renders")
+	}
+	return off
 }
 
 // New returns a Service.
@@ -393,23 +427,19 @@ func New(opts Options) (*Service, error) {
 		now:          opts.Now,
 
 		statusTimeout: opts.StatusTimeout,
-		core:          opts.CoreUpdates,
 		prober:        opts.Prober,
+		pinner:        opts.ImagePinner,
+		templates:     opts.Templates,
+
+		healthTimeout:  opts.CoreUpdates.HealthTimeout,
+		healthInterval: opts.CoreUpdates.HealthInterval,
 	}
-	if s.prober == nil {
-		s.prober, _ = opts.Provisioner.(provisioner.Prober)
+	s.rollouts = newRollouts(s, opts.CoreUpdates, opts.ImageUpdates)
+	if s.healthTimeout <= 0 {
+		s.healthTimeout = DefaultHealthTimeout
 	}
-	s.pinner, _ = opts.Provisioner.(provisioner.ImagePinner)
-	s.templates, _ = opts.Provisioner.(templateDriver)
-	s.images = &imageChecker{opts: opts.ImageUpdates, pulled: map[string]time.Time{}, latest: map[string]ImageBuild{}}
-	if s.core.MaxFailures <= 0 {
-		s.core.MaxFailures = 3
-	}
-	if s.core.HealthTimeout <= 0 {
-		s.core.HealthTimeout = DefaultHealthTimeout
-	}
-	if s.core.HealthInterval <= 0 {
-		s.core.HealthInterval = DefaultHealthInterval
+	if s.healthInterval <= 0 {
+		s.healthInterval = DefaultHealthInterval
 	}
 	if s.statusTimeout <= 0 {
 		s.statusTimeout = DefaultStatusTimeout
@@ -719,8 +749,8 @@ func (s *Service) TakeAdminCredentials(ctx context.Context, siteID string) (Admi
 	return creds, nil
 }
 
-// Handlers returns the job handlers of the site workflows, to register on
-// the job pool.
+// Handlers returns the job handlers of the site workflows and the
+// rollouts, to register on the job pool.
 func (s *Service) Handlers() []jobs.Handler {
 	handlers := []jobs.Handler{
 		s.createHandler(), s.deleteHandler(), s.updateHandler(), s.startHandler(), s.stopHandler(),
@@ -728,21 +758,11 @@ func (s *Service) Handlers() []jobs.Handler {
 	}
 	if s.restores() {
 		handlers = append(handlers, s.restoreHandler())
-		handlers = append(handlers, s.coreUpdateHandler())
-	}
-	if s.pinner != nil {
-		handlers = append(handlers, s.imageUpdateHandler())
-	}
-	if s.templates != nil {
-		handlers = append(handlers, s.templateUpdateHandler())
-	}
-	if len(s.rolloutSources()) > 0 {
-		handlers = append(handlers, s.rolloutHandler())
 	}
 	if s.imports() {
 		handlers = append(handlers, s.importHandler())
 	}
-	return handlers
+	return append(handlers, s.rollouts.handlers()...)
 }
 
 // SharedServiceAttacher reconnects the platform services to a site's

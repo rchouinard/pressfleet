@@ -280,11 +280,13 @@ func TestTwoFactorPlugin(t *testing.T) {
 		ctx := context.Background()
 		e := newEnvWith(t, db, testPreviewBase, func(o *sites.Options) { o.TwoFactor = config.TwoFactorRequiredForAdmins })
 		site := e.running(t, "Was Required")
-		off, err := sites.New(sites.Options{
+		o := sites.Options{
 			DB: db, Secrets: e.sec, Catalog: mustCatalog(t), PreviewBaseDomain: testPreviewBase,
 			Provisioner: e.prov, Databases: e.dbs, ObjectCaches: e.cache, Logger: storetest.Logger(),
 			TwoFactor: config.TwoFactorOff,
-		})
+		}
+		withDriverCapabilities(&o)
+		off, err := sites.New(o)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -69,8 +69,8 @@ const (
 	dataTemplateRendered = "templates_rendered"
 )
 
-// templateDriver is what the templates rollout needs of the driver.
-type templateDriver interface {
+// TemplateDriver is what the templates rollout needs of the driver.
+type TemplateDriver interface {
 	provisioner.TemplateFingerprinter
 	provisioner.RenderSnapshotter
 }
@@ -106,12 +106,12 @@ func (s *Service) awaitsTemplates(site store.Site) bool {
 
 // templateCandidates lists the running sites rendered with other templates,
 // oldest site first.
-func (s *Service) templateCandidates(ctx context.Context) ([]rolloutCandidate, error) {
-	running, err := s.runningSites(ctx)
+func (rt *Rollouts) templateCandidates(ctx context.Context) ([]rolloutCandidate, error) {
+	running, err := rt.s.runningSites(ctx)
 	if err != nil {
 		return nil, err
 	}
-	current := s.templates.TemplateFingerprint()
+	current := rt.s.templates.TemplateFingerprint()
 	var out []rolloutCandidate
 	for _, site := range running {
 		if site.TemplateFingerprint != current {
@@ -124,21 +124,21 @@ func (s *Service) templateCandidates(ctx context.Context) ([]rolloutCandidate, e
 // TemplateProgress returns the fingerprint of the driver's templates and
 // how many running sites are rendered with others, for the templates
 // rollout's status. Without fingerprints it returns ErrUnknownRollout.
-func (s *Service) TemplateProgress(ctx context.Context) (fingerprint string, pending int, err error) {
-	if s.templates == nil {
+func (rt *Rollouts) TemplateProgress(ctx context.Context) (fingerprint string, pending int, err error) {
+	if rt.s.templates == nil {
 		return "", 0, fmt.Errorf("%w %q", ErrUnknownRollout, templateRollout)
 	}
-	candidates, err := s.templateCandidates(ctx)
+	candidates, err := rt.templateCandidates(ctx)
 	if err != nil {
 		return "", 0, err
 	}
-	return s.templates.TemplateFingerprint(), len(candidates), nil
+	return rt.s.templates.TemplateFingerprint(), len(candidates), nil
 }
 
 // enqueueTemplateUpdate sets a running site's status to updating and queues
 // its template update, in q's transaction. A site rendered with the target
 // templates since it was listed is skipped.
-func (s *Service) enqueueTemplateUpdate(ctx context.Context, q store.Querier, site store.Site, target, rollout string) (store.Job, error) {
+func (rt *Rollouts) enqueueTemplateUpdate(ctx context.Context, q store.Querier, site store.Site, target, rollout string) (store.Job, error) {
 	if site.TemplateFingerprint == target {
 		return store.Job{}, errSkipCandidate
 	}
@@ -161,13 +161,13 @@ func (s *Service) enqueueTemplateUpdate(ctx context.Context, q store.Querier, si
 	})
 }
 
-func (s *Service) templateUpdateHandler() jobs.Handler {
+func (rt *Rollouts) templateUpdateHandler() jobs.Handler {
 	return jobs.Handler{Type: TemplateUpdateJobType, Steps: []jobs.Step{
-		{Name: stepPrepareUpdate, Do: s.prepareTemplateUpdate, Undo: s.finishFailedTemplateUpdate},
-		{Name: stepRenderTemplates, Do: s.renderTemplates, Undo: s.revertTemplates},
-		{Name: stepHealthCheck, Do: s.checkTemplateHealth},
-		{Name: stepTemplatePlugins, Do: s.templatePlugins},
-		{Name: stepFinishTemplates, Do: s.finishTemplateUpdate},
+		{Name: stepPrepareUpdate, Do: rt.prepareTemplateUpdate, Undo: rt.finishFailedTemplateUpdate},
+		{Name: stepRenderTemplates, Do: rt.renderTemplates, Undo: rt.revertTemplates},
+		{Name: stepHealthCheck, Do: rt.checkTemplateHealth},
+		{Name: stepTemplatePlugins, Do: rt.templatePlugins},
+		{Name: stepFinishTemplates, Do: rt.finishTemplateUpdate},
 	}}
 }
 
@@ -191,8 +191,8 @@ func (p templateUpdatePayload) previousTemplates() string {
 	return p.From
 }
 
-func (s *Service) prepareTemplateUpdate(ctx context.Context, r *jobs.Run) error {
-	if _, err := s.managedSite(ctx, r); err != nil {
+func (rt *Rollouts) prepareTemplateUpdate(ctx context.Context, r *jobs.Run) error {
+	if _, err := rt.s.managedSite(ctx, r); err != nil {
 		return err
 	}
 	p, err := templateJobPayload(r)
@@ -201,7 +201,7 @@ func (s *Service) prepareTemplateUpdate(ctx context.Context, r *jobs.Run) error 
 	}
 	// The job can't render other templates than the running release's;
 	// a later release's rollout queues its own.
-	if current := s.templates.TemplateFingerprint(); current != p.To {
+	if current := rt.s.templates.TemplateFingerprint(); current != p.To {
 		return jobs.Permanent(fmt.Errorf("the job is for templates %s, but this release has %s", p.To, current))
 	}
 	r.Logf("Re-rendering the site with this release's templates (%s; it was rendered with %s).", p.To, p.previousTemplates())
@@ -210,8 +210,8 @@ func (s *Service) prepareTemplateUpdate(ctx context.Context, r *jobs.Run) error 
 
 // renderTemplates keeps a copy of the site's rendered definition, once, and
 // re-renders it.
-func (s *Service) renderTemplates(ctx context.Context, r *jobs.Run) error {
-	site, err := s.managedSite(ctx, r)
+func (rt *Rollouts) renderTemplates(ctx context.Context, r *jobs.Run) error {
+	site, err := rt.s.managedSite(ctx, r)
 	if err != nil {
 		return err
 	}
@@ -222,7 +222,7 @@ func (s *Service) renderTemplates(ctx context.Context, r *jobs.Run) error {
 		return err
 	}
 	if !taken {
-		err := s.templates.SnapshotRender(ctx, site.ID)
+		err := rt.s.templates.SnapshotRender(ctx, site.ID)
 		if errors.Is(err, provisioner.ErrSiteNotFound) {
 			return jobs.Permanent(fmt.Errorf("the site has no rendered definition to keep: %w", err))
 		}
@@ -238,7 +238,7 @@ func (s *Service) renderTemplates(ctx context.Context, r *jobs.Run) error {
 	if err := r.Set(dataTemplateRendered, true); err != nil {
 		return err
 	}
-	st, err := s.converge(ctx, r, site)
+	st, err := rt.s.converge(ctx, r, site)
 	if err != nil {
 		return err
 	}
@@ -250,14 +250,14 @@ func (s *Service) renderTemplates(ctx context.Context, r *jobs.Run) error {
 // fingerprint back unless the update succeeded. If that keeps failing, it
 // gives up on its last attempt and records why, so the final Undo marks the
 // site failed.
-func (s *Service) revertTemplates(ctx context.Context, r *jobs.Run) error {
+func (rt *Rollouts) revertTemplates(ctx context.Context, r *jobs.Run) error {
 	if healthy, err := flag(r, dataHealthy); err != nil || healthy {
 		return err
 	}
 	if rendered, err := flag(r, dataTemplateRendered); err != nil || !rendered {
 		return err
 	}
-	site, err := s.jobSite(ctx, r)
+	site, err := rt.s.jobSite(ctx, r)
 	if err != nil || site.Status != store.SiteUpdating {
 		return nil
 	}
@@ -265,7 +265,7 @@ func (s *Service) revertTemplates(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.templates.RestoreRender(ctx, site.ID); err != nil {
+	if _, err := rt.s.templates.RestoreRender(ctx, site.ID); err != nil {
 		if errors.Is(err, provisioner.ErrNoRenderSnapshot) || errors.Is(err, provisioner.ErrSiteNotFound) {
 			err = jobs.Permanent(err)
 		}
@@ -275,19 +275,19 @@ func (s *Service) revertTemplates(ctx context.Context, r *jobs.Run) error {
 		r.Warnf("Couldn't put the site's previous definition back: %v", err)
 		return r.Set(dataRevertError, err.Error())
 	}
-	if _, err := store.NewSites(s.db).SetTemplateFingerprint(ctx, site.ID, p.From); err != nil {
+	if _, err := store.NewSites(rt.s.db).SetTemplateFingerprint(ctx, site.ID, p.From); err != nil {
 		return err
 	}
 	r.Warnf("Put the site's previous definition back: it runs as it was rendered with %s templates.", p.previousTemplates())
 	return nil
 }
 
-func (s *Service) checkTemplateHealth(ctx context.Context, r *jobs.Run) error {
-	site, err := s.managedSite(ctx, r)
+func (rt *Rollouts) checkTemplateHealth(ctx context.Context, r *jobs.Run) error {
+	site, err := rt.s.managedSite(ctx, r)
 	if err != nil {
 		return err
 	}
-	if err := s.CheckHealth(ctx, site, site.WPCoreVersion); err != nil {
+	if err := rt.s.CheckHealth(ctx, site, site.WPCoreVersion); err != nil {
 		return jobs.Permanent(err)
 	}
 	if err := r.Set(dataHealthy, true); err != nil {
@@ -300,12 +300,12 @@ func (s *Service) checkTemplateHealth(ctx context.Context, r *jobs.Run) error {
 // templatePlugins converges the site's default plugins, as the
 // reconciliation's plugins step does after it re-renders a site; the
 // reconciliation left this site to the rollout.
-func (s *Service) templatePlugins(ctx context.Context, r *jobs.Run) error {
-	site, err := s.managedSite(ctx, r)
+func (rt *Rollouts) templatePlugins(ctx context.Context, r *jobs.Run) error {
+	site, err := rt.s.managedSite(ctx, r)
 	if err != nil {
 		return err
 	}
-	if err := s.configurePlugins(ctx, r, site.ID); err != nil {
+	if err := rt.s.configurePlugins(ctx, r, site.ID); err != nil {
 		return err
 	}
 	r.Logf("The site's default plugins are in place.")
@@ -314,8 +314,8 @@ func (s *Service) templatePlugins(ctx context.Context, r *jobs.Run) error {
 
 // finishTemplateUpdate sets the status from the live phase and records the
 // success.
-func (s *Service) finishTemplateUpdate(ctx context.Context, r *jobs.Run) error {
-	if err := s.finishUpdate(ctx, r); err != nil {
+func (rt *Rollouts) finishTemplateUpdate(ctx context.Context, r *jobs.Run) error {
+	if err := rt.s.finishUpdate(ctx, r); err != nil {
 		return err
 	}
 	p, err := templateJobPayload(r)
@@ -325,13 +325,13 @@ func (s *Service) finishTemplateUpdate(ctx context.Context, r *jobs.Run) error {
 	if err := r.SetResult("templates", p.To); err != nil {
 		return err
 	}
-	return s.recordRolloutOutcome(ctx, r, templateRollout, p.Rollout, p.To, "")
+	return rt.recordRolloutOutcome(ctx, r, templateRollout, p.Rollout, p.To, "")
 }
 
 // finishFailedTemplateUpdate is the last Undo of a failed
 // site.template_update job: it sets the site's status, says in its status
 // message what the failed update left behind, and records the failure.
-func (s *Service) finishFailedTemplateUpdate(ctx context.Context, r *jobs.Run) error {
+func (rt *Rollouts) finishFailedTemplateUpdate(ctx context.Context, r *jobs.Run) error {
 	siteID := r.Job().TargetID
 	p, err := templateJobPayload(r)
 	if err != nil {
@@ -349,7 +349,7 @@ func (s *Service) finishFailedTemplateUpdate(ctx context.Context, r *jobs.Run) e
 	if err != nil {
 		return err
 	}
-	status := s.observedStatus(ctx, siteID)
+	status := rt.s.observedStatus(ctx, siteID)
 	var prefix string
 	switch {
 	case healthy:
@@ -363,7 +363,7 @@ func (s *Service) finishFailedTemplateUpdate(ctx context.Context, r *jobs.Run) e
 		prefix = "the template update failed before changing the site"
 	}
 	msg := statusMessage(prefix, r.Job().Error)
-	changed, err := store.NewSites(s.db).SetStatus(ctx, siteID, status, msg, store.SiteUpdating)
+	changed, err := store.NewSites(rt.s.db).SetStatus(ctx, siteID, status, msg, store.SiteUpdating)
 	if err != nil {
 		return err
 	}
@@ -372,14 +372,14 @@ func (s *Service) finishFailedTemplateUpdate(ctx context.Context, r *jobs.Run) e
 	}
 	// A job an earlier release queued says nothing about this release's
 	// templates, so it doesn't count against their rollout.
-	if p.To != s.templates.TemplateFingerprint() {
+	if p.To != rt.s.templates.TemplateFingerprint() {
 		if p.Rollout == "" {
 			return nil
 		}
-		return enqueueRolloutPass(ctx, s.db, p.Rollout)
+		return enqueueRolloutPass(ctx, rt.s.db, p.Rollout)
 	}
 	if healthy {
-		return s.recordRolloutOutcome(ctx, r, templateRollout, p.Rollout, p.To, "")
+		return rt.recordRolloutOutcome(ctx, r, templateRollout, p.Rollout, p.To, "")
 	}
-	return s.recordRolloutOutcome(ctx, r, templateRollout, p.Rollout, p.To, msg)
+	return rt.recordRolloutOutcome(ctx, r, templateRollout, p.Rollout, p.To, msg)
 }

@@ -139,6 +139,8 @@ func newSiteEnv(t *testing.T, db *store.DB, previewBase string) *siteEnv {
 		Provisioner: e.tmpl, Databases: e.dbs, ObjectCaches: objectcachetest.New(), Logger: storetest.Logger(),
 		DNSChecker: e.dns, Backups: e.backups, BackupEngine: e.engine,
 		Uploads: e.uploads, Tasks: e.prov, TmpDir: t.TempDir(),
+		// As serve does with the Compose driver.
+		Prober: e.tmpl, ImagePinner: e.tmpl, Templates: e.tmpl,
 	})
 	if err != nil {
 		t.Fatal(err)

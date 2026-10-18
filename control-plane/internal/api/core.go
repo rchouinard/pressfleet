@@ -24,7 +24,7 @@ func (h *Handlers) GetSiteCore(ctx context.Context, req gen.GetSiteCoreRequestOb
 	if _, err := h.authorize(ctx, authz.ViewSites, authz.Site(req.SiteID)); err != nil {
 		return nil, err
 	}
-	st, err := h.sites.CoreStatus(ctx, req.SiteID)
+	st, err := h.rollouts.CoreStatus(ctx, req.SiteID)
 	if err != nil {
 		return nil, coreError(err)
 	}
@@ -36,7 +36,7 @@ func (h *Handlers) SetSiteCorePolicy(ctx context.Context, req gen.SetSiteCorePol
 	if _, err := h.authorize(ctx, authz.ApproveCoreUpdate, authz.Site(req.SiteID)); err != nil {
 		return nil, err
 	}
-	st, err := h.sites.SetCorePolicy(ctx, req.SiteID, corePolicyUpdate(req.Body))
+	st, err := h.rollouts.SetCorePolicy(ctx, req.SiteID, corePolicyUpdate(req.Body))
 	if err != nil {
 		return nil, coreError(err)
 	}
@@ -49,7 +49,7 @@ func (h *Handlers) UpdateSiteCore(ctx context.Context, req gen.UpdateSiteCoreReq
 	if err != nil {
 		return nil, err
 	}
-	site, job, err := h.sites.UpdateCore(ctx, req.SiteID, p.UserID)
+	site, job, err := h.rollouts.UpdateCore(ctx, req.SiteID, p.UserID)
 	if err != nil {
 		return nil, coreError(err)
 	}
@@ -73,7 +73,7 @@ func (h *Handlers) GetClientGroupCorePolicy(ctx context.Context, req gen.GetClie
 	if _, err := h.authorize(ctx, authz.ViewClientGroups, authz.ClientGroup(req.ClientGroupID)); err != nil {
 		return nil, err
 	}
-	p, err := h.sites.ClientGroupCorePolicy(ctx, req.ClientGroupID)
+	p, err := h.rollouts.ClientGroupCorePolicy(ctx, req.ClientGroupID)
 	if err != nil {
 		return nil, coreError(err)
 	}
@@ -85,7 +85,7 @@ func (h *Handlers) SetClientGroupCorePolicy(ctx context.Context, req gen.SetClie
 	if _, err := h.authorize(ctx, authz.ApproveCoreUpdate, authz.ClientGroup(req.ClientGroupID)); err != nil {
 		return nil, err
 	}
-	p, err := h.sites.SetClientGroupCorePolicy(ctx, req.ClientGroupID, corePolicyUpdate(req.Body))
+	p, err := h.rollouts.SetClientGroupCorePolicy(ctx, req.ClientGroupID, corePolicyUpdate(req.Body))
 	if err != nil {
 		return nil, coreError(err)
 	}
@@ -97,7 +97,7 @@ func (h *Handlers) GetCoreRollout(ctx context.Context, _ gen.GetCoreRolloutReque
 	if _, err := h.authorize(ctx, authz.ViewSites, authz.Platform()); err != nil {
 		return nil, err
 	}
-	ro, err := h.sites.Rollout(ctx, sites.CoreRolloutName)
+	ro, err := h.rollouts.Rollout(ctx, sites.CoreRolloutName)
 	if err != nil {
 		return nil, coreError(err)
 	}
@@ -109,7 +109,7 @@ func (h *Handlers) ResumeCoreRollout(ctx context.Context, _ gen.ResumeCoreRollou
 	if _, err := h.authorize(ctx, authz.ApproveCoreUpdate, authz.Platform()); err != nil {
 		return nil, err
 	}
-	ro, err := h.sites.ResumeRollout(ctx, sites.CoreRolloutName)
+	ro, err := h.rollouts.ResumeRollout(ctx, sites.CoreRolloutName)
 	if err != nil {
 		return nil, coreError(err)
 	}
@@ -205,7 +205,7 @@ func (h *Handlers) coreRolloutResponse(ro sites.RolloutStatus) gen.CoreRollout {
 		out.HaltedAt, out.HaltReason = timePtr(ro.HaltedAt), &ro.HaltReason
 	}
 	out.Window = updateWindowResponse(ro.Window)
-	for _, w := range h.sites.CoreReleases() {
+	for _, w := range h.rollouts.CoreReleases() {
 		r := gen.CoreRelease{Version: w.Version, Branch: w.Branch(), Insecure: w.Insecure}
 		if !w.Published.IsZero() {
 			r.Published = &openapi_types.Date{Time: w.Published}

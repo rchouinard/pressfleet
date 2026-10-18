@@ -18,7 +18,7 @@ func (h *Handlers) GetImageRollout(ctx context.Context, _ gen.GetImageRolloutReq
 	if _, err := h.authorize(ctx, authz.ViewSites, authz.Platform()); err != nil {
 		return nil, err
 	}
-	ro, err := h.sites.Rollout(ctx, sites.ImageRolloutName)
+	ro, err := h.rollouts.Rollout(ctx, sites.ImageRolloutName)
 	if err != nil {
 		return nil, coreError(err)
 	}
@@ -30,7 +30,7 @@ func (h *Handlers) ResumeImageRollout(ctx context.Context, _ gen.ResumeImageRoll
 	if _, err := h.authorize(ctx, authz.ApproveCoreUpdate, authz.Platform()); err != nil {
 		return nil, err
 	}
-	ro, err := h.sites.ResumeRollout(ctx, sites.ImageRolloutName)
+	ro, err := h.rollouts.ResumeRollout(ctx, sites.ImageRolloutName)
 	if err != nil {
 		return nil, coreError(err)
 	}
@@ -49,7 +49,7 @@ func (h *Handlers) imageRolloutResponse(ro sites.RolloutStatus) gen.ImageRollout
 	if ro.Halted() {
 		out.HaltedAt, out.HaltReason = timePtr(ro.HaltedAt), &ro.HaltReason
 	}
-	for _, b := range h.sites.ImageBuilds() {
+	for _, b := range h.rollouts.ImageBuilds() {
 		ib := gen.ImageBuild{Image: b.Image, Build: b.Build, CheckedAt: b.CheckedAt.UTC()}
 		if !b.PulledAt.IsZero() {
 			ib.PulledAt = timePtr(b.PulledAt)

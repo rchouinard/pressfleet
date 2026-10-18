@@ -92,7 +92,7 @@ func (e *imageEnv) imageJobs(t *testing.T, siteID string) []store.Job {
 
 func (e *imageEnv) rolloutState(t *testing.T) sites.RolloutStatus {
 	t.Helper()
-	ro, err := e.svc.Rollout(context.Background(), sites.ImageRolloutName)
+	ro, err := e.svc.Rollouts().Rollout(context.Background(), sites.ImageRolloutName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestImageRolloutSiteBySite(t *testing.T) {
 		newPHP, newNginx := build(e.tags.PHP, 2), build(e.tags.Nginx, 2)
 		e.prov.SetLocalImage(e.tags.PHP, newPHP)
 		e.prov.SetLocalImage(e.tags.Nginx, newNginx)
-		if err := e.svc.EnqueueRollout(context.Background()); err != nil {
+		if err := e.svc.Rollouts().EnqueueRollout(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		// One site at a time: however many passes run, never more than
@@ -135,7 +135,7 @@ func TestImageRolloutSiteBySite(t *testing.T) {
 			if !ran {
 				break
 			}
-			if err := e.svc.EnqueueRollout(context.Background()); err != nil {
+			if err := e.svc.Rollouts().EnqueueRollout(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 			active, err := store.NewJobs(e.db).List(context.Background(), store.JobFilter{
@@ -178,7 +178,7 @@ func TestImageRolloutSiteBySite(t *testing.T) {
 		if ro := e.rolloutState(t); ro.Halted() || ro.ConsecutiveFailures != 0 || len(ro.Failures) != 0 {
 			t.Errorf("rollout = %+v", ro)
 		}
-		builds := e.svc.ImageBuilds()
+		builds := e.svc.Rollouts().ImageBuilds()
 		if len(builds) != 2 || builds[0].Build != newNginx || builds[1].Build != newPHP {
 			t.Errorf("image builds = %+v", builds)
 		}
@@ -232,7 +232,7 @@ func TestImageRolloutHaltsOnRepeatedFailures(t *testing.T) {
 
 		// Resuming tries the site that wasn't, but not the failed ones
 		// with the same build.
-		if _, err := e.svc.ResumeRollout(context.Background(), sites.ImageRolloutName); err != nil {
+		if _, err := e.svc.Rollouts().ResumeRollout(context.Background(), sites.ImageRolloutName); err != nil {
 			t.Fatal(err)
 		}
 		e.runJobs(t)

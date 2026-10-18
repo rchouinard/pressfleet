@@ -227,6 +227,20 @@ func newEnv(t *testing.T, db *store.DB) *env {
 	return newEnvWith(t, db, testPreviewBase)
 }
 
+// withDriverCapabilities gives the service the capabilities its provisioner
+// has and opts doesn't already set, as serve does with the Compose driver.
+func withDriverCapabilities(o *sites.Options) {
+	if p, ok := o.Provisioner.(provisioner.Prober); ok && o.Prober == nil {
+		o.Prober = p
+	}
+	if p, ok := o.Provisioner.(provisioner.ImagePinner); ok && o.ImagePinner == nil {
+		o.ImagePinner = p
+	}
+	if p, ok := o.Provisioner.(sites.TemplateDriver); ok && o.Templates == nil {
+		o.Templates = p
+	}
+}
+
 // newEnvWith returns an env whose service has the given preview base
 // domain, after applying opts to its options.
 func newEnvWith(t *testing.T, db *store.DB, previewBase string, opts ...func(*sites.Options)) *env {
@@ -262,6 +276,7 @@ func newEnvWith(t *testing.T, db *store.DB, previewBase string, opts ...func(*si
 	for _, opt := range opts {
 		opt(&o)
 	}
+	withDriverCapabilities(&o)
 	e.svc, err = sites.New(o)
 	if err != nil {
 		t.Fatal(err)

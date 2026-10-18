@@ -2,7 +2,6 @@ package sites
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"strings"
@@ -158,17 +157,17 @@ type coreUpdatePayload struct {
 	Rollout string `json:"rollout,omitempty"`
 }
 
-func (s *Service) coreUpdates() bool { return s.restores() }
+func (rt *Rollouts) coreUpdates() bool { return rt.s.restores() }
 
-func (s *Service) coreUpdateHandler() jobs.Handler {
-	steps := []jobs.Step{{Name: stepPrepareUpdate, Do: s.prepareCoreUpdate, Undo: s.finishFailedCoreUpdate}}
-	steps = append(steps, s.backups.Steps(store.BackupPreUpdate)...)
+func (rt *Rollouts) coreUpdateHandler() jobs.Handler {
+	steps := []jobs.Step{{Name: stepPrepareUpdate, Do: rt.prepareCoreUpdate, Undo: rt.finishFailedCoreUpdate}}
+	steps = append(steps, rt.s.backups.Steps(store.BackupPreUpdate)...)
 	steps = append(steps,
-		jobs.Step{Name: stepRecordSchema, Do: s.recordSchema},
-		jobs.Step{Name: stepRecreate, Do: s.recreateOnCore, Undo: s.revertCore},
-		jobs.Step{Name: stepUpgradeCoreDB, Do: s.upgradeCoreDatabase, Undo: s.restoreChangedSchema},
-		jobs.Step{Name: stepHealthCheck, Do: s.checkCoreHealth},
-		jobs.Step{Name: stepFinishCoreImage, Do: s.finishCoreUpdate},
+		jobs.Step{Name: stepRecordSchema, Do: rt.recordSchema},
+		jobs.Step{Name: stepRecreate, Do: rt.recreateOnCore, Undo: rt.revertCore},
+		jobs.Step{Name: stepUpgradeCoreDB, Do: rt.upgradeCoreDatabase, Undo: rt.restoreChangedSchema},
+		jobs.Step{Name: stepHealthCheck, Do: rt.checkCoreHealth},
+		jobs.Step{Name: stepFinishCoreImage, Do: rt.finishCoreUpdate},
 	)
 	return jobs.Handler{Type: CoreUpdateJobType, Steps: steps}
 }
@@ -179,27 +178,27 @@ func (s *Service) coreUpdateHandler() jobs.Handler {
 // ErrNoCoreUpdate if the plan has no target (a major release that isn't
 // approved is no target), ErrNotRunning for a site that isn't running, and
 // ErrBusy or ErrNotProvisioned like other changes.
-func (s *Service) UpdateCore(ctx context.Context, siteID, createdByUserID string) (store.Site, store.Job, error) {
-	if !s.coreUpdates() {
+func (rt *Rollouts) UpdateCore(ctx context.Context, siteID, createdByUserID string) (store.Site, store.Job, error) {
+	if !rt.coreUpdates() {
 		return store.Site{}, store.Job{}, ErrNoBackups
 	}
 	var (
 		site store.Site
 		job  store.Job
 	)
-	err := s.db.InTx(ctx, func(q store.Querier) error {
-		current, err := s.manageable(ctx, store.NewSites(q), siteID)
+	err := rt.s.db.InTx(ctx, func(q store.Querier) error {
+		current, err := rt.s.manageable(ctx, store.NewSites(q), siteID)
 		if err != nil {
 			return err
 		}
-		plan, err := s.corePlan(ctx, q, current)
+		plan, err := rt.corePlan(ctx, q, current)
 		if err != nil {
 			return err
 		}
 		if plan.Target == "" {
 			return fmt.Errorf("%w (it runs WordPress %s)", ErrNoCoreUpdate, current.WPCoreVersion)
 		}
-		job, err = s.enqueueCoreUpdate(ctx, q, current, plan.Target, "", createdByUserID)
+		job, err = rt.enqueueCoreUpdate(ctx, q, current, plan.Target, "", createdByUserID)
 		if err != nil {
 			return err
 		}
@@ -209,13 +208,13 @@ func (s *Service) UpdateCore(ctx context.Context, siteID, createdByUserID string
 	if err != nil {
 		return store.Site{}, store.Job{}, err
 	}
-	s.log.InfoContext(ctx, "core update queued", "site_id", siteID, "to", site.WPCoreVersion, "job_id", job.ID)
+	rt.s.log.InfoContext(ctx, "core update queued", "site_id", siteID, "to", site.WPCoreVersion, "job_id", job.ID)
 	return site, job, nil
 }
 
 // enqueueCoreUpdate sets a running site's status to updating and queues
 // its core update, in q's transaction.
-func (s *Service) enqueueCoreUpdate(ctx context.Context, q store.Querier, site store.Site, to, rollout, createdByUserID string) (store.Job, error) {
+func (rt *Rollouts) enqueueCoreUpdate(ctx context.Context, q store.Querier, site store.Site, to, rollout, createdByUserID string) (store.Job, error) {
 	if site.Status != store.SiteRunning {
 		return store.Job{}, fmt.Errorf("%w (it is %s)", ErrNotRunning, site.Status)
 	}
@@ -249,8 +248,8 @@ func coreJobPayload(r *jobs.Run) (coreUpdatePayload, error) {
 	return p, nil
 }
 
-func (s *Service) prepareCoreUpdate(ctx context.Context, r *jobs.Run) error {
-	site, err := s.managedSite(ctx, r)
+func (rt *Rollouts) prepareCoreUpdate(ctx context.Context, r *jobs.Run) error {
+	site, err := rt.s.managedSite(ctx, r)
 	if err != nil {
 		return err
 	}
@@ -276,15 +275,15 @@ func branchOf(version string) string {
 
 // wpcliSite runs WP-CLI on a site a job is changing. WP-CLI exiting with
 // an error is permanent, as in a restore (wpcliRestored).
-func (s *Service) wpcliSite(ctx context.Context, siteID string, args ...string) (string, error) {
-	out, err := s.wpcliRestored(ctx, siteID, args...)
+func (rt *Rollouts) wpcliSite(ctx context.Context, siteID string, args ...string) (string, error) {
+	out, err := rt.s.wpcliRestored(ctx, siteID, args...)
 	return strings.TrimSpace(out), err
 }
 
 // recordSchema records the site's database schema version before the
 // update, so a revert knows whether update-db changed it.
-func (s *Service) recordSchema(ctx context.Context, r *jobs.Run) error {
-	site, err := s.managedSite(ctx, r)
+func (rt *Rollouts) recordSchema(ctx context.Context, r *jobs.Run) error {
+	site, err := rt.s.managedSite(ctx, r)
 	if err != nil {
 		return err
 	}
@@ -292,7 +291,7 @@ func (s *Service) recordSchema(ctx context.Context, r *jobs.Run) error {
 	if found, err := r.Get(dataSchemaBefore, &before); err != nil || found {
 		return err
 	}
-	before, err = s.wpcliSite(ctx, site.ID, "option", "get", "db_version")
+	before, err = rt.wpcliSite(ctx, site.ID, "option", "get", "db_version")
 	if err != nil {
 		return fmt.Errorf("reading the database schema version: %w", err)
 	}
@@ -305,8 +304,8 @@ func (s *Service) recordSchema(ctx context.Context, r *jobs.Run) error {
 
 // recreateOnCore records the new core version and recreates both
 // containers on its images.
-func (s *Service) recreateOnCore(ctx context.Context, r *jobs.Run) error {
-	site, err := s.managedSite(ctx, r)
+func (rt *Rollouts) recreateOnCore(ctx context.Context, r *jobs.Run) error {
+	site, err := rt.s.managedSite(ctx, r)
 	if err != nil {
 		return err
 	}
@@ -318,11 +317,11 @@ func (s *Service) recreateOnCore(ctx context.Context, r *jobs.Run) error {
 	if err := r.Set(dataImagesChanged, true); err != nil {
 		return err
 	}
-	if _, err := store.NewSites(s.db).SetWPCoreVersion(ctx, site.ID, p.To); err != nil {
+	if _, err := store.NewSites(rt.s.db).SetWPCoreVersion(ctx, site.ID, p.To); err != nil {
 		return err
 	}
 	site.WPCoreVersion = p.To
-	if _, err := s.converge(ctx, r, site); err != nil {
+	if _, err := rt.s.converge(ctx, r, site); err != nil {
 		return err
 	}
 	r.Logf("Recreated the site's php and nginx containers on the WordPress %s images.", p.To)
@@ -333,7 +332,7 @@ func (s *Service) recreateOnCore(ctx context.Context, r *jobs.Run) error {
 // containers on the previous images, unless the update succeeded. If that
 // keeps failing, it gives up on its last attempt and records why, so the
 // final Undo marks the site failed.
-func (s *Service) revertCore(ctx context.Context, r *jobs.Run) error {
+func (rt *Rollouts) revertCore(ctx context.Context, r *jobs.Run) error {
 	if healthy, err := flag(r, dataHealthy); err != nil || healthy {
 		return err
 	}
@@ -348,7 +347,7 @@ func (s *Service) revertCore(ctx context.Context, r *jobs.Run) error {
 		r.Warnf("Keeping the newer WordPress core: the database was upgraded for it and couldn't be restored.")
 		return nil
 	}
-	site, err := s.jobSite(ctx, r)
+	site, err := rt.s.jobSite(ctx, r)
 	if err != nil || site.Status != store.SiteUpdating {
 		return nil
 	}
@@ -356,11 +355,11 @@ func (s *Service) revertCore(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
-	if _, err := store.NewSites(s.db).SetWPCoreVersion(ctx, site.ID, p.From); err != nil {
+	if _, err := store.NewSites(rt.s.db).SetWPCoreVersion(ctx, site.ID, p.From); err != nil {
 		return err
 	}
 	site.WPCoreVersion = p.From
-	if _, err := s.converge(ctx, r, site); err != nil {
+	if _, err := rt.s.converge(ctx, r, site); err != nil {
 		if !lastAttempt(r, err) {
 			return err
 		}
@@ -368,7 +367,7 @@ func (s *Service) revertCore(ctx context.Context, r *jobs.Run) error {
 		return r.Set(dataRevertError, err.Error())
 	}
 	// The object cache may hold options of the newer core.
-	if err := s.caches.FlushCache(ctx, site.ID); err != nil {
+	if err := rt.s.caches.FlushCache(ctx, site.ID); err != nil {
 		r.Warnf("Couldn't flush the object cache after reverting: %v", err)
 	}
 	r.Warnf("Moved the site back to WordPress %s: both containers run the previous images again.", p.From)
@@ -376,18 +375,18 @@ func (s *Service) revertCore(ctx context.Context, r *jobs.Run) error {
 }
 
 // upgradeCoreDatabase applies the new core's database schema.
-func (s *Service) upgradeCoreDatabase(ctx context.Context, r *jobs.Run) error {
-	site, err := s.managedSite(ctx, r)
+func (rt *Rollouts) upgradeCoreDatabase(ctx context.Context, r *jobs.Run) error {
+	site, err := rt.s.managedSite(ctx, r)
 	if err != nil {
 		return err
 	}
 	if err := r.Set(dataSchemaStarted, true); err != nil {
 		return err
 	}
-	if _, err := s.wpcliSite(ctx, site.ID, "core", "update-db"); err != nil {
+	if _, err := rt.wpcliSite(ctx, site.ID, "core", "update-db"); err != nil {
 		return fmt.Errorf("upgrading the database to WordPress %s: %w", site.WPCoreVersion, err)
 	}
-	after, err := s.wpcliSite(ctx, site.ID, "option", "get", "db_version")
+	after, err := rt.wpcliSite(ctx, site.ID, "option", "get", "db_version")
 	if err != nil {
 		return fmt.Errorf("reading the database schema version: %w", err)
 	}
@@ -409,7 +408,7 @@ func (s *Service) upgradeCoreDatabase(ctx context.Context, r *jobs.Run) error {
 // restoreChangedSchema restores the pre-update backup if the database
 // schema changed, or may have: a database upgraded for a newer core can't
 // safely run on the previous one.
-func (s *Service) restoreChangedSchema(ctx context.Context, r *jobs.Run) error {
+func (rt *Rollouts) restoreChangedSchema(ctx context.Context, r *jobs.Run) error {
 	for _, key := range []string{dataHealthy, dataBackupRestored} {
 		if done, err := flag(r, key); err != nil || done {
 			return err
@@ -430,16 +429,16 @@ func (s *Service) restoreChangedSchema(ctx context.Context, r *jobs.Run) error {
 		r.Logf("The database schema didn't change, so the pre-update backup isn't needed.")
 		return nil
 	}
-	return s.restoreJobBackup(ctx, r, "pre-update")
+	return rt.restoreJobBackup(ctx, r, "pre-update")
 }
 
 // restoreJobBackup restores the backup the job's backup steps took into
 // the job's site, then flushes its caches. If restoring keeps failing, it
 // gives up on its last attempt without failing the rollback and records
 // why (dataRestoreError); on success it sets dataBackupRestored.
-func (s *Service) restoreJobBackup(ctx context.Context, r *jobs.Run, what string) error {
+func (rt *Rollouts) restoreJobBackup(ctx context.Context, r *jobs.Run, what string) error {
 	siteID := r.Job().TargetID
-	rec, found, err := s.backups.JobBackup(ctx, r)
+	rec, found, err := rt.s.backups.JobBackup(ctx, r)
 	if err != nil {
 		return err
 	}
@@ -450,17 +449,17 @@ func (s *Service) restoreJobBackup(ctx context.Context, r *jobs.Run, what string
 	if !found || rec.Status != store.BackupSucceeded || rec.SnapshotID == "" {
 		return giveUp(fmt.Errorf("the job has no %s snapshot", what))
 	}
-	if err := s.engine.Restore(ctx, siteID, backup.SnapshotID(rec.SnapshotID), siteID); err != nil {
+	if err := rt.s.engine.Restore(ctx, siteID, backup.SnapshotID(rec.SnapshotID), siteID); err != nil {
 		err = permanentRestoreError(err)
 		if !lastAttempt(r, err) {
 			return err
 		}
 		return giveUp(fmt.Errorf("backup %s (snapshot %s): %w", rec.ID, shortSnapshot(rec.SnapshotID), err))
 	}
-	if err := s.caches.FlushCache(ctx, siteID); err != nil {
+	if err := rt.s.caches.FlushCache(ctx, siteID); err != nil {
 		r.Warnf("Couldn't flush the object cache after restoring: %v", err)
 	}
-	if err := s.prov.PurgeCache(ctx, siteID); err != nil && !errors.Is(err, provisioner.ErrSiteNotFound) {
+	if err := rt.s.prov.PurgeCache(ctx, siteID); err != nil && !errors.Is(err, provisioner.ErrSiteNotFound) {
 		r.Warnf("Couldn't purge the page cache after restoring: %v", err)
 	}
 	if err := r.Set(dataBackupRestored, true); err != nil {
@@ -470,8 +469,8 @@ func (s *Service) restoreJobBackup(ctx context.Context, r *jobs.Run, what string
 	return nil
 }
 
-func (s *Service) checkCoreHealth(ctx context.Context, r *jobs.Run) error {
-	site, err := s.managedSite(ctx, r)
+func (rt *Rollouts) checkCoreHealth(ctx context.Context, r *jobs.Run) error {
+	site, err := rt.s.managedSite(ctx, r)
 	if err != nil {
 		return err
 	}
@@ -479,7 +478,7 @@ func (s *Service) checkCoreHealth(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
-	if err := s.CheckHealth(ctx, site, p.To); err != nil {
+	if err := rt.s.CheckHealth(ctx, site, p.To); err != nil {
 		return jobs.Permanent(err)
 	}
 	if err := r.Set(dataHealthy, true); err != nil {
@@ -489,79 +488,10 @@ func (s *Service) checkCoreHealth(ctx context.Context, r *jobs.Run) error {
 	return nil
 }
 
-// CheckHealth checks that a running site works (§5.5): an HTTP request to
-// its web server gets an answer below 500, and WP-CLI reports core version
-// wantCore (unless it is empty) and loads WordPress with its plugins. It
-// tries again until the health timeout while the site's containers settle,
-// except after a wrong core version, which waiting doesn't fix. Its error
-// wraps ErrUnhealthy.
-func (s *Service) CheckHealth(ctx context.Context, site store.Site, wantCore string) error {
-	deadline := time.Now().Add(s.core.HealthTimeout)
-	for {
-		err := s.healthOnce(ctx, site, wantCore)
-		if err == nil {
-			return nil
-		}
-		if errors.Is(err, errWrongCore) || !time.Now().Before(deadline) || ctx.Err() != nil {
-			return fmt.Errorf("%w: %w", ErrUnhealthy, err)
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("%w: %w", ErrUnhealthy, ctx.Err())
-		case <-time.After(s.core.HealthInterval):
-		}
-	}
-}
-
-func (s *Service) healthOnce(ctx context.Context, site store.Site, wantCore string) error {
-	if s.prober != nil {
-		// A query string bypasses the page cache, which would otherwise
-		// answer for PHP, even with a stale page when PHP fails.
-		req := provisioner.ProbeRequest{
-			Host: strings.TrimPrefix(URL(site), "https://"),
-			Path: "/?pressfleet-health-check=" + strings.ToLower(rand.Text()[:8]),
-		}
-		res, err := s.prober.ProbeHTTP(ctx, site.ID, req)
-		if err != nil {
-			return fmt.Errorf("HTTP request: %w", err)
-		}
-		if res.StatusCode >= 500 {
-			return fmt.Errorf("HTTP request: the site answered %d", res.StatusCode)
-		}
-	}
-	if wantCore != "" {
-		got, err := s.wpcli(ctx, site.ID, "core", "version")
-		if err != nil {
-			return err
-		}
-		if got != wantCore {
-			return fmt.Errorf("%w: WP-CLI reports WordPress %s, want %s", errWrongCore, got, wantCore)
-		}
-	}
-	if _, err := s.wpcli(ctx, site.ID, "core", "is-installed"); err != nil {
-		return err
-	}
-	return nil
-}
-
-// wpcli runs WP-CLI for a health check, keeping only WP-CLI's error
-// message in the error.
-func (s *Service) wpcli(ctx context.Context, siteID string, args ...string) (string, error) {
-	out, err := s.prov.ExecWPCLI(ctx, siteID, args)
-	var ee *provisioner.ExecError
-	if errors.As(err, &ee) {
-		return "", fmt.Errorf("wp %s: exit status %d: %s", strings.Join(args, " "), ee.ExitCode, trimWPCLIError(ee.Stderr))
-	}
-	if err != nil {
-		return "", fmt.Errorf("wp %s: %w", strings.Join(args, " "), err)
-	}
-	return strings.TrimSpace(out), nil
-}
-
 // finishCoreUpdate sets the status from the live phase, records the
 // success, and puts the update in the job's result.
-func (s *Service) finishCoreUpdate(ctx context.Context, r *jobs.Run) error {
-	if err := s.finishUpdate(ctx, r); err != nil {
+func (rt *Rollouts) finishCoreUpdate(ctx context.Context, r *jobs.Run) error {
+	if err := rt.s.finishUpdate(ctx, r); err != nil {
 		return err
 	}
 	p, err := coreJobPayload(r)
@@ -569,7 +499,7 @@ func (s *Service) finishCoreUpdate(ctx context.Context, r *jobs.Run) error {
 		return err
 	}
 	result := map[string]string{"from": p.From, "to": p.To}
-	if rec, found, err := s.backups.JobBackup(ctx, r); err != nil {
+	if rec, found, err := rt.s.backups.JobBackup(ctx, r); err != nil {
 		return err
 	} else if found {
 		result["pre_update_backup_id"] = rec.ID
@@ -579,13 +509,13 @@ func (s *Service) finishCoreUpdate(ctx context.Context, r *jobs.Run) error {
 			return err
 		}
 	}
-	return s.recordRolloutOutcome(ctx, r, coreRollout, p.Rollout, p.To, "")
+	return rt.recordRolloutOutcome(ctx, r, coreRollout, p.Rollout, p.To, "")
 }
 
 // finishFailedCoreUpdate is the last Undo of a failed site.core_update job:
 // it sets the site's status, says in its status message what the failed
 // update left behind, and records the failure.
-func (s *Service) finishFailedCoreUpdate(ctx context.Context, r *jobs.Run) error {
+func (rt *Rollouts) finishFailedCoreUpdate(ctx context.Context, r *jobs.Run) error {
 	siteID := r.Job().TargetID
 	p, err := coreJobPayload(r)
 	if err != nil {
@@ -605,12 +535,12 @@ func (s *Service) finishFailedCoreUpdate(ctx context.Context, r *jobs.Run) error
 		}
 	}
 	backupNote := ""
-	if rec, found, err := s.backups.JobBackup(ctx, r); err != nil {
+	if rec, found, err := rt.s.backups.JobBackup(ctx, r); err != nil {
 		return err
 	} else if found && rec.Status == store.BackupSucceeded {
 		backupNote = " (pre-update backup " + rec.ID + ")"
 	}
-	status := s.observedStatus(ctx, siteID)
+	status := rt.s.observedStatus(ctx, siteID)
 	var prefix string
 	switch {
 	case flags[dataHealthy]:
@@ -630,7 +560,7 @@ func (s *Service) finishFailedCoreUpdate(ctx context.Context, r *jobs.Run) error
 		prefix = "the WordPress " + p.To + " update failed before changing the site"
 	}
 	msg := statusMessage(prefix, r.Job().Error)
-	changed, err := store.NewSites(s.db).SetStatus(ctx, siteID, status, msg, store.SiteUpdating)
+	changed, err := store.NewSites(rt.s.db).SetStatus(ctx, siteID, status, msg, store.SiteUpdating)
 	if err != nil {
 		return err
 	}
@@ -638,14 +568,14 @@ func (s *Service) finishFailedCoreUpdate(ctx context.Context, r *jobs.Run) error
 		r.Warnf("The site is %s: %s.", status, prefix)
 	}
 	if flags[dataHealthy] {
-		return s.recordRolloutOutcome(ctx, r, coreRollout, p.Rollout, p.To, "")
+		return rt.recordRolloutOutcome(ctx, r, coreRollout, p.Rollout, p.To, "")
 	}
-	return s.recordRolloutOutcome(ctx, r, coreRollout, p.Rollout, p.To, msg)
+	return rt.recordRolloutOutcome(ctx, r, coreRollout, p.Rollout, p.To, msg)
 }
 
 // corePlan returns the site's core update plan with its and its group's
 // policies, at the service's time.
-func (s *Service) corePlan(ctx context.Context, q store.Querier, site store.Site) (coreupdate.Plan, error) {
+func (rt *Rollouts) corePlan(ctx context.Context, q store.Querier, site store.Site) (coreupdate.Plan, error) {
 	policies := store.NewCorePolicies(q)
 	sp, err := policies.Site(ctx, site.ID)
 	if err != nil {
@@ -655,7 +585,7 @@ func (s *Service) corePlan(ctx context.Context, q store.Querier, site store.Site
 	if err != nil {
 		return coreupdate.Plan{}, err
 	}
-	return coreupdate.Decide(s.catalog, site.WPCoreVersion, corePolicy(sp), corePolicy(gp), s.core.Policy, s.now())
+	return coreupdate.Decide(rt.s.catalog, site.WPCoreVersion, corePolicy(sp), corePolicy(gp), rt.core.Policy, rt.s.now())
 }
 
 func corePolicy(p store.CorePolicy) coreupdate.Policy {

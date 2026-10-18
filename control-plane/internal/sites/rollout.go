@@ -78,6 +78,48 @@ func RolloutLockKey(name string) string { return "rollout:" + name }
 // RolloutScheduleName names a rollout's schedule.
 func RolloutScheduleName(name string) string { return "rollout:" + name }
 
+// Rollouts moves running sites, one at a time, to the WordPress release
+// their core update policy allows (coreupdate.go, corepolicy.go), to new
+// builds of their images (imageupdate.go), and to new site templates
+// (templateupdate.go), each in a job that checks the site's health and
+// reverts on failure. Rollout passes (this file) find the sites to move.
+// It works on the Service's sites with the Service's site-job toolkit:
+// converging, health checks, and status changes. Get it from
+// Service.Rollouts.
+type Rollouts struct {
+	s      *Service
+	core   CoreUpdateOptions
+	images *imageChecker
+}
+
+func newRollouts(s *Service, core CoreUpdateOptions, images ImageUpdateOptions) *Rollouts {
+	if core.MaxFailures <= 0 {
+		core.MaxFailures = 3
+	}
+	return &Rollouts{
+		s: s, core: core,
+		images: &imageChecker{opts: images, pulled: map[string]time.Time{}, latest: map[string]ImageBuild{}},
+	}
+}
+
+// handlers returns the job handlers of the rollouts the service can run.
+func (rt *Rollouts) handlers() []jobs.Handler {
+	var handlers []jobs.Handler
+	if rt.coreUpdates() {
+		handlers = append(handlers, rt.coreUpdateHandler())
+	}
+	if rt.s.pinner != nil {
+		handlers = append(handlers, rt.imageUpdateHandler())
+	}
+	if rt.s.templates != nil {
+		handlers = append(handlers, rt.templateUpdateHandler())
+	}
+	if len(rt.rolloutSources()) > 0 {
+		handlers = append(handlers, rt.rolloutHandler())
+	}
+	return handlers
+}
+
 // ErrUnknownRollout means a rollout name isn't one the service runs.
 var ErrUnknownRollout = errors.New("unknown rollout")
 
@@ -107,58 +149,58 @@ type rolloutSource struct {
 // if it can take backups, the image rollout if the driver pins images, and
 // the templates rollout if the driver fingerprints and snapshots its
 // renders.
-func (s *Service) rolloutSources() map[string]rolloutSource {
+func (rt *Rollouts) rolloutSources() map[string]rolloutSource {
 	out := map[string]rolloutSource{}
-	if s.coreUpdates() {
+	if rt.coreUpdates() {
 		out[coreRollout] = rolloutSource{
 			name:    coreRollout,
 			jobType: CoreUpdateJobType,
 			fingerprint: func(context.Context) (string, error) {
-				return s.coreFingerprint(), nil
+				return rt.coreFingerprint(), nil
 			},
-			candidates: s.coreCandidates,
+			candidates: rt.coreCandidates,
 			enqueue: func(ctx context.Context, q store.Querier, c rolloutCandidate) (store.Job, error) {
-				return s.enqueueCoreUpdate(ctx, q, c.site, c.target, coreRollout, "")
+				return rt.enqueueCoreUpdate(ctx, q, c.site, c.target, coreRollout, "")
 			},
 		}
 	}
-	if s.pinner != nil {
+	if rt.s.pinner != nil {
 		out[imageRollout] = rolloutSource{
 			name:        imageRollout,
 			jobType:     ImageUpdateJobType,
-			fingerprint: s.imageFingerprint,
-			candidates:  s.imageCandidates,
+			fingerprint: rt.imageFingerprint,
+			candidates:  rt.imageCandidates,
 			enqueue: func(ctx context.Context, q store.Querier, c rolloutCandidate) (store.Job, error) {
-				return s.enqueueImageUpdate(ctx, q, c.site, c.images, imageRollout)
+				return rt.enqueueImageUpdate(ctx, q, c.site, c.images, imageRollout)
 			},
 		}
 	}
-	if s.templates != nil {
+	if rt.s.templates != nil {
 		out[templateRollout] = rolloutSource{
 			name:    templateRollout,
 			jobType: TemplateUpdateJobType,
 			fingerprint: func(context.Context) (string, error) {
-				return s.templates.TemplateFingerprint(), nil
+				return rt.s.templates.TemplateFingerprint(), nil
 			},
-			candidates: s.templateCandidates,
+			candidates: rt.templateCandidates,
 			enqueue: func(ctx context.Context, q store.Querier, c rolloutCandidate) (store.Job, error) {
-				return s.enqueueTemplateUpdate(ctx, q, c.site, c.target, templateRollout)
+				return rt.enqueueTemplateUpdate(ctx, q, c.site, c.target, templateRollout)
 			},
 		}
 	}
 	return out
 }
 
-func (s *Service) rolloutHandler() jobs.Handler {
-	return jobs.Handler{Type: RolloutJobType, Steps: []jobs.Step{{Name: stepRolloutPass, Do: s.rolloutPass}}}
+func (rt *Rollouts) rolloutHandler() jobs.Handler {
+	return jobs.Handler{Type: RolloutJobType, Steps: []jobs.Step{{Name: stepRolloutPass, Do: rt.rolloutPass}}}
 }
 
 // EnqueueRollout queues a pass of every rollout, unless one is already
 // waiting. The control plane calls it at startup, so new images in the
 // version manifest start rolling out.
-func (s *Service) EnqueueRollout(ctx context.Context) error {
-	for name := range s.rolloutSources() {
-		if err := enqueueRolloutPass(ctx, s.db, name); err != nil {
+func (rt *Rollouts) EnqueueRollout(ctx context.Context) error {
+	for name := range rt.rolloutSources() {
+		if err := enqueueRolloutPass(ctx, rt.s.db, name); err != nil {
 			return err
 		}
 	}
@@ -188,9 +230,9 @@ func enqueueRolloutPass(ctx context.Context, q store.Querier, name string) error
 
 // EnsureRolloutSchedule creates or updates every rollout's schedule. It is
 // idempotent.
-func (s *Service) EnsureRolloutSchedule(ctx context.Context) error {
-	for name := range s.rolloutSources() {
-		if _, err := jobs.UpsertSchedule(ctx, s.db, jobs.ScheduleSpec{
+func (rt *Rollouts) EnsureRolloutSchedule(ctx context.Context) error {
+	for name := range rt.rolloutSources() {
+		if _, err := jobs.UpsertSchedule(ctx, rt.s.db, jobs.ScheduleSpec{
 			Name: RolloutScheduleName(name), JobType: RolloutJobType, TargetType: rolloutTargetType, TargetID: rolloutTargetID(name),
 			LockKey: RolloutLockKey(name), Interval: RolloutInterval, MissedRunPolicy: store.MissedCoalesce,
 		}); err != nil {
@@ -201,8 +243,8 @@ func (s *Service) EnsureRolloutSchedule(ctx context.Context) error {
 }
 
 // rolloutPass runs one pass of the job's rollout.
-func (s *Service) rolloutPass(ctx context.Context, r *jobs.Run) error {
-	src, ok := s.rolloutSources()[strings.TrimPrefix(r.Job().TargetID, rolloutTargetID(""))]
+func (rt *Rollouts) rolloutPass(ctx context.Context, r *jobs.Run) error {
+	src, ok := rt.rolloutSources()[strings.TrimPrefix(r.Job().TargetID, rolloutTargetID(""))]
 	if !ok {
 		return jobs.Permanent(fmt.Errorf("%w %q", ErrUnknownRollout, r.Job().TargetID))
 	}
@@ -210,7 +252,7 @@ func (s *Service) rolloutPass(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
-	ro, err := store.NewRollouts(s.db).Sync(ctx, src.name, fingerprint)
+	ro, err := store.NewRollouts(rt.s.db).Sync(ctx, src.name, fingerprint)
 	if err != nil {
 		return err
 	}
@@ -219,11 +261,11 @@ func (s *Service) rolloutPass(ctx context.Context, r *jobs.Run) error {
 			ro.HaltedAt.UTC().Format(time.RFC3339), ro.HaltReason)
 		return r.SetResult("halted", true)
 	}
-	if now := s.now(); !s.core.Window.Contains(now) {
+	if now := rt.s.now(); !rt.core.Window.Contains(now) {
 		r.Logf("Outside the maintenance window; site updates wait for it.")
 		return nil
 	}
-	active, err := store.NewJobs(s.db).List(ctx, store.JobFilter{
+	active, err := store.NewJobs(rt.s.db).List(ctx, store.JobFilter{
 		States: []store.JobState{store.JobQueued, store.JobRunning, store.JobRollingBack}, Types: []string{src.jobType}, Limit: 1,
 	})
 	if err != nil {
@@ -237,7 +279,7 @@ func (s *Service) rolloutPass(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
-	failures, err := store.NewRollouts(s.db).Failures(ctx, src.name)
+	failures, err := store.NewRollouts(rt.s.db).Failures(ctx, src.name)
 	if err != nil {
 		return err
 	}
@@ -246,7 +288,7 @@ func (s *Service) rolloutPass(ctx context.Context, r *jobs.Run) error {
 			continue
 		}
 		var job store.Job
-		err := s.db.InTx(ctx, func(q store.Querier) error {
+		err := rt.s.db.InTx(ctx, func(q store.Querier) error {
 			// The site may have changed since it was listed.
 			current, err := store.NewSites(q).Get(ctx, c.site.ID)
 			if err != nil {
@@ -267,7 +309,7 @@ func (s *Service) rolloutPass(ctx context.Context, r *jobs.Run) error {
 			return err
 		}
 		r.Logf("Updating site %s (%s) to %s (job %s).", c.site.ID, c.site.PreviewDomain, c.target, job.ID)
-		s.log.InfoContext(ctx, "rollout site update queued", "rollout", src.name, "site_id", c.site.ID, "target", c.target, "job_id", job.ID)
+		rt.s.log.InfoContext(ctx, "rollout site update queued", "rollout", src.name, "site_id", c.site.ID, "target", c.target, "job_id", job.ID)
 		for k, v := range map[string]string{"site_id": c.site.ID, "target": c.target, "job_id": job.ID} {
 			if err := r.SetResult(k, v); err != nil {
 				return err
@@ -286,19 +328,19 @@ var errSkipCandidate = errors.New("the site changed since it was listed")
 // the same target on the site again, also after an update started by hand;
 // only an update the rollout queued (rollout not empty) counts towards
 // halting it, and queues its next pass.
-func (s *Service) recordRolloutOutcome(ctx context.Context, r *jobs.Run, name, rollout, target, failureMsg string) error {
+func (rt *Rollouts) recordRolloutOutcome(ctx context.Context, r *jobs.Run, name, rollout, target, failureMsg string) error {
 	siteID := r.Job().TargetID
-	rollouts := store.NewRollouts(s.db)
+	rollouts := store.NewRollouts(rt.s.db)
 	if failureMsg != "" {
 		// An update cut short by the site's deletion says nothing about
 		// the release, so it doesn't count toward halting the rollout.
-		site, err := store.NewSites(s.db).Get(ctx, siteID)
+		site, err := store.NewSites(rt.s.db).Get(ctx, siteID)
 		if errors.Is(err, store.ErrNotFound) || err == nil && site.Status == store.SiteDeleting {
 			r.Logf("The site is being deleted, so the failed update doesn't count against the %s rollout.", name)
 			if rollout == "" {
 				return nil
 			}
-			return enqueueRolloutPass(ctx, s.db, rollout)
+			return enqueueRolloutPass(ctx, rt.s.db, rollout)
 		}
 		if err != nil {
 			return err
@@ -314,7 +356,7 @@ func (s *Service) recordRolloutOutcome(ctx context.Context, r *jobs.Run, name, r
 		}
 	} else {
 		ro, err := rollouts.RecordFailure(ctx, name, store.RolloutFailure{SiteID: siteID, Target: target, Message: failureMsg},
-			rollout != "", s.core.MaxFailures)
+			rollout != "", rt.core.MaxFailures)
 		if errors.Is(err, store.ErrReference) {
 			return nil // the site is gone
 		}
@@ -323,19 +365,19 @@ func (s *Service) recordRolloutOutcome(ctx context.Context, r *jobs.Run, name, r
 		}
 		if ro.Halted() {
 			r.Warnf("The %s rollout is halted: %s.", name, ro.HaltReason)
-			s.log.WarnContext(ctx, "rollout halted", "rollout", name, "reason", ro.HaltReason)
+			rt.s.log.WarnContext(ctx, "rollout halted", "rollout", name, "reason", ro.HaltReason)
 		}
 	}
 	if rollout == "" {
 		return nil
 	}
-	return enqueueRolloutPass(ctx, s.db, rollout)
+	return enqueueRolloutPass(ctx, rt.s.db, rollout)
 }
 
 // coreFingerprint identifies the WordPress releases in the catalog.
-func (s *Service) coreFingerprint() string {
+func (rt *Rollouts) coreFingerprint() string {
 	var vs []string
-	for _, w := range s.catalog.WordPressVersions() {
+	for _, w := range rt.s.catalog.WordPressVersions() {
 		vs = append(vs, w.Version)
 	}
 	return strings.Join(vs, " ")
@@ -343,12 +385,12 @@ func (s *Service) coreFingerprint() string {
 
 // coreCandidates lists the running sites whose plan has a target, oldest
 // site first.
-func (s *Service) coreCandidates(ctx context.Context) ([]rolloutCandidate, error) {
-	running, err := s.runningSites(ctx)
+func (rt *Rollouts) coreCandidates(ctx context.Context) ([]rolloutCandidate, error) {
+	running, err := rt.s.runningSites(ctx)
 	if err != nil {
 		return nil, err
 	}
-	policies := store.NewCorePolicies(s.db)
+	policies := store.NewCorePolicies(rt.s.db)
 	sitePolicies, err := policies.Sites(ctx)
 	if err != nil {
 		return nil, err
@@ -358,12 +400,12 @@ func (s *Service) coreCandidates(ctx context.Context) ([]rolloutCandidate, error
 		return nil, err
 	}
 	var out []rolloutCandidate
-	now := s.now()
+	now := rt.s.now()
 	for _, site := range running {
-		plan, err := coreupdate.Decide(s.catalog, site.WPCoreVersion, corePolicy(sitePolicies[site.ID]),
-			corePolicy(groupPolicies[site.ClientGroupID]), s.core.Policy, now)
+		plan, err := coreupdate.Decide(rt.s.catalog, site.WPCoreVersion, corePolicy(sitePolicies[site.ID]),
+			corePolicy(groupPolicies[site.ClientGroupID]), rt.core.Policy, now)
 		if err != nil {
-			s.log.WarnContext(ctx, "planning a site's core update failed", "site_id", site.ID, "error", err)
+			rt.s.log.WarnContext(ctx, "planning a site's core update failed", "site_id", site.ID, "error", err)
 			continue
 		}
 		if plan.Target != "" {
@@ -385,19 +427,19 @@ type RolloutStatus struct {
 }
 
 // Rollout returns the rollout's state.
-func (s *Service) Rollout(ctx context.Context, name string) (RolloutStatus, error) {
-	if _, ok := s.rolloutSources()[name]; !ok {
+func (rt *Rollouts) Rollout(ctx context.Context, name string) (RolloutStatus, error) {
+	if _, ok := rt.rolloutSources()[name]; !ok {
 		return RolloutStatus{}, fmt.Errorf("%w %q", ErrUnknownRollout, name)
 	}
-	ro, err := store.NewRollouts(s.db).Get(ctx, name)
+	ro, err := store.NewRollouts(rt.s.db).Get(ctx, name)
 	if err != nil {
 		return RolloutStatus{}, err
 	}
-	failures, err := store.NewRollouts(s.db).Failures(ctx, name)
+	failures, err := store.NewRollouts(rt.s.db).Failures(ctx, name)
 	if err != nil {
 		return RolloutStatus{}, err
 	}
-	st := RolloutStatus{Rollout: ro, MaxFailures: s.core.MaxFailures, Window: s.core.Window, Failures: []store.RolloutFailure{}}
+	st := RolloutStatus{Rollout: ro, MaxFailures: rt.core.MaxFailures, Window: rt.core.Window, Failures: []store.RolloutFailure{}}
 	for _, id := range slices.Sorted(maps.Keys(failures)) {
 		st.Failures = append(st.Failures, failures[id])
 	}
@@ -405,11 +447,11 @@ func (s *Service) Rollout(ctx context.Context, name string) (RolloutStatus, erro
 }
 
 // ResumeRollout lifts a halt and queues a pass.
-func (s *Service) ResumeRollout(ctx context.Context, name string) (RolloutStatus, error) {
-	if _, ok := s.rolloutSources()[name]; !ok {
+func (rt *Rollouts) ResumeRollout(ctx context.Context, name string) (RolloutStatus, error) {
+	if _, ok := rt.rolloutSources()[name]; !ok {
 		return RolloutStatus{}, fmt.Errorf("%w %q", ErrUnknownRollout, name)
 	}
-	err := s.db.InTx(ctx, func(q store.Querier) error {
+	err := rt.s.db.InTx(ctx, func(q store.Querier) error {
 		if _, err := store.NewRollouts(q).Resume(ctx, name); err != nil {
 			return err
 		}
@@ -418,6 +460,6 @@ func (s *Service) ResumeRollout(ctx context.Context, name string) (RolloutStatus
 	if err != nil {
 		return RolloutStatus{}, err
 	}
-	s.log.InfoContext(ctx, "rollout resumed", "rollout", name)
-	return s.Rollout(ctx, name)
+	rt.s.log.InfoContext(ctx, "rollout resumed", "rollout", name)
+	return rt.Rollout(ctx, name)
 }

@@ -190,6 +190,7 @@ type Handlers struct {
 	db            *store.DB
 	auth          *auth.Service
 	sites         *sites.Service
+	rollouts      *sites.Rollouts
 	updates       *pluginupdates.Service
 	backups       *sitebackup.Service
 	offboarding   *offboard.Service
@@ -252,6 +253,9 @@ func newHandler(opts Options, requireAll bool) (http.Handler, error) {
 
 	h := &Handlers{log: opts.Logger, readiness: opts.Readiness, db: opts.DB, auth: opts.Auth, sites: opts.Sites, backups: opts.Backups,
 		uploads: opts.Uploads, secureCookies: opts.SecureCookies, sftp: opts.SFTP, build: opts.Build}
+	if opts.Sites != nil {
+		h.rollouts = opts.Sites.Rollouts()
+	}
 	h.exports = opts.Exports
 	if opts.DB != nil {
 		h.updates = pluginupdates.NewService(opts.DB)

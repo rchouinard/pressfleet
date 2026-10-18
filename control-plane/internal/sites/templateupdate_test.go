@@ -91,7 +91,7 @@ func (e *templateEnv) templateJobs(t *testing.T, siteID string) []store.Job {
 
 func (e *templateEnv) templateRollout(t *testing.T) sites.RolloutStatus {
 	t.Helper()
-	ro, err := e.svc.Rollout(context.Background(), sites.TemplateRolloutName)
+	ro, err := e.svc.Rollouts().Rollout(context.Background(), sites.TemplateRolloutName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestTemplateRolloutSiteBySite(t *testing.T) {
 
 		// An upgrade to a release with other templates.
 		e.tmpl.SetFingerprint(newTemplates)
-		if err := e.svc.EnqueueRollout(context.Background()); err != nil {
+		if err := e.svc.Rollouts().EnqueueRollout(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		for range 100 {
@@ -135,7 +135,7 @@ func TestTemplateRolloutSiteBySite(t *testing.T) {
 			if !ran {
 				break
 			}
-			if err := e.svc.EnqueueRollout(context.Background()); err != nil {
+			if err := e.svc.Rollouts().EnqueueRollout(context.Background()); err != nil {
 				t.Fatal(err)
 			}
 			updating := 0
@@ -216,7 +216,7 @@ func TestTemplateRolloutRevertsAndHalts(t *testing.T) {
 		}
 
 		// Resuming tries the site that wasn't, but not the failed ones.
-		if _, err := e.svc.ResumeRollout(context.Background(), sites.TemplateRolloutName); err != nil {
+		if _, err := e.svc.Rollouts().ResumeRollout(context.Background(), sites.TemplateRolloutName); err != nil {
 			t.Fatal(err)
 		}
 		e.runJobs(t)
@@ -308,7 +308,7 @@ func TestTemplateUpdateFromEarlierRelease(t *testing.T) {
 		e := newTemplateEnv(t, db, func(o *sites.Options) { o.CoreUpdates.MaxFailures = 1 })
 		site := e.siteOn(t, "A", "7.2.1")
 		e.tmpl.SetFingerprint(newTemplates)
-		if err := e.svc.EnqueueRollout(ctx); err != nil {
+		if err := e.svc.Rollouts().EnqueueRollout(ctx); err != nil {
 			t.Fatal(err)
 		}
 		for len(e.templateJobs(t, site.ID)) == 0 {

@@ -132,7 +132,7 @@ func (e *coreEnv) siteOn(t *testing.T, name, version string) store.Site {
 // rollout runs a rollout pass and everything it queues.
 func (e *coreEnv) rollout(t *testing.T) {
 	t.Helper()
-	if err := e.svc.EnqueueRollout(context.Background()); err != nil {
+	if err := e.svc.Rollouts().EnqueueRollout(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	e.runJobs(t)
@@ -180,7 +180,7 @@ func (e *coreEnv) checkCore(t *testing.T, siteID, version string) {
 
 func (e *coreEnv) setPolicy(t *testing.T, siteID string, u sites.CorePolicyUpdate) {
 	t.Helper()
-	if _, err := e.svc.SetCorePolicy(context.Background(), siteID, u); err != nil {
+	if _, err := e.svc.Rollouts().SetCorePolicy(context.Background(), siteID, u); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -210,15 +210,15 @@ func TestCoreRolloutMinorReleases(t *testing.T) {
 			if err != nil || rec.Kind != store.BackupPreUpdate || rec.Status != store.BackupSucceeded || rec.WPCoreVersion != "7.1.2" {
 				t.Errorf("pre-update backup = %+v, %v", rec, err)
 			}
-			st, err := e.svc.CoreStatus(context.Background(), site.ID)
+			st, err := e.svc.Rollouts().CoreStatus(context.Background(), site.ID)
 			if err != nil || st.Plan.Target != "" || st.Plan.Pending == nil || st.Plan.Pending.Version != "7.2.1" {
 				t.Errorf("status after the rollout = %+v, %v", st.Plan, err)
 			}
 		}
-		if st, _ := e.svc.CoreStatus(context.Background(), held.ID); st.Plan.Pending.Reason != coreupdate.PendingHeld {
+		if st, _ := e.svc.Rollouts().CoreStatus(context.Background(), held.ID); st.Plan.Pending.Reason != coreupdate.PendingHeld {
 			t.Errorf("held site's pending reason = %s", st.Plan.Pending.Reason)
 		}
-		if st, _ := e.svc.CoreStatus(context.Background(), free.ID); st.Plan.Pending.Reason != coreupdate.PendingAwaitingApproval {
+		if st, _ := e.svc.Rollouts().CoreStatus(context.Background(), free.ID); st.Plan.Pending.Reason != coreupdate.PendingAwaitingApproval {
 			t.Errorf("other site's pending reason = %s", st.Plan.Pending.Reason)
 		}
 		// Nothing more to do.
@@ -238,7 +238,7 @@ func TestCoreMajorNeedsApproval(t *testing.T) {
 		if len(e.coreJobs(t, site.ID)) != 0 {
 			t.Fatal("a major release rolled out without approval")
 		}
-		if _, _, err := e.svc.UpdateCore(context.Background(), site.ID, ""); !errors.Is(err, sites.ErrNoCoreUpdate) {
+		if _, _, err := e.svc.Rollouts().UpdateCore(context.Background(), site.ID, ""); !errors.Is(err, sites.ErrNoCoreUpdate) {
 			t.Errorf("UpdateCore without approval: err = %v, want ErrNoCoreUpdate", err)
 		}
 
@@ -255,7 +255,7 @@ func TestCoreMajorNeedsApproval(t *testing.T) {
 		// wins over it.
 		held := e.siteOn(t, "Held", "7.1.4")
 		e.setPolicy(t, held.ID, sites.CorePolicyUpdate{Hold: true})
-		if _, err := e.svc.SetClientGroupCorePolicy(context.Background(), e.group, sites.CorePolicyUpdate{ApprovedBranch: "7.2"}); err != nil {
+		if _, err := e.svc.Rollouts().SetClientGroupCorePolicy(context.Background(), e.group, sites.CorePolicyUpdate{ApprovedBranch: "7.2"}); err != nil {
 			t.Fatal(err)
 		}
 		e.runJobs(t)
@@ -318,7 +318,7 @@ func TestCoreUpdateRevertsOnFailure(t *testing.T) {
 		if restores != 1 {
 			t.Errorf("engine calls = %q, want one restore", e.engineOps(from))
 		}
-		st, err := e.svc.CoreStatus(context.Background(), site.ID)
+		st, err := e.svc.Rollouts().CoreStatus(context.Background(), site.ID)
 		if err != nil || st.LastFailure == nil || st.LastFailure.Target != "7.2.1" {
 			t.Errorf("status = %+v, %v; want the failure", st.LastFailure, err)
 		}
@@ -329,12 +329,12 @@ func TestCoreUpdateRevertsOnFailure(t *testing.T) {
 			t.Errorf("%d core update jobs after another rollout, want 1", n)
 		}
 		delete(e.reports, "7.2.1")
-		if _, _, err := e.svc.UpdateCore(context.Background(), site.ID, ""); err != nil {
+		if _, _, err := e.svc.Rollouts().UpdateCore(context.Background(), site.ID, ""); err != nil {
 			t.Fatal(err)
 		}
 		e.runJobs(t)
 		e.checkCore(t, site.ID, "7.2.1")
-		if st, _ := e.svc.CoreStatus(context.Background(), site.ID); st.LastFailure != nil {
+		if st, _ := e.svc.Rollouts().CoreStatus(context.Background(), site.ID); st.LastFailure != nil {
 			t.Errorf("failure kept after a successful update: %+v", st.LastFailure)
 		}
 	})
@@ -385,7 +385,7 @@ func TestCoreRolloutHaltsOnRepeatedFailures(t *testing.T) {
 			}
 			e.checkCore(t, id, "7.1.2")
 		}
-		ro, err := e.svc.Rollout(context.Background(), sites.CoreRolloutName)
+		ro, err := e.svc.Rollouts().Rollout(context.Background(), sites.CoreRolloutName)
 		if err != nil || !ro.Halted() || ro.ConsecutiveFailures != 2 || len(ro.Failures) != 2 {
 			t.Fatalf("rollout = %+v, %v; want halted after 2 failures", ro, err)
 		}
@@ -393,13 +393,13 @@ func TestCoreRolloutHaltsOnRepeatedFailures(t *testing.T) {
 		// Fixed images; resuming updates the site that wasn't tried, but
 		// not the ones that failed with the same release.
 		delete(e.reports, "7.1.4")
-		if _, err := e.svc.ResumeRollout(context.Background(), sites.CoreRolloutName); err != nil {
+		if _, err := e.svc.Rollouts().ResumeRollout(context.Background(), sites.CoreRolloutName); err != nil {
 			t.Fatal(err)
 		}
 		e.runJobs(t)
 		e.checkCore(t, ids[2], "7.1.4")
 		e.checkCore(t, ids[0], "7.1.2")
-		if ro, _ := e.svc.Rollout(context.Background(), sites.CoreRolloutName); ro.Halted() || ro.ConsecutiveFailures != 0 {
+		if ro, _ := e.svc.Rollouts().Rollout(context.Background(), sites.CoreRolloutName); ro.Halted() || ro.ConsecutiveFailures != 0 {
 			t.Errorf("rollout after resuming = %+v", ro)
 		}
 	})
@@ -455,23 +455,23 @@ func TestCorePolicyValidation(t *testing.T) {
 			{ApprovedBranch: "6.9"}, // no images
 		} {
 			var ve *sites.ValidationError
-			if _, err := e.svc.SetCorePolicy(ctx, site.ID, u); !errors.As(err, &ve) {
+			if _, err := e.svc.Rollouts().SetCorePolicy(ctx, site.ID, u); !errors.As(err, &ve) {
 				t.Errorf("SetCorePolicy(%+v) error = %v, want a ValidationError", u, err)
 			}
 		}
-		if _, err := e.svc.SetCorePolicy(ctx, "01jzzzzzzzzzzzzzzzzzzzzzzz", sites.CorePolicyUpdate{Hold: true}); !errors.Is(err, sites.ErrNotFound) {
+		if _, err := e.svc.Rollouts().SetCorePolicy(ctx, "01jzzzzzzzzzzzzzzzzzzzzzzz", sites.CorePolicyUpdate{Hold: true}); !errors.Is(err, sites.ErrNotFound) {
 			t.Errorf("missing site: err = %v", err)
 		}
-		if _, err := e.svc.SetClientGroupCorePolicy(ctx, "01jzzzzzzzzzzzzzzzzzzzzzzz", sites.CorePolicyUpdate{Hold: true}); !errors.Is(err, sites.ErrClientGroupNotFound) {
+		if _, err := e.svc.Rollouts().SetClientGroupCorePolicy(ctx, "01jzzzzzzzzzzzzzzzzzzzzzzz", sites.CorePolicyUpdate{Hold: true}); !errors.Is(err, sites.ErrClientGroupNotFound) {
 			t.Errorf("missing group: err = %v", err)
 		}
 		// A hold keeps the time it was placed.
-		st, err := e.svc.SetCorePolicy(ctx, site.ID, sites.CorePolicyUpdate{Hold: true})
+		st, err := e.svc.Rollouts().SetCorePolicy(ctx, site.ID, sites.CorePolicyUpdate{Hold: true})
 		if err != nil || !st.Policy.Hold || !st.Policy.HoldSince.Equal(testNow) {
 			t.Fatalf("hold = %+v, %v", st.Policy, err)
 		}
 		// Following the group again.
-		st, err = e.svc.SetCorePolicy(ctx, site.ID, sites.CorePolicyUpdate{})
+		st, err = e.svc.Rollouts().SetCorePolicy(ctx, site.ID, sites.CorePolicyUpdate{})
 		if err != nil || !st.Policy.IsZero() || st.Plan.Source != coreupdate.SourceNone {
 			t.Errorf("cleared policy = %+v (%s), %v", st.Policy, st.Plan.Source, err)
 		}

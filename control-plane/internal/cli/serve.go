@@ -240,10 +240,16 @@ func (a *app) buildServer(ctx context.Context) (_ *server, err error) {
 		Tasks:             prov,
 		TmpDir:            layout.TmpDir(),
 		ImageUpdates:      a.imageUpdates(),
+		Prober:            prov,
+		ImagePinner:       prov,
+		Templates:         prov,
 		Logger:            a.log.With("component", "sites"),
 	})
 	if err != nil {
 		return nil, err
+	}
+	for _, off := range s.siteSvc.Disabled() {
+		a.log.Info("site workflow disabled", "workflow", off)
 	}
 	if a.cfg.PreviewBaseDomain == "" {
 		a.log.Warn("preview_base_domain is not set; site creation is refused until it is")
@@ -396,8 +402,8 @@ func (s *server) startup(ctx context.Context) error {
 		}},
 		// The core rollout runs on a schedule, and once now, so releases
 		// new to the version manifest start rolling out.
-		{"scheduling the rollouts", func() error { return siteSvc.EnsureRolloutSchedule(ctx) }},
-		{"queuing the rollouts", func() error { return siteSvc.EnqueueRollout(ctx) }},
+		{"scheduling the rollouts", func() error { return siteSvc.Rollouts().EnsureRolloutSchedule(ctx) }},
+		{"queuing the rollouts", func() error { return siteSvc.Rollouts().EnqueueRollout(ctx) }},
 	}
 	for _, step := range bestEffort {
 		if err := step.run(); err != nil && !stopping() {
