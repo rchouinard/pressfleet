@@ -234,6 +234,23 @@ Done when: every Phase 1–4 operation can be performed from the UI. (Design doc
 | [#131](https://github.com/rchouinard/pressfleet/issues/131) | Integration tests: one-click admin login | P1 | M | #127, #129 |
 | [#133](https://github.com/rchouinard/pressfleet/issues/133) | Site export: wp-content archive and SQL dump | P1 | L | #112, #114 |
 | [#134](https://github.com/rchouinard/pressfleet/issues/134) | Export a site from a backup snapshot | P1 | M | #133, #52 |
+| [#146](https://github.com/rchouinard/pressfleet/issues/146) | Design: two-factor authentication for dashboard logins | P1 | S | — |
+| [#147](https://github.com/rchouinard/pressfleet/issues/147) | Authz: only sessions can create API tokens | P1 | S | — |
+| [#148](https://github.com/rchouinard/pressfleet/issues/148) | Config: two-factor settings | P1 | S | #146 |
+| [#149](https://github.com/rchouinard/pressfleet/issues/149) | Store: two-factor tables and repositories | P1 | M | #146 |
+| [#150](https://github.com/rchouinard/pressfleet/issues/150) | Auth: two-step login and recovery codes | P1 | M | #149 |
+| [#151](https://github.com/rchouinard/pressfleet/issues/151) | Auth + API: TOTP enrollment and login | P1 | M | #150 |
+| [#152](https://github.com/rchouinard/pressfleet/issues/152) | Auth + API: WebAuthn security keys and passkeys as a second factor | P1 | L | #150 |
+| [#153](https://github.com/rchouinard/pressfleet/issues/153) | Authz: required two-factor and forced enrollment | P1 | S | #148, #150 |
+| [#154](https://github.com/rchouinard/pressfleet/issues/154) | Authz + API: reauthentication for sensitive actions | P1 | M | #148, #150 |
+| [#155](https://github.com/rchouinard/pressfleet/issues/155) | API: Admin reset of a user's second factors | P1 | S | #151 |
+| [#156](https://github.com/rchouinard/pressfleet/issues/156) | CLI: `pressfleet user reset-two-factor` | P1 | S | #155 |
+| [#157](https://github.com/rchouinard/pressfleet/issues/157) | Doctor: WebAuthn credentials bound to another relying party ID | P1 | S | #152 |
+| [#158](https://github.com/rchouinard/pressfleet/issues/158) | UI: login second step and reauthentication dialog | P1 | M | #151, #152, #154 |
+| [#159](https://github.com/rchouinard/pressfleet/issues/159) | UI: two-factor settings, forced enrollment, and Admin reset | P1 | M | #151, #152, #153, #155 |
+| [#160](https://github.com/rchouinard/pressfleet/issues/160) | Integration and end-to-end tests: dashboard two-factor | P1 | M | #147, #156, #158, #159 |
+
+**Two-factor (2026-10-18):** dashboard logins get TOTP, WebAuthn security keys and passkeys, and recovery codes, with an optional requirement, reauthentication for sensitive actions, and session-only API token creation (design doc §6.2, [#146](https://github.com/rchouinard/pressfleet/issues/146), [plan](dashboard-two-factor-plan.md)). #147 is independent and can land first. The security review (#97) depends on #160. Passwordless passkey sign-in is post-MVP (#161).
 
 ### MVP Release Gate
 
@@ -246,7 +263,7 @@ Done when: 50 sites on an 8 GiB host stay healthy under light traffic (§4.1), a
 | [#94](https://github.com/rchouinard/pressfleet/issues/94) | ~~Decision: platform upgrade process~~ Resolved | P0 | S | — |
 | [#95](https://github.com/rchouinard/pressfleet/issues/95) | Platform upgrade command and procedure | P0 | L | #94, #8, #106, #58, #100 |
 | [#96](https://github.com/rchouinard/pressfleet/issues/96) | Disaster recovery: restore control plane state on a new host | P1 | M | #52, #94 |
-| [#97](https://github.com/rchouinard/pressfleet/issues/97) | Security review: tenant isolation and secrets | P0 | M | #79 |
+| [#97](https://github.com/rchouinard/pressfleet/issues/97) | Security review: tenant isolation and secrets | P0 | M | #79, #160 |
 | [#98](https://github.com/rchouinard/pressfleet/issues/98) | Capacity test: 50 sites on an 8 GiB host | P0 | L | #79 |
 | [#99](https://github.com/rchouinard/pressfleet/issues/99) | Installation and operator documentation | P0 | M | #95 |
 | [#100](https://github.com/rchouinard/pressfleet/issues/100) | Release pipeline: versioned binaries and images | P0 | M | #19, #80 |
@@ -289,6 +306,14 @@ Built-in Model Context Protocol server exposing the dashboard's operations to ag
 | # | Issue | Priority | Size | Depends on |
 | --- | --- | --- | --- | --- |
 | [#132](https://github.com/rchouinard/pressfleet/issues/132) | Built-in MCP server (tracking) | P2 | XL | #11, #103, #104 |
+
+### Post-MVP: Passwordless Sign-In
+
+Sign in to the dashboard with a passkey alone (§6.2). The MVP two-factor work keeps it open without a migration. Do not implement before MVP ships.
+
+| # | Issue | Priority | Size | Depends on |
+| --- | --- | --- | --- | --- |
+| [#161](https://github.com/rchouinard/pressfleet/issues/161) | Passwordless passkey sign-in (tracking) | P2 | M | #152, #158 |
 
 ## Open decisions
 

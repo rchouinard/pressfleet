@@ -1,6 +1,6 @@
 # Dashboard Two-Factor Authentication: Implementation Plan
 
-**Status:** Draft, 2026-10-18. Part of the MVP; not yet in the design doc or on the project board.
+**Status:** Accepted, 2026-10-18. Part of the MVP (M5). The design is in design doc §6.2 ([#146](https://github.com/rchouinard/pressfleet/issues/146)); this plan keeps the implementation detail.
 
 This plan adds a second factor to dashboard logins: TOTP authenticator apps, and WebAuthn security keys and passkeys (FIDO2, YubiKey). It doesn't change two-factor authentication in sites' wp-admin, which the WordPress security set already covers (design doc §6.1).
 
@@ -49,7 +49,7 @@ two_factor:
 
 Like other settings, a change applies when `pressfleet upgrade` recreates the control plane. Role changes apply immediately (§4.6): a user promoted to Admin under `admins` must enroll on their next request.
 
-**Domain coupling:** WebAuthn credentials are bound to a relying party ID, which is `dashboard_domain`. Changing the domain makes every registered security key and passkey unusable. The plan adds this to the domain-change warnings in [Changing settings](configuration.md#changing-settings) and a `doctor` check (issue 11). Without `dashboard_domain` (local development), the relying party ID is `localhost`.
+**Domain coupling:** WebAuthn credentials are bound to a relying party ID, which is `dashboard_domain`. Changing the domain makes every registered security key and passkey unusable. The plan adds this to the domain-change warnings in [Changing settings](configuration.md#changing-settings) and a `doctor` check (#157). Without `dashboard_domain` (local development), the relying party ID is `localhost`.
 
 ## Design
 
@@ -169,36 +169,36 @@ When it's built: `POST /auth/passkey/options` and `POST /auth/passkey`, conditio
 
 ## Issues
 
-Sizes and priorities follow the [roadmap](roadmap.md#conventions). Issue numbers are placeholders until the issues are created. All but the passwordless tracking issue are P1 in M5, and #97 depends on issue 14.
+Sizes and priorities follow the [roadmap](roadmap.md#conventions). All but the passwordless tracking issue are P1 in M5, and #97 depends on #160.
 
 | # | Issue | Size | Depends on |
 | --- | --- | --- | --- |
-| 1 | Design: dashboard two-factor authentication (design doc §4.5, §4.6, §6; this plan's decisions) | S | — |
-| 2 | Config: `two_factor` settings, validation, and docs | S | 1 |
-| 3 | Store: two-factor tables, `sessions.verified_at`, and repositories (SQLite + PostgreSQL) | M | 1 |
-| 4 | Auth: two-step login, challenge store, factor throttling, and recovery codes | M | 3 |
-| 5 | Auth + API: TOTP enrollment and login | M | 4 |
-| 6 | Auth + API: WebAuthn security keys and passkeys as a second factor (adds `go-webauthn`) | L | 4 |
-| 7 | Authz: required two-factor and forced enrollment | S | 2, 4 |
-| 8 | Authz + API: reauthentication for sensitive actions | M | 2, 4 |
-| 9 | API: Admin two-factor reset and two-factor status on users | S | 5 |
-| 10 | CLI: `pressfleet user reset-two-factor` | S | 9 |
-| 11 | Doctor: WebAuthn credentials bound to a different relying party ID | S | 6 |
-| 12 | UI: login second step and reauthentication dialog | M | 5, 6, 8 |
-| 13 | UI: two-factor settings, forced enrollment, and Admin reset | M | 5, 6, 7, 9 |
-| 14 | Integration and end-to-end tests: two-factor | M | 10, 12, 13, 15 |
-| 15 | Authz: only sessions can create API tokens | S | — |
-| — | Post-MVP: passwordless passkey sign-in (tracking) | M | 6, 12 |
+| [#146](https://github.com/rchouinard/pressfleet/issues/146) | Design: dashboard two-factor authentication (design doc §4.5, §4.6, §6; this plan's decisions) | S | — |
+| [#148](https://github.com/rchouinard/pressfleet/issues/148) | Config: `two_factor` settings, validation, and docs | S | #146 |
+| [#149](https://github.com/rchouinard/pressfleet/issues/149) | Store: two-factor tables, `sessions.verified_at`, and repositories (SQLite + PostgreSQL) | M | #146 |
+| [#150](https://github.com/rchouinard/pressfleet/issues/150) | Auth: two-step login, challenge store, factor throttling, and recovery codes | M | #149 |
+| [#151](https://github.com/rchouinard/pressfleet/issues/151) | Auth + API: TOTP enrollment and login | M | #150 |
+| [#152](https://github.com/rchouinard/pressfleet/issues/152) | Auth + API: WebAuthn security keys and passkeys as a second factor (adds `go-webauthn`) | L | #150 |
+| [#153](https://github.com/rchouinard/pressfleet/issues/153) | Authz: required two-factor and forced enrollment | S | #148, #150 |
+| [#154](https://github.com/rchouinard/pressfleet/issues/154) | Authz + API: reauthentication for sensitive actions | M | #148, #150 |
+| [#155](https://github.com/rchouinard/pressfleet/issues/155) | API: Admin two-factor reset and two-factor status on users | S | #151 |
+| [#156](https://github.com/rchouinard/pressfleet/issues/156) | CLI: `pressfleet user reset-two-factor` | S | #155 |
+| [#157](https://github.com/rchouinard/pressfleet/issues/157) | Doctor: WebAuthn credentials bound to a different relying party ID | S | #152 |
+| [#158](https://github.com/rchouinard/pressfleet/issues/158) | UI: login second step and reauthentication dialog | M | #151, #152, #154 |
+| [#159](https://github.com/rchouinard/pressfleet/issues/159) | UI: two-factor settings, forced enrollment, and Admin reset | M | #151, #152, #153, #155 |
+| [#160](https://github.com/rchouinard/pressfleet/issues/160) | Integration and end-to-end tests: two-factor | M | #156, #158, #159, #147 |
+| [#147](https://github.com/rchouinard/pressfleet/issues/147) | Authz: only sessions can create API tokens | S | — |
+| [#161](https://github.com/rchouinard/pressfleet/issues/161) | Post-MVP: passwordless passkey sign-in (tracking) | M | #152, #158 |
 
 Each issue updates the OpenAPI spec first and regenerates the Go and TypeScript code, and documents its user-facing behavior.
 
 ### Order
 
-1. **Foundation (15, 1–4):** 15 is independent and can land at any time. 1–4 settle the design and land storage and the two-step login, with nothing visible yet.
-2. **TOTP slice (5, 7, 9, 10, then the TOTP parts of 12–13):** a usable, shippable feature on its own, including enforcement and recovery.
-3. **WebAuthn (6, 11):** fits into the same login step and UI.
-4. **Reauthentication (8):** independent of the factors once 4 is in. Its UI dialog is part of 12.
-5. **Tests (14)**, on top of each issue's own unit tests.
+1. **Foundation (#147, #146, #148–#150):** #147 is independent and can land at any time. The rest settles the design and lands storage and the two-step login, with nothing visible yet.
+2. **TOTP slice (#151, #153, #155, #156, then the TOTP parts of #158 and #159):** a usable, shippable feature on its own, including enforcement and recovery.
+3. **WebAuthn (#152, #157):** fits into the same login step and UI.
+4. **Reauthentication (#154):** independent of the factors once #150 is in. Its UI dialog is part of #158.
+5. **Tests (#160)**, on top of each issue's own unit tests.
 
 ### Testing
 

@@ -2,7 +2,7 @@
 
 **Project Codename:** PressFleet  
 **Status:** Draft  
-**Last Updated:** 2026-09-27  
+**Last Updated:** 2026-10-18  
 **Target Audience:** Agencies specializing in WordPress development and management  
 **Core Vision:** A self-hostable, containerized application server for WordPress—a smaller-scale, open-source alternative to WP Engine featuring one-click deployments, automatic TLS, page/object caching, built-in monitoring, file management, and automated backup/restore routines.
 
@@ -341,7 +341,7 @@ Site components are named by role (`nginx`, `php`), not by orchestrator object. 
 * **Spec-first:** The API is defined in an OpenAPI 3.1 document (`/api/openapi.yaml`), which is the source of truth. Go server interfaces and request/response types, and the TypeScript client used by the Nuxt UI, are generated from it. CI fails if generated code is out of date with the spec.
 * **Versioned paths:** All endpoints live under `/api/v1/`. Breaking changes require a new version prefix; additive changes do not.
 * **Conventions:** JSON request/response bodies, standard HTTP status codes, `202 Accepted` + job ID for long-running operations, and a consistent error body (RFC 9457 Problem Details).
-* **Authentication:** Session cookies for the embedded UI; bearer API tokens (with scopes, §4.2) for automation.
+* **Authentication:** Session cookies for the embedded UI, with an optional or required second factor (§6.2); bearer API tokens (with scopes, §4.2) for automation. Only sessions can create API tokens.
 * **Authorization:** Role-based, enforced by the server on every endpoint (§4.6). `403 Forbidden` responses use the standard Problem Details body.
 
 ### 4.6. Authorization & Roles
@@ -359,15 +359,16 @@ Each user has one platform-wide role. The roles are fixed in the MVP; there are 
 | Create and edit client groups; manage alert rules | ✓ | ✓ | |
 | Delete sites, optionally with their backups (snapshots and backup records) | ✓ | | |
 | Delete or offboard client groups (export or delete the backup repository and its key) | ✓ | | |
-| Manage users, roles, and other users' API tokens; view the audit log | ✓ | | |
+| Manage users, roles, and other users' API tokens; reset other users' second factors; view the audit log | ✓ | | |
 | Change platform settings (DNS and S3 credentials, SMTP, alert channels, backup location, retention, WordPress security set) | ✓ | | |
-| Manage their own profile (display name), password, API tokens, and SSH keys | ✓ | ✓ | ✓ |
+| Manage their own profile (display name), password, second factors (§6.2), API tokens, and SSH keys | ✓ | ✓ | ✓ |
 
 **Rules:**
 * **Single check point:** Every API handler calls one authorization check with the caller, the action, and the target before doing anything. The UI hides actions the user can't take, but the server is authoritative.
-* **Tokens:** A token's effective permissions are the intersection of its scope and its owner's *current* role. MVP scopes are `full` (everything the owner's role allows) and `read-only`. Future site-scoped tokens (§4.2) plug into the same check.
+* **Tokens:** A token's effective permissions are the intersection of its scope and its owner's *current* role. MVP scopes are `full` (everything the owner's role allows) and `read-only`. Future site-scoped tokens (§4.2) plug into the same check. Tokens are created only from dashboard sessions, never with another token, so a stolen token can't mint replacements that outlive its revocation; tokens can still list and revoke tokens.
 * **Immediate effect:** Role changes apply immediately to the user's existing sessions and tokens.
-* **At least one Admin:** The last Admin can't be demoted, disabled, or deleted. `pressfleet init` creates the first user as an Admin, and `pressfleet user create --role` (run inside the control plane container, §4.7) exists for recovery.
+* **Two-factor:** Restricted sessions of users who must enroll, and sensitive actions that need a fresh factor check, are enforced by the same check (§6.2).
+* **At least one Admin:** The last Admin can't be demoted, disabled, or deleted. `pressfleet init` creates the first user as an Admin, and `pressfleet user create --role` and `pressfleet user reset-two-factor` (run inside the control plane container, §4.7) exist for recovery.
 * **Client groups:** The check resolves every target (site, backup, job, alert) to its client group. Client-group-scoped access (post-MVP) only needs a user↔group membership table on top of this.
 
 **Audit log:** Every authenticated state-changing request and every authorization denial is recorded as an `AuditEvent`. Each event holds the actor (user and token), action, target, result, source IP, and timestamp, and never includes secrets. Admins can view and filter the audit log in the dashboard. Retention is configurable.
@@ -547,7 +548,7 @@ A button on a site's dashboard page logs the current platform user in to the sit
 * **Token format (v1):** `v1.<payload>.<signature>`, both parts base64url without padding. The payload is JSON `{"site", "user", "actor", "jti", "iat", "exp"}`: the site ID, the WordPress user's login, the platform user's ID, a random 128-bit ID (hex), and Unix times 60 seconds apart. The signature is Ed25519 over the ASCII bytes `v1.<payload>`.
 * **Flow:** `POST /api/v1/sites/{id}/admin-login` returns the token and the site's login URL: `wp-login.php?action=pressfleet-login` on the primary domain once the site is live (§5.2), otherwise on the preview domain. The dashboard submits the token as a form POST in a new tab, so it never appears in a URL, an access log (which Viewers can read, §7.4), a `Referer` header, or browser history. The site must be running and not in maintenance mode.
 * **Site side:** a module of the platform must-use plugin checks the signature, the site ID, the expiry, and that the token hasn't been used (each `jti` is recorded in the site's database until it expires, not in the object cache, which can evict it). It then checks that the user is an administrator, sets the WordPress auth cookie for a browser session, and redirects to wp-admin. Any failure shows one generic error. The session is marked as a platform login with the actor and `jti`.
-* **Two-factor:** the platform login counts as authentication. When the security set requires two-factor authentication (§6.1), a dashboard login asks for no second factor, and its session is exempt from the forced enrollment, so a shared administrator account isn't bound to one person's device. Password logins are unaffected.
+* **Two-factor:** the platform login counts as authentication. When the security set requires two-factor authentication (§6.1), a dashboard login asks for no second factor, and its session is exempt from the forced enrollment, so a shared administrator account isn't bound to one person's device. Password logins are unaffected. This is about wp-admin; dashboard sessions themselves can require a second factor (§6.2).
 * **Audit:** every issued token is an audit event (§4.6) naming the WordPress user and the `jti` (never the token), so a WordPress session can be traced to the platform user who opened it.
 * **Preview password protection:** when it is on (§5.1) and the site isn't live, Traefik asks for the preview credentials before the login reaches WordPress; the dashboard says so.
 
@@ -564,11 +565,11 @@ A button on a site's dashboard page logs the current platform user in to the sit
   * Site users live only in the server's memory; the control plane recreates them from the state database when it starts and whenever the server restarts.
   * Redis runs with a `maxmemory` limit and an LRU eviction policy. One busy site can evict others' cache entries; this is an accepted trade-off for lower resource usage, and eviction rates are monitored (§7).
 * **Backups:** Each client group's Restic repository has its own encryption key.
-* **Secrets:** Database passwords, Redis ACL passwords, preview basic auth passwords, Restic repository keys, and S3 credentials are stored encrypted at rest in the control plane database using the platform master key, supplied via environment variable or file. Install-time secrets that `pressfleet init` collects before the state database exists (DNS provider credentials, the SMTP relay password) are encrypted with the same key and stored sealed in the configuration file; the control plane decrypts them at startup. Plaintext secrets are never logged. Losing the master key makes all backups unrecoverable; see the warning in §4.1.
+* **Secrets:** Database passwords, Redis ACL passwords, preview basic auth passwords, Restic repository keys, S3 credentials, and users' TOTP secrets (§6.2) are stored encrypted at rest in the control plane database using the platform master key, supplied via environment variable or file. Install-time secrets that `pressfleet init` collects before the state database exists (DNS provider credentials, the SMTP relay password) are encrypted with the same key and stored sealed in the configuration file; the control plane decrypts them at startup. Plaintext secrets are never logged. Losing the master key makes all backups unrecoverable; see the warning in §4.1.
 * **Docker socket:** Access to the Docker socket is equivalent to root on the host. Traefik uses a read-only socket proxy, and only the control plane has write access.
 * **Developer access:** SFTP and database tunnels authenticate with SSH keys tied to platform users, not shared passwords. SFTP runs as the site's UID with only its `wp-content` mounted, and database sessions use temporary MariaDB users that are dropped at expiry, so the site's own database password is never revealed (§5.8).
 * **Dashboard login to WordPress:** platform users log in to wp-admin with signed tokens that expire after 60 seconds and work once, sent in a POST body rather than a URL. Sites hold only the platform's public key, and every login is audited (§5.9).
-* **Control plane access:** All API endpoints require authentication (session for the UI, API tokens for automation) and role-based authorization (§4.6). State-changing actions and authorization denials are written to the audit log.
+* **Control plane access:** All API endpoints require authentication (session for the UI, API tokens for automation) and role-based authorization (§4.6). Dashboard logins can require a second factor, and sensitive actions a fresh one (§6.2). State-changing actions and authorization denials are written to the audit log.
 
 ### 6.1. WordPress Security Set
 
@@ -588,6 +589,43 @@ PHP features are modules of the platform must-use plugin in the site images (`/o
 | **Disable application passwords.** Left available by default because integrations rely on them. | Off | Must-use plugin |
 
 All-in-one security suites (Wordfence and similar) are deliberately excluded: their memory use conflicts with the capacity target, they expect to write to `wp-config.php`, `.user.ini`, and core files (all read-only here), and they duplicate platform features.
+
+### 6.2. Dashboard Two-Factor Authentication
+
+Dashboard logins can require a second factor: an authenticator app (TOTP), or a security key or passkey (WebAuthn, which covers FIDO2 keys such as YubiKeys), with recovery codes as a fallback (decided 2026-10-18). Any user can turn it on for themselves; a platform setting can require it. This is separate from two-factor in sites' wp-admin (§6.1).
+
+**Settings (§4.1):**
+
+| Setting | Default | Meaning |
+| :--- | :---: | :--- |
+| `two_factor.required` | `off` | `off`: optional for everyone. `admins`: Admins must enroll. `all`: every user must. |
+| `two_factor.reauthentication` | `on` | Ask for a fresh check before sensitive actions in the dashboard. |
+| `two_factor.reauthentication_max_age` | `10m` | How long a check counts as fresh (1 minute to 1 hour). |
+
+**Login:** a password login for a user with a second factor answers `401` with the problem type `second-factor-required`, listing the user's methods and the WebAuthn request options, and sets a short-lived (5 minutes), single-use `pressfleet_login` cookie. `POST /api/v1/auth/login/second-factor` checks the factor and starts the session. Users without a second factor log in as before. Failed factor checks count against the same per-account and per-address throttle as failed passwords, and are audited.
+
+**Factors:**
+* **TOTP:** RFC 6238 (SHA-1, 6 digits, 30-second steps, one step of skew), confirmed with a code at enrollment. The secret is sealed with the master key, since it can't be hashed; each time step's code works once. One per user.
+* **WebAuthn:** security keys and passkeys, any number per user, named by the user. The relying party ID is `dashboard_domain` (`localhost` without one), and origins come from configuration, never from the request. Attestation is `none`. Registration prefers resident keys and records each credential's user verification and backup flags, and each user has a random WebAuthn user handle, so credentials registered now can later sign in without a password. A signature counter that goes backwards is audited, not refused, since synced passkeys report 0. Changing `dashboard_domain` makes every registered credential unusable; `pressfleet doctor` warns about credentials bound to another relying party ID.
+* **Recovery codes:** ten single-use codes of 80 random bits, stored as SHA-256 hashes and shown once. Regenerating replaces the set. They stand in for a second factor at login but don't count as enrollment.
+
+**Enforcement:** when `two_factor.required` covers a user's role and they have no second factor, a password login starts a restricted session that can only view the user, log out, and enroll; anything else is refused with `403` and the problem type `two-factor-enrollment-required`. It is checked on every request, so role and setting changes apply immediately (§4.6). A user can't remove their last second factor while one is required. API tokens and SSH keys of users who haven't enrolled keep working, so turning the setting on doesn't break automation.
+
+**Reauthentication:** sessions record when the user last proved who they are (`verified_at`: at login, and on `POST /api/v1/auth/reauthenticate` with a second factor, or the password for users without one). With `two_factor.reauthentication` on, the authorization check refuses the following actions from a session verified longer ago than the maximum age, with `403` and the problem type `reauthentication-required`; the dashboard asks for the factor and retries:
+
+| Action | Why |
+| :--- | :--- |
+| Add, remove, or reset second factors; regenerate recovery codes | They protect the account |
+| Create API tokens; add SSH keys | Long-lived credentials that bypass two-factor |
+| Create, update (including roles), and delete users; manage others' API tokens and SSH keys | Privilege changes |
+| Open read-write database sessions | Direct write access to site data |
+| Delete sites, delete client groups, offboard client groups | Destructive, and can delete backups |
+
+Password changes already ask for the current password. Dashboard login to WordPress (§5.9) isn't on the list: it is frequent and scoped to one site. API tokens can't be asked to reauthenticate, so the checks don't apply to them, but tokens can never create API tokens (§4.6) and second factors are managed from sessions only.
+
+**Resets:** removing a factor signs the user out of their other sessions. An Admin can reset another user's second factors, which removes them all and signs that user out everywhere; `pressfleet user reset-two-factor`, run inside the control plane container (§4.7), does the same for a locked-out last Admin. Every enrollment, removal, reset, reauthentication, and recovery-code login is audited (§4.6), without codes, secrets, or keys.
+
+**Passwordless sign-in** with a passkey is planned after the MVP; the constraints above (resident keys, user handles, stored flags, and a challenge store that doesn't need to know the user) keep it from needing a migration or re-registration.
 
 ---
 
@@ -669,6 +707,7 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
   * **Done when:** every metric in §7.1–7.2 is collected and queryable via the API, and each default alert rule fires and resolves correctly in integration tests.
 * **Phase 5: Dashboard**
   * Build the Nuxt management UI for client groups, provisioning, go-live, site status, job progress, backups, metrics charts, logs, alerts, users and roles, and the audit log, plus one-click login to a site's WordPress admin (§5.9).
+  * Two-factor authentication for dashboard logins: TOTP, security keys and passkeys, recovery codes, an optional requirement, and reauthentication for sensitive actions (§6.2).
   * Embed the static UI build into the Go binary.
   * **Done when:** every Phase 1–4 operation can be performed from the UI.
 * **MVP Release Gate**
