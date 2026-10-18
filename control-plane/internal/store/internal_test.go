@@ -107,3 +107,16 @@ func TestBackupBeforeUpgrade(t *testing.T) {
 		t.Errorf("migration not applied (exists=%v, err=%v)", exists, err)
 	}
 }
+
+func TestFloorDiv(t *testing.T) {
+	tests := []struct{ a, b, want int64 }{
+		{7, 2, 3}, {6, 2, 3}, {0, 3, 0},
+		{-7, 2, -4}, {-6, 2, -3}, {-1, 3, -1},
+		{7, -2, -4}, {-7, -2, 3},
+	}
+	for _, tt := range tests {
+		if got := floorDiv(tt.a, tt.b); got != tt.want {
+			t.Errorf("floorDiv(%d, %d) = %d, want %d", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
