@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // syncBuffer is a bytes.Buffer safe for the workers' concurrent logging.
@@ -33,18 +34,27 @@ func TestWorkerGroup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &workerGroup{ctx: ctx, log: slog.New(slog.NewTextHandler(&logs, nil))}
 
-	failed := make(chan struct{})
-	w.Go("broken", func(context.Context) error { defer close(failed); return errors.New("database gone") })
-	quit := make(chan struct{})
-	w.Go("quitter", func(context.Context) error { defer close(quit); return nil })
+	w.Go("broken", func(context.Context) error { return errors.New("database gone") })
+	w.Go("quitter", func(context.Context) error { return nil })
 	// Well-behaved workers run until shutdown, whatever they return then.
 	w.Go("steady", func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() })
 	w.Go("noisy at shutdown", func(ctx context.Context) error { <-ctx.Done(); return errors.New("flush failed") })
 	ran := false
 	w.Once(func(context.Context) { ran = true })
 
-	<-failed
-	<-quit
+	// Shut down only once both early stops are logged: the group tells
+	// an early stop from a shutdown by whether ctx is done when the worker
+	// returns.
+	early := []string{"worker=broken", "worker=quitter"}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+		out := logs.String()
+		if strings.Contains(out, early[0]) && strings.Contains(out, early[1]) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("early stops not logged:\n%s", out)
+		}
+	}
 	cancel()
 	w.Wait()
 
