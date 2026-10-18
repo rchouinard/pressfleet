@@ -3,6 +3,7 @@ package auth
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"sync"
 	"time"
 )
@@ -19,6 +20,9 @@ const (
 	// maxThrottleEntries bounds memory if a client invents many emails or
 	// addresses.
 	maxThrottleEntries = 100_000
+	// ipv6ThrottlePrefix groups IPv6 clients: one client usually holds a
+	// whole /64 and can pick any address in it.
+	ipv6ThrottlePrefix = 64
 )
 
 // ErrThrottled means too many recent failed attempts. Errors that wrap it
@@ -41,16 +45,20 @@ func (e *ThrottledError) Is(target error) bool { return target == ErrThrottled }
 type throttle struct {
 	mu      sync.Mutex
 	now     func() time.Time
+	max     int
 	entries map[string]*throttleEntry
 }
 
 type throttleEntry struct {
 	failures int
 	start    time.Time
+	// account marks a per-account counter, which pruning keeps longest:
+	// it is what stops guessing one user's password.
+	account bool
 }
 
 func newThrottle(now func() time.Time) *throttle {
-	return &throttle{now: now, entries: map[string]*throttleEntry{}}
+	return &throttle{now: now, max: maxThrottleEntries, entries: map[string]*throttleEntry{}}
 }
 
 // check returns a *ThrottledError if any key has reached its limit.
@@ -79,10 +87,10 @@ func (t *throttle) fail(keys ...throttleKey) {
 	for _, k := range keys {
 		e := t.live(k.key, now)
 		if e == nil {
-			if len(t.entries) >= maxThrottleEntries {
+			if len(t.entries) >= t.max {
 				t.prune(now)
 			}
-			e = &throttleEntry{start: now}
+			e = &throttleEntry{start: now, account: k.account}
 			t.entries[k.key] = e
 		}
 		e.failures++
@@ -109,28 +117,64 @@ func (t *throttle) live(key string, now time.Time) *throttleEntry {
 	return e
 }
 
-// prune drops ended windows. If every entry is live, it drops them all:
-// forgetting some counters is better than growing without bound.
+// prune makes room for a new entry. It drops ended windows, then, if the
+// table is still full, every per-address counter, and only then the one
+// account counter with the fewest failures (the newest of those). Account
+// counters are never dropped wholesale, and the ones closest to their
+// limit go last: a client that fills the table with invented emails from
+// many addresses must not reset the count of a password it is guessing.
 func (t *throttle) prune(now time.Time) {
 	for k, e := range t.entries {
 		if !now.Before(e.start.Add(throttleWindow)) {
 			delete(t.entries, k)
 		}
 	}
-	if len(t.entries) >= maxThrottleEntries {
-		clear(t.entries)
+	if len(t.entries) < t.max {
+		return
 	}
+	for k, e := range t.entries {
+		if !e.account {
+			delete(t.entries, k)
+		}
+	}
+	if len(t.entries) < t.max {
+		return
+	}
+	var (
+		victim string
+		least  *throttleEntry
+	)
+	for k, e := range t.entries {
+		if least == nil || e.failures < least.failures ||
+			(e.failures == least.failures && e.start.After(least.start)) {
+			victim, least = k, e
+		}
+	}
+	delete(t.entries, victim)
 }
 
 type throttleKey struct {
-	key   string
-	limit int
+	key     string
+	limit   int
+	account bool
 }
 
 func accountKey(email string) throttleKey {
-	return throttleKey{key: "account:" + email, limit: maxFailuresPerAccount}
+	return throttleKey{key: "account:" + email, limit: maxFailuresPerAccount, account: true}
 }
 
+// addressKey counts an IPv4 client by its address and an IPv6 client by
+// its /64, so rotating addresses within one network doesn't escape the
+// limit. Input that isn't an address (the API always passes one) is used
+// as is.
 func addressKey(ip string) throttleKey {
+	if a, err := netip.ParseAddr(ip); err == nil {
+		a = a.Unmap()
+		if a.Is6() {
+			ip = netip.PrefixFrom(a.WithZone(""), ipv6ThrottlePrefix).Masked().String()
+		} else {
+			ip = a.String()
+		}
+	}
 	return throttleKey{key: "address:" + ip, limit: maxFailuresPerAddress}
 }

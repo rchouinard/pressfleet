@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -116,5 +117,78 @@ func TestThrottle(t *testing.T) {
 	th.reset(acct)
 	if len(th.entries) != 0 {
 		t.Errorf("entries after reset: %v", th.entries)
+	}
+}
+
+func TestAddressKey(t *testing.T) {
+	tests := []struct {
+		a, b string
+		same bool
+	}{
+		{"192.0.2.1", "192.0.2.1", true},
+		{"192.0.2.1", "192.0.2.2", false},
+		{"::ffff:192.0.2.1", "192.0.2.1", true},
+		{"2001:db8:1:2::1", "2001:db8:1:2:ffff:ffff:ffff:ffff", true},
+		{"2001:db8:1:2::1", "2001:db8:1:3::1", false},
+		{"fe80::1%eth0", "fe80::2", true},
+		{"not an address", "not an address", true},
+	}
+	for _, tt := range tests {
+		if got := addressKey(tt.a).key == addressKey(tt.b).key; got != tt.same {
+			t.Errorf("addressKey(%q) == addressKey(%q) is %v, want %v (%q, %q)",
+				tt.a, tt.b, got, tt.same, addressKey(tt.a).key, addressKey(tt.b).key)
+		}
+	}
+}
+
+// A client that fills the table from many addresses, with invented
+// emails, must not reset the counter of an account it is guessing.
+func TestThrottlePruneKeepsAccounts(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	th := newThrottle(func() time.Time { return now })
+	th.max = 10
+	target := accountKey("victim@example.com")
+	for range maxFailuresPerAccount {
+		th.fail(target, addressKey("192.0.2.1"))
+	}
+	for i := range 10 * th.max {
+		now = now.Add(time.Second)
+		th.fail(accountKey(fmt.Sprintf("ghost%d@example.com", i)), addressKey(fmt.Sprintf("2001:db8:%x::1", i)))
+		if len(th.entries) > th.max {
+			t.Fatalf("%d entries, limit %d", len(th.entries), th.max)
+		}
+		if th.check(target) == nil {
+			t.Fatalf("target account no longer throttled after %d invented failures", i+1)
+		}
+	}
+}
+
+func TestThrottlePrune(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	th := newThrottle(func() time.Time { return now })
+	th.max = 3
+	// Ended windows go first.
+	th.fail(accountKey("ended@example.com"))
+	now = now.Add(throttleWindow)
+	th.fail(accountKey("a@example.com"), addressKey("192.0.2.1"))
+	th.fail(accountKey("b@example.com"))
+	if _, ok := th.entries["account:ended@example.com"]; ok {
+		t.Errorf("entries = %v, want the ended window pruned", th.entries)
+	}
+	// Then address counters, before any live account counter.
+	now = now.Add(time.Second)
+	th.fail(accountKey("c@example.com"))
+	if _, ok := th.entries["address:192.0.2.1"]; ok || len(th.entries) != 3 {
+		t.Errorf("entries = %v, want a, b, and c", th.entries)
+	}
+	// Then the account counter with the fewest failures, newest first:
+	// c, which has as few as b but came later.
+	th.fail(accountKey("a@example.com"))
+	now = now.Add(time.Second)
+	th.fail(accountKey("d@example.com"))
+	for _, k := range []string{"account:a@example.com", "account:b@example.com", "account:d@example.com"} {
+		if _, ok := th.entries[k]; !ok {
+			t.Errorf("entries = %v, want %s kept", th.entries, k)
+		}
 	}
 }

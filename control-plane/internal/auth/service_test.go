@@ -3,6 +3,7 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -90,6 +91,28 @@ func TestLogin(t *testing.T) {
 				t.Errorf("login %s: %v", c.email, err)
 			}
 		}
+	})
+}
+
+// A successful login upgrades a hash made with older parameters, and the
+// password keeps working.
+func TestLoginRehashesPassword(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		old, _ := newService(t, db)
+		mustCreate(t, old, "a@example.com", store.RoleAdmin)
+		stronger := cheap
+		stronger.Memory *= 2
+		svc := auth.NewService(db, auth.Options{Logger: storetest.Logger(), PasswordParams: stronger})
+		login(t, svc, "a@example.com")
+		u, err := store.NewUsers(db).GetByEmail(ctx, "a@example.com")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := fmt.Sprintf("m=%d,", stronger.Memory); !strings.Contains(u.PasswordHash.Reveal(), want) {
+			t.Errorf("hash not upgraded: want parameters %q", want)
+		}
+		login(t, svc, "a@example.com")
 	})
 }
 
