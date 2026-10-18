@@ -33,7 +33,7 @@ CI (`.github/workflows/ci.yml`) runs lint, a `go mod tidy` check, tests, and the
 
 ## Architecture rules
 
-- All orchestration goes through `provisioner.Provisioner`. Docker, Compose, and Kubernetes SDK imports **and** invocations of the `docker` CLI belong only in `control-plane/internal/provisioner/compose/` (archtest enforces imports; review enforces the CLI rule). §4.2
+- All orchestration goes through `provisioner.Provisioner`. Docker, Compose, and Kubernetes SDK imports **and** invocations of the `docker` CLI belong only in `control-plane/internal/provisioner/compose/` (archtest enforces imports and `exec` calls that name `docker` literally; review catches computed program names). Only `cli`, `doctor`, `platform`, `e2e`, and `*_docker_test.go` files may import the compose package, to manage the platform's own stack. §4.2
 - Site configuration is data (`provisioner.SiteConfig`), never Compose-specific fields.
 - Everything that touches the state database must work on both SQLite and PostgreSQL, with tests on both.
 - Job steps must be idempotent; permanently failed jobs roll back what they created. §5
