@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -36,6 +37,10 @@ type fakeS3 struct {
 	lostToken bool
 	requests  []string
 }
+
+// signedAuth matches the Authorization header of a request signed with the
+// test credentials on any day.
+var signedAuth = regexp.MustCompile(`^AWS4-HMAC-SHA256 Credential=` + testKeyID + `/\d{8}/us-east-1/s3/aws4_request, SignedHeaders=[a-z0-9;-]+, Signature=[0-9a-f]{64}$`)
 
 const (
 	testKeyID  = "AKIDTEST"
@@ -64,8 +69,7 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	f.requests = append(f.requests, r.Method+" "+r.URL.RequestURI())
 
-	if auth := r.Header.Get("Authorization"); !strings.HasPrefix(auth, "AWS4-HMAC-SHA256 Credential="+testKeyID+"/20261018/us-east-1/s3/aws4_request,") ||
-		!strings.Contains(auth, "Signature=") || r.Header.Get("X-Amz-Content-Sha256") != emptySHA256 {
+	if auth := r.Header.Get("Authorization"); !signedAuth.MatchString(auth) || r.Header.Get("X-Amz-Content-Sha256") != emptySHA256 {
 		f.t.Errorf("%s %s: unsigned or badly signed request: %q", r.Method, r.URL, auth)
 	}
 	if f.fail != 0 {

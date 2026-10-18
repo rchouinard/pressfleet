@@ -24,7 +24,7 @@ func TestSchedulePhase(t *testing.T) {
 			t.Errorf("%s: phase isn't deterministic", name)
 		}
 		// Offset 23h plus a stagger under 3h wraps past midnight.
-		if p%time.Second != 0 || !(p >= 23*time.Hour || p < 2*time.Hour) {
+		if p%time.Second != 0 || (p < 23*time.Hour && p >= 2*time.Hour) {
 			t.Errorf("%s: phase %s outside 23:00-02:00", name, p)
 		}
 	}
