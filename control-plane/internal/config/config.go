@@ -642,6 +642,32 @@ var intEnvVars = []struct {
 	{"PRESSFLEET_UPDATES_CORE_HOLD_WARNING_DAYS", func(c *Config) *int { return &c.Updates.Core.HoldWarningDays }},
 	{"PRESSFLEET_UPDATES_IMAGES_CHECK_HOURS", func(c *Config) *int { return &c.Updates.Images.CheckHours }},
 	{"PRESSFLEET_METRICS_INTERVAL_SECONDS", func(c *Config) *int { return &c.Metrics.IntervalSeconds }},
+	{"PRESSFLEET_JOBS_CONCURRENCY", func(c *Config) *int { return &c.Jobs.Concurrency }},
+	{"PRESSFLEET_AUDIT_RETENTION_DAYS", func(c *Config) *int { return &c.Audit.RetentionDays }},
+	{"PRESSFLEET_METRICS_RETENTION_DAYS", func(c *Config) *int { return &c.Metrics.RetentionDays }},
+	{"PRESSFLEET_SMTP_PORT", func(c *Config) *int { return &c.SMTP.Port }},
+}
+
+// boolEnvVars maps environment variables to the true-or-false fields they
+// set.
+var boolEnvVars = []struct {
+	name  string
+	field func(*Config) *bool
+}{
+	{"PRESSFLEET_ACME_STAGING", func(c *Config) *bool { return &c.ACME.Staging }},
+	{"PRESSFLEET_METRICS_ENABLED", func(c *Config) *bool { return &c.Metrics.Enabled }},
+	{"PRESSFLEET_ALERTS_ENABLED", func(c *Config) *bool { return &c.Alerts.Enabled }},
+	{"PRESSFLEET_ALERTS_WEBHOOK_ALLOW_LOCAL_TARGETS", func(c *Config) *bool { return &c.Alerts.WebhookAllowLocalTargets }},
+}
+
+// listEnvVars maps environment variables to the list fields they set from
+// comma-separated values.
+var listEnvVars = []struct {
+	name  string
+	field func(*Config) *[]string
+}{
+	{envTrustedProxies, func(c *Config) *[]string { return &c.HTTP.TrustedProxies }},
+	{"PRESSFLEET_ACME_DNS_RESOLVERS", func(c *Config) *[]string { return &c.ACME.DNSResolvers }},
 }
 
 // envVars maps environment variables to the fields they set.
@@ -752,27 +778,6 @@ func ApplyEnv(cfg *Config, env LookupEnv) error {
 			*v.field(cfg) = val
 		}
 	}
-	if val, ok := env("PRESSFLEET_JOBS_CONCURRENCY"); ok {
-		n, err := strconv.Atoi(val)
-		if err != nil {
-			return fmt.Errorf("PRESSFLEET_JOBS_CONCURRENCY must be a whole number, got %q", val)
-		}
-		cfg.Jobs.Concurrency = n
-	}
-	if val, ok := env("PRESSFLEET_AUDIT_RETENTION_DAYS"); ok {
-		n, err := strconv.Atoi(val)
-		if err != nil {
-			return fmt.Errorf("PRESSFLEET_AUDIT_RETENTION_DAYS must be a whole number, got %q", val)
-		}
-		cfg.Audit.RetentionDays = n
-	}
-	if val, ok := env("PRESSFLEET_METRICS_RETENTION_DAYS"); ok {
-		n, err := strconv.Atoi(val)
-		if err != nil {
-			return fmt.Errorf("PRESSFLEET_METRICS_RETENTION_DAYS must be a whole number, got %q", val)
-		}
-		cfg.Metrics.RetentionDays = n
-	}
 	for _, v := range intEnvVars {
 		if val, ok := env(v.name); ok {
 			n, err := strconv.Atoi(val)
@@ -782,48 +787,49 @@ func ApplyEnv(cfg *Config, env LookupEnv) error {
 			*v.field(cfg) = n
 		}
 	}
-	if val, ok := env("PRESSFLEET_SMTP_PORT"); ok {
-		n, err := strconv.Atoi(val)
-		if err != nil {
-			return fmt.Errorf("PRESSFLEET_SMTP_PORT must be a whole number, got %q", val)
+	for _, v := range boolEnvVars {
+		if val, ok := env(v.name); ok {
+			b, err := strconv.ParseBool(val)
+			if err != nil {
+				return fmt.Errorf("%s must be true or false, got %q", v.name, val)
+			}
+			*v.field(cfg) = b
 		}
-		cfg.SMTP.Port = n
 	}
-	if val, ok := env(envTrustedProxies); ok {
-		cfg.HTTP.TrustedProxies = splitList(val)
-	}
-	if val, ok := env("PRESSFLEET_ACME_STAGING"); ok {
-		b, err := strconv.ParseBool(val)
-		if err != nil {
-			return fmt.Errorf("PRESSFLEET_ACME_STAGING must be true or false, got %q", val)
+	for _, v := range listEnvVars {
+		if val, ok := env(v.name); ok {
+			*v.field(cfg) = splitList(val)
 		}
-		cfg.ACME.Staging = b
-	}
-	if val, ok := env("PRESSFLEET_METRICS_ENABLED"); ok {
-		b, err := strconv.ParseBool(val)
-		if err != nil {
-			return fmt.Errorf("PRESSFLEET_METRICS_ENABLED must be true or false, got %q", val)
-		}
-		cfg.Metrics.Enabled = b
-	}
-	if val, ok := env("PRESSFLEET_ALERTS_ENABLED"); ok {
-		b, err := strconv.ParseBool(val)
-		if err != nil {
-			return fmt.Errorf("PRESSFLEET_ALERTS_ENABLED must be true or false, got %q", val)
-		}
-		cfg.Alerts.Enabled = b
-	}
-	if val, ok := env("PRESSFLEET_ALERTS_WEBHOOK_ALLOW_LOCAL_TARGETS"); ok {
-		b, err := strconv.ParseBool(val)
-		if err != nil {
-			return fmt.Errorf("PRESSFLEET_ALERTS_WEBHOOK_ALLOW_LOCAL_TARGETS must be true or false, got %q", val)
-		}
-		cfg.Alerts.WebhookAllowLocalTargets = b
-	}
-	if val, ok := env("PRESSFLEET_ACME_DNS_RESOLVERS"); ok {
-		cfg.ACME.DNSResolvers = splitList(val)
 	}
 	return cfg.WordPressSecurity.applyEnv(env)
+}
+
+// envVarNames returns the name of every environment variable ApplyEnv
+// reads, apart from deprecated ones.
+func envVarNames() []string {
+	var names []string
+	for _, v := range envVars {
+		names = append(names, v.name)
+	}
+	for _, v := range intEnvVars {
+		names = append(names, v.name)
+	}
+	for _, v := range boolEnvVars {
+		names = append(names, v.name)
+	}
+	for _, v := range listEnvVars {
+		names = append(names, v.name)
+	}
+	for _, v := range wpSecurityBools {
+		names = append(names, envWPSecurity+v.name)
+	}
+	for _, v := range wpSecurityInts {
+		names = append(names, envWPSecurity+v.name)
+	}
+	for _, v := range wpSecurityStrings {
+		names = append(names, envWPSecurity+v.name)
+	}
+	return names
 }
 
 // splitList splits a comma-separated environment variable, dropping empty
