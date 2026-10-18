@@ -14,17 +14,10 @@ import (
 // Pending plugin and theme updates (#125, design doc §5.6, §9 Q2). The
 // platform only reports them; nothing here runs an update.
 
-// errNoUpdates is a wiring bug: the handlers make the service from the
-// database.
-var errNoUpdates = errors.New("api: no update report service configured")
-
 // GetSiteUpdates returns the site's pending plugin and theme updates.
 func (h *Handlers) GetSiteUpdates(ctx context.Context, req gen.GetSiteUpdatesRequestObject) (gen.GetSiteUpdatesResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ViewSites, authz.Site(req.SiteID)); err != nil {
 		return nil, err
-	}
-	if h.updates == nil {
-		return nil, errNoUpdates
 	}
 	rep, err := h.updates.Report(ctx, req.SiteID)
 	if err != nil {
@@ -52,9 +45,6 @@ func (h *Handlers) CheckSiteUpdates(ctx context.Context, req gen.CheckSiteUpdate
 	if err != nil {
 		return nil, err
 	}
-	if h.updates == nil {
-		return nil, errNoUpdates
-	}
 	job, err := h.updates.Check(ctx, req.SiteID, p.UserID)
 	if err != nil {
 		return nil, updatesError(err)
@@ -73,9 +63,6 @@ func (h *Handlers) CheckSiteUpdates(ctx context.Context, req gen.CheckSiteUpdate
 // updateCounts returns every checked site's pending update counts, for
 // the site list and detail.
 func (h *Handlers) updateCounts(ctx context.Context) (map[string]store.UpdateCounts, error) {
-	if h.updates == nil {
-		return nil, nil
-	}
 	return h.updates.Counts(ctx)
 }
 

@@ -14,9 +14,6 @@ import (
 
 // One-click WordPress admin login (#129, design doc §5.9).
 
-// errNoAdminLogin is a wiring bug: serve always passes the service.
-var errNoAdminLogin = errors.New("api: no admin login service configured")
-
 // ChooseUserProblemType is the problem type of the 409 that asks the
 // caller to choose which administrator to log in as. It links to the
 // description of the login flow, so clients can tell it from the other
@@ -29,9 +26,6 @@ func (h *Handlers) CreateSiteAdminLogin(ctx context.Context, req gen.CreateSiteA
 	p, err := h.authorize(ctx, authz.AdminLogin, authz.Site(req.SiteID))
 	if err != nil {
 		return nil, err
-	}
-	if h.adminLogin == nil {
-		return nil, errNoAdminLogin
 	}
 	user := ""
 	if req.Body != nil && req.Body.User != nil {
@@ -53,9 +47,6 @@ func (h *Handlers) CreateSiteAdminLogin(ctx context.Context, req gen.CreateSiteA
 func (h *Handlers) ListSiteAdministrators(ctx context.Context, req gen.ListSiteAdministratorsRequestObject) (gen.ListSiteAdministratorsResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.AdminLogin, authz.Site(req.SiteID)); err != nil {
 		return nil, err
-	}
-	if h.adminLogin == nil {
-		return nil, errNoAdminLogin
 	}
 	admins, err := h.adminLogin.Administrators(ctx, req.SiteID)
 	if err != nil {

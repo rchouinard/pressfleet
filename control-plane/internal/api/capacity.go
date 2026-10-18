@@ -31,9 +31,6 @@ func (h *Handlers) GetPlatformCapacity(ctx context.Context, _ gen.GetPlatformCap
 	if _, err := h.authorize(ctx, authz.ViewMonitoring, authz.Platform()); err != nil {
 		return nil, err
 	}
-	if h.db == nil {
-		return nil, errNoDatabase
-	}
 	// A stopped site's containers are down and a deleting site is going
 	// away. A failed site may be half-built, so it counts, which errs toward
 	// warning early.
@@ -53,9 +50,6 @@ func (h *Handlers) GetPlatformCapacity(ctx context.Context, _ gen.GetPlatformCap
 // capacity is still useful then (the reservations are known), so that is not
 // an error.
 func (h *Handlers) hostMemoryBytes(ctx context.Context) (float64, error) {
-	if h.metrics == nil {
-		return 0, nil
-	}
 	res, err := h.metrics.Summary(ctx, metricsapi.Request{Metrics: []string{"host_memory"}})
 	if errors.Is(err, metrics.ErrUnavailable) {
 		return 0, nil

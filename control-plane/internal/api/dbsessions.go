@@ -15,9 +15,6 @@ import (
 
 // Temporary database sessions (#115, design doc §5.8).
 
-// errNoDatabaseSessions is a wiring bug: serve always passes the service.
-var errNoDatabaseSessions = errors.New("api: no database session service configured")
-
 // CreateSiteDatabaseSession opens a session. Read-only sessions need
 // authz.OpenDatabaseSession, read-write ones
 // authz.OpenReadWriteDatabaseSession (Admin); the audit event records the
@@ -40,9 +37,6 @@ func (h *Handlers) CreateSiteDatabaseSession(ctx context.Context, req gen.Create
 	p, err := h.authorize(ctx, action, authz.Site(req.SiteID))
 	if err != nil {
 		return nil, err
-	}
-	if h.dbSessions == nil {
-		return nil, errNoDatabaseSessions
 	}
 	o, err := h.dbSessions.Open(ctx, req.SiteID, p.UserID, access, ttl)
 	if err != nil {
@@ -69,9 +63,6 @@ func (h *Handlers) ListSiteDatabaseSessions(ctx context.Context, req gen.ListSit
 	if _, err := h.authorize(ctx, authz.ViewSites, authz.Site(req.SiteID)); err != nil {
 		return nil, err
 	}
-	if h.dbSessions == nil {
-		return nil, errNoDatabaseSessions
-	}
 	if _, err := store.NewSites(h.db).Get(ctx, req.SiteID); errors.Is(err, store.ErrNotFound) {
 		return nil, fmt.Errorf("%w: %w", ErrNotFound, dbsession.ErrSiteNotFound)
 	} else if err != nil {
@@ -93,9 +84,6 @@ func (h *Handlers) EndSiteDatabaseSession(ctx context.Context, req gen.EndSiteDa
 	p, err := h.authorize(ctx, authz.EndDatabaseSession, authz.Site(req.SiteID))
 	if err != nil {
 		return nil, err
-	}
-	if h.dbSessions == nil {
-		return nil, errNoDatabaseSessions
 	}
 	setAuditDetails(ctx, map[string]string{"session_id": req.SessionID})
 	d, err := h.dbSessions.End(ctx, req.SiteID, req.SessionID, p.UserID)

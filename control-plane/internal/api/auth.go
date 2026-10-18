@@ -19,15 +19,9 @@ import (
 
 // Sessions, the current user, and the current user's API tokens (#13).
 
-// errAuthNotConfigured is a 500: the server was built without Options.Auth.
-var errAuthNotConfigured = errors.New("authentication service is not configured")
-
 // Login verifies credentials and starts a session. It is public, so it
 // needs no authorization check.
 func (h *Handlers) Login(ctx context.Context, req gen.LoginRequestObject) (gen.LoginResponseObject, error) {
-	if h.auth == nil {
-		return nil, errAuthNotConfigured
-	}
 	client := clientFromContext(ctx)
 	res, err := h.auth.Login(ctx, auth.LoginRequest{
 		Email:     string(req.Body.Email),
@@ -194,9 +188,6 @@ func (h *Handlers) authorizeAuth(ctx context.Context, action authz.Action, targe
 	p, err := h.authorize(ctx, action, target)
 	if err != nil {
 		return auth.Principal{}, err
-	}
-	if h.auth == nil {
-		return auth.Principal{}, errAuthNotConfigured
 	}
 	return p, nil
 }

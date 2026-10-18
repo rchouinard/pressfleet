@@ -17,17 +17,11 @@ import (
 
 // Sites: provisioning (#27), management (#28), and deletion (#29).
 
-// errNoSites is a wiring bug: serve always passes the site service.
-var errNoSites = errors.New("api: no site service configured")
-
 // ListSites lists sites, newest first, optionally filtered by client group
 // or status. The cursor is the ID of the last site on the previous page.
 func (h *Handlers) ListSites(ctx context.Context, req gen.ListSitesRequestObject) (gen.ListSitesResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ViewSites, authz.ClientGroup(deref(req.Params.ClientGroupID))); err != nil {
 		return nil, err
-	}
-	if h.sites == nil {
-		return nil, errNoSites
 	}
 	p := req.Params
 	f := store.SiteFilter{ClientGroupID: deref(p.ClientGroupID)}
@@ -69,9 +63,6 @@ func (h *Handlers) CreateSite(ctx context.Context, req gen.CreateSiteRequestObje
 	if err != nil {
 		return nil, err
 	}
-	if h.sites == nil {
-		return nil, errNoSites
-	}
 	b := req.Body
 	in := sites.NewSite{
 		ClientGroupID:   b.ClientGroupID,
@@ -109,9 +100,6 @@ func (h *Handlers) ImportSite(ctx context.Context, req gen.ImportSiteRequestObje
 	if err != nil {
 		return nil, err
 	}
-	if h.sites == nil {
-		return nil, errNoSites
-	}
 	b := req.Body
 	in := sites.Import{
 		ClientGroupID:   b.ClientGroupID,
@@ -147,9 +135,6 @@ func (h *Handlers) GetSite(ctx context.Context, req gen.GetSiteRequestObject) (g
 	if _, err := h.authorize(ctx, authz.ViewSites, authz.Site(req.SiteID)); err != nil {
 		return nil, err
 	}
-	if h.sites == nil {
-		return nil, errNoSites
-	}
 	site, aliases, err := h.sites.Get(ctx, req.SiteID)
 	if err != nil {
 		return nil, siteError(err)
@@ -174,9 +159,6 @@ func (h *Handlers) UpdateSite(ctx context.Context, req gen.UpdateSiteRequestObje
 	p, err := h.authorize(ctx, authz.UpdateSite, authz.Site(req.SiteID))
 	if err != nil {
 		return nil, err
-	}
-	if h.sites == nil {
-		return nil, errNoSites
 	}
 	b := deref(req.Body)
 	in := sites.SiteUpdate{PHPVersion: b.PhpVersion, CreatedByUserID: p.UserID}
@@ -218,9 +200,6 @@ func (h *Handlers) SetSiteMaintenance(ctx context.Context, req gen.SetSiteMainte
 	if err != nil {
 		return nil, err
 	}
-	if h.sites == nil {
-		return nil, errNoSites
-	}
 	site, job, err := h.sites.SetMaintenance(ctx, req.SiteID, deref(req.Body).Enabled, p.UserID)
 	if err != nil {
 		return nil, siteError(err)
@@ -246,9 +225,6 @@ func (h *Handlers) GoLiveSite(ctx context.Context, req gen.GoLiveSiteRequestObje
 	p, err := h.authorize(ctx, authz.ManageSiteDomains, authz.Site(req.SiteID))
 	if err != nil {
 		return nil, err
-	}
-	if h.sites == nil {
-		return nil, errNoSites
 	}
 	b := deref(req.Body)
 	site, aliases, job, err := h.sites.GoLive(ctx, req.SiteID, sites.GoLive{
@@ -277,9 +253,6 @@ func (h *Handlers) SetSiteAliases(ctx context.Context, req gen.SetSiteAliasesReq
 	p, err := h.authorize(ctx, authz.ManageSiteDomains, authz.Site(req.SiteID))
 	if err != nil {
 		return nil, err
-	}
-	if h.sites == nil {
-		return nil, errNoSites
 	}
 	b := deref(req.Body)
 	site, aliases, job, err := h.sites.SetAliases(ctx, req.SiteID, sites.SetAliases{
@@ -327,9 +300,6 @@ func (h *Handlers) RegenerateSitePreviewPassword(ctx context.Context, req gen.Re
 	if err != nil {
 		return nil, err
 	}
-	if h.sites == nil {
-		return nil, errNoSites
-	}
 	creds, job, err := h.sites.RegeneratePreviewPassword(ctx, req.SiteID, p.UserID)
 	if err != nil {
 		return nil, siteError(err)
@@ -362,9 +332,6 @@ func (h *Handlers) DeleteSite(ctx context.Context, req gen.DeleteSiteRequestObje
 	if err != nil {
 		return nil, err
 	}
-	if h.sites == nil {
-		return nil, errNoSites
-	}
 	job, err := h.sites.Delete(ctx, req.SiteID, p.UserID, sites.DeleteOptions{DeleteBackups: deleteBackups})
 	if err != nil {
 		return nil, siteError(err)
@@ -387,9 +354,6 @@ func (h *Handlers) StartSite(ctx context.Context, req gen.StartSiteRequestObject
 	if err != nil {
 		return nil, err
 	}
-	if h.sites == nil {
-		return nil, errNoSites
-	}
 	job, err := h.sites.Start(ctx, req.SiteID, p.UserID)
 	if err != nil {
 		return nil, siteError(err)
@@ -410,9 +374,6 @@ func (h *Handlers) StopSite(ctx context.Context, req gen.StopSiteRequestObject) 
 	p, err := h.authorize(ctx, authz.StopSite, authz.Site(req.SiteID))
 	if err != nil {
 		return nil, err
-	}
-	if h.sites == nil {
-		return nil, errNoSites
 	}
 	job, err := h.sites.Stop(ctx, req.SiteID, p.UserID)
 	if err != nil {
@@ -436,9 +397,6 @@ func (h *Handlers) PurgeSiteCache(ctx context.Context, req gen.PurgeSiteCacheReq
 	if err != nil {
 		return nil, err
 	}
-	if h.sites == nil {
-		return nil, errNoSites
-	}
 	job, err := h.sites.PurgeCache(ctx, req.SiteID, p.UserID)
 	if err != nil {
 		return nil, siteError(err)
@@ -459,9 +417,6 @@ func (h *Handlers) PurgeSiteCache(ctx context.Context, req gen.PurgeSiteCacheReq
 func (h *Handlers) RetrieveSiteAdminCredentials(ctx context.Context, req gen.RetrieveSiteAdminCredentialsRequestObject) (gen.RetrieveSiteAdminCredentialsResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.RetrieveSiteCredentials, authz.Site(req.SiteID)); err != nil {
 		return nil, err
-	}
-	if h.sites == nil {
-		return nil, errNoSites
 	}
 	creds, err := h.sites.TakeAdminCredentials(ctx, req.SiteID)
 	if err != nil {

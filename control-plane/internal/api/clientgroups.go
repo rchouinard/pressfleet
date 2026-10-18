@@ -24,9 +24,6 @@ func (h *Handlers) ListClientGroups(ctx context.Context, req gen.ListClientGroup
 	if _, err := h.authorize(ctx, authz.ViewClientGroups, authz.Platform()); err != nil {
 		return nil, err
 	}
-	if h.db == nil {
-		return nil, errNoDatabase
-	}
 	limit := pageLimit(req.Params.Limit)
 	f := store.ClientGroupFilter{Limit: limit + 1}
 	if c := req.Params.Cursor; c != nil {
@@ -66,9 +63,6 @@ func (h *Handlers) CreateClientGroup(ctx context.Context, req gen.CreateClientGr
 	if _, err := h.authorize(ctx, authz.CreateClientGroup, authz.Platform()); err != nil {
 		return nil, err
 	}
-	if h.db == nil {
-		return nil, errNoDatabase
-	}
 	g := store.ClientGroup{Name: req.Body.Name, Notes: deref(req.Body.Notes)}
 	if err := store.NewClientGroups(h.db).Create(ctx, &g); err != nil {
 		return nil, clientGroupError(err, g.Name)
@@ -86,9 +80,6 @@ func (h *Handlers) GetClientGroup(ctx context.Context, req gen.GetClientGroupReq
 	if _, err := h.authorize(ctx, authz.ViewClientGroups, authz.ClientGroup(req.ClientGroupID)); err != nil {
 		return nil, err
 	}
-	if h.db == nil {
-		return nil, errNoDatabase
-	}
 	g, err := store.NewClientGroups(h.db).Get(ctx, req.ClientGroupID)
 	if err != nil {
 		return nil, clientGroupError(err, "")
@@ -100,9 +91,6 @@ func (h *Handlers) GetClientGroup(ctx context.Context, req gen.GetClientGroupReq
 func (h *Handlers) UpdateClientGroup(ctx context.Context, req gen.UpdateClientGroupRequestObject) (gen.UpdateClientGroupResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.UpdateClientGroup, authz.ClientGroup(req.ClientGroupID)); err != nil {
 		return nil, err
-	}
-	if h.db == nil {
-		return nil, errNoDatabase
 	}
 	var g store.ClientGroup
 	err := h.db.InTx(ctx, func(q store.Querier) error {
@@ -144,9 +132,6 @@ func (h *Handlers) DeleteClientGroup(ctx context.Context, req gen.DeleteClientGr
 	p, err := h.authorize(ctx, action, authz.ClientGroup(req.ClientGroupID))
 	if err != nil {
 		return nil, err
-	}
-	if h.db == nil {
-		return nil, errNoDatabase
 	}
 	if withRepository {
 		setAuditDetails(ctx, map[string]string{"delete_backup_repository": "true"})
@@ -210,9 +195,6 @@ func (h *Handlers) DeleteClientGroupBackupRepository(ctx context.Context, req ge
 	}, nil
 }
 
-// errNoOffboarding is a wiring bug: serve always passes the service.
-var errNoOffboarding = errors.New("api: no offboarding service configured")
-
 // errRepositoryToDelete makes DeleteClientGroup's transaction hand the
 // group over to the repository deletion job.
 var errRepositoryToDelete = errors.New("client group has a backup repository to delete")
@@ -220,9 +202,6 @@ var errRepositoryToDelete = errors.New("client group has a backup repository to 
 // queueRepositoryDeletion queues the deletion of the group's repository,
 // and of the group with deleteGroup, recording the job in the audit event.
 func (h *Handlers) queueRepositoryDeletion(ctx context.Context, groupID string, deleteGroup bool, userID string) (store.Job, error) {
-	if h.offboarding == nil {
-		return store.Job{}, errNoOffboarding
-	}
 	job, err := h.offboarding.Enqueue(ctx, groupID, deleteGroup, userID)
 	switch {
 	case errors.Is(err, offboard.ErrClientGroupNotFound):

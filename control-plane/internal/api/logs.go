@@ -26,21 +26,12 @@ const (
 	defaultLogTail  = 100
 )
 
-// errNoLogs is a wiring bug: serve always passes the log reader.
-var errNoLogs = errors.New("api: no log reader configured")
-
 // ListSiteLogs returns a page of the site's runtime logs, newest matching
 // entries first by page and oldest first within it. The cursor is the time
 // in Unix nanoseconds that the older page ends before.
 func (h *Handlers) ListSiteLogs(ctx context.Context, req gen.ListSiteLogsRequestObject) (gen.ListSiteLogsResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ViewMonitoring, authz.Site(req.SiteID)); err != nil {
 		return nil, err
-	}
-	if h.logs == nil {
-		return nil, errNoLogs
-	}
-	if h.sites == nil {
-		return nil, errNoSites
 	}
 	if _, _, err := h.sites.Get(ctx, req.SiteID); err != nil {
 		return nil, siteError(err)
@@ -178,12 +169,6 @@ func (h *Handlers) StreamSiteLogs(ctx context.Context, req gen.StreamSiteLogsReq
 	if _, err := h.authorize(ctx, authz.ViewMonitoring, authz.Site(req.SiteID)); err != nil {
 		return nil, err
 	}
-	if h.logs == nil {
-		return nil, errNoLogs
-	}
-	if h.sites == nil {
-		return nil, errNoSites
-	}
 	if _, _, err := h.sites.Get(ctx, req.SiteID); err != nil {
 		return nil, siteError(err)
 	}
@@ -310,12 +295,6 @@ func (h *Handlers) writeLogError(ctx context.Context, w io.Writer, siteID string
 func (h *Handlers) ListSiteJobLogs(ctx context.Context, req gen.ListSiteJobLogsRequestObject) (gen.ListSiteJobLogsResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ViewJobs, authz.Site(req.SiteID)); err != nil {
 		return nil, err
-	}
-	if h.db == nil {
-		return nil, errNoDatabase
-	}
-	if h.sites == nil {
-		return nil, errNoSites
 	}
 	if _, _, err := h.sites.Get(ctx, req.SiteID); err != nil {
 		return nil, siteError(err)

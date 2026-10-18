@@ -81,6 +81,9 @@ func TestEveryStateChangingOperationIsAudited(t *testing.T) {
 				want := store.AuditEvent{
 					ID: e.ID, OccurredAt: e.OccurredAt, ActorUserID: u.ID, ActorTokenID: tokenID, Action: string(op.Action),
 					TargetType: e.TargetType, TargetID: e.TargetID, Result: store.AuditSuccess, SourceIP: testClientIP,
+					// Details depend on how far the operation got; this
+					// test is about attribution.
+					Details: e.Details,
 				}
 				if w.Code >= 400 {
 					want.Result = store.AuditFailure
@@ -235,4 +238,21 @@ func TestAuditLogOverHTTP(t *testing.T) {
 	if n := len(list("limit=200").Items); n != len(all.Items) {
 		t.Errorf("listing added events: %d, then %d", len(all.Items), n)
 	}
+}
+
+// A state-changing request whose handler panics is still audited, as a
+// failure, and answered with a 500 by the recovery middleware.
+func TestPanickingRequestIsAudited(t *testing.T) {
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		// No site service: deleting a site panics past authorization.
+		h := newHandler(t, api.Options{Authenticator: &fakeAuth{}, DB: db})
+		w := do(t, h, request{authed: true, method: http.MethodDelete, target: "/api/v1/sites/01j9zq3v6t8k4m2n5p7r9s1x3y"})
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("status %d, want 500", w.Code)
+		}
+		events := allEvents(t, db)
+		if len(events) != 1 || events[0].Action != "site.delete" || events[0].Result != store.AuditFailure {
+			t.Errorf("events = %+v, want one failed site.delete", events)
+		}
+	})
 }

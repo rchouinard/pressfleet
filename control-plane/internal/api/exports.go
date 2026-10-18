@@ -19,18 +19,12 @@ import (
 
 // Site exports (#133, #134, design doc §5.7).
 
-// errNoExports is a wiring bug: serve always passes the service.
-var errNoExports = errors.New("api: no export service configured")
-
 // ExportSite queues a job that exports the live site and returns 202 with
 // the job, whose result links to the downloads.
 func (h *Handlers) ExportSite(ctx context.Context, req gen.ExportSiteRequestObject) (gen.ExportSiteResponseObject, error) {
 	p, err := h.authorize(ctx, authz.ExportSite, authz.Site(req.SiteID))
 	if err != nil {
 		return nil, err
-	}
-	if h.exports == nil {
-		return nil, errNoExports
 	}
 	job, err := h.exports.ExportSite(ctx, req.SiteID, p.UserID)
 	if err != nil {
@@ -81,9 +75,6 @@ func (h *Handlers) ExportClientGroupBackup(ctx context.Context, req gen.ExportCl
 // exportBackup queues the export of a backup that belongs to the path's
 // site or group, as belongs says; any other is not found.
 func (h *Handlers) exportBackup(ctx context.Context, backupID, userID string, belongs func(store.BackupRecord) bool) (store.Job, error) {
-	if h.exports == nil {
-		return store.Job{}, errNoExports
-	}
 	rec, err := store.NewBackupRecords(h.db).Get(ctx, backupID)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && !belongs(rec)) {
 		return store.Job{}, fmt.Errorf("%w: %w: %s", ErrNotFound, export.ErrBackupNotFound, backupID)
@@ -112,9 +103,6 @@ func jobAccepted(job store.Job) (gen.JobAccepted, string, error) {
 func (h *Handlers) ListClientGroupBackups(ctx context.Context, req gen.ListClientGroupBackupsRequestObject) (gen.ListClientGroupBackupsResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ViewBackups, authz.ClientGroup(req.ClientGroupID)); err != nil {
 		return nil, err
-	}
-	if h.backups == nil {
-		return nil, errNoBackups
 	}
 	p := req.Params
 	f := store.BackupRecordFilter{ClientGroupID: req.ClientGroupID, DeletedSites: p.Deleted != nil && *p.Deleted}
@@ -165,9 +153,6 @@ func (h *Handlers) ListExports(ctx context.Context, req gen.ListExportsRequestOb
 	if _, err := h.authorize(ctx, authz.ViewSites, target); err != nil {
 		return nil, err
 	}
-	if h.exports == nil {
-		return nil, errNoExports
-	}
 	if target == authz.Platform() {
 		return nil, httpserver.NewProblem(http.StatusBadRequest, "Pass site_id or client_group_id.")
 	}
@@ -209,9 +194,6 @@ func (h *Handlers) GetExport(ctx context.Context, req gen.GetExportRequestObject
 	if _, err := h.authorize(ctx, authz.ViewSites, authz.Export(req.ExportID)); err != nil {
 		return nil, err
 	}
-	if h.exports == nil {
-		return nil, errNoExports
-	}
 	e, err := h.exports.Get(ctx, req.ExportID)
 	if err != nil {
 		return nil, exportError(err)
@@ -226,9 +208,6 @@ func (h *Handlers) DownloadExportFile(ctx context.Context, req gen.DownloadExpor
 	auditRead(ctx)
 	if _, err := h.authorize(ctx, authz.ExportSite, authz.Export(req.ExportID)); err != nil {
 		return nil, err
-	}
-	if h.exports == nil {
-		return nil, errNoExports
 	}
 	setAuditDetails(ctx, map[string]string{"file": string(req.FileName)})
 	d, err := h.exports.Open(ctx, req.ExportID, string(req.FileName))

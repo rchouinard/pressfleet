@@ -17,17 +17,11 @@ import (
 
 // Site backups (#52).
 
-// errNoBackups is a wiring bug: serve always passes the backup service.
-var errNoBackups = errors.New("api: no backup service configured")
-
 // ListSiteBackups lists the site's backup records, newest first. The cursor
 // is the ID of the last backup on the previous page.
 func (h *Handlers) ListSiteBackups(ctx context.Context, req gen.ListSiteBackupsRequestObject) (gen.ListSiteBackupsResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ViewBackups, authz.Site(req.SiteID)); err != nil {
 		return nil, err
-	}
-	if h.backups == nil {
-		return nil, errNoBackups
 	}
 	p := req.Params
 	f := store.BackupRecordFilter{SiteID: req.SiteID}
@@ -64,9 +58,6 @@ func (h *Handlers) CreateSiteBackup(ctx context.Context, req gen.CreateSiteBacku
 	if err != nil {
 		return nil, err
 	}
-	if h.backups == nil {
-		return nil, errNoBackups
-	}
 	job, err := h.backups.Backup(ctx, req.SiteID, p.UserID)
 	if err != nil {
 		return nil, backupError(err)
@@ -87,9 +78,6 @@ func (h *Handlers) GetSiteBackupSchedule(ctx context.Context, req gen.GetSiteBac
 	if _, err := h.authorize(ctx, authz.ViewBackups, authz.Site(req.SiteID)); err != nil {
 		return nil, err
 	}
-	if h.backups == nil {
-		return nil, errNoBackups
-	}
 	s, err := h.backups.Schedule(ctx, req.SiteID)
 	if err != nil {
 		return nil, backupError(err)
@@ -102,9 +90,6 @@ func (h *Handlers) GetSiteBackupSchedule(ctx context.Context, req gen.GetSiteBac
 func (h *Handlers) SetSiteBackupSchedule(ctx context.Context, req gen.SetSiteBackupScheduleRequestObject) (gen.SetSiteBackupScheduleResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.UpdateSite, authz.Site(req.SiteID)); err != nil {
 		return nil, err
-	}
-	if h.backups == nil {
-		return nil, errNoBackups
 	}
 	b := deref(req.Body)
 	in := store.DefaultSiteBackupSchedule()
@@ -137,9 +122,6 @@ func (h *Handlers) RestoreSite(ctx context.Context, req gen.RestoreSiteRequestOb
 	p, err := h.authorize(ctx, authz.RestoreBackup, authz.Site(req.SiteID))
 	if err != nil {
 		return nil, err
-	}
-	if h.sites == nil {
-		return nil, errNoSites
 	}
 	b := deref(req.Body)
 	site, job, err := h.sites.Restore(ctx, req.SiteID, sites.Restore{

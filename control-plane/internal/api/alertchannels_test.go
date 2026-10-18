@@ -397,12 +397,3 @@ func TestAlertChannelChangesAreAudited(t *testing.T) {
 		}
 	})
 }
-
-func TestAlertChannelsWithoutService(t *testing.T) {
-	storetest.Run(t, func(t *testing.T, db *store.DB) {
-		h := newHandler(t, api.Options{DB: db, Authenticator: &fakeAuth{}})
-		if w := do(t, h, request{authed: true, method: http.MethodGet, target: "/api/v1/alert-channels"}); w.Code != http.StatusInternalServerError {
-			t.Errorf("list without a service: %d", w.Code)
-		}
-	})
-}

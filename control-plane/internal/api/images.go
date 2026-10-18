@@ -18,9 +18,6 @@ func (h *Handlers) GetImageRollout(ctx context.Context, _ gen.GetImageRolloutReq
 	if _, err := h.authorize(ctx, authz.ViewSites, authz.Platform()); err != nil {
 		return nil, err
 	}
-	if h.sites == nil {
-		return nil, errNoSites
-	}
 	ro, err := h.sites.Rollout(ctx, sites.ImageRolloutName)
 	if err != nil {
 		return nil, coreError(err)
@@ -32,9 +29,6 @@ func (h *Handlers) GetImageRollout(ctx context.Context, _ gen.GetImageRolloutReq
 func (h *Handlers) ResumeImageRollout(ctx context.Context, _ gen.ResumeImageRolloutRequestObject) (gen.ResumeImageRolloutResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ApproveCoreUpdate, authz.Platform()); err != nil {
 		return nil, err
-	}
-	if h.sites == nil {
-		return nil, errNoSites
 	}
 	ro, err := h.sites.ResumeRollout(ctx, sites.ImageRolloutName)
 	if err != nil {
@@ -73,9 +67,6 @@ func (h *Handlers) imageRolloutResponse(ro sites.RolloutStatus) gen.ImageRollout
 func (h *Handlers) ListPHPVersions(ctx context.Context, _ gen.ListPHPVersionsRequestObject) (gen.ListPHPVersionsResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ViewSites, authz.Platform()); err != nil {
 		return nil, err
-	}
-	if h.sites == nil {
-		return nil, errNoSites
 	}
 	versions, def, now := h.sites.PHPCatalog()
 	out := gen.ListPHPVersions200JSONResponse{Items: make([]gen.PHPVersionInfo, len(versions))}

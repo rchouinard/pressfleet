@@ -27,9 +27,6 @@ func (h *Handlers) ListAlertRules(ctx context.Context, req gen.ListAlertRulesReq
 	if _, err := h.authorize(ctx, authz.ViewMonitoring, authz.Platform()); err != nil {
 		return nil, err
 	}
-	if h.db == nil {
-		return nil, errNoDatabase
-	}
 	p := req.Params
 	limit := pageLimit(p.Limit)
 	f := store.AlertRuleFilter{
@@ -76,9 +73,6 @@ func (h *Handlers) CreateAlertRule(ctx context.Context, req gen.CreateAlertRuleR
 	if _, err := h.authorize(ctx, authz.ManageAlertRules, authz.Platform()); err != nil {
 		return nil, err
 	}
-	if h.db == nil {
-		return nil, errNoDatabase
-	}
 	b := req.Body
 	rule := store.AlertRule{
 		Name:          b.Name,
@@ -114,9 +108,6 @@ func (h *Handlers) GetAlertRule(ctx context.Context, req gen.GetAlertRuleRequest
 	if _, err := h.authorize(ctx, authz.ViewMonitoring, authz.AlertRule(req.AlertRuleID)); err != nil {
 		return nil, err
 	}
-	if h.db == nil {
-		return nil, errNoDatabase
-	}
 	rule, err := store.NewAlertRules(h.db).Get(ctx, req.AlertRuleID)
 	if err != nil {
 		return nil, alertRuleError(err, "")
@@ -128,9 +119,6 @@ func (h *Handlers) GetAlertRule(ctx context.Context, req gen.GetAlertRuleRequest
 func (h *Handlers) UpdateAlertRule(ctx context.Context, req gen.UpdateAlertRuleRequestObject) (gen.UpdateAlertRuleResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ManageAlertRules, authz.AlertRule(req.AlertRuleID)); err != nil {
 		return nil, err
-	}
-	if h.db == nil {
-		return nil, errNoDatabase
 	}
 	b := req.Body
 	var rule store.AlertRule
@@ -193,9 +181,6 @@ func (h *Handlers) DeleteAlertRule(ctx context.Context, req gen.DeleteAlertRuleR
 	if _, err := h.authorize(ctx, authz.ManageAlertRules, authz.AlertRule(req.AlertRuleID)); err != nil {
 		return nil, err
 	}
-	if h.db == nil {
-		return nil, errNoDatabase
-	}
 	if err := store.NewAlertRules(h.db).Delete(ctx, req.AlertRuleID); err != nil {
 		return nil, alertRuleError(err, "")
 	}
@@ -224,9 +209,6 @@ func (h *Handlers) setAlertRuleEnabled(ctx context.Context, ruleID string, enabl
 	if _, err := h.authorize(ctx, authz.ManageAlertRules, authz.AlertRule(ruleID)); err != nil {
 		return store.AlertRule{}, err
 	}
-	if h.db == nil {
-		return store.AlertRule{}, errNoDatabase
-	}
 	var rule store.AlertRule
 	err := h.db.InTx(ctx, func(q store.Querier) error {
 		rules := store.NewAlertRules(q)
@@ -251,9 +233,6 @@ func (h *Handlers) setAlertRuleEnabled(ctx context.Context, ruleID string, enabl
 func (h *Handlers) ListAlerts(ctx context.Context, req gen.ListAlertsRequestObject) (gen.ListAlertsResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ViewMonitoring, authz.Platform()); err != nil {
 		return nil, err
-	}
-	if h.db == nil {
-		return nil, errNoDatabase
 	}
 	p := req.Params
 	limit := pageLimit(p.Limit)
@@ -288,9 +267,6 @@ func (h *Handlers) ListAlerts(ctx context.Context, req gen.ListAlertsRequestObje
 func (h *Handlers) GetAlert(ctx context.Context, req gen.GetAlertRequestObject) (gen.GetAlertResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ViewMonitoring, authz.Alert(req.AlertID)); err != nil {
 		return nil, err
-	}
-	if h.db == nil {
-		return nil, errNoDatabase
 	}
 	a, err := store.NewAlerts(h.db).Get(ctx, req.AlertID)
 	if err != nil {

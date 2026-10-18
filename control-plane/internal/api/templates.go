@@ -17,9 +17,6 @@ func (h *Handlers) GetTemplateRollout(ctx context.Context, _ gen.GetTemplateRoll
 	if _, err := h.authorize(ctx, authz.ViewSites, authz.Platform()); err != nil {
 		return nil, err
 	}
-	if h.sites == nil {
-		return nil, errNoSites
-	}
 	ro, err := h.sites.Rollout(ctx, sites.TemplateRolloutName)
 	if err != nil {
 		return nil, coreError(err)
@@ -37,9 +34,6 @@ func (h *Handlers) ResumeTemplateRollout(ctx context.Context, _ gen.ResumeTempla
 	// releases and images.
 	if _, err := h.authorize(ctx, authz.ApproveCoreUpdate, authz.Platform()); err != nil {
 		return nil, err
-	}
-	if h.sites == nil {
-		return nil, errNoSites
 	}
 	ro, err := h.sites.ResumeRollout(ctx, sites.TemplateRolloutName)
 	if err != nil {

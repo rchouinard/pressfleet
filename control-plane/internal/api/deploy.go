@@ -14,9 +14,6 @@ import (
 
 // Code deployments (#113, design doc §5.8).
 
-// errNoDeployments is a wiring bug: serve always passes the service.
-var errNoDeployments = errors.New("api: no deployment service configured")
-
 // DeploySiteCode queues a job that deploys an uploaded theme or plugin
 // package to the site, claiming the upload for it, and returns 202 with
 // the job.
@@ -24,9 +21,6 @@ func (h *Handlers) DeploySiteCode(ctx context.Context, req gen.DeploySiteCodeReq
 	p, err := h.authorize(ctx, authz.DeployCode, authz.Site(req.SiteID))
 	if err != nil {
 		return nil, err
-	}
-	if h.deploys == nil {
-		return nil, errNoDeployments
 	}
 	b := deref(req.Body)
 	job, err := h.deploys.Deploy(ctx, req.SiteID, deploy.Request{

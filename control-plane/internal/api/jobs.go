@@ -27,9 +27,6 @@ func (h *Handlers) ListJobs(ctx context.Context, req gen.ListJobsRequestObject) 
 	if _, err := h.authorize(ctx, authz.ViewJobs, target); err != nil {
 		return nil, err
 	}
-	if h.db == nil {
-		return nil, errNoDatabase
-	}
 	p := req.Params
 	f := store.JobFilter{}
 	if p.Limit != nil {
@@ -80,9 +77,6 @@ func (h *Handlers) GetJob(ctx context.Context, req gen.GetJobRequestObject) (gen
 	if _, err := h.authorize(ctx, authz.ViewJobs, authz.Job(req.JobID)); err != nil {
 		return nil, err
 	}
-	if h.db == nil {
-		return nil, errNoDatabase
-	}
 	d, err := store.NewJobs(h.db).Detail(ctx, req.JobID)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, fmt.Errorf("job %s: %w", req.JobID, ErrNotFound)
@@ -106,9 +100,6 @@ func (h *Handlers) GetJob(ctx context.Context, req gen.GetJobRequestObject) (gen
 	}
 	return gen.GetJob200JSONResponse(j), nil
 }
-
-// errNoDatabase is a wiring bug: serve always passes the database.
-var errNoDatabase = errors.New("api: no state database configured")
 
 // jobResponse converts a job for the API. logs is nil for listings, which
 // omit step logs.

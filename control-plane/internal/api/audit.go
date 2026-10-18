@@ -144,21 +144,39 @@ func auditRequests(log *slog.Logger, db *store.DB) func(http.Handler) http.Handl
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rec := &auditRecord{}
 			sw := &statusRecorder{ResponseWriter: w}
+			// Deferred, so a request whose handler panics is still recorded,
+			// as a failure (the recovery middleware outside answers 500),
+			// before the panic goes on.
+			defer func() {
+				p := recover()
+				status := sw.status
+				if p != nil {
+					status = http.StatusInternalServerError
+				}
+				writeAuditEvent(log, db, r, rec, status)
+				if p != nil {
+					panic(p)
+				}
+			}()
 			next.ServeHTTP(sw, r.WithContext(context.WithValue(r.Context(), auditKey{}, rec)))
-			if db == nil {
-				return
-			}
-			e, ok := auditEvent(r, rec, sw.status)
-			if !ok {
-				return
-			}
-			// The client may have gone; the event must still be written.
-			ctx := context.WithoutCancel(r.Context())
-			if err := store.NewAuditEvents(db).Insert(ctx, &e); err != nil {
-				httpserver.LoggerFromContext(r.Context(), log).Error("writing audit event failed",
-					"action", e.Action, "result", string(e.Result), "error", err)
-			}
 		})
+	}
+}
+
+// writeAuditEvent records the request, if it is one that is recorded.
+func writeAuditEvent(log *slog.Logger, db *store.DB, r *http.Request, rec *auditRecord, status int) {
+	if db == nil {
+		return
+	}
+	e, ok := auditEvent(r, rec, status)
+	if !ok {
+		return
+	}
+	// The client may have gone; the event must still be written.
+	ctx := context.WithoutCancel(r.Context())
+	if err := store.NewAuditEvents(db).Insert(ctx, &e); err != nil {
+		httpserver.LoggerFromContext(r.Context(), log).Error("writing audit event failed",
+			"action", e.Action, "result", string(e.Result), "error", err)
 	}
 }
 
@@ -213,9 +231,6 @@ func auditEvent(r *http.Request, rec *auditRecord, status int) (store.AuditEvent
 func (h *Handlers) ListAuditEvents(ctx context.Context, req gen.ListAuditEventsRequestObject) (gen.ListAuditEventsResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ViewAuditLog, authz.Platform()); err != nil {
 		return nil, err
-	}
-	if h.db == nil {
-		return nil, errNoDatabase
 	}
 	p := req.Params
 	f := store.AuditFilter{

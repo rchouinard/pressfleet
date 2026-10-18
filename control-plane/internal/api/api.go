@@ -45,6 +45,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/adminlogin"
@@ -68,6 +69,37 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/uploads"
 )
 
+// missing returns the names of the required Options fields that are unset.
+// The services' handlers don't check for them: NewHandler refuses to build
+// without them.
+func (o Options) missing() []string {
+	required := []struct {
+		name string
+		set  bool
+	}{
+		{"DB", o.DB != nil},
+		{"Auth", o.Auth != nil},
+		{"Sites", o.Sites != nil},
+		{"Backups", o.Backups != nil},
+		{"Offboarding", o.Offboarding != nil},
+		{"Uploads", o.Uploads != nil},
+		{"Exports", o.Exports != nil},
+		{"Deployments", o.Deployments != nil},
+		{"DatabaseSessions", o.DatabaseSessions != nil},
+		{"AdminLogin", o.AdminLogin != nil},
+		{"Logs", o.Logs != nil},
+		{"AlertChannels", o.AlertChannels != nil},
+		{"Doctor", o.Doctor != nil},
+	}
+	var names []string
+	for _, r := range required {
+		if !r.set {
+			names = append(names, r.name)
+		}
+	}
+	return names
+}
+
 // Authenticator identifies the caller of an operation that requires
 // authentication (#13: session cookies and bearer API tokens).
 type Authenticator interface {
@@ -77,7 +109,9 @@ type Authenticator interface {
 	Authenticate(r *http.Request) (context.Context, error)
 }
 
-// Options configures the API handler.
+// Options configures the API handler. The services marked required back
+// whole areas of the API; NewHandler fails without them rather than
+// serving an API whose operations fail one by one.
 type Options struct {
 	// Logger is required.
 	Logger *slog.Logger
@@ -87,55 +121,49 @@ type Options struct {
 	// NewAuthenticator(Auth). If nil, every protected operation is rejected
 	// with 401.
 	Authenticator Authenticator
-	// DB is the state database. Handlers that need it fail with a 500
-	// without it.
+	// DB is the state database. Required.
 	DB *store.DB
 	// Auth backs login, the current user, API tokens, and user management.
-	// If nil, those operations fail with 500.
+	// Required.
 	Auth *auth.Service
 	// TrustedProxies are the networks whose X-Forwarded-For and
 	// X-Forwarded-Proto headers are believed. Nil means
 	// DefaultTrustedProxies; use an empty, non-nil slice to trust none.
 	TrustedProxies []netip.Prefix
-	// Sites runs the site workflows. If nil, the site operations fail with
-	// 500.
+	// Sites runs the site workflows. Required.
 	Sites *sites.Service
-	// Backups takes and lists site backups. If nil, the backup operations
-	// fail with 500.
+	// Backups takes and lists site backups. Required.
 	Backups *sitebackup.Service
-	// Offboarding deletes client groups' backup repositories. If nil,
-	// those deletions fail with 500.
+	// Offboarding deletes client groups' backup repositories. Required.
 	Offboarding *offboard.Service
-	// Uploads receives large files for site imports and deployments. If
-	// nil, the upload operations fail with 500.
+	// Uploads receives large files for site imports and deployments.
+	// Required.
 	Uploads *uploads.Service
-	// Exports exports site databases and whole sites for download. If
-	// nil, the export operations fail with 500.
+	// Exports exports site databases and whole sites for download.
+	// Required.
 	Exports *export.Service
-	// Deployments deploys theme and plugin packages. If nil, the deploy
-	// operation fails with 500.
+	// Deployments deploys theme and plugin packages. Required.
 	Deployments *deploy.Service
-	// DatabaseSessions opens and ends temporary database sessions. If nil,
-	// the database session operations fail with 500.
+	// DatabaseSessions opens and ends temporary database sessions.
+	// Required.
 	DatabaseSessions *dbsession.Service
 	// AdminLogin issues one-click WordPress admin login tokens and lists
-	// the administrators to choose from. If nil, those operations fail with
-	// 500.
+	// the administrators to choose from. Required.
 	AdminLogin *adminlogin.Service
 	// Logs reads the site containers' logs through the orchestrator
-	// driver. If nil, the site log operations fail with 500.
+	// driver. Required.
 	Logs provisioner.LogReader
 	// Metrics answers the metrics queries. If nil, they fail with 503, as
 	// when VictoriaMetrics can't be reached.
 	Metrics *metricsapi.Service
-	// AlertChannels manages alert channels and sends test notifications. If
-	// nil, the alert channel operations fail with 500.
+	// AlertChannels manages alert channels and sends test notifications.
+	// Required.
 	AlertChannels *alertchannels.Service
 	// JobChanges wakes job event streams when the job pool records
 	// progress. If nil, the streams only notice changes by polling.
 	JobChanges *jobs.Changes
 	// Doctor runs the platform's preflight checks for GET
-	// /api/v1/platform/doctor. If nil, that operation fails with 500.
+	// /api/v1/platform/doctor. Required.
 	Doctor DoctorFunc
 	// SecureCookies forces the Secure flag on the session cookie. Otherwise
 	// it is set when the request arrived over HTTPS, directly or through a
@@ -188,8 +216,20 @@ var _ gen.StrictServerInterface = (*Handlers)(nil)
 // document, including /healthz and /readyz. Unmatched requests get 404 or
 // 405 Problem Details.
 func NewHandler(opts Options) (http.Handler, error) {
+	return newHandler(opts, true)
+}
+
+// newHandler builds the handler. With requireAll false it accepts Options
+// missing required services, for tests that exercise one area: an
+// operation whose service is missing then panics, which the server's
+// recovery middleware turns into a 500, so a test that forgets a service
+// fails loudly.
+func newHandler(opts Options, requireAll bool) (http.Handler, error) {
 	if opts.Logger == nil {
 		return nil, fmt.Errorf("api: Logger is required")
+	}
+	if missing := opts.missing(); requireAll && len(missing) > 0 {
+		return nil, fmt.Errorf("api: required options missing: %s", strings.Join(missing, ", "))
 	}
 	if opts.Readiness == nil {
 		opts.Readiness = &httpserver.Readiness{}

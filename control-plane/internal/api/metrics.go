@@ -112,9 +112,6 @@ func (h *Handlers) checkMetricsSite(ctx context.Context, siteID string) error {
 	if _, err := h.authorize(ctx, authz.ViewMonitoring, authz.Site(siteID)); err != nil {
 		return err
 	}
-	if h.sites == nil {
-		return errNoSites
-	}
 	if _, _, err := h.sites.Get(ctx, siteID); err != nil {
 		return siteError(err)
 	}

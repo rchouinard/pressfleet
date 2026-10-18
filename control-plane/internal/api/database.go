@@ -17,9 +17,6 @@ func (h *Handlers) ExportSiteDatabase(ctx context.Context, req gen.ExportSiteDat
 	if err != nil {
 		return nil, err
 	}
-	if h.exports == nil {
-		return nil, errNoExports
-	}
 	job, err := h.exports.ExportDatabase(ctx, req.SiteID, p.UserID)
 	if err != nil {
 		return nil, exportError(err)
@@ -42,9 +39,6 @@ func (h *Handlers) DownloadSiteDatabaseExport(ctx context.Context, req gen.Downl
 	auditRead(ctx)
 	if _, err := h.authorize(ctx, authz.DownloadDatabaseExport, authz.Site(req.SiteID)); err != nil {
 		return nil, err
-	}
-	if h.exports == nil {
-		return nil, errNoExports
 	}
 	d, err := h.exports.OpenDatabase(ctx, req.SiteID, req.ExportID)
 	if err != nil {

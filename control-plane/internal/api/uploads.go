@@ -16,9 +16,6 @@ import (
 
 // Resumable uploads (#111).
 
-// errNoUploads is a wiring bug: serve always passes the upload service.
-var errNoUploads = errors.New("api: no upload service configured")
-
 // uploadAction is the permission an upload for purpose needs: that of the
 // job it is for. Unknown purposes are checked as imports; the service
 // refuses them.
@@ -41,9 +38,6 @@ func (h *Handlers) CreateUpload(ctx context.Context, req gen.CreateUploadRequest
 	p, err := h.authorize(ctx, uploadAction(purpose), target)
 	if err != nil {
 		return nil, err
-	}
-	if h.uploads == nil {
-		return nil, errNoUploads
 	}
 	u, err := h.uploads.Create(ctx, uploads.NewUpload{
 		Purpose:         purpose,
@@ -136,9 +130,6 @@ func (h *Handlers) authorizeUpload(ctx context.Context, uploadID string) (auth.P
 	p, err := h.authorize(ctx, uploadAction(u.Purpose), authz.Upload(uploadID))
 	if err != nil {
 		return auth.Principal{}, store.Upload{}, err
-	}
-	if h.uploads == nil {
-		return auth.Principal{}, store.Upload{}, errNoUploads
 	}
 	if !found || u.CreatedByUserID != p.UserID {
 		return auth.Principal{}, store.Upload{}, fmt.Errorf("%w: %w", ErrNotFound, uploads.ErrNotFound)

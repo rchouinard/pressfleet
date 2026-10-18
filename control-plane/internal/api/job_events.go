@@ -42,9 +42,6 @@ func (h *Handlers) StreamJobEvents(ctx context.Context, req gen.StreamJobEventsR
 	if _, err := h.authorize(ctx, authz.ViewJobs, authz.Job(req.JobID)); err != nil {
 		return nil, err
 	}
-	if h.db == nil {
-		return nil, errNoDatabase
-	}
 	var after int64
 	if p := req.Params.LastEventID; p != nil && *p != "" {
 		n, err := strconv.ParseInt(*p, 10, 64)

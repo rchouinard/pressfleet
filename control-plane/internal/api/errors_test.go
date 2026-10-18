@@ -59,7 +59,7 @@ func TestUnexpectedHandlerErrorIsLoggedNotLeaked(t *testing.T) {
 }
 
 func TestAuthenticationRunsBeforeValidation(t *testing.T) {
-	h, err := NewHandler(Options{Logger: slog.New(slog.DiscardHandler), Authenticator: rejectAll{}})
+	h, err := newHandler(Options{Logger: slog.New(slog.DiscardHandler), Authenticator: rejectAll{}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

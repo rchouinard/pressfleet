@@ -21,16 +21,11 @@ import (
 // credentials reduced to whether they are set. Delivery is package
 // alertchannels'.
 
-var errNoAlertChannels = errors.New("api: no alert channel service configured")
-
 // ListAlertChannels lists alert channels by name. The cursor encodes the
 // name and ID of the last channel on the previous page.
 func (h *Handlers) ListAlertChannels(ctx context.Context, req gen.ListAlertChannelsRequestObject) (gen.ListAlertChannelsResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ViewMonitoring, authz.Platform()); err != nil {
 		return nil, err
-	}
-	if h.channels == nil {
-		return nil, errNoAlertChannels
 	}
 	p := req.Params
 	limit := pageLimit(p.Limit)
@@ -57,9 +52,6 @@ func (h *Handlers) ListAlertChannels(ctx context.Context, req gen.ListAlertChann
 func (h *Handlers) CreateAlertChannel(ctx context.Context, req gen.CreateAlertChannelRequestObject) (gen.CreateAlertChannelResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ManagePlatformSettings, authz.Platform()); err != nil {
 		return nil, err
-	}
-	if h.channels == nil {
-		return nil, errNoAlertChannels
 	}
 	b := req.Body
 	in := alertchannels.Input{
@@ -102,9 +94,6 @@ func (h *Handlers) GetAlertChannel(ctx context.Context, req gen.GetAlertChannelR
 	if _, err := h.authorize(ctx, authz.ViewMonitoring, authz.AlertChannel(req.AlertChannelID)); err != nil {
 		return nil, err
 	}
-	if h.channels == nil {
-		return nil, errNoAlertChannels
-	}
 	c, err := h.channels.Get(ctx, req.AlertChannelID)
 	if err != nil {
 		return nil, alertChannelError(err, "")
@@ -117,9 +106,6 @@ func (h *Handlers) GetAlertChannel(ctx context.Context, req gen.GetAlertChannelR
 func (h *Handlers) UpdateAlertChannel(ctx context.Context, req gen.UpdateAlertChannelRequestObject) (gen.UpdateAlertChannelResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ManagePlatformSettings, authz.AlertChannel(req.AlertChannelID)); err != nil {
 		return nil, err
-	}
-	if h.channels == nil {
-		return nil, errNoAlertChannels
 	}
 	b := req.Body
 	p := alertchannels.Patch{Name: b.Name, RuleID: b.RuleID, ClientGroupID: b.ClientGroupID}
@@ -159,9 +145,6 @@ func (h *Handlers) DeleteAlertChannel(ctx context.Context, req gen.DeleteAlertCh
 	if _, err := h.authorize(ctx, authz.ManagePlatformSettings, authz.AlertChannel(req.AlertChannelID)); err != nil {
 		return nil, err
 	}
-	if h.channels == nil {
-		return nil, errNoAlertChannels
-	}
 	if err := h.channels.Delete(ctx, req.AlertChannelID); err != nil {
 		return nil, alertChannelError(err, "")
 	}
@@ -190,9 +173,6 @@ func (h *Handlers) setAlertChannelEnabled(ctx context.Context, channelID string,
 	if _, err := h.authorize(ctx, authz.ManagePlatformSettings, authz.AlertChannel(channelID)); err != nil {
 		return alertchannels.Channel{}, err
 	}
-	if h.channels == nil {
-		return alertchannels.Channel{}, errNoAlertChannels
-	}
 	c, err := h.channels.Update(ctx, channelID, alertchannels.Patch{Enabled: &enabled})
 	if err != nil {
 		return alertchannels.Channel{}, alertChannelError(err, "")
@@ -204,9 +184,6 @@ func (h *Handlers) setAlertChannelEnabled(ctx context.Context, channelID string,
 func (h *Handlers) TestAlertChannel(ctx context.Context, req gen.TestAlertChannelRequestObject) (gen.TestAlertChannelResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ManagePlatformSettings, authz.AlertChannel(req.AlertChannelID)); err != nil {
 		return nil, err
-	}
-	if h.channels == nil {
-		return nil, errNoAlertChannels
 	}
 	res, err := h.channels.Test(ctx, req.AlertChannelID)
 	if err != nil {
@@ -222,9 +199,6 @@ func (h *Handlers) TestAlertChannel(ctx context.Context, req gen.TestAlertChanne
 func (h *Handlers) ListAlertDeliveries(ctx context.Context, req gen.ListAlertDeliveriesRequestObject) (gen.ListAlertDeliveriesResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ViewMonitoring, authz.Platform()); err != nil {
 		return nil, err
-	}
-	if h.db == nil {
-		return nil, errNoDatabase
 	}
 	p := req.Params
 	limit := pageLimit(p.Limit)

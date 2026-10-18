@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
@@ -33,9 +32,6 @@ func (h *Handlers) GetPlatform(ctx context.Context, _ gen.GetPlatformRequestObje
 	}, nil
 }
 
-// errNoDoctor is a wiring bug: serve always passes a doctor.
-var errNoDoctor = errors.New("api: no doctor configured")
-
 // DoctorFunc runs the preflight checks that can run from the control plane.
 // Checks that need the host must come back as doctor.StatusUnavailable.
 type DoctorFunc func(ctx context.Context) doctor.Report
@@ -44,9 +40,6 @@ type DoctorFunc func(ctx context.Context) doctor.Report
 func (h *Handlers) GetPlatformDoctor(ctx context.Context, _ gen.GetPlatformDoctorRequestObject) (gen.GetPlatformDoctorResponseObject, error) {
 	if _, err := h.authorize(ctx, authz.ViewMonitoring, authz.Platform()); err != nil {
 		return nil, err
-	}
-	if h.doctor == nil {
-		return nil, errNoDoctor
 	}
 	rep := h.doctor(ctx)
 	out := gen.DoctorReport{Outcome: gen.DoctorReportOutcome(rep.Outcome().String()), Results: make([]gen.DoctorResult, len(rep.Results))}

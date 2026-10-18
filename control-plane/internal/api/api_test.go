@@ -59,7 +59,7 @@ func newHandler(t *testing.T, opts api.Options) http.Handler {
 	if opts.Logger == nil {
 		opts.Logger = slog.New(slog.DiscardHandler)
 	}
-	h, err := api.NewHandler(opts)
+	h, err := api.NewPartialHandler(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -477,5 +477,25 @@ func TestReadiness(t *testing.T) {
 func TestNewHandlerRequiresLogger(t *testing.T) {
 	if _, err := api.NewHandler(api.Options{}); err == nil {
 		t.Error("expected an error without a logger")
+	}
+}
+
+// The services behind whole areas of the API are required: a wiring
+// mistake stops startup instead of failing those operations one by one.
+func TestNewHandlerRequiresServices(t *testing.T) {
+	_, err := api.NewHandler(api.Options{Logger: slog.New(slog.DiscardHandler)})
+	if err == nil {
+		t.Fatal("NewHandler built a handler without any services")
+	}
+	for _, name := range []string{"DB", "Auth", "Sites", "Backups", "Offboarding", "Uploads", "Exports", "Deployments",
+		"DatabaseSessions", "AdminLogin", "Logs", "AlertChannels", "Doctor"} {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("error %q doesn't name %s", err, name)
+		}
+	}
+	for _, optional := range []string{"Metrics", "JobChanges", "Authenticator", "Readiness"} {
+		if strings.Contains(err.Error(), optional) {
+			t.Errorf("error %q names optional %s", err, optional)
+		}
 	}
 }
