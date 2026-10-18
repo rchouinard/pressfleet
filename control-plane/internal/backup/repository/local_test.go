@@ -19,8 +19,13 @@ func TestLocalRepositoryIsShared(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	db := storetest.Open(t, store.SQLite)
-	// Not root: use a group this user may give files to.
+	// Use a group this user may give files to. Root may give files to any
+	// group but can't choose GID 0 (zero selects the default), so it
+	// takes an unused one.
 	gid := os.Getgid()
+	if gid == 0 {
+		gid = 4242
+	}
 	f := newFixture(t, db, repository.Options{RepositoryGID: gid})
 	groupID := f.group(t, "Acme")
 	access, err := f.m.TaskAccess(ctx, groupID)

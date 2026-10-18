@@ -93,7 +93,9 @@ type Options struct {
 	// Restic is the restic binary; empty means "restic" on PATH.
 	Restic string
 	// RepositoryGID owns local repositories; zero means
-	// provisioner.RepositoryGID, the group backup tasks run with.
+	// provisioner.RepositoryGID, the group backup tasks run with. Root's
+	// group can't be chosen: repositories are shared with site tasks
+	// through a dedicated group, never through GID 0.
 	RepositoryGID int
 	// HTTPClient talks to S3 for export and delete; nil means a default
 	// client.
