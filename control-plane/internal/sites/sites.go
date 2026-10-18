@@ -426,10 +426,6 @@ func New(opts Options) (*Service, error) {
 	return s, nil
 }
 
-// LockKey is the lock key of every job that changes the site, so they run
-// one at a time (package jobs).
-func LockKey(siteID string) string { return "site:" + siteID }
-
 // NewSite is a request to create a site. Optional fields are zero when
 // unset.
 type NewSite struct {
@@ -620,9 +616,9 @@ func (s *Service) create(ctx context.Context, site store.Site, req NewSite) (sto
 		}
 		job, err = jobs.Enqueue(ctx, q, jobs.Spec{
 			Type:            CreateJobType,
-			TargetType:      "site",
+			TargetType:      store.JobTargetSite,
 			TargetID:        site.ID,
-			LockKey:         LockKey(site.ID),
+			LockKey:         store.SiteLockKey(site.ID),
 			CreatedByUserID: req.CreatedByUserID,
 		})
 		return err

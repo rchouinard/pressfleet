@@ -142,7 +142,7 @@ func (e *coreEnv) rollout(t *testing.T) {
 func (e *coreEnv) coreJobs(t *testing.T, siteID string) []store.Job {
 	t.Helper()
 	page, err := store.NewJobs(e.db).List(context.Background(), store.JobFilter{
-		Types: []string{sites.CoreUpdateJobType}, TargetType: "site", TargetID: siteID,
+		Types: []string{sites.CoreUpdateJobType}, TargetType: store.JobTargetSite, TargetID: siteID,
 	})
 	if err != nil {
 		t.Fatal(err)

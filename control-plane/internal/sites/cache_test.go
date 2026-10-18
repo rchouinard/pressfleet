@@ -31,7 +31,7 @@ func TestPurgeCache(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if job.Type != sites.PurgeCacheJobType || job.TargetID != site.ID || job.LockKey != sites.LockKey(site.ID) {
+			if job.Type != sites.PurgeCacheJobType || job.TargetID != site.ID || job.LockKey != store.SiteLockKey(site.ID) {
 				t.Errorf("job = %+v", job)
 			}
 			e.runJobs(t)

@@ -53,7 +53,7 @@ func TestDeletion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if job.Type != sites.DeleteJobType || job.TargetID != site.ID || job.LockKey != sites.LockKey(site.ID) {
+		if job.Type != sites.DeleteJobType || job.TargetID != site.ID || job.LockKey != store.SiteLockKey(site.ID) {
 			t.Errorf("job = %+v", job)
 		}
 		if got := e.site(t, site.ID); got.Status != store.SiteDeleting {
@@ -84,7 +84,7 @@ func TestDeletion(t *testing.T) {
 			t.Errorf("Delete of a deleted site: err = %v, want ErrNotFound", err)
 		}
 		// A deletion job for a site that is already gone finishes quietly.
-		late, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: sites.DeleteJobType, TargetType: "site", TargetID: site.ID, LockKey: sites.LockKey(site.ID)})
+		late, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: sites.DeleteJobType, TargetType: store.JobTargetSite, TargetID: site.ID, LockKey: store.SiteLockKey(site.ID)})
 		if err != nil {
 			t.Fatal(err)
 		}

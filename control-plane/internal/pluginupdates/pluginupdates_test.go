@@ -205,7 +205,7 @@ func TestScheduledCheckStoresReport(t *testing.T) {
 		if n, err := sched.RunOnce(ctx); err != nil || n != 1 {
 			t.Fatalf("scheduler enqueued %d jobs, %v; want 1", n, err)
 		}
-		page, err := store.NewJobs(db).List(ctx, store.JobFilter{TargetType: "site", TargetID: siteID})
+		page, err := store.NewJobs(db).List(ctx, store.JobFilter{TargetType: store.JobTargetSite, TargetID: siteID})
 		if err != nil || len(page.Jobs) != 1 {
 			t.Fatalf("jobs for site = %+v, %v", page.Jobs, err)
 		}
@@ -294,7 +294,7 @@ func TestDeletedSite(t *testing.T) {
 		if err := pluginupdates.EnsureSchedule(ctx, db, siteID); err != nil {
 			t.Fatal(err)
 		}
-		j, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: pluginupdates.JobType, TargetType: "site", TargetID: siteID, MaxAttempts: 1})
+		j, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: pluginupdates.JobType, TargetType: store.JobTargetSite, TargetID: siteID, MaxAttempts: 1})
 		if err != nil {
 			t.Fatal(err)
 		}

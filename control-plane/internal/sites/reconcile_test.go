@@ -69,7 +69,7 @@ func TestEnqueueReconcile(t *testing.T) {
 			t.Errorf("second EnqueueReconcile = %d, %v; want 0", n, err)
 		}
 		for _, j := range e.reconcileJobs(t) {
-			if j.LockKey != sites.LockKey(j.TargetID) || j.TargetType != "site" {
+			if j.LockKey != store.SiteLockKey(j.TargetID) || j.TargetType != store.JobTargetSite {
 				t.Errorf("job = %+v", j)
 			}
 		}

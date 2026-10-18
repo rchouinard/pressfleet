@@ -343,10 +343,10 @@ func (s *Service) enqueueImageUpdate(ctx context.Context, q store.Querier, site 
 	}
 	return jobs.Enqueue(ctx, q, jobs.Spec{
 		Type:       ImageUpdateJobType,
-		TargetType: "site",
+		TargetType: store.JobTargetSite,
 		TargetID:   site.ID,
 		Payload:    imageUpdatePayload{Images: changes, Rollout: rollout},
-		LockKey:    LockKey(site.ID),
+		LockKey:    store.SiteLockKey(site.ID),
 	})
 }
 

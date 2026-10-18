@@ -63,10 +63,10 @@ func (s *Service) SetMaintenance(ctx context.Context, siteID string, enabled boo
 		}
 		job, err = jobs.Enqueue(ctx, q, jobs.Spec{
 			Type:            MaintenanceJobType,
-			TargetType:      "site",
+			TargetType:      store.JobTargetSite,
 			TargetID:        siteID,
 			Payload:         maintenancePayload{Enabled: enabled, Previous: current.Maintenance},
-			LockKey:         LockKey(siteID),
+			LockKey:         store.SiteLockKey(siteID),
 			CreatedByUserID: createdByUserID,
 		})
 		if err != nil {

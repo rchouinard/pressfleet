@@ -154,10 +154,10 @@ func (s *Service) enqueueTemplateUpdate(ctx context.Context, q store.Querier, si
 	}
 	return jobs.Enqueue(ctx, q, jobs.Spec{
 		Type:       TemplateUpdateJobType,
-		TargetType: "site",
+		TargetType: store.JobTargetSite,
 		TargetID:   site.ID,
 		Payload:    templateUpdatePayload{From: site.TemplateFingerprint, To: target, Rollout: rollout},
-		LockKey:    LockKey(site.ID),
+		LockKey:    store.SiteLockKey(site.ID),
 	})
 }
 

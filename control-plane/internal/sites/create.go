@@ -53,7 +53,7 @@ func (s *Service) createHandler() jobs.Handler {
 // jobSite loads the site a job targets.
 func (s *Service) jobSite(ctx context.Context, r *jobs.Run) (store.Site, error) {
 	job := r.Job()
-	if job.TargetType != "site" || job.TargetID == "" {
+	if job.TargetType != store.JobTargetSite || job.TargetID == "" {
 		return store.Site{}, jobs.Permanent(fmt.Errorf("%s job targets %s %q, want a site", job.Type, job.TargetType, job.TargetID))
 	}
 	site, err := store.NewSites(s.db).Get(ctx, job.TargetID)

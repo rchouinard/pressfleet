@@ -15,7 +15,7 @@ import (
 func TestExports(t *testing.T) {
 	ctx := context.Background()
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
-		job := store.Job{Type: "site.export", TargetType: "site", TargetID: id.New()}
+		job := store.Job{Type: "site.export", TargetType: store.JobTargetSite, TargetID: id.New()}
 		if err := store.NewJobs(db).Enqueue(ctx, &job); err != nil {
 			t.Fatal(err)
 		}

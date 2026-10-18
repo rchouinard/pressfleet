@@ -26,9 +26,9 @@ func TestTargetClientGroup(t *testing.T) {
 			t.Fatal(err)
 		}
 		jobs := store.NewJobs(db)
-		siteJob := store.Job{Type: "site.update", TargetType: "site", TargetID: site}
-		groupJob := store.Job{Type: "backup", TargetType: "client_group", TargetID: group.ID}
-		orphanJob := store.Job{Type: "site.update", TargetType: "site", TargetID: id.New()}
+		siteJob := store.Job{Type: "site.update", TargetType: store.JobTargetSite, TargetID: site}
+		groupJob := store.Job{Type: "backup", TargetType: store.JobTargetClientGroup, TargetID: group.ID}
+		orphanJob := store.Job{Type: "site.update", TargetType: store.JobTargetSite, TargetID: id.New()}
 		for _, j := range []*store.Job{&siteJob, &groupJob, &orphanJob} {
 			if err := jobs.Enqueue(ctx, j); err != nil {
 				t.Fatal(err)

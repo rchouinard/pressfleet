@@ -117,7 +117,7 @@ func TestStreamJobEvents(t *testing.T) {
 		}}); err != nil {
 			t.Fatal(err)
 		}
-		job, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "site.create", TargetType: "site", TargetID: id.New()})
+		job, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "site.create", TargetType: store.JobTargetSite, TargetID: id.New()})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -254,7 +254,7 @@ func TestStreamJobEventsPolls(t *testing.T) {
 		}}); err != nil {
 			t.Fatal(err)
 		}
-		job, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "site.update", TargetType: "site", TargetID: id.New()})
+		job, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "site.update", TargetType: store.JobTargetSite, TargetID: id.New()})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -293,7 +293,7 @@ func TestStreamJobEventsLogBeforeSteps(t *testing.T) {
 	ctx := context.Background()
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
 		api.SetJobEventPoll(t, 20*time.Millisecond)
-		job, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "site.update", TargetType: "site", TargetID: id.New()})
+		job, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "site.update", TargetType: store.JobTargetSite, TargetID: id.New()})
 		if err != nil {
 			t.Fatal(err)
 		}

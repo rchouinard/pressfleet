@@ -75,10 +75,6 @@ var Args = []string{"cron", "event", "run", "--due-now"}
 // ScheduleName returns the name of a site's cron schedule.
 func ScheduleName(siteID string) string { return "wp-cron:" + siteID }
 
-// LockKey returns the lock key of a site's cron jobs, shared with every
-// other job that changes the site.
-func LockKey(siteID string) string { return "site:" + siteID }
-
 // EnsureSchedule creates or updates the site's cron schedule. It is
 // idempotent. Call it with the transaction that creates the site, so the
 // schedule exists exactly when the site row does.
@@ -89,9 +85,9 @@ func EnsureSchedule(ctx context.Context, q store.Querier, siteID string) error {
 	_, err := jobs.UpsertSchedule(ctx, q, jobs.ScheduleSpec{
 		Name:            ScheduleName(siteID),
 		JobType:         JobType,
-		TargetType:      "site",
+		TargetType:      store.JobTargetSite,
 		TargetID:        siteID,
-		LockKey:         LockKey(siteID),
+		LockKey:         store.SiteLockKey(siteID),
 		MaxAttempts:     MaxAttempts,
 		Interval:        Interval,
 		Stagger:         Interval,
@@ -144,7 +140,7 @@ type runner struct {
 
 func (rn runner) run(ctx context.Context, r *jobs.Run) error {
 	job := r.Job()
-	if job.TargetType != "site" || job.TargetID == "" {
+	if job.TargetType != store.JobTargetSite || job.TargetID == "" {
 		return jobs.Permanent(fmt.Errorf("%s job targets %s %q, want a site", JobType, job.TargetType, job.TargetID))
 	}
 	siteID := job.TargetID

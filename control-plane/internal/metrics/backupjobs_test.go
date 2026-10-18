@@ -25,7 +25,7 @@ func addBackup(t *testing.T, db *store.DB, siteID, groupID string, status store.
 
 func addJob(t *testing.T, db *store.DB, state store.JobState) {
 	t.Helper()
-	j := store.Job{Type: "test.job", TargetType: "site", TargetID: id.New(), Payload: json.RawMessage(`{}`)}
+	j := store.Job{Type: "test.job", TargetType: store.JobTargetSite, TargetID: id.New(), Payload: json.RawMessage(`{}`)}
 	if err := store.NewJobs(db).Enqueue(context.Background(), &j); err != nil {
 		t.Fatal(err)
 	}

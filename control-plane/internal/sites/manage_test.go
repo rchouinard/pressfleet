@@ -100,7 +100,7 @@ func TestUpdate(t *testing.T) {
 			saved.MemoryReservationMB != site.MemoryReservationMB {
 			t.Errorf("saved = %+v", saved)
 		}
-		if job.Type != sites.UpdateJobType || job.LockKey != sites.LockKey(site.ID) || !strings.Contains(string(job.Payload), `"php_version":"8.4"`) {
+		if job.Type != sites.UpdateJobType || job.LockKey != store.SiteLockKey(site.ID) || !strings.Contains(string(job.Payload), `"php_version":"8.4"`) {
 			t.Errorf("job = %+v (payload %s)", job, job.Payload)
 		}
 		// One change at a time.
@@ -323,7 +323,7 @@ func TestStartStop(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if job.Type != sites.StopJobType || job.LockKey != sites.LockKey(site.ID) {
+		if job.Type != sites.StopJobType || job.LockKey != store.SiteLockKey(site.ID) {
 			t.Errorf("job = %+v", job)
 		}
 		// The status changes when the job has done its work.

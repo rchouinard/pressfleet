@@ -99,10 +99,10 @@ func scheduleSpec(siteID string, s store.SiteBackupSchedule, w Window) jobs.Sche
 	return jobs.ScheduleSpec{
 		Name:       ScheduleName(siteID),
 		JobType:    JobType,
-		TargetType: "site",
+		TargetType: store.JobTargetSite,
 		TargetID:   siteID,
 		Payload:    JobPayload{Kind: store.BackupScheduled},
-		LockKey:    LockKey(siteID),
+		LockKey:    store.SiteLockKey(siteID),
 		Interval:   interval,
 		// Slots are counted from the Unix epoch, a midnight UTC, so an
 		// offset of start modulo the interval puts one at start every day.
@@ -182,7 +182,7 @@ func ReconcileSchedules(ctx context.Context, db *store.DB, w Window) error {
 		return fmt.Errorf("reconcile backup schedules: %w", err)
 	}
 	for _, sch := range all {
-		if sch.JobType == JobType && sch.TargetType == "site" && !exists[sch.TargetID] {
+		if sch.JobType == JobType && sch.TargetType == store.JobTargetSite && !exists[sch.TargetID] {
 			if err := EnsureSchedule(ctx, db, sch.TargetID, w); err != nil {
 				return fmt.Errorf("reconcile backup schedules: %w", err)
 			}

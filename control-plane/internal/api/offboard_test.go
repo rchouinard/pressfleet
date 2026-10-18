@@ -113,7 +113,7 @@ func TestOffboardEndpoints(t *testing.T) {
 		}
 
 		// Not while an export from the group's backups is in flight.
-		exp, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: export.BackupJobType, TargetType: "client_group", TargetID: acme})
+		exp, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: export.BackupJobType, TargetType: store.JobTargetClientGroup, TargetID: acme})
 		if err != nil {
 			t.Fatal(err)
 		}

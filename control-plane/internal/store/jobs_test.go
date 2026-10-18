@@ -19,7 +19,7 @@ var testTypes = []string{"test.a", "test.b"}
 
 func enqueue(t *testing.T, q store.Querier, typ, lockKey string) store.Job {
 	t.Helper()
-	j := store.Job{Type: typ, TargetType: "site", TargetID: id.New(), LockKey: lockKey, Payload: json.RawMessage(`{"n":1}`)}
+	j := store.Job{Type: typ, TargetType: store.JobTargetSite, TargetID: id.New(), LockKey: lockKey, Payload: json.RawMessage(`{"n":1}`)}
 	if err := store.NewJobs(q).Enqueue(context.Background(), &j); err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestJobsEnqueueLeaseFinish(t *testing.T) {
 		if !id.Valid(j.ID) || j.State != store.JobQueued || j.Seq < 1 || j.MaxAttempts != store.DefaultMaxAttempts || j.RunAfter.IsZero() {
 			t.Fatalf("Enqueue = %+v", j)
 		}
-		if err := jobs.Enqueue(ctx, &store.Job{Type: "x", TargetType: "site", TargetID: "1", Payload: json.RawMessage(`[1]`)}); err == nil {
+		if err := jobs.Enqueue(ctx, &store.Job{Type: "x", TargetType: store.JobTargetSite, TargetID: "1", Payload: json.RawMessage(`[1]`)}); err == nil {
 			t.Error("Enqueue accepted a non-object payload")
 		}
 		if _, ok := lease(t, db, j.RunAfter.Add(-time.Second)); ok {
@@ -248,7 +248,7 @@ func TestJobsList(t *testing.T) {
 		site := id.New()
 		var all []store.Job
 		for i := range 5 {
-			j := store.Job{Type: "test.a", TargetType: "site", TargetID: site}
+			j := store.Job{Type: "test.a", TargetType: store.JobTargetSite, TargetID: site}
 			if i%2 == 1 {
 				j.Type, j.TargetType, j.TargetID = "test.b", "client_group", id.New()
 			}
@@ -284,7 +284,7 @@ func TestJobsList(t *testing.T) {
 			f    store.JobFilter
 			want int
 		}{
-			{"target", store.JobFilter{TargetType: "site", TargetID: site}, 3},
+			{"target", store.JobFilter{TargetType: store.JobTargetSite, TargetID: site}, 3},
 			{"type", store.JobFilter{Types: []string{"test.b"}}, 2},
 			{"state", store.JobFilter{States: []store.JobState{store.JobQueued}}, 5},
 			{"no match", store.JobFilter{States: []store.JobState{store.JobFailed}}, 0},
@@ -394,7 +394,7 @@ func TestJobsLogsForTarget(t *testing.T) {
 		site := id.New()
 		mk := func(target string) store.Job {
 			t.Helper()
-			j := store.Job{Type: "test.a", TargetType: "site", TargetID: target}
+			j := store.Job{Type: "test.a", TargetType: store.JobTargetSite, TargetID: target}
 			if err := jobs.Enqueue(ctx, &j); err != nil {
 				t.Fatal(err)
 			}

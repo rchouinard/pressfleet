@@ -77,7 +77,7 @@ func (e *templateEnv) checkTemplates(t *testing.T, siteID, fingerprint string) {
 func (e *templateEnv) templateJobs(t *testing.T, siteID string) []store.Job {
 	t.Helper()
 	page, err := store.NewJobs(e.db).List(context.Background(), store.JobFilter{
-		Types: []string{sites.TemplateUpdateJobType}, TargetType: "site", TargetID: siteID,
+		Types: []string{sites.TemplateUpdateJobType}, TargetType: store.JobTargetSite, TargetID: siteID,
 	})
 	if err != nil {
 		t.Fatal(err)

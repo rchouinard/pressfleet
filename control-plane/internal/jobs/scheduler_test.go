@@ -75,7 +75,7 @@ func TestNextRunAfter(t *testing.T) {
 func newSchedule(t *testing.T, db *store.DB, name string, policy store.MissedRunPolicy, interval time.Duration, now time.Time) store.Schedule {
 	t.Helper()
 	s := store.Schedule{
-		Name: name, JobType: "site.wp_cron", TargetType: "site", TargetID: "site-1",
+		Name: name, JobType: "site.wp_cron", TargetType: store.JobTargetSite, TargetID: "site-1",
 		Payload: []byte(`{"site_id":"site-1"}`), LockKey: "site:site-1",
 		Interval: interval, MissedRunPolicy: policy,
 	}
@@ -198,7 +198,7 @@ func TestConcurrentSchedulers(t *testing.T) {
 		clock := jobstest.NewClock(time.Now())
 		for i := range schedules {
 			s := store.Schedule{
-				Name: fmt.Sprintf("s%02d", i), JobType: "t", TargetType: "site", TargetID: fmt.Sprint(i),
+				Name: fmt.Sprintf("s%02d", i), JobType: "t", TargetType: store.JobTargetSite, TargetID: fmt.Sprint(i),
 				Interval: time.Minute, MissedRunPolicy: store.MissedCatchUp,
 			}
 			must(t, store.NewSchedules(db).Upsert(ctx, &s, clock.Now()))
@@ -241,7 +241,7 @@ func TestScheduleUpsertAndDelete(t *testing.T) {
 	ctx := context.Background()
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
 		spec := jobs.ScheduleSpec{
-			Name: "wp-cron:site-1", JobType: "site.wp_cron", TargetType: "site", TargetID: "site-1",
+			Name: "wp-cron:site-1", JobType: "site.wp_cron", TargetType: store.JobTargetSite, TargetID: "site-1",
 			Payload: map[string]string{"site_id": "site-1"}, Interval: 5 * time.Minute, MissedRunPolicy: store.MissedCoalesce,
 		}
 		first, err := jobs.UpsertSchedule(ctx, db, spec)
@@ -275,11 +275,11 @@ func TestScheduleUpsertAndDelete(t *testing.T) {
 		}
 
 		for _, bad := range []jobs.ScheduleSpec{
-			{Name: "x", JobType: "t", TargetType: "site", TargetID: "1", Interval: 0, MissedRunPolicy: store.MissedSkip},
-			{Name: "x", JobType: "t", TargetType: "site", TargetID: "1", Interval: 1500 * time.Millisecond, MissedRunPolicy: store.MissedSkip},
-			{Name: "x", JobType: "t", TargetType: "site", TargetID: "1", Interval: time.Minute, MissedRunPolicy: "sometimes"},
-			{Name: "x", JobType: "t", TargetType: "site", TargetID: "1", Interval: time.Minute, Offset: time.Minute, MissedRunPolicy: store.MissedSkip},
-			{JobType: "t", TargetType: "site", TargetID: "1", Interval: time.Minute, MissedRunPolicy: store.MissedSkip},
+			{Name: "x", JobType: "t", TargetType: store.JobTargetSite, TargetID: "1", Interval: 0, MissedRunPolicy: store.MissedSkip},
+			{Name: "x", JobType: "t", TargetType: store.JobTargetSite, TargetID: "1", Interval: 1500 * time.Millisecond, MissedRunPolicy: store.MissedSkip},
+			{Name: "x", JobType: "t", TargetType: store.JobTargetSite, TargetID: "1", Interval: time.Minute, MissedRunPolicy: "sometimes"},
+			{Name: "x", JobType: "t", TargetType: store.JobTargetSite, TargetID: "1", Interval: time.Minute, Offset: time.Minute, MissedRunPolicy: store.MissedSkip},
+			{JobType: "t", TargetType: store.JobTargetSite, TargetID: "1", Interval: time.Minute, MissedRunPolicy: store.MissedSkip},
 		} {
 			if _, err := jobs.UpsertSchedule(ctx, db, bad); err == nil {
 				t.Errorf("UpsertSchedule(%+v) accepted", bad)

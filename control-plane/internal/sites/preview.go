@@ -112,10 +112,10 @@ func (s *Service) RegeneratePreviewPassword(ctx context.Context, siteID, created
 		}
 		job, err = jobs.Enqueue(ctx, q, jobs.Spec{
 			Type:            UpdateJobType,
-			TargetType:      "site",
+			TargetType:      store.JobTargetSite,
 			TargetID:        siteID,
 			Payload:         updatePayload{Previous: site.Settings()},
-			LockKey:         LockKey(siteID),
+			LockKey:         store.SiteLockKey(siteID),
 			CreatedByUserID: createdByUserID,
 		})
 		creds = PreviewCredentials{Username: site.PreviewUsername, Password: password}

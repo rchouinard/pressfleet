@@ -197,10 +197,10 @@ func (s *Service) GoLive(ctx context.Context, siteID string, req GoLive) (store.
 		}
 		job, err = jobs.Enqueue(ctx, q, jobs.Spec{
 			Type:            GoLiveJobType,
-			TargetType:      "site",
+			TargetType:      store.JobTargetSite,
 			TargetID:        siteID,
 			Payload:         domainsPayload{Previous: prev, SkipDNSCheck: req.SkipDNSCheck},
-			LockKey:         LockKey(siteID),
+			LockKey:         store.SiteLockKey(siteID),
 			CreatedByUserID: req.CreatedByUserID,
 		})
 		if err != nil {

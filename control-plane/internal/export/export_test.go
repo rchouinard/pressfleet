@@ -448,7 +448,7 @@ func TestExportDatabase(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if job.Type != export.JobType || job.TargetType != "site" || job.TargetID != site.ID || job.LockKey != "site:"+site.ID {
+		if job.Type != export.JobType || job.TargetType != store.JobTargetSite || job.TargetID != site.ID || job.LockKey != "site:"+site.ID {
 			t.Errorf("job = %+v", job)
 		}
 		done := e.run(t, job, store.JobSucceeded)
@@ -599,7 +599,7 @@ func TestExportSite(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if job.Type != export.SiteJobType || job.TargetType != "site" || job.TargetID != site.ID || job.LockKey != "site:"+site.ID {
+		if job.Type != export.SiteJobType || job.TargetType != store.JobTargetSite || job.TargetID != site.ID || job.LockKey != "site:"+site.ID {
 			t.Errorf("job = %+v", job)
 		}
 		start := e.clock.now()
@@ -773,7 +773,7 @@ func TestExportBackup(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if job.Type != export.BackupJobType || job.TargetType != "site" || job.TargetID != site.ID || job.LockKey != "" {
+		if job.Type != export.BackupJobType || job.TargetType != store.JobTargetSite || job.TargetID != site.ID || job.LockKey != "" {
 			t.Errorf("job = %+v", job)
 		}
 		done := e.run(t, job, store.JobSucceeded)
@@ -811,7 +811,7 @@ func TestExportBackup(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if job.TargetType != "client_group" || job.TargetID != e.group {
+		if job.TargetType != store.JobTargetClientGroup || job.TargetID != e.group {
 			t.Errorf("job of a deleted site's backup = %+v", job)
 		}
 		res = result(t, e.run(t, job, store.JobSucceeded))

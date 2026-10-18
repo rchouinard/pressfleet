@@ -190,14 +190,14 @@ func (s *Service) Import(ctx context.Context, req Import) (string, store.Job, er
 		var err error
 		job, err = jobs.Enqueue(ctx, q, jobs.Spec{
 			Type:       ImportJobType,
-			TargetType: "site",
+			TargetType: store.JobTargetSite,
 			TargetID:   siteID,
 			Payload: importPayload{
 				Name: name, PHPVersion: site.PHPVersion, CPU: site.CPULimit,
 				MemoryReservationMB: site.MemoryReservationMB, MemoryLimitMB: site.MemoryLimitMB,
 				ArchiveUploadID: req.ArchiveUploadID, DumpUploadID: req.DumpUploadID,
 			},
-			LockKey:         LockKey(siteID),
+			LockKey:         store.SiteLockKey(siteID),
 			CreatedByUserID: req.CreatedByUserID,
 		})
 		if err != nil {

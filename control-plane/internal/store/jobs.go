@@ -71,6 +71,17 @@ const (
 // DefaultMaxAttempts is used when a job doesn't set MaxAttempts.
 const DefaultMaxAttempts = 5
 
+// Job target types: what Job.TargetType says Job.TargetID names.
+const (
+	JobTargetSite        = "site"
+	JobTargetClientGroup = "client_group"
+)
+
+// SiteLockKey is the lock key of every job that changes a site, whichever
+// package runs it, so jobs on one site run one at a time (design doc §5).
+// Define it nowhere else: two spellings would let them run together.
+func SiteLockKey(siteID string) string { return "site:" + siteID }
+
 // Job is a unit of background work (design doc §5).
 type Job struct {
 	ID         string

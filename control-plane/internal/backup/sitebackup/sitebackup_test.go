@@ -16,7 +16,6 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/id"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
-	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
 )
@@ -123,8 +122,8 @@ func TestManualBackup(t *testing.T) {
 		if err := json.Unmarshal(job.Payload, &payload); err != nil {
 			t.Fatal(err)
 		}
-		if job.Type != sitebackup.JobType || job.TargetType != "site" || job.TargetID != site.ID ||
-			job.LockKey != sites.LockKey(site.ID) || payload.Kind != store.BackupManual || job.State != store.JobQueued {
+		if job.Type != sitebackup.JobType || job.TargetType != store.JobTargetSite || job.TargetID != site.ID ||
+			job.LockKey != store.SiteLockKey(site.ID) || payload.Kind != store.BackupManual || job.State != store.JobQueued {
 			t.Errorf("job = %+v, payload %+v", job, payload)
 		}
 		if _, err := e.svc.Backup(ctx, stopped.ID, ""); err != nil {
@@ -328,7 +327,7 @@ func TestStepsInAnotherJob(t *testing.T) {
 		}
 
 		site := e.site(t, "acme", store.SiteRunning)
-		job, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "test.restore", TargetType: "site", TargetID: site.ID, LockKey: sitebackup.LockKey(site.ID)})
+		job, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "test.restore", TargetType: store.JobTargetSite, TargetID: site.ID, LockKey: store.SiteLockKey(site.ID)})
 		if err != nil {
 			t.Fatal(err)
 		}

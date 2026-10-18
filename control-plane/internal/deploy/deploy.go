@@ -223,10 +223,6 @@ func New(opts Options) (*Service, error) {
 	return s, nil
 }
 
-// LockKey is the lock key of deployment jobs: the site's, shared with every
-// job that changes the site (sites.LockKey).
-func LockKey(siteID string) string { return "site:" + siteID }
-
 // Deploy checks req and queues a [JobType] job that deploys the uploaded
 // package to the site, claiming the upload for it. An invalid request, or
 // an upload that doesn't exist, isn't the caller's, or was made for
@@ -260,10 +256,10 @@ func (s *Service) Deploy(ctx context.Context, siteID string, req Request) (store
 		var err error
 		job, err = jobs.Enqueue(ctx, q, jobs.Spec{
 			Type:            JobType,
-			TargetType:      "site",
+			TargetType:      store.JobTargetSite,
 			TargetID:        siteID,
 			Payload:         payload{UploadID: req.UploadID, Kind: req.Kind, Name: req.Name, Activate: req.Activate},
-			LockKey:         LockKey(siteID),
+			LockKey:         store.SiteLockKey(siteID),
 			CreatedByUserID: req.UserID,
 		})
 		if err != nil {

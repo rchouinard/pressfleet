@@ -115,8 +115,8 @@ func TestProvisioning(t *testing.T) {
 			!strings.HasPrefix(site.AdminUsername, "admin-") || site.AdminEmail != "owner@example.com" {
 			t.Errorf("site = %+v", site)
 		}
-		if job.Type != sites.CreateJobType || job.TargetType != "site" || job.TargetID != site.ID ||
-			job.LockKey != sites.LockKey(site.ID) || job.State != store.JobQueued {
+		if job.Type != sites.CreateJobType || job.TargetType != store.JobTargetSite || job.TargetID != site.ID ||
+			job.LockKey != store.SiteLockKey(site.ID) || job.State != store.JobQueued {
 			t.Errorf("job = %+v", job)
 		}
 		salts, err := e.sec.Get(ctx, secrets.Ref(site.WPSaltsSecretRef))

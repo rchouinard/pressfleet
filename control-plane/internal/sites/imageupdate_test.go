@@ -78,7 +78,7 @@ func (e *imageEnv) checkRuns(t *testing.T, siteID, php, nginx string) {
 func (e *imageEnv) imageJobs(t *testing.T, siteID string) []store.Job {
 	t.Helper()
 	page, err := store.NewJobs(e.db).List(context.Background(), store.JobFilter{
-		Types: []string{sites.ImageUpdateJobType}, TargetType: "site", TargetID: siteID,
+		Types: []string{sites.ImageUpdateJobType}, TargetType: store.JobTargetSite, TargetID: siteID,
 	})
 	if err != nil {
 		t.Fatal(err)

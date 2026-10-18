@@ -133,7 +133,7 @@ func TestDeleteRepository(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if job.Type != offboard.DeleteJobType || job.TargetType != "client_group" || job.TargetID != groupID || job.LockKey != repomaint.LockKey(groupID) {
+		if job.Type != offboard.DeleteJobType || job.TargetType != store.JobTargetClientGroup || job.TargetID != groupID || job.LockKey != repomaint.LockKey(groupID) {
 			t.Errorf("job = %+v", job)
 		}
 		if j := e.run(t, job.ID); j.State != store.JobSucceeded {
@@ -161,7 +161,7 @@ func TestDeleteRepository(t *testing.T) {
 		if _, err := e.svc.Enqueue(ctx, groupID, false, ""); !errors.Is(err, offboard.ErrNoRepository) {
 			t.Errorf("Enqueue again: %v, want ErrNoRepository", err)
 		}
-		again, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: offboard.DeleteJobType, TargetType: "client_group", TargetID: groupID})
+		again, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: offboard.DeleteJobType, TargetType: store.JobTargetClientGroup, TargetID: groupID})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -189,7 +189,7 @@ func TestDeleteRepositoryAndGroup(t *testing.T) {
 		}
 		// Running again finds both gone.
 		again, err := jobs.Enqueue(ctx, db, jobs.Spec{
-			Type: offboard.DeleteJobType, TargetType: "client_group", TargetID: groupID, Payload: map[string]bool{"delete_client_group": true},
+			Type: offboard.DeleteJobType, TargetType: store.JobTargetClientGroup, TargetID: groupID, Payload: map[string]bool{"delete_client_group": true},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -209,7 +209,7 @@ func TestEnqueueRefusals(t *testing.T) {
 		withSites, _ := e.group(t, "Sites", true)
 		e.addSite(t, withSites)
 		exporting, _ := e.group(t, "Exporting", true)
-		exp, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: export.BackupJobType, TargetType: "client_group", TargetID: exporting})
+		exp, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: export.BackupJobType, TargetType: store.JobTargetClientGroup, TargetID: exporting})
 		if err != nil {
 			t.Fatal(err)
 		}

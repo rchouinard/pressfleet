@@ -19,7 +19,7 @@ func TestBackupRecords(t *testing.T) {
 		if err := store.NewClientGroups(db).Create(ctx, group); err != nil {
 			t.Fatal(err)
 		}
-		job := store.Job{Type: "site.backup", TargetType: "site", TargetID: id.New()}
+		job := store.Job{Type: "site.backup", TargetType: store.JobTargetSite, TargetID: id.New()}
 		if err := store.NewJobs(db).Enqueue(ctx, &job); err != nil {
 			t.Fatal(err)
 		}

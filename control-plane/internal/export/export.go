@@ -191,10 +191,6 @@ type Snapshots interface {
 	DumpDatabase(ctx context.Context, siteID string, snap backup.SnapshotID, w io.Writer) (backup.Snapshot, error)
 }
 
-// LockKey is the lock key of database and site export jobs: the site's,
-// shared with every job that changes the site (sites.LockKey).
-func LockKey(siteID string) string { return "site:" + siteID }
-
 // DownloadPath is the API path that downloads a database export, from
 // before exports had kinds.
 func DownloadPath(siteID, exportID string) string {
@@ -328,9 +324,9 @@ func (s *Service) exportLive(ctx context.Context, jobType, siteID, createdByUser
 		var err error
 		job, err = jobs.Enqueue(ctx, q, jobs.Spec{
 			Type:            jobType,
-			TargetType:      "site",
+			TargetType:      store.JobTargetSite,
 			TargetID:        siteID,
-			LockKey:         LockKey(siteID),
+			LockKey:         store.SiteLockKey(siteID),
 			CreatedByUserID: createdByUserID,
 		})
 		if err != nil {

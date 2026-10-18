@@ -172,7 +172,7 @@ func TestPruneJob(t *testing.T) {
 		otherRec := e.backUp(t, other.ID)
 
 		job := e.enqueue(t, repomaint.PruneJobType)
-		if job.LockKey != "repo:"+e.group || job.TargetType != "client_group" || job.TargetID != e.group {
+		if job.LockKey != "repo:"+e.group || job.TargetType != store.JobTargetClientGroup || job.TargetID != e.group {
 			t.Errorf("job = %+v", job)
 		}
 		e.runJobs(t)

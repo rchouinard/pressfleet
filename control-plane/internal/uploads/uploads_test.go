@@ -118,7 +118,7 @@ func (e *env) send(u store.Upload, content []byte, n int) store.Upload {
 func (e *env) enqueue(state store.JobState) store.Job {
 	e.t.Helper()
 	ctx := context.Background()
-	j := store.Job{Type: "site.import", TargetType: "client_group", TargetID: e.groupID}
+	j := store.Job{Type: "site.import", TargetType: store.JobTargetClientGroup, TargetID: e.groupID}
 	if err := store.NewJobs(e.db).Enqueue(ctx, &j); err != nil {
 		e.t.Fatal(err)
 	}

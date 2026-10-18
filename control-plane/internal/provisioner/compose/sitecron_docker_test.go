@@ -108,8 +108,8 @@ func TestSiteCronDocker(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := jobs.Enqueue(ctx, db, jobs.Spec{
-		Type: sitecron.JobType, TargetType: "site", TargetID: siteID,
-		LockKey: sitecron.LockKey(siteID), MaxAttempts: sitecron.MaxAttempts,
+		Type: sitecron.JobType, TargetType: store.JobTargetSite, TargetID: siteID,
+		LockKey: store.SiteLockKey(siteID), MaxAttempts: sitecron.MaxAttempts,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func runCronJob(t *testing.T, ctx context.Context, db *store.DB, pool *jobs.Pool
 	if ran, err := pool.RunNext(ctx); err != nil || !ran {
 		t.Fatalf("RunNext = %v, %v", ran, err)
 	}
-	page, err := store.NewJobs(db).List(ctx, store.JobFilter{TargetType: "site", TargetID: siteID, Limit: 1})
+	page, err := store.NewJobs(db).List(ctx, store.JobFilter{TargetType: store.JobTargetSite, TargetID: siteID, Limit: 1})
 	if err != nil || len(page.Jobs) == 0 {
 		t.Fatalf("listing jobs: %v", err)
 	}

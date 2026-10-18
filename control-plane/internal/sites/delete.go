@@ -71,7 +71,7 @@ func (s *Service) Delete(ctx context.Context, siteID, createdByUserID string, op
 		}
 		if site.Status == store.SiteDeleting {
 			page, err := store.NewJobs(q).List(ctx, store.JobFilter{
-				Types: []string{DeleteJobType}, States: unfinished, TargetType: "site", TargetID: siteID, Limit: 1,
+				Types: []string{DeleteJobType}, States: unfinished, TargetType: store.JobTargetSite, TargetID: siteID, Limit: 1,
 			})
 			if err != nil {
 				return err
@@ -87,9 +87,9 @@ func (s *Service) Delete(ctx context.Context, siteID, createdByUserID string, op
 		}
 		job, err = jobs.Enqueue(ctx, q, jobs.Spec{
 			Type:            DeleteJobType,
-			TargetType:      "site",
+			TargetType:      store.JobTargetSite,
 			TargetID:        siteID,
-			LockKey:         LockKey(siteID),
+			LockKey:         store.SiteLockKey(siteID),
 			CreatedByUserID: createdByUserID,
 			Payload:         deletePayload(opts),
 		})

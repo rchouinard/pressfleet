@@ -116,7 +116,7 @@ func TestUploads(t *testing.T) {
 		}
 
 		// A claim needs a complete upload.
-		job := store.Job{Type: "site.deploy", TargetType: "site", TargetID: f.siteID}
+		job := store.Job{Type: "site.deploy", TargetType: store.JobTargetSite, TargetID: f.siteID}
 		if err := store.NewJobs(db).Enqueue(ctx, &job); err != nil {
 			t.Fatal(err)
 		}
@@ -187,7 +187,7 @@ func TestUploadsCleanupQueries(t *testing.T) {
 			if ok, err := uploads.Complete(ctx, u.ID, "x", u.ExpiresAt, at); err != nil || !ok {
 				t.Fatalf("Complete = %v, %v", ok, err)
 			}
-			job := store.Job{Type: "site.import", TargetType: "client_group", TargetID: f.groupID}
+			job := store.Job{Type: "site.import", TargetType: store.JobTargetClientGroup, TargetID: f.groupID}
 			if err := store.NewJobs(db).Enqueue(ctx, &job); err != nil {
 				t.Fatal(err)
 			}

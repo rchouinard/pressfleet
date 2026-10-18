@@ -90,11 +90,6 @@ var (
 	ErrNotBackupable = errors.New("the site can't be backed up")
 )
 
-// LockKey is the lock key of backup jobs: the site's, shared with every job
-// that changes the site. It equals sites.LockKey, which this package can't
-// import (package sites may one day take backups itself).
-func LockKey(siteID string) string { return "site:" + siteID }
-
 // JobPayload is the payload of a JobType job.
 type JobPayload struct {
 	// Kind is what asked for the backup; empty means store.BackupManual.
@@ -110,10 +105,10 @@ func Enqueue(ctx context.Context, q store.Querier, siteID string, kind store.Bac
 	}
 	job, err := jobs.Enqueue(ctx, q, jobs.Spec{
 		Type:            JobType,
-		TargetType:      "site",
+		TargetType:      store.JobTargetSite,
 		TargetID:        siteID,
 		Payload:         JobPayload{Kind: kind},
-		LockKey:         LockKey(siteID),
+		LockKey:         store.SiteLockKey(siteID),
 		CreatedByUserID: createdByUserID,
 	})
 	if err != nil {

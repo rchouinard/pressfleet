@@ -60,8 +60,8 @@ func TestScheduledBackup(t *testing.T) {
 		if err := json.Unmarshal(sch.Payload, &payload); err != nil {
 			t.Fatal(err)
 		}
-		if sch.JobType != sitebackup.JobType || sch.TargetType != "site" || sch.TargetID != site.ID ||
-			sch.LockKey != sitebackup.LockKey(site.ID) || payload.Kind != store.BackupScheduled ||
+		if sch.JobType != sitebackup.JobType || sch.TargetType != store.JobTargetSite || sch.TargetID != site.ID ||
+			sch.LockKey != store.SiteLockKey(site.ID) || payload.Kind != store.BackupScheduled ||
 			sch.Interval != 24*time.Hour || sch.MissedRunPolicy != store.MissedCoalesce {
 			t.Errorf("schedule = %+v, payload %s", sch, sch.Payload)
 		}

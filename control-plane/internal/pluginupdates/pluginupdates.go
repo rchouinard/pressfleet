@@ -89,10 +89,6 @@ func Args(kind string) []string {
 // ScheduleName returns the name of a site's update check schedule.
 func ScheduleName(siteID string) string { return "update-check:" + siteID }
 
-// LockKey returns the lock key of a site's checks, shared with every other
-// job that changes the site.
-func LockKey(siteID string) string { return "site:" + siteID }
-
 // EnsureSchedule creates or updates the site's check schedule. It is
 // idempotent. Call it with the transaction that creates the site.
 func EnsureSchedule(ctx context.Context, q store.Querier, siteID string) error {
@@ -102,9 +98,9 @@ func EnsureSchedule(ctx context.Context, q store.Querier, siteID string) error {
 	_, err := jobs.UpsertSchedule(ctx, q, jobs.ScheduleSpec{
 		Name:            ScheduleName(siteID),
 		JobType:         JobType,
-		TargetType:      "site",
+		TargetType:      store.JobTargetSite,
 		TargetID:        siteID,
-		LockKey:         LockKey(siteID),
+		LockKey:         store.SiteLockKey(siteID),
 		MaxAttempts:     MaxAttempts,
 		Interval:        Interval,
 		Stagger:         Interval,
@@ -145,7 +141,7 @@ func ReconcileSchedules(ctx context.Context, db *store.DB) error {
 		return fmt.Errorf("reconcile update check schedules: %w", err)
 	}
 	for _, sch := range all {
-		if sch.JobType == JobType && sch.TargetType == "site" && !exists[sch.TargetID] {
+		if sch.JobType == JobType && sch.TargetType == store.JobTargetSite && !exists[sch.TargetID] {
 			if err := RemoveSchedule(ctx, db, sch.TargetID); err != nil {
 				return fmt.Errorf("reconcile update check schedules: %w", err)
 			}
@@ -175,7 +171,7 @@ type runner struct {
 
 func (rn runner) run(ctx context.Context, r *jobs.Run) error {
 	job := r.Job()
-	if job.TargetType != "site" || job.TargetID == "" {
+	if job.TargetType != store.JobTargetSite || job.TargetID == "" {
 		return jobs.Permanent(fmt.Errorf("%s job targets %s %q, want a site", JobType, job.TargetType, job.TargetID))
 	}
 	siteID := job.TargetID
@@ -377,7 +373,7 @@ func (s *Service) Check(ctx context.Context, siteID, userID string) (store.Job, 
 		}
 		page, err := store.NewJobs(q).List(ctx, store.JobFilter{
 			States: []store.JobState{store.JobQueued}, Types: []string{JobType},
-			TargetType: "site", TargetID: siteID, Limit: 1,
+			TargetType: store.JobTargetSite, TargetID: siteID, Limit: 1,
 		})
 		if err != nil {
 			return err
@@ -387,8 +383,8 @@ func (s *Service) Check(ctx context.Context, siteID, userID string) (store.Job, 
 			return nil
 		}
 		job, err = jobs.Enqueue(ctx, q, jobs.Spec{
-			Type: JobType, TargetType: "site", TargetID: siteID,
-			LockKey: LockKey(siteID), MaxAttempts: MaxAttempts, CreatedByUserID: userID,
+			Type: JobType, TargetType: store.JobTargetSite, TargetID: siteID,
+			LockKey: store.SiteLockKey(siteID), MaxAttempts: MaxAttempts, CreatedByUserID: userID,
 		})
 		return err
 	})

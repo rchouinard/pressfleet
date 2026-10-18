@@ -81,8 +81,8 @@ func (f *fixture) addSite(t *testing.T, status string, phase provisioner.SitePha
 func (f *fixture) enqueue(t *testing.T, siteID string) store.Job {
 	t.Helper()
 	j, err := jobs.Enqueue(context.Background(), f.db, jobs.Spec{
-		Type: sitecron.JobType, TargetType: "site", TargetID: siteID,
-		LockKey: sitecron.LockKey(siteID), MaxAttempts: sitecron.MaxAttempts,
+		Type: sitecron.JobType, TargetType: store.JobTargetSite, TargetID: siteID,
+		LockKey: store.SiteLockKey(siteID), MaxAttempts: sitecron.MaxAttempts,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -144,7 +144,7 @@ func TestScheduledRunExecutesDueEvents(t *testing.T) {
 		if n, err := sched.RunOnce(ctx); err != nil || n != 1 {
 			t.Fatalf("scheduler enqueued %d jobs, %v; want 1", n, err)
 		}
-		page, err := store.NewJobs(db).List(ctx, store.JobFilter{TargetType: "site", TargetID: siteID})
+		page, err := store.NewJobs(db).List(ctx, store.JobFilter{TargetType: store.JobTargetSite, TargetID: siteID})
 		if err != nil || len(page.Jobs) != 1 {
 			t.Fatalf("jobs for site = %+v, %v", page.Jobs, err)
 		}
@@ -309,7 +309,7 @@ func TestScheduleHelpers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if first.JobType != sitecron.JobType || first.TargetType != "site" || first.TargetID != siteID ||
+		if first.JobType != sitecron.JobType || first.TargetType != store.JobTargetSite || first.TargetID != siteID ||
 			first.LockKey != "site:"+siteID || first.MaxAttempts != 1 || first.Interval != 5*time.Minute ||
 			first.Stagger != first.Interval || first.MissedRunPolicy != store.MissedCoalesce {
 			t.Errorf("schedule = %+v", first)

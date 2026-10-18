@@ -207,12 +207,12 @@ func (s *Service) Restore(ctx context.Context, siteID string, req Restore) (stor
 		}
 		job, err = jobs.Enqueue(ctx, q, jobs.Spec{
 			Type:       RestoreJobType,
-			TargetType: "site",
+			TargetType: store.JobTargetSite,
 			TargetID:   siteID,
 			Payload: restorePayload{
 				SourceSiteID: source, SnapshotID: string(snap.ID), SnapshotWPCore: snap.WPCoreVersion,
 			},
-			LockKey:         LockKey(siteID),
+			LockKey:         store.SiteLockKey(siteID),
 			CreatedByUserID: req.CreatedByUserID,
 		})
 		if err != nil {

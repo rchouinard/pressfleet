@@ -210,7 +210,7 @@ func TestSiteJobLogsEndpoint(t *testing.T) {
 		e, h, site := logSite(t, db)
 		e.runJobs(t)
 		jobs := store.NewJobs(db)
-		page, err := jobs.List(ctx, store.JobFilter{TargetType: "site", TargetID: site.ID})
+		page, err := jobs.List(ctx, store.JobFilter{TargetType: store.JobTargetSite, TargetID: site.ID})
 		if err != nil || len(page.Jobs) == 0 {
 			t.Fatalf("site jobs = %+v, %v", page, err)
 		}

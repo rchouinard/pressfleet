@@ -234,7 +234,7 @@ func TestResolve(t *testing.T) {
 			site, group.ID, now, now); err != nil {
 			t.Fatal(err)
 		}
-		job := store.Job{Type: "site.update", TargetType: "site", TargetID: site}
+		job := store.Job{Type: "site.update", TargetType: store.JobTargetSite, TargetID: site}
 		if err := store.NewJobs(db).Enqueue(ctx, &job); err != nil {
 			t.Fatal(err)
 		}

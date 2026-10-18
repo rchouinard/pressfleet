@@ -84,7 +84,7 @@ func jobPayload(r *jobs.Run) (payload, error) {
 // the deployment.
 func (s *Service) jobSite(ctx context.Context, r *jobs.Run) (store.Site, error) {
 	job := r.Job()
-	if job.TargetType != "site" {
+	if job.TargetType != store.JobTargetSite {
 		return store.Site{}, jobs.Permanent(fmt.Errorf("%s job targets %s %q, want a site", job.Type, job.TargetType, job.TargetID))
 	}
 	site, err := deployableSite(ctx, s.db, job.TargetID)

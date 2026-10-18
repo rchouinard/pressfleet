@@ -142,10 +142,10 @@ func (s *Service) Update(ctx context.Context, siteID string, req SiteUpdate) (st
 		}
 		job, err = jobs.Enqueue(ctx, q, jobs.Spec{
 			Type:            UpdateJobType,
-			TargetType:      "site",
+			TargetType:      store.JobTargetSite,
 			TargetID:        siteID,
 			Payload:         updatePayload{Previous: current.Settings()},
-			LockKey:         LockKey(siteID),
+			LockKey:         store.SiteLockKey(siteID),
 			CreatedByUserID: req.CreatedByUserID,
 		})
 		if err != nil {
@@ -256,9 +256,9 @@ func (s *Service) enqueueSiteJob(ctx context.Context, siteID, jobType, createdBy
 		var err error
 		job, err = jobs.Enqueue(ctx, q, jobs.Spec{
 			Type:            jobType,
-			TargetType:      "site",
+			TargetType:      store.JobTargetSite,
 			TargetID:        siteID,
-			LockKey:         LockKey(siteID),
+			LockKey:         store.SiteLockKey(siteID),
 			CreatedByUserID: createdByUserID,
 		})
 		return err

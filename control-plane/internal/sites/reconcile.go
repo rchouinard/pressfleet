@@ -119,7 +119,7 @@ func (s *Service) enqueueReconcile(ctx context.Context, siteID string) (bool, er
 	err := s.db.InTx(ctx, func(q store.Querier) error {
 		page, err := store.NewJobs(q).List(ctx, store.JobFilter{
 			States: []store.JobState{store.JobQueued}, Types: []string{ReconcileJobType},
-			TargetType: "site", TargetID: siteID, Limit: 1,
+			TargetType: store.JobTargetSite, TargetID: siteID, Limit: 1,
 		})
 		if err != nil {
 			return err
@@ -129,9 +129,9 @@ func (s *Service) enqueueReconcile(ctx context.Context, siteID string) (bool, er
 		}
 		_, err = jobs.Enqueue(ctx, q, jobs.Spec{
 			Type:       ReconcileJobType,
-			TargetType: "site",
+			TargetType: store.JobTargetSite,
 			TargetID:   siteID,
-			LockKey:    LockKey(siteID),
+			LockKey:    store.SiteLockKey(siteID),
 		})
 		queued = err == nil
 		return err

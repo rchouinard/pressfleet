@@ -173,7 +173,7 @@ func TestImport(t *testing.T) {
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
 		ie := newImportEnv(t, db)
 		siteID, job := ie.importSite(t, ie.group, testArchive(t), testDump("57155", ""))
-		if job.Type != sites.ImportJobType || job.TargetType != "site" || job.TargetID != siteID || job.LockKey != sites.LockKey(siteID) {
+		if job.Type != sites.ImportJobType || job.TargetType != store.JobTargetSite || job.TargetID != siteID || job.LockKey != store.SiteLockKey(siteID) {
 			t.Errorf("job = %+v", job)
 		}
 		// Nothing exists until the job has checked the uploads.

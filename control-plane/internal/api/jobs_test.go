@@ -42,7 +42,7 @@ func TestJobsEndpoints(t *testing.T) {
 			t.Fatal(err)
 		}
 		site := id.New()
-		failed, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "site.create", TargetType: "site", TargetID: site})
+		failed, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "site.create", TargetType: store.JobTargetSite, TargetID: site})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -50,12 +50,12 @@ func TestJobsEndpoints(t *testing.T) {
 			t.Fatal(err)
 		}
 		time.Sleep(2 * time.Millisecond) // a later ID timestamp, for a stable newest-first order
-		queued, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "site.update", TargetType: "site", TargetID: site})
+		queued, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "site.update", TargetType: store.JobTargetSite, TargetID: site})
 		if err != nil {
 			t.Fatal(err)
 		}
 		time.Sleep(2 * time.Millisecond)
-		other, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "site.update", TargetType: "client_group", TargetID: id.New()})
+		other, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "site.update", TargetType: store.JobTargetClientGroup, TargetID: id.New()})
 		if err != nil {
 			t.Fatal(err)
 		}

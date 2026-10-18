@@ -88,7 +88,7 @@ func newFixture(t *testing.T, db *store.DB, opts jobs.Options, handlers ...jobs.
 func (f *fixture) enqueue(t *testing.T, typ, lockKey string, payload any) store.Job {
 	t.Helper()
 	j, err := jobs.Enqueue(context.Background(), f.db, jobs.Spec{
-		Type: typ, TargetType: "site", TargetID: id.New(), LockKey: lockKey, Payload: payload, MaxAttempts: 3,
+		Type: typ, TargetType: store.JobTargetSite, TargetID: id.New(), LockKey: lockKey, Payload: payload, MaxAttempts: 3,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -638,7 +638,7 @@ func TestEnqueueRollsBackWithTransaction(t *testing.T) {
 		boom := errors.New("site insert failed")
 		var jobID string
 		err := db.InTx(ctx, func(q store.Querier) error {
-			j, err := jobs.Enqueue(ctx, q, jobs.Spec{Type: "site.create", TargetType: "site", TargetID: id.New(), LockKey: "site:x"})
+			j, err := jobs.Enqueue(ctx, q, jobs.Spec{Type: "site.create", TargetType: store.JobTargetSite, TargetID: id.New(), LockKey: "site:x"})
 			if err != nil {
 				return err
 			}
@@ -651,7 +651,7 @@ func TestEnqueueRollsBackWithTransaction(t *testing.T) {
 		if _, err := store.NewJobs(db).Get(ctx, jobID); !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("job survived the rolled-back transaction: %v", err)
 		}
-		if _, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "t", TargetType: "site", TargetID: "x", Payload: []int{1}}); err == nil {
+		if _, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "t", TargetType: store.JobTargetSite, TargetID: "x", Payload: []int{1}}); err == nil {
 			t.Error("Enqueue accepted a non-object payload")
 		}
 	})
@@ -722,7 +722,7 @@ func TestPoolNotifiesChanges(t *testing.T) {
 		}}}}); err != nil {
 			t.Fatal(err)
 		}
-		job, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "test.notify", TargetType: "site", TargetID: id.New()})
+		job, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "test.notify", TargetType: store.JobTargetSite, TargetID: id.New()})
 		if err != nil {
 			t.Fatal(err)
 		}

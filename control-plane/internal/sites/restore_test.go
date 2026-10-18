@@ -234,7 +234,7 @@ func (e *restoreEnv) restore(t *testing.T, siteID string, req sites.Restore) sto
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
-	if site.Status != store.SiteUpdating || job.Type != sites.RestoreJobType || job.LockKey != sites.LockKey(siteID) {
+	if site.Status != store.SiteUpdating || job.Type != sites.RestoreJobType || job.LockKey != store.SiteLockKey(siteID) {
 		t.Errorf("Restore returned site %s, job %+v", site.Status, job)
 	}
 	e.runJobs(t)
