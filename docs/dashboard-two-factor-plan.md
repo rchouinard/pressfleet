@@ -1,6 +1,6 @@
 # Dashboard Two-Factor Authentication: Implementation Plan
 
-**Status:** Draft, 2026-10-18. Not yet in the design doc or on the project board.
+**Status:** Draft, 2026-10-18. Part of the MVP; not yet in the design doc or on the project board.
 
 This plan adds a second factor to dashboard logins: TOTP authenticator apps, and WebAuthn security keys and passkeys (FIDO2, YubiKey). It doesn't change two-factor authentication in sites' wp-admin, which the WordPress security set already covers (design doc §6.1).
 
@@ -8,6 +8,7 @@ This plan adds a second factor to dashboard logins: TOTP authenticator apps, and
 
 | Topic | Decision |
 | --- | --- |
+| Release | MVP. The issues go in M5 (Dashboard), and the security review ([#97](https://github.com/rchouinard/pressfleet/issues/97)) covers them. |
 | Mechanisms | TOTP and WebAuthn, plus recovery codes. Passkeys and security keys are both WebAuthn credentials; they differ only in registration options. |
 | Passkeys | Second factor first. Passwordless sign-in is planned (see [Passwordless sign-in](#passwordless-sign-in-later)), and the first release must not need a migration to support it. |
 | Enforcement | A platform setting can require a second factor. Any user can turn it on for themselves whatever the setting. |
@@ -154,7 +155,7 @@ When it's built: `POST /auth/passkey/options` and `POST /auth/passkey`, conditio
 
 ## Issues
 
-Sizes and priorities follow the [roadmap](roadmap.md#conventions). Issue numbers are placeholders until the issues are created.
+Sizes and priorities follow the [roadmap](roadmap.md#conventions). Issue numbers are placeholders until the issues are created. All but the passwordless tracking issue are P1 in M5, and #97 depends on issue 14.
 
 | # | Issue | Size | Depends on |
 | --- | --- | --- | --- |
@@ -194,6 +195,6 @@ Each issue updates the OpenAPI spec first and regenerates the Go and TypeScript 
 
 ## Open questions
 
-1. **MVP or post-MVP?** Nothing in §1.1 excludes it, but it isn't in the MVP plan either. Adding it before v1.0 (in M5 or the release gate, before the security review in [#97](https://github.com/rchouinard/pressfleet/issues/97)) means the review covers it. As post-MVP it gets its own milestone like the MCP server.
+1. ~~**MVP or post-MVP?**~~ **Resolved (2026-10-18):** MVP, in M5, ahead of the security review in [#97](https://github.com/rchouinard/pressfleet/issues/97).
 2. **Token callers and credential-creating actions:** confirm that, with reauthentication on, API tokens can no longer create API tokens or add SSH keys (see [Reauthentication](#reauthentication-for-sensitive-actions)).
 3. **Sensitive action list:** confirm the table, particularly whether one-click wp-admin login belongs on it.
