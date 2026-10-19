@@ -163,7 +163,10 @@ func TestRestrictedSessionRefusedEveryOtherOperation(t *testing.T) {
 	svc, _ := newAuthService(t)
 	restricted := &auth.Principal{UserID: "01j9zq3v6t8k4m2n5p7r9s1x3y", Role: store.RoleAdmin, Method: auth.MethodSession, SessionID: "s", EnrollmentRequired: true}
 	h := newHandler(t, api.Options{Authenticator: &fakeAuth{principal: restricted}, Auth: svc, DB: storetest.Open(t, store.SQLite)})
-	allowed := map[authz.Action]bool{authz.ViewSelf: true, authz.Logout: true, authz.RegenerateRecoveryCodes: true}
+	allowed := map[authz.Action]bool{
+		authz.ViewSelf: true, authz.Logout: true, authz.RegenerateRecoveryCodes: true,
+		authz.EnrollTOTP: true, authz.RemoveTOTP: true, authz.RegisterWebAuthnCredential: true,
+	}
 	for _, op := range ops {
 		if op.Public {
 			continue

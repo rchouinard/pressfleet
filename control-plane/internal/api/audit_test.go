@@ -37,6 +37,15 @@ func allEvents(t *testing.T, db *store.DB) []store.AuditEvent {
 	}
 }
 
+// sessionOnlyOperations are the operations only dashboard sessions may
+// call: creating API tokens and managing second factors.
+var sessionOnlyOperations = map[string]bool{
+	"createApiToken": true, "regenerateRecoveryCodes": true,
+	"beginWebAuthnRegistration": true, "registerWebAuthnCredential": true,
+	"renameWebAuthnCredential": true, "removeWebAuthnCredential": true,
+	"startTotpEnrollment": true, "confirmTotpEnrollment": true, "removeTotp": true,
+}
+
 // auditedReads are the reads recorded like changes (auditRead).
 var auditedReads = map[string]bool{"downloadSiteDatabaseExport": true, "downloadExportFile": true}
 
@@ -96,8 +105,7 @@ func TestEveryStateChangingOperationIsAudited(t *testing.T) {
 				if w.Code >= 400 {
 					want.Result = store.AuditFailure
 				}
-				switch op.ID {
-				case "createApiToken", "regenerateRecoveryCodes", "startTotpEnrollment", "confirmTotpEnrollment", "removeTotp":
+				if sessionOnlyOperations[op.ID] {
 					// Only sessions may create tokens and manage second
 					// factors, so the token caller is denied.
 					want.Result = store.AuditDenied

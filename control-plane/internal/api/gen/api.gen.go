@@ -3172,8 +3172,13 @@ type Role string
 // SecondFactorLogin defines model for SecondFactorLogin.
 type SecondFactorLogin struct {
 	// Code A TOTP code or recovery code, for those methods.
-	Code   *string            `json:"code,omitempty"`
-	Method SecondFactorMethod `json:"method"`
+	Code *string `json:"code,omitempty"`
+
+	// Credential For `webauthn`: the `PublicKeyCredential` that
+	// `navigator.credentials.get()` returned for the login's `webauthn`
+	// request options, in its JSON form.
+	Credential *WebAuthnPublicKeyCredential `json:"credential,omitempty"`
+	Method     SecondFactorMethod           `json:"method"`
 }
 
 // SecondFactorMethod defines model for SecondFactorMethod.
@@ -3220,6 +3225,11 @@ type SecondFactorRequired struct {
 	//
 	// Examples: about:blank
 	Type string `json:"type"`
+
+	// Webauthn With `webauthn` in `methods`: the request options to pass to
+	// `navigator.credentials.get()`. Their challenge lasts as long
+	// as the login.
+	Webauthn *WebAuthnRequestOptions `json:"webauthn,omitempty"`
 }
 
 // Site defines model for Site.
@@ -4002,6 +4012,118 @@ type UserUpdate struct {
 	Role *Role `json:"role,omitempty"`
 }
 
+// WebAuthnCreationOptions WebAuthn credential creation options in the JSON form
+// (`PublicKeyCredentialCreationOptionsJSON`): `rp`, `user`, `challenge`,
+// `pubKeyCredParams`, `timeout`, `excludeCredentials`,
+// `authenticatorSelection`, and `attestation`. Binary members are
+// base64url without padding.
+type WebAuthnCreationOptions map[string]interface{}
+
+// WebAuthnCredential A security key or passkey. Public keys and credential IDs aren't
+// returned.
+type WebAuthnCredential struct {
+	// Aaguid The authenticator model's AAGUID, all zeros if it reported none.
+	//
+	// Examples: cb69481e-8ff7-4039-93ec-0a2729a154a8
+	Aaguid string `json:"aaguid"`
+
+	// BackupEligible Whether the credential can be synced (a synced passkey) rather than bound to one device.
+	BackupEligible bool `json:"backup_eligible"`
+
+	// BackupState Whether the credential was backed up when last used.
+	BackupState bool `json:"backup_state"`
+
+	// CreatedAt Examples: 2026-09-26T17:25:00Z
+	CreatedAt Timestamp `json:"created_at"`
+
+	// ID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ID ID `json:"id"`
+
+	// LastUsedAt When the credential last passed a second-factor check; null if never.
+	LastUsedAt *Timestamp `json:"last_used_at"`
+
+	// Name The user's name for the credential.
+	//
+	// Examples: YubiKey 5C
+	Name WebAuthnCredentialName `json:"name"`
+
+	// RpID The relying party ID (dashboard domain) the credential is bound
+	// to. A credential for another ID than the current one can't be used.
+	//
+	//
+	// Examples: dashboard.example.com
+	RpID string `json:"rp_id"`
+
+	// SignCount The authenticator's signature counter when last used; synced passkeys keep 0.
+	SignCount int64 `json:"sign_count"`
+
+	// Transports How the browser can reach the authenticator, as it reported at registration.
+	Transports []string `json:"transports"`
+
+	// UserVerified Whether the authenticator verified the user (a PIN or biometric) at registration.
+	UserVerified bool `json:"user_verified"`
+}
+
+// WebAuthnCredentialList defines model for WebAuthnCredentialList.
+type WebAuthnCredentialList struct {
+	Items []WebAuthnCredential `json:"items"`
+}
+
+// WebAuthnCredentialName The user's name for the credential.
+//
+// Examples: YubiKey 5C
+type WebAuthnCredentialName = string
+
+// WebAuthnCredentialRegistered defines model for WebAuthnCredentialRegistered.
+type WebAuthnCredentialRegistered struct {
+	// Credential A security key or passkey. Public keys and credential IDs aren't
+	// returned.
+	Credential WebAuthnCredential `json:"credential"`
+
+	// RecoveryCodes Only when this was the user's first second factor: their first
+	// ten single-use recovery codes, shown only this once.
+	RecoveryCodes *[]string `json:"recovery_codes,omitempty"`
+}
+
+// WebAuthnCredentialUpdate defines model for WebAuthnCredentialUpdate.
+type WebAuthnCredentialUpdate struct {
+	// Name The user's name for the credential.
+	//
+	// Examples: YubiKey 5C
+	Name WebAuthnCredentialName `json:"name"`
+}
+
+// WebAuthnPublicKeyCredential A `PublicKeyCredential` from `navigator.credentials.create()` or
+// `navigator.credentials.get()` in its JSON form (`toJSON()`):
+// `id`, `rawId`, `type`, `response`, `clientExtensionResults`, and
+// `authenticatorAttachment`, with binary members base64url without
+// padding.
+type WebAuthnPublicKeyCredential map[string]interface{}
+
+// WebAuthnRegistration defines model for WebAuthnRegistration.
+type WebAuthnRegistration struct {
+	// Credential A `PublicKeyCredential` from `navigator.credentials.create()` or
+	// `navigator.credentials.get()` in its JSON form (`toJSON()`):
+	// `id`, `rawId`, `type`, `response`, `clientExtensionResults`, and
+	// `authenticatorAttachment`, with binary members base64url without
+	// padding.
+	Credential WebAuthnPublicKeyCredential `json:"credential"`
+
+	// Name The user's name for the credential.
+	//
+	// Examples: YubiKey 5C
+	Name WebAuthnCredentialName `json:"name"`
+}
+
+// WebAuthnRequestOptions WebAuthn request options in the JSON form
+// (`PublicKeyCredentialRequestOptionsJSON`), for
+// `navigator.credentials.get()`: `challenge`, `timeout`, `rpId`,
+// `allowCredentials`, and `userVerification`. Binary members are
+// base64url without padding.
+type WebAuthnRequestOptions map[string]interface{}
+
 // WebhookFormat The shape of the request body. `generic` is PressFleet's own payload
 // (documented in docs/configuration.md): it has a top-level `text`, so
 // a Slack incoming webhook accepts it too. `slack` adds an attachment
@@ -4088,6 +4210,11 @@ type UploadID = ID
 //
 // Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
 type UserID = ID
+
+// WebAuthnCredentialID Opaque, server-assigned identifier.
+//
+// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+type WebAuthnCredentialID = ID
 
 // BadRequest RFC 9457 Problem Details. Additional members may be added.
 type BadRequest = Problem
@@ -4618,6 +4745,12 @@ type AddOwnSSHKeyJSONRequestBody = SSHKeyCreate
 // ConfirmTotpEnrollmentJSONRequestBody defines body for ConfirmTotpEnrollment for application/json ContentType.
 type ConfirmTotpEnrollmentJSONRequestBody = TotpConfirmation
 
+// RegisterWebAuthnCredentialJSONRequestBody defines body for RegisterWebAuthnCredential for application/json ContentType.
+type RegisterWebAuthnCredentialJSONRequestBody = WebAuthnRegistration
+
+// RenameWebAuthnCredentialJSONRequestBody defines body for RenameWebAuthnCredential for application/json ContentType.
+type RenameWebAuthnCredentialJSONRequestBody = WebAuthnCredentialUpdate
+
 // UpdateUserJSONRequestBody defines body for UpdateUser for application/json ContentType.
 type UpdateUserJSONRequestBody = UserUpdate
 
@@ -4956,6 +5089,24 @@ type ServerInterface interface {
 	// ConfirmTotpEnrollment Confirm an authenticator app with a code
 	// (POST /api/v1/users/me/two-factor/totp/confirm)
 	ConfirmTotpEnrollment(w http.ResponseWriter, r *http.Request)
+	// ListWebAuthnCredentials List the current user's security keys and passkeys
+	// (GET /api/v1/users/me/two-factor/webauthn)
+	ListWebAuthnCredentials(w http.ResponseWriter, r *http.Request)
+	// RegisterWebAuthnCredential Register a security key or passkey
+	// (POST /api/v1/users/me/two-factor/webauthn)
+	RegisterWebAuthnCredential(w http.ResponseWriter, r *http.Request)
+	// BeginWebAuthnRegistration Start registering a security key or passkey
+	// (POST /api/v1/users/me/two-factor/webauthn/options)
+	BeginWebAuthnRegistration(w http.ResponseWriter, r *http.Request)
+	// RemoveWebAuthnCredential Remove one of the current user's security keys or passkeys
+	// (DELETE /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id})
+	RemoveWebAuthnCredential(w http.ResponseWriter, r *http.Request, webauthnCredentialID WebAuthnCredentialID)
+	// GetWebAuthnCredential Get one of the current user's security keys or passkeys
+	// (GET /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id})
+	GetWebAuthnCredential(w http.ResponseWriter, r *http.Request, webauthnCredentialID WebAuthnCredentialID)
+	// RenameWebAuthnCredential Rename one of the current user's security keys or passkeys
+	// (PATCH /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id})
+	RenameWebAuthnCredential(w http.ResponseWriter, r *http.Request, webauthnCredentialID WebAuthnCredentialID)
 	// DeleteUser Delete a user
 	// (DELETE /api/v1/users/{user_id})
 	DeleteUser(w http.ResponseWriter, r *http.Request, userID UserID)
@@ -8800,6 +8951,126 @@ func (siw *ServerInterfaceWrapper) ConfirmTotpEnrollment(w http.ResponseWriter, 
 	handler.ServeHTTP(w, r)
 }
 
+// ListWebAuthnCredentials operation middleware
+func (siw *ServerInterfaceWrapper) ListWebAuthnCredentials(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListWebAuthnCredentials(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RegisterWebAuthnCredential operation middleware
+func (siw *ServerInterfaceWrapper) RegisterWebAuthnCredential(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RegisterWebAuthnCredential(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// BeginWebAuthnRegistration operation middleware
+func (siw *ServerInterfaceWrapper) BeginWebAuthnRegistration(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.BeginWebAuthnRegistration(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RemoveWebAuthnCredential operation middleware
+func (siw *ServerInterfaceWrapper) RemoveWebAuthnCredential(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "webauthn_credential_id" -------------
+	var webauthnCredentialID WebAuthnCredentialID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "webauthn_credential_id", r.PathValue("webauthn_credential_id"), &webauthnCredentialID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "webauthn_credential_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RemoveWebAuthnCredential(w, r, webauthnCredentialID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetWebAuthnCredential operation middleware
+func (siw *ServerInterfaceWrapper) GetWebAuthnCredential(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "webauthn_credential_id" -------------
+	var webauthnCredentialID WebAuthnCredentialID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "webauthn_credential_id", r.PathValue("webauthn_credential_id"), &webauthnCredentialID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "webauthn_credential_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetWebAuthnCredential(w, r, webauthnCredentialID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RenameWebAuthnCredential operation middleware
+func (siw *ServerInterfaceWrapper) RenameWebAuthnCredential(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "webauthn_credential_id" -------------
+	var webauthnCredentialID WebAuthnCredentialID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "webauthn_credential_id", r.PathValue("webauthn_credential_id"), &webauthnCredentialID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "webauthn_credential_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RenameWebAuthnCredential(w, r, webauthnCredentialID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteUser operation middleware
 func (siw *ServerInterfaceWrapper) DeleteUser(w http.ResponseWriter, r *http.Request) {
 
@@ -9162,6 +9433,12 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/users/me/two-factor/totp", wrapper.RemoveTotp)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/users/me/two-factor/totp", wrapper.StartTotpEnrollment)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/users/me/two-factor/totp/confirm", wrapper.ConfirmTotpEnrollment)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/users/me/two-factor/webauthn/options", wrapper.BeginWebAuthnRegistration)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/users/me/two-factor/webauthn", wrapper.ListWebAuthnCredentials)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/users/me/two-factor/webauthn", wrapper.RegisterWebAuthnCredential)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/users/me/two-factor/webauthn/{webauthn_credential_id}", wrapper.RemoveWebAuthnCredential)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/users/me/two-factor/webauthn/{webauthn_credential_id}", wrapper.GetWebAuthnCredential)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/v1/users/me/two-factor/webauthn/{webauthn_credential_id}", wrapper.RenameWebAuthnCredential)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/users/me/ssh-keys", wrapper.ListOwnSSHKeys)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/users/me/ssh-keys", wrapper.AddOwnSSHKey)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/users/me/ssh-keys/{ssh_key_id}", wrapper.DeleteOwnSSHKey)
@@ -20867,6 +21144,579 @@ func (response ConfirmTotpEnrollmentdefaultApplicationProblemPlusJSONResponse) V
 	return err
 }
 
+type ListWebAuthnCredentialsRequestObject struct {
+}
+
+type ListWebAuthnCredentialsResponseObject interface {
+	VisitListWebAuthnCredentialsResponse(w http.ResponseWriter) error
+}
+
+type ListWebAuthnCredentials200JSONResponse WebAuthnCredentialList
+
+func (response ListWebAuthnCredentials200JSONResponse) VisitListWebAuthnCredentialsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListWebAuthnCredentials401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ListWebAuthnCredentials401ApplicationProblemPlusJSONResponse) VisitListWebAuthnCredentialsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListWebAuthnCredentials403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ListWebAuthnCredentials403ApplicationProblemPlusJSONResponse) VisitListWebAuthnCredentialsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListWebAuthnCredentialsdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ListWebAuthnCredentialsdefaultApplicationProblemPlusJSONResponse) VisitListWebAuthnCredentialsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterWebAuthnCredentialRequestObject struct {
+	Body *RegisterWebAuthnCredentialJSONRequestBody
+}
+
+type RegisterWebAuthnCredentialResponseObject interface {
+	VisitRegisterWebAuthnCredentialResponse(w http.ResponseWriter) error
+}
+
+type RegisterWebAuthnCredential201ResponseHeaders struct {
+	Location *string
+}
+
+type RegisterWebAuthnCredential201JSONResponse struct {
+	Body    WebAuthnCredentialRegistered
+	Headers RegisterWebAuthnCredential201ResponseHeaders
+}
+
+func (response RegisterWebAuthnCredential201JSONResponse) VisitRegisterWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterWebAuthnCredential400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response RegisterWebAuthnCredential400ApplicationProblemPlusJSONResponse) VisitRegisterWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterWebAuthnCredential401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response RegisterWebAuthnCredential401ApplicationProblemPlusJSONResponse) VisitRegisterWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterWebAuthnCredential403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response RegisterWebAuthnCredential403ApplicationProblemPlusJSONResponse) VisitRegisterWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterWebAuthnCredential409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response RegisterWebAuthnCredential409ApplicationProblemPlusJSONResponse) VisitRegisterWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterWebAuthnCredential422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response RegisterWebAuthnCredential422ApplicationProblemPlusJSONResponse) VisitRegisterWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterWebAuthnCredentialdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response RegisterWebAuthnCredentialdefaultApplicationProblemPlusJSONResponse) VisitRegisterWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type BeginWebAuthnRegistrationRequestObject struct {
+}
+
+type BeginWebAuthnRegistrationResponseObject interface {
+	VisitBeginWebAuthnRegistrationResponse(w http.ResponseWriter) error
+}
+
+type BeginWebAuthnRegistration200JSONResponse WebAuthnCreationOptions
+
+func (response BeginWebAuthnRegistration200JSONResponse) VisitBeginWebAuthnRegistrationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type BeginWebAuthnRegistration401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response BeginWebAuthnRegistration401ApplicationProblemPlusJSONResponse) VisitBeginWebAuthnRegistrationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type BeginWebAuthnRegistration403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response BeginWebAuthnRegistration403ApplicationProblemPlusJSONResponse) VisitBeginWebAuthnRegistrationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type BeginWebAuthnRegistrationdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response BeginWebAuthnRegistrationdefaultApplicationProblemPlusJSONResponse) VisitBeginWebAuthnRegistrationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveWebAuthnCredentialRequestObject struct {
+	WebauthnCredentialID WebAuthnCredentialID `json:"webauthn_credential_id"`
+}
+
+type RemoveWebAuthnCredentialResponseObject interface {
+	VisitRemoveWebAuthnCredentialResponse(w http.ResponseWriter) error
+}
+
+type RemoveWebAuthnCredential204Response struct {
+}
+
+func (response RemoveWebAuthnCredential204Response) VisitRemoveWebAuthnCredentialResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type RemoveWebAuthnCredential401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response RemoveWebAuthnCredential401ApplicationProblemPlusJSONResponse) VisitRemoveWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveWebAuthnCredential403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response RemoveWebAuthnCredential403ApplicationProblemPlusJSONResponse) VisitRemoveWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveWebAuthnCredential404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response RemoveWebAuthnCredential404ApplicationProblemPlusJSONResponse) VisitRemoveWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveWebAuthnCredential409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response RemoveWebAuthnCredential409ApplicationProblemPlusJSONResponse) VisitRemoveWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveWebAuthnCredentialdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response RemoveWebAuthnCredentialdefaultApplicationProblemPlusJSONResponse) VisitRemoveWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWebAuthnCredentialRequestObject struct {
+	WebauthnCredentialID WebAuthnCredentialID `json:"webauthn_credential_id"`
+}
+
+type GetWebAuthnCredentialResponseObject interface {
+	VisitGetWebAuthnCredentialResponse(w http.ResponseWriter) error
+}
+
+type GetWebAuthnCredential200JSONResponse WebAuthnCredential
+
+func (response GetWebAuthnCredential200JSONResponse) VisitGetWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWebAuthnCredential401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetWebAuthnCredential401ApplicationProblemPlusJSONResponse) VisitGetWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWebAuthnCredential403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetWebAuthnCredential403ApplicationProblemPlusJSONResponse) VisitGetWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWebAuthnCredential404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response GetWebAuthnCredential404ApplicationProblemPlusJSONResponse) VisitGetWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWebAuthnCredentialdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetWebAuthnCredentialdefaultApplicationProblemPlusJSONResponse) VisitGetWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RenameWebAuthnCredentialRequestObject struct {
+	WebauthnCredentialID WebAuthnCredentialID `json:"webauthn_credential_id"`
+	Body                 *RenameWebAuthnCredentialJSONRequestBody
+}
+
+type RenameWebAuthnCredentialResponseObject interface {
+	VisitRenameWebAuthnCredentialResponse(w http.ResponseWriter) error
+}
+
+type RenameWebAuthnCredential200JSONResponse WebAuthnCredential
+
+func (response RenameWebAuthnCredential200JSONResponse) VisitRenameWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RenameWebAuthnCredential400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response RenameWebAuthnCredential400ApplicationProblemPlusJSONResponse) VisitRenameWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RenameWebAuthnCredential401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response RenameWebAuthnCredential401ApplicationProblemPlusJSONResponse) VisitRenameWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RenameWebAuthnCredential403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response RenameWebAuthnCredential403ApplicationProblemPlusJSONResponse) VisitRenameWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RenameWebAuthnCredential404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response RenameWebAuthnCredential404ApplicationProblemPlusJSONResponse) VisitRenameWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RenameWebAuthnCredential422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response RenameWebAuthnCredential422ApplicationProblemPlusJSONResponse) VisitRenameWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RenameWebAuthnCredentialdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response RenameWebAuthnCredentialdefaultApplicationProblemPlusJSONResponse) VisitRenameWebAuthnCredentialResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type DeleteUserRequestObject struct {
 	UserID UserID `json:"user_id"`
 }
@@ -21907,6 +22757,24 @@ type StrictServerInterface interface {
 	// ConfirmTotpEnrollment Confirm an authenticator app with a code
 	// (POST /api/v1/users/me/two-factor/totp/confirm)
 	ConfirmTotpEnrollment(ctx context.Context, request ConfirmTotpEnrollmentRequestObject) (ConfirmTotpEnrollmentResponseObject, error)
+	// ListWebAuthnCredentials List the current user's security keys and passkeys
+	// (GET /api/v1/users/me/two-factor/webauthn)
+	ListWebAuthnCredentials(ctx context.Context, request ListWebAuthnCredentialsRequestObject) (ListWebAuthnCredentialsResponseObject, error)
+	// RegisterWebAuthnCredential Register a security key or passkey
+	// (POST /api/v1/users/me/two-factor/webauthn)
+	RegisterWebAuthnCredential(ctx context.Context, request RegisterWebAuthnCredentialRequestObject) (RegisterWebAuthnCredentialResponseObject, error)
+	// BeginWebAuthnRegistration Start registering a security key or passkey
+	// (POST /api/v1/users/me/two-factor/webauthn/options)
+	BeginWebAuthnRegistration(ctx context.Context, request BeginWebAuthnRegistrationRequestObject) (BeginWebAuthnRegistrationResponseObject, error)
+	// RemoveWebAuthnCredential Remove one of the current user's security keys or passkeys
+	// (DELETE /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id})
+	RemoveWebAuthnCredential(ctx context.Context, request RemoveWebAuthnCredentialRequestObject) (RemoveWebAuthnCredentialResponseObject, error)
+	// GetWebAuthnCredential Get one of the current user's security keys or passkeys
+	// (GET /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id})
+	GetWebAuthnCredential(ctx context.Context, request GetWebAuthnCredentialRequestObject) (GetWebAuthnCredentialResponseObject, error)
+	// RenameWebAuthnCredential Rename one of the current user's security keys or passkeys
+	// (PATCH /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id})
+	RenameWebAuthnCredential(ctx context.Context, request RenameWebAuthnCredentialRequestObject) (RenameWebAuthnCredentialResponseObject, error)
 	// DeleteUser Delete a user
 	// (DELETE /api/v1/users/{user_id})
 	DeleteUser(ctx context.Context, request DeleteUserRequestObject) (DeleteUserResponseObject, error)
@@ -24995,6 +25863,170 @@ func (sh *strictHandler) ConfirmTotpEnrollment(w http.ResponseWriter, r *http.Re
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ConfirmTotpEnrollmentResponseObject); ok {
 		if err := validResponse.VisitConfirmTotpEnrollmentResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListWebAuthnCredentials operation middleware
+func (sh *strictHandler) ListWebAuthnCredentials(w http.ResponseWriter, r *http.Request) {
+	var request ListWebAuthnCredentialsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListWebAuthnCredentials(ctx, request.(ListWebAuthnCredentialsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListWebAuthnCredentials")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListWebAuthnCredentialsResponseObject); ok {
+		if err := validResponse.VisitListWebAuthnCredentialsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RegisterWebAuthnCredential operation middleware
+func (sh *strictHandler) RegisterWebAuthnCredential(w http.ResponseWriter, r *http.Request) {
+	var request RegisterWebAuthnCredentialRequestObject
+
+	var body RegisterWebAuthnCredentialJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RegisterWebAuthnCredential(ctx, request.(RegisterWebAuthnCredentialRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RegisterWebAuthnCredential")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RegisterWebAuthnCredentialResponseObject); ok {
+		if err := validResponse.VisitRegisterWebAuthnCredentialResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// BeginWebAuthnRegistration operation middleware
+func (sh *strictHandler) BeginWebAuthnRegistration(w http.ResponseWriter, r *http.Request) {
+	var request BeginWebAuthnRegistrationRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.BeginWebAuthnRegistration(ctx, request.(BeginWebAuthnRegistrationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "BeginWebAuthnRegistration")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(BeginWebAuthnRegistrationResponseObject); ok {
+		if err := validResponse.VisitBeginWebAuthnRegistrationResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RemoveWebAuthnCredential operation middleware
+func (sh *strictHandler) RemoveWebAuthnCredential(w http.ResponseWriter, r *http.Request, webauthnCredentialID WebAuthnCredentialID) {
+	var request RemoveWebAuthnCredentialRequestObject
+
+	request.WebauthnCredentialID = webauthnCredentialID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RemoveWebAuthnCredential(ctx, request.(RemoveWebAuthnCredentialRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RemoveWebAuthnCredential")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RemoveWebAuthnCredentialResponseObject); ok {
+		if err := validResponse.VisitRemoveWebAuthnCredentialResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetWebAuthnCredential operation middleware
+func (sh *strictHandler) GetWebAuthnCredential(w http.ResponseWriter, r *http.Request, webauthnCredentialID WebAuthnCredentialID) {
+	var request GetWebAuthnCredentialRequestObject
+
+	request.WebauthnCredentialID = webauthnCredentialID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetWebAuthnCredential(ctx, request.(GetWebAuthnCredentialRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetWebAuthnCredential")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetWebAuthnCredentialResponseObject); ok {
+		if err := validResponse.VisitGetWebAuthnCredentialResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RenameWebAuthnCredential operation middleware
+func (sh *strictHandler) RenameWebAuthnCredential(w http.ResponseWriter, r *http.Request, webauthnCredentialID WebAuthnCredentialID) {
+	var request RenameWebAuthnCredentialRequestObject
+
+	request.WebauthnCredentialID = webauthnCredentialID
+
+	var body RenameWebAuthnCredentialJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RenameWebAuthnCredential(ctx, request.(RenameWebAuthnCredentialRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RenameWebAuthnCredential")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RenameWebAuthnCredentialResponseObject); ok {
+		if err := validResponse.VisitRenameWebAuthnCredentialResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

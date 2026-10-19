@@ -142,9 +142,9 @@ func printUser(w io.Writer, verb string, u store.User, pw redact.Secret, generat
 
 // authOptions are the auth service's options from the configuration, for
 // the API and the in-container user commands alike, so both apply the same
-// two-factor policy. keys seal TOTP secrets; without them (nil) the
-// service has no TOTP verifier, which only callers that check no second
-// factors can do without.
+// two-factor policy and WebAuthn relying party. keys seal TOTP secrets;
+// without them (nil) the service has no TOTP verifier, which only callers
+// that check no second factors can do without.
 func (a *app) authOptions(keys *secrets.Keyring) auth.Options {
 	tf := a.cfg.TwoFactor
 	var factors []auth.FactorVerifier
@@ -159,5 +159,7 @@ func (a *app) authOptions(keys *secrets.Keyring) auth.Options {
 			Reauthentication:       tf.ReauthenticationEnabled(),
 			ReauthenticationMaxAge: tf.ReauthenticationMaxAge,
 		},
+		// From the configured domain, never a request's Host header (§6.2).
+		RelyingParty: auth.RelyingPartyFor(a.cfg.DashboardDomain),
 	}
 }

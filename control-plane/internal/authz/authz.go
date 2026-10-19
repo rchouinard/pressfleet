@@ -189,6 +189,11 @@ const (
 	// Replace their own recovery codes (design doc §6.2).
 	RegenerateRecoveryCodes Action = "self.two_factor.recovery_codes.regenerate"
 
+	// Register, rename, and remove their own security keys and passkeys
+	// (design doc §6.2).
+	RegisterWebAuthnCredential Action = "self.two_factor.webauthn.register"
+	RenameWebAuthnCredential   Action = "self.two_factor.webauthn.rename"
+	RemoveWebAuthnCredential   Action = "self.two_factor.webauthn.remove"
 	// Enroll (start and confirm) and remove their own authenticator app
 	// (design doc §6.2).
 	EnrollTOTP Action = "self.two_factor.totp.enroll"
@@ -214,8 +219,12 @@ var sessionActions = map[Action]bool{
 	// Second factors are managed from sessions only (§6.2): a stolen token
 	// must not be able to swap the account's recovery codes for its own.
 	RegenerateRecoveryCodes: true,
-	EnrollTOTP:              true,
-	RemoveTOTP:              true,
+	// WebAuthn needs a browser anyway.
+	RegisterWebAuthnCredential: true,
+	RenameWebAuthnCredential:   true,
+	RemoveWebAuthnCredential:   true,
+	EnrollTOTP:                 true,
+	RemoveTOTP:                 true,
 }
 
 // enrollmentActions are the only actions a session that must enroll a
@@ -226,6 +235,11 @@ var enrollmentActions = map[Action]bool{
 	ViewSelf:                true,
 	Logout:                  true,
 	RegenerateRecoveryCodes: true,
+	// Enrolling the first factor. Removing a TOTP can only cancel an
+	// unconfirmed one here: a restricted user has no confirmed factor.
+	EnrollTOTP:                 true,
+	RemoveTOTP:                 true,
+	RegisterWebAuthnCredential: true,
 }
 
 // rule says who may take an action.
@@ -328,8 +342,11 @@ var rules = map[Action]rule{
 
 	RegenerateRecoveryCodes: {store.RoleViewer, true},
 
-	EnrollTOTP: {store.RoleViewer, true},
-	RemoveTOTP: {store.RoleViewer, true},
+	RegisterWebAuthnCredential: {store.RoleViewer, true},
+	RenameWebAuthnCredential:   {store.RoleViewer, true},
+	RemoveWebAuthnCredential:   {store.RoleViewer, true},
+	EnrollTOTP:                 {store.RoleViewer, true},
+	RemoveTOTP:                 {store.RoleViewer, true},
 }
 
 // Actions returns every action, for tests and documentation.
@@ -389,6 +406,9 @@ const (
 	// TargetExport is an export (§5.7), which belongs to the client group
 	// of its site when it began.
 	TargetExport TargetType = "export"
+	// TargetWebAuthnCredential is one of the caller's security keys or
+	// passkeys.
+	TargetWebAuthnCredential TargetType = "webauthn_credential" //nolint:gosec // G101: a target type, not a credential
 )
 
 // Target is what an action applies to.
@@ -442,6 +462,10 @@ func Alert(id string) Target { return Target{Type: TargetAlert, ID: id} }
 
 // Export returns the target for an export.
 func Export(id string) Target { return Target{Type: TargetExport, ID: id} }
+
+// WebAuthnCredential returns the target for one of the caller's security
+// keys or passkeys.
+func WebAuthnCredential(id string) Target { return Target{Type: TargetWebAuthnCredential, ID: id} }
 
 // AlertChannel returns the target for an alert channel.
 func AlertChannel(id string) Target { return Target{Type: TargetAlertChannel, ID: id} }

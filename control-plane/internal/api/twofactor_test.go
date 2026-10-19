@@ -14,12 +14,12 @@ import (
 )
 
 // enrollAdmin gives the env's admin a second factor (a WebAuthn
-// credential, which this control plane can't check yet, so only recovery
-// codes work) and returns their recovery codes.
+// credential bound to another dashboard domain, which can't be used here,
+// so only recovery codes work) and returns their recovery codes.
 func (e *authEnv) enrollAdmin() []redact.Secret {
 	e.t.Helper()
 	ctx := context.Background()
-	c := store.WebAuthnCredential{UserID: e.user.ID, CredentialID: []byte("cred"), PublicKey: []byte("key"), Algorithm: -7, RPID: "localhost", Name: "key"}
+	c := store.WebAuthnCredential{UserID: e.user.ID, CredentialID: []byte("cred"), PublicKey: []byte("key"), Algorithm: -7, RPID: "old.example.com", Name: "key"}
 	if err := store.NewWebAuthnCredentials(e.db).Create(ctx, &c); err != nil {
 		e.t.Fatal(err)
 	}

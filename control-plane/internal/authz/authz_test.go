@@ -92,6 +92,10 @@ var designTable = map[authz.Action]struct {
 	authz.DeleteOwnSSHKey:   {true, true, true, true},
 	// Replace their own recovery codes.
 	authz.RegenerateRecoveryCodes: {true, true, true, true},
+	// Register, rename, and remove their own security keys and passkeys.
+	authz.RegisterWebAuthnCredential: {true, true, true, true},
+	authz.RenameWebAuthnCredential:   {true, true, true, true},
+	authz.RemoveWebAuthnCredential:   {true, true, true, true},
 	// Enroll and remove their own authenticator app.
 	authz.EnrollTOTP: {true, true, true, true},
 	authz.RemoveTOTP: {true, true, true, true},
@@ -106,10 +110,13 @@ var sshKeyActions = map[authz.Action]bool{
 // sessionOnlyActions are the actions API tokens can't take whatever their
 // scope, because a token that could take them could outlive its revocation.
 var sessionOnlyActions = map[authz.Action]bool{
-	authz.CreateOwnToken:          true,
-	authz.RegenerateRecoveryCodes: true,
-	authz.EnrollTOTP:              true,
-	authz.RemoveTOTP:              true,
+	authz.CreateOwnToken:             true,
+	authz.RegenerateRecoveryCodes:    true,
+	authz.RegisterWebAuthnCredential: true,
+	authz.RenameWebAuthnCredential:   true,
+	authz.RemoveWebAuthnCredential:   true,
+	authz.EnrollTOTP:                 true,
+	authz.RemoveTOTP:                 true,
 }
 
 func TestDesignTableCoversEveryAction(t *testing.T) {
@@ -237,9 +244,12 @@ func TestResolve(t *testing.T) {
 // enrollmentOnlyActions restates the actions a session that must enroll a
 // second factor may take (design doc §6.2).
 var enrollmentOnlyActions = map[authz.Action]bool{
-	authz.ViewSelf:                true,
-	authz.Logout:                  true,
-	authz.RegenerateRecoveryCodes: true,
+	authz.ViewSelf:                   true,
+	authz.Logout:                     true,
+	authz.RegenerateRecoveryCodes:    true,
+	authz.EnrollTOTP:                 true,
+	authz.RemoveTOTP:                 true,
+	authz.RegisterWebAuthnCredential: true,
 }
 
 // TestCheckRestrictsSessionsThatMustEnroll checks every action for every

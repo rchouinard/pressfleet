@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strconv"
 	"time"
@@ -95,6 +97,7 @@ func (h *Handlers) LoginSecondFactor(ctx context.Context, req gen.LoginSecondFac
 	}
 	method := auth.FactorMethod(req.Body.Method)
 	codeField := "/code"
+	proof := auth.FactorProof{Method: method, Code: redact.Secret(deref(req.Body.Code))}
 	switch method {
 	case auth.FactorTOTP, auth.FactorRecoveryCode:
 		if deref(req.Body.Code) == "" {
@@ -102,11 +105,18 @@ func (h *Handlers) LoginSecondFactor(ctx context.Context, req gen.LoginSecondFac
 		}
 	case auth.FactorWebAuthn:
 		codeField = "/credential"
+		if req.Body.Credential == nil {
+			return nil, fieldError(codeField, "is required for "+string(method))
+		}
+		var err error
+		if proof.Credential, err = json.Marshal(*req.Body.Credential); err != nil {
+			return nil, fmt.Errorf("encoding WebAuthn credential: %w", err)
+		}
 	}
 	client := clientFromContext(ctx)
 	res, err := h.auth.LoginSecondFactor(ctx, auth.SecondFactorRequest{
 		PendingToken: redact.Secret(token),
-		Proof:        auth.FactorProof{Method: method, Code: redact.Secret(deref(req.Body.Code))},
+		Proof:        proof,
 		ClientIP:     client.IP,
 		UserAgent:    client.UserAgent,
 	})
@@ -129,6 +139,9 @@ func (h *Handlers) LoginSecondFactor(ctx context.Context, req gen.LoginSecondFac
 	}
 	noteLogin(ctx, res.User.ID)
 	details := map[string]string{auditSecondFactor: string(method)}
+	// The verifier's notes, such as the WebAuthn credential used and a
+	// signature counter that went backwards.
+	maps.Copy(details, res.FactorDetails)
 	if method == auth.FactorRecoveryCode {
 		n, err := h.auth.RecoveryCodesRemaining(ctx, res.User.ID)
 		if err != nil {
@@ -333,7 +346,8 @@ func authError(err error, passwordField string) error {
 	switch {
 	case errors.Is(err, auth.ErrUserNotFound), errors.Is(err, auth.ErrTokenNotFound), errors.Is(err, auth.ErrSSHKeyNotFound):
 		return fmt.Errorf("%w: %w", ErrNotFound, err)
-	case errors.Is(err, auth.ErrEmailTaken), errors.Is(err, auth.ErrLastAdmin), errors.Is(err, auth.ErrNoSecondFactor):
+	case errors.Is(err, auth.ErrEmailTaken), errors.Is(err, auth.ErrLastAdmin), errors.Is(err, auth.ErrNoSecondFactor),
+		errors.Is(err, auth.ErrLastSecondFactor):
 		return fmt.Errorf("%w: %w", ErrConflict, err)
 	case errors.Is(err, auth.ErrUnauthenticated):
 		return ErrUnauthenticated

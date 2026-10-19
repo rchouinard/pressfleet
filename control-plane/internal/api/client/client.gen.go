@@ -3171,8 +3171,13 @@ type Role string
 // SecondFactorLogin defines model for SecondFactorLogin.
 type SecondFactorLogin struct {
 	// Code A TOTP code or recovery code, for those methods.
-	Code   *string            `json:"code,omitempty"`
-	Method SecondFactorMethod `json:"method"`
+	Code *string `json:"code,omitempty"`
+
+	// Credential For `webauthn`: the `PublicKeyCredential` that
+	// `navigator.credentials.get()` returned for the login's `webauthn`
+	// request options, in its JSON form.
+	Credential *WebAuthnPublicKeyCredential `json:"credential,omitempty"`
+	Method     SecondFactorMethod           `json:"method"`
 }
 
 // SecondFactorMethod defines model for SecondFactorMethod.
@@ -3219,6 +3224,11 @@ type SecondFactorRequired struct {
 	//
 	// Examples: about:blank
 	Type string `json:"type"`
+
+	// Webauthn With `webauthn` in `methods`: the request options to pass to
+	// `navigator.credentials.get()`. Their challenge lasts as long
+	// as the login.
+	Webauthn *WebAuthnRequestOptions `json:"webauthn,omitempty"`
 }
 
 // Site defines model for Site.
@@ -4001,6 +4011,118 @@ type UserUpdate struct {
 	Role *Role `json:"role,omitempty"`
 }
 
+// WebAuthnCreationOptions WebAuthn credential creation options in the JSON form
+// (`PublicKeyCredentialCreationOptionsJSON`): `rp`, `user`, `challenge`,
+// `pubKeyCredParams`, `timeout`, `excludeCredentials`,
+// `authenticatorSelection`, and `attestation`. Binary members are
+// base64url without padding.
+type WebAuthnCreationOptions map[string]interface{}
+
+// WebAuthnCredential A security key or passkey. Public keys and credential IDs aren't
+// returned.
+type WebAuthnCredential struct {
+	// Aaguid The authenticator model's AAGUID, all zeros if it reported none.
+	//
+	// Examples: cb69481e-8ff7-4039-93ec-0a2729a154a8
+	Aaguid string `json:"aaguid"`
+
+	// BackupEligible Whether the credential can be synced (a synced passkey) rather than bound to one device.
+	BackupEligible bool `json:"backup_eligible"`
+
+	// BackupState Whether the credential was backed up when last used.
+	BackupState bool `json:"backup_state"`
+
+	// CreatedAt Examples: 2026-09-26T17:25:00Z
+	CreatedAt Timestamp `json:"created_at"`
+
+	// ID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ID ID `json:"id"`
+
+	// LastUsedAt When the credential last passed a second-factor check; null if never.
+	LastUsedAt *Timestamp `json:"last_used_at"`
+
+	// Name The user's name for the credential.
+	//
+	// Examples: YubiKey 5C
+	Name WebAuthnCredentialName `json:"name"`
+
+	// RpID The relying party ID (dashboard domain) the credential is bound
+	// to. A credential for another ID than the current one can't be used.
+	//
+	//
+	// Examples: dashboard.example.com
+	RpID string `json:"rp_id"`
+
+	// SignCount The authenticator's signature counter when last used; synced passkeys keep 0.
+	SignCount int64 `json:"sign_count"`
+
+	// Transports How the browser can reach the authenticator, as it reported at registration.
+	Transports []string `json:"transports"`
+
+	// UserVerified Whether the authenticator verified the user (a PIN or biometric) at registration.
+	UserVerified bool `json:"user_verified"`
+}
+
+// WebAuthnCredentialList defines model for WebAuthnCredentialList.
+type WebAuthnCredentialList struct {
+	Items []WebAuthnCredential `json:"items"`
+}
+
+// WebAuthnCredentialName The user's name for the credential.
+//
+// Examples: YubiKey 5C
+type WebAuthnCredentialName = string
+
+// WebAuthnCredentialRegistered defines model for WebAuthnCredentialRegistered.
+type WebAuthnCredentialRegistered struct {
+	// Credential A security key or passkey. Public keys and credential IDs aren't
+	// returned.
+	Credential WebAuthnCredential `json:"credential"`
+
+	// RecoveryCodes Only when this was the user's first second factor: their first
+	// ten single-use recovery codes, shown only this once.
+	RecoveryCodes *[]string `json:"recovery_codes,omitempty"`
+}
+
+// WebAuthnCredentialUpdate defines model for WebAuthnCredentialUpdate.
+type WebAuthnCredentialUpdate struct {
+	// Name The user's name for the credential.
+	//
+	// Examples: YubiKey 5C
+	Name WebAuthnCredentialName `json:"name"`
+}
+
+// WebAuthnPublicKeyCredential A `PublicKeyCredential` from `navigator.credentials.create()` or
+// `navigator.credentials.get()` in its JSON form (`toJSON()`):
+// `id`, `rawId`, `type`, `response`, `clientExtensionResults`, and
+// `authenticatorAttachment`, with binary members base64url without
+// padding.
+type WebAuthnPublicKeyCredential map[string]interface{}
+
+// WebAuthnRegistration defines model for WebAuthnRegistration.
+type WebAuthnRegistration struct {
+	// Credential A `PublicKeyCredential` from `navigator.credentials.create()` or
+	// `navigator.credentials.get()` in its JSON form (`toJSON()`):
+	// `id`, `rawId`, `type`, `response`, `clientExtensionResults`, and
+	// `authenticatorAttachment`, with binary members base64url without
+	// padding.
+	Credential WebAuthnPublicKeyCredential `json:"credential"`
+
+	// Name The user's name for the credential.
+	//
+	// Examples: YubiKey 5C
+	Name WebAuthnCredentialName `json:"name"`
+}
+
+// WebAuthnRequestOptions WebAuthn request options in the JSON form
+// (`PublicKeyCredentialRequestOptionsJSON`), for
+// `navigator.credentials.get()`: `challenge`, `timeout`, `rpId`,
+// `allowCredentials`, and `userVerification`. Binary members are
+// base64url without padding.
+type WebAuthnRequestOptions map[string]interface{}
+
 // WebhookFormat The shape of the request body. `generic` is PressFleet's own payload
 // (documented in docs/configuration.md): it has a top-level `text`, so
 // a Slack incoming webhook accepts it too. `slack` adds an attachment
@@ -4087,6 +4209,11 @@ type UploadID = ID
 //
 // Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
 type UserID = ID
+
+// WebAuthnCredentialID Opaque, server-assigned identifier.
+//
+// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+type WebAuthnCredentialID = ID
 
 // BadRequest RFC 9457 Problem Details. Additional members may be added.
 type BadRequest = Problem
@@ -4617,6 +4744,12 @@ type AddOwnSSHKeyJSONRequestBody = SSHKeyCreate
 // ConfirmTotpEnrollmentJSONRequestBody defines body for ConfirmTotpEnrollment for application/json ContentType.
 type ConfirmTotpEnrollmentJSONRequestBody = TotpConfirmation
 
+// RegisterWebAuthnCredentialJSONRequestBody defines body for RegisterWebAuthnCredential for application/json ContentType.
+type RegisterWebAuthnCredentialJSONRequestBody = WebAuthnRegistration
+
+// RenameWebAuthnCredentialJSONRequestBody defines body for RenameWebAuthnCredential for application/json ContentType.
+type RenameWebAuthnCredentialJSONRequestBody = WebAuthnCredentialUpdate
+
 // UpdateUserJSONRequestBody defines body for UpdateUser for application/json ContentType.
 type UpdateUserJSONRequestBody = UserUpdate
 
@@ -4979,9 +5112,12 @@ type ClientInterface interface {
 	//   code from the step before or after the current one is accepted,
 	//   and each works once: a code of a step already used, or of an
 	//   earlier one, is wrong.
-	// * `webauthn` is listed once it is available.
+	// * `webauthn`: send `credential`, the assertion for the `webauthn`
+	//   request options in the login's problem document. A signature
+	//   counter that goes backwards is audited, not refused.
 	//
-	// A wrong code returns `422` with an error on `/code` and counts
+	// A wrong code or assertion returns `422` with an error on `/code`
+	// (`/credential` for `webauthn`) and counts
 	// toward login throttling (`429`); the login stays pending, so the user
 	// can try again without the password. A method the user can't use
 	// returns `422` with an error on `/method`. A missing, expired (after
@@ -5006,9 +5142,12 @@ type ClientInterface interface {
 	//   code from the step before or after the current one is accepted,
 	//   and each works once: a code of a step already used, or of an
 	//   earlier one, is wrong.
-	// * `webauthn` is listed once it is available.
+	// * `webauthn`: send `credential`, the assertion for the `webauthn`
+	//   request options in the login's problem document. A signature
+	//   counter that goes backwards is audited, not refused.
 	//
-	// A wrong code returns `422` with an error on `/code` and counts
+	// A wrong code or assertion returns `422` with an error on `/code`
+	// (`/credential` for `webauthn`) and counts
 	// toward login throttling (`429`); the login stays pending, so the user
 	// can try again without the password. A method the user can't use
 	// returns `422` with an error on `/method`. A missing, expired (after
@@ -6961,6 +7100,107 @@ type ClientInterface interface {
 	// Corresponds with POST /api/v1/users/me/two-factor/totp/confirm (the `ConfirmTotpEnrollment` operationId).
 	ConfirmTotpEnrollment(ctx context.Context, body ConfirmTotpEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListWebAuthnCredentials List the current user's security keys and passkeys
+	//
+	// Lists every credential, including any registered under a previous
+	// dashboard domain (`rp_id`), which can no longer be used.
+	//
+	// Corresponds with GET /api/v1/users/me/two-factor/webauthn (the `ListWebAuthnCredentials` operationId).
+	ListWebAuthnCredentials(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterWebAuthnCredentialWithBody Register a security key or passkey
+	//
+	// Checks the response of `navigator.credentials.create()` to the
+	// options from `POST /api/v1/users/me/two-factor/webauthn/options` and
+	// registers the credential under `name`. From then on the user needs
+	// a second factor to log in.
+	//
+	// If this is the user's first second factor, the response includes
+	// their first ten recovery codes, shown only this once.
+	//
+	// A response that doesn't verify (another origin or relying party ID,
+	// an unknown, expired, or already used challenge, no user presence)
+	// returns `422` with an error on `/credential`; a credential that is
+	// already registered returns `409`. Only dashboard sessions may call
+	// this; API tokens get `403`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/users/me/two-factor/webauthn (the `RegisterWebAuthnCredential` operationId).
+	RegisterWebAuthnCredentialWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterWebAuthnCredential Register a security key or passkey
+	//
+	// Checks the response of `navigator.credentials.create()` to the
+	// options from `POST /api/v1/users/me/two-factor/webauthn/options` and
+	// registers the credential under `name`. From then on the user needs
+	// a second factor to log in.
+	//
+	// If this is the user's first second factor, the response includes
+	// their first ten recovery codes, shown only this once.
+	//
+	// A response that doesn't verify (another origin or relying party ID,
+	// an unknown, expired, or already used challenge, no user presence)
+	// returns `422` with an error on `/credential`; a credential that is
+	// already registered returns `409`. Only dashboard sessions may call
+	// this; API tokens get `403`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/users/me/two-factor/webauthn (the `RegisterWebAuthnCredential` operationId).
+	RegisterWebAuthnCredential(ctx context.Context, body RegisterWebAuthnCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BeginWebAuthnRegistration Start registering a security key or passkey
+	//
+	// Returns the options for `navigator.credentials.create()`, in the JSON
+	// form that `PublicKeyCredential.parseCreationOptionsFromJSON()` takes.
+	// The relying party ID is the dashboard domain (`localhost` without
+	// one), and the only accepted origin is `https://` followed by it.
+	// The options prefer a discoverable credential (`residentKey:
+	// preferred`) and user verification, ask for no attestation, and list
+	// the user's registered credentials in `excludeCredentials`, so a key
+	// isn't registered twice.
+	//
+	// Answer within 5 minutes with `POST
+	// /api/v1/users/me/two-factor/webauthn`; each challenge works once.
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Corresponds with POST /api/v1/users/me/two-factor/webauthn/options (the `BeginWebAuthnRegistration` operationId).
+	BeginWebAuthnRegistration(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RemoveWebAuthnCredential Remove one of the current user's security keys or passkeys
+	//
+	// Removes the credential and signs the user out of their other
+	// sessions; API tokens are kept. Removing the user's last second
+	// factor while `two_factor.required` covers their role returns `409`.
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Corresponds with DELETE /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id} (the `RemoveWebAuthnCredential` operationId).
+	RemoveWebAuthnCredential(ctx context.Context, webauthnCredentialID WebAuthnCredentialID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetWebAuthnCredential Get one of the current user's security keys or passkeys
+	//
+	// Corresponds with GET /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id} (the `GetWebAuthnCredential` operationId).
+	GetWebAuthnCredential(ctx context.Context, webauthnCredentialID WebAuthnCredentialID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenameWebAuthnCredentialWithBody Rename one of the current user's security keys or passkeys
+	//
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id} (the `RenameWebAuthnCredential` operationId).
+	RenameWebAuthnCredentialWithBody(ctx context.Context, webauthnCredentialID WebAuthnCredentialID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenameWebAuthnCredential Rename one of the current user's security keys or passkeys
+	//
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id} (the `RenameWebAuthnCredential` operationId).
+	RenameWebAuthnCredential(ctx context.Context, webauthnCredentialID WebAuthnCredentialID, body RenameWebAuthnCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DeleteUser Delete a user
 	//
 	// Also revokes the user's sessions, tokens, and SSH keys. Deleting the last Admin returns `409`.
@@ -7574,9 +7814,12 @@ func (c *Client) Login(ctx context.Context, body LoginJSONRequestBody, reqEditor
 //     code from the step before or after the current one is accepted,
 //     and each works once: a code of a step already used, or of an
 //     earlier one, is wrong.
-//   - `webauthn` is listed once it is available.
+//   - `webauthn`: send `credential`, the assertion for the `webauthn`
+//     request options in the login's problem document. A signature
+//     counter that goes backwards is audited, not refused.
 //
-// A wrong code returns `422` with an error on `/code` and counts
+// A wrong code or assertion returns `422` with an error on `/code`
+// (`/credential` for `webauthn`) and counts
 // toward login throttling (`429`); the login stays pending, so the user
 // can try again without the password. A method the user can't use
 // returns `422` with an error on `/method`. A missing, expired (after
@@ -7611,9 +7854,12 @@ func (c *Client) LoginSecondFactorWithBody(ctx context.Context, params *LoginSec
 //     code from the step before or after the current one is accepted,
 //     and each works once: a code of a step already used, or of an
 //     earlier one, is wrong.
-//   - `webauthn` is listed once it is available.
+//   - `webauthn`: send `credential`, the assertion for the `webauthn`
+//     request options in the login's problem document. A signature
+//     counter that goes backwards is audited, not refused.
 //
-// A wrong code returns `422` with an error on `/code` and counts
+// A wrong code or assertion returns `422` with an error on `/code`
+// (`/credential` for `webauthn`) and counts
 // toward login throttling (`429`); the login stays pending, so the user
 // can try again without the password. A method the user can't use
 // returns `422` with an error on `/method`. A missing, expired (after
@@ -10686,6 +10932,187 @@ func (c *Client) ConfirmTotpEnrollmentWithBody(ctx context.Context, contentType 
 // Corresponds with POST /api/v1/users/me/two-factor/totp/confirm (the `ConfirmTotpEnrollment` operationId).
 func (c *Client) ConfirmTotpEnrollment(ctx context.Context, body ConfirmTotpEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewConfirmTotpEnrollmentRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListWebAuthnCredentials List the current user's security keys and passkeys
+//
+// Lists every credential, including any registered under a previous
+// dashboard domain (`rp_id`), which can no longer be used.
+//
+// Corresponds with GET /api/v1/users/me/two-factor/webauthn (the `ListWebAuthnCredentials` operationId).
+func (c *Client) ListWebAuthnCredentials(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListWebAuthnCredentialsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterWebAuthnCredentialWithBody Register a security key or passkey
+//
+// Checks the response of `navigator.credentials.create()` to the
+// options from `POST /api/v1/users/me/two-factor/webauthn/options` and
+// registers the credential under `name`. From then on the user needs
+// a second factor to log in.
+//
+// If this is the user's first second factor, the response includes
+// their first ten recovery codes, shown only this once.
+//
+// A response that doesn't verify (another origin or relying party ID,
+// an unknown, expired, or already used challenge, no user presence)
+// returns `422` with an error on `/credential`; a credential that is
+// already registered returns `409`. Only dashboard sessions may call
+// this; API tokens get `403`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/users/me/two-factor/webauthn (the `RegisterWebAuthnCredential` operationId).
+func (c *Client) RegisterWebAuthnCredentialWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterWebAuthnCredentialRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterWebAuthnCredential Register a security key or passkey
+//
+// Checks the response of `navigator.credentials.create()` to the
+// options from `POST /api/v1/users/me/two-factor/webauthn/options` and
+// registers the credential under `name`. From then on the user needs
+// a second factor to log in.
+//
+// If this is the user's first second factor, the response includes
+// their first ten recovery codes, shown only this once.
+//
+// A response that doesn't verify (another origin or relying party ID,
+// an unknown, expired, or already used challenge, no user presence)
+// returns `422` with an error on `/credential`; a credential that is
+// already registered returns `409`. Only dashboard sessions may call
+// this; API tokens get `403`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/users/me/two-factor/webauthn (the `RegisterWebAuthnCredential` operationId).
+func (c *Client) RegisterWebAuthnCredential(ctx context.Context, body RegisterWebAuthnCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterWebAuthnCredentialRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// BeginWebAuthnRegistration Start registering a security key or passkey
+//
+// Returns the options for `navigator.credentials.create()`, in the JSON
+// form that `PublicKeyCredential.parseCreationOptionsFromJSON()` takes.
+// The relying party ID is the dashboard domain (`localhost` without
+// one), and the only accepted origin is `https://` followed by it.
+// The options prefer a discoverable credential (`residentKey:
+// preferred`) and user verification, ask for no attestation, and list
+// the user's registered credentials in `excludeCredentials`, so a key
+// isn't registered twice.
+//
+// Answer within 5 minutes with `POST
+// /api/v1/users/me/two-factor/webauthn`; each challenge works once.
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Corresponds with POST /api/v1/users/me/two-factor/webauthn/options (the `BeginWebAuthnRegistration` operationId).
+func (c *Client) BeginWebAuthnRegistration(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBeginWebAuthnRegistrationRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RemoveWebAuthnCredential Remove one of the current user's security keys or passkeys
+//
+// Removes the credential and signs the user out of their other
+// sessions; API tokens are kept. Removing the user's last second
+// factor while `two_factor.required` covers their role returns `409`.
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Corresponds with DELETE /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id} (the `RemoveWebAuthnCredential` operationId).
+func (c *Client) RemoveWebAuthnCredential(ctx context.Context, webauthnCredentialID WebAuthnCredentialID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveWebAuthnCredentialRequest(c.Server, webauthnCredentialID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetWebAuthnCredential Get one of the current user's security keys or passkeys
+//
+// Corresponds with GET /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id} (the `GetWebAuthnCredential` operationId).
+func (c *Client) GetWebAuthnCredential(ctx context.Context, webauthnCredentialID WebAuthnCredentialID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetWebAuthnCredentialRequest(c.Server, webauthnCredentialID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenameWebAuthnCredentialWithBody Rename one of the current user's security keys or passkeys
+//
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id} (the `RenameWebAuthnCredential` operationId).
+func (c *Client) RenameWebAuthnCredentialWithBody(ctx context.Context, webauthnCredentialID WebAuthnCredentialID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenameWebAuthnCredentialRequestWithBody(c.Server, webauthnCredentialID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RenameWebAuthnCredential Rename one of the current user's security keys or passkeys
+//
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id} (the `RenameWebAuthnCredential` operationId).
+func (c *Client) RenameWebAuthnCredential(ctx context.Context, webauthnCredentialID WebAuthnCredentialID, body RenameWebAuthnCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenameWebAuthnCredentialRequest(c.Server, webauthnCredentialID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -16267,6 +16694,215 @@ func NewConfirmTotpEnrollmentRequestWithBody(server string, contentType string, 
 	return req, nil
 }
 
+// NewListWebAuthnCredentialsRequest constructs an http.Request for the ListWebAuthnCredentials method
+func NewListWebAuthnCredentialsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/users/me/two-factor/webauthn")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRegisterWebAuthnCredentialRequest calls the generic RegisterWebAuthnCredential builder with application/json body
+func NewRegisterWebAuthnCredentialRequest(server string, body RegisterWebAuthnCredentialJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRegisterWebAuthnCredentialRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRegisterWebAuthnCredentialRequestWithBody constructs an http.Request for the RegisterWebAuthnCredential method, with any body, and a specified content type
+func NewRegisterWebAuthnCredentialRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/users/me/two-factor/webauthn")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewBeginWebAuthnRegistrationRequest constructs an http.Request for the BeginWebAuthnRegistration method
+func NewBeginWebAuthnRegistrationRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/users/me/two-factor/webauthn/options")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRemoveWebAuthnCredentialRequest constructs an http.Request for the RemoveWebAuthnCredential method
+func NewRemoveWebAuthnCredentialRequest(server string, webauthnCredentialID WebAuthnCredentialID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "webauthn_credential_id", webauthnCredentialID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/users/me/two-factor/webauthn/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetWebAuthnCredentialRequest constructs an http.Request for the GetWebAuthnCredential method
+func NewGetWebAuthnCredentialRequest(server string, webauthnCredentialID WebAuthnCredentialID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "webauthn_credential_id", webauthnCredentialID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/users/me/two-factor/webauthn/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRenameWebAuthnCredentialRequest calls the generic RenameWebAuthnCredential builder with application/json body
+func NewRenameWebAuthnCredentialRequest(server string, webauthnCredentialID WebAuthnCredentialID, body RenameWebAuthnCredentialJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRenameWebAuthnCredentialRequestWithBody(server, webauthnCredentialID, "application/json", bodyReader)
+}
+
+// NewRenameWebAuthnCredentialRequestWithBody constructs an http.Request for the RenameWebAuthnCredential method, with any body, and a specified content type
+func NewRenameWebAuthnCredentialRequestWithBody(server string, webauthnCredentialID WebAuthnCredentialID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "webauthn_credential_id", webauthnCredentialID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/users/me/two-factor/webauthn/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewDeleteUserRequest constructs an http.Request for the DeleteUser method
 func NewDeleteUserRequest(server string, userID UserID) (*http.Request, error) {
 	var err error
@@ -16953,9 +17589,12 @@ type ClientWithResponsesInterface interface {
 	//   code from the step before or after the current one is accepted,
 	//   and each works once: a code of a step already used, or of an
 	//   earlier one, is wrong.
-	// * `webauthn` is listed once it is available.
+	// * `webauthn`: send `credential`, the assertion for the `webauthn`
+	//   request options in the login's problem document. A signature
+	//   counter that goes backwards is audited, not refused.
 	//
-	// A wrong code returns `422` with an error on `/code` and counts
+	// A wrong code or assertion returns `422` with an error on `/code`
+	// (`/credential` for `webauthn`) and counts
 	// toward login throttling (`429`); the login stays pending, so the user
 	// can try again without the password. A method the user can't use
 	// returns `422` with an error on `/method`. A missing, expired (after
@@ -16980,9 +17619,12 @@ type ClientWithResponsesInterface interface {
 	//   code from the step before or after the current one is accepted,
 	//   and each works once: a code of a step already used, or of an
 	//   earlier one, is wrong.
-	// * `webauthn` is listed once it is available.
+	// * `webauthn`: send `credential`, the assertion for the `webauthn`
+	//   request options in the login's problem document. A signature
+	//   counter that goes backwards is audited, not refused.
 	//
-	// A wrong code returns `422` with an error on `/code` and counts
+	// A wrong code or assertion returns `422` with an error on `/code`
+	// (`/credential` for `webauthn`) and counts
 	// toward login throttling (`429`); the login stays pending, so the user
 	// can try again without the password. A method the user can't use
 	// returns `422` with an error on `/method`. A missing, expired (after
@@ -19064,6 +19706,115 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/users/me/two-factor/totp/confirm (the `ConfirmTotpEnrollment` operationId).
 	ConfirmTotpEnrollmentWithResponse(ctx context.Context, body ConfirmTotpEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmTotpEnrollmentResponse, error)
+
+	// ListWebAuthnCredentialsWithResponse List the current user's security keys and passkeys
+	//
+	// Lists every credential, including any registered under a previous
+	// dashboard domain (`rp_id`), which can no longer be used.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/users/me/two-factor/webauthn (the `ListWebAuthnCredentials` operationId).
+	ListWebAuthnCredentialsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListWebAuthnCredentialsResponse, error)
+
+	// RegisterWebAuthnCredentialWithBodyWithResponse Register a security key or passkey
+	//
+	// Checks the response of `navigator.credentials.create()` to the
+	// options from `POST /api/v1/users/me/two-factor/webauthn/options` and
+	// registers the credential under `name`. From then on the user needs
+	// a second factor to log in.
+	//
+	// If this is the user's first second factor, the response includes
+	// their first ten recovery codes, shown only this once.
+	//
+	// A response that doesn't verify (another origin or relying party ID,
+	// an unknown, expired, or already used challenge, no user presence)
+	// returns `422` with an error on `/credential`; a credential that is
+	// already registered returns `409`. Only dashboard sessions may call
+	// this; API tokens get `403`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/users/me/two-factor/webauthn (the `RegisterWebAuthnCredential` operationId).
+	RegisterWebAuthnCredentialWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterWebAuthnCredentialResponse, error)
+
+	// RegisterWebAuthnCredentialWithResponse Register a security key or passkey
+	//
+	// Checks the response of `navigator.credentials.create()` to the
+	// options from `POST /api/v1/users/me/two-factor/webauthn/options` and
+	// registers the credential under `name`. From then on the user needs
+	// a second factor to log in.
+	//
+	// If this is the user's first second factor, the response includes
+	// their first ten recovery codes, shown only this once.
+	//
+	// A response that doesn't verify (another origin or relying party ID,
+	// an unknown, expired, or already used challenge, no user presence)
+	// returns `422` with an error on `/credential`; a credential that is
+	// already registered returns `409`. Only dashboard sessions may call
+	// this; API tokens get `403`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/users/me/two-factor/webauthn (the `RegisterWebAuthnCredential` operationId).
+	RegisterWebAuthnCredentialWithResponse(ctx context.Context, body RegisterWebAuthnCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterWebAuthnCredentialResponse, error)
+
+	// BeginWebAuthnRegistrationWithResponse Start registering a security key or passkey
+	//
+	// Returns the options for `navigator.credentials.create()`, in the JSON
+	// form that `PublicKeyCredential.parseCreationOptionsFromJSON()` takes.
+	// The relying party ID is the dashboard domain (`localhost` without
+	// one), and the only accepted origin is `https://` followed by it.
+	// The options prefer a discoverable credential (`residentKey:
+	// preferred`) and user verification, ask for no attestation, and list
+	// the user's registered credentials in `excludeCredentials`, so a key
+	// isn't registered twice.
+	//
+	// Answer within 5 minutes with `POST
+	// /api/v1/users/me/two-factor/webauthn`; each challenge works once.
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/users/me/two-factor/webauthn/options (the `BeginWebAuthnRegistration` operationId).
+	BeginWebAuthnRegistrationWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BeginWebAuthnRegistrationResponse, error)
+
+	// RemoveWebAuthnCredentialWithResponse Remove one of the current user's security keys or passkeys
+	//
+	// Removes the credential and signs the user out of their other
+	// sessions; API tokens are kept. Removing the user's last second
+	// factor while `two_factor.required` covers their role returns `409`.
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id} (the `RemoveWebAuthnCredential` operationId).
+	RemoveWebAuthnCredentialWithResponse(ctx context.Context, webauthnCredentialID WebAuthnCredentialID, reqEditors ...RequestEditorFn) (*RemoveWebAuthnCredentialResponse, error)
+
+	// GetWebAuthnCredentialWithResponse Get one of the current user's security keys or passkeys
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id} (the `GetWebAuthnCredential` operationId).
+	GetWebAuthnCredentialWithResponse(ctx context.Context, webauthnCredentialID WebAuthnCredentialID, reqEditors ...RequestEditorFn) (*GetWebAuthnCredentialResponse, error)
+
+	// RenameWebAuthnCredentialWithBodyWithResponse Rename one of the current user's security keys or passkeys
+	//
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id} (the `RenameWebAuthnCredential` operationId).
+	RenameWebAuthnCredentialWithBodyWithResponse(ctx context.Context, webauthnCredentialID WebAuthnCredentialID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenameWebAuthnCredentialResponse, error)
+
+	// RenameWebAuthnCredentialWithResponse Rename one of the current user's security keys or passkeys
+	//
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id} (the `RenameWebAuthnCredential` operationId).
+	RenameWebAuthnCredentialWithResponse(ctx context.Context, webauthnCredentialID WebAuthnCredentialID, body RenameWebAuthnCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*RenameWebAuthnCredentialResponse, error)
 
 	// DeleteUserWithResponse Delete a user
 	//
@@ -27663,6 +28414,441 @@ func (r ConfirmTotpEnrollmentResponse) ContentType() string {
 	return ""
 }
 
+type ListWebAuthnCredentialsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *WebAuthnCredentialList
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListWebAuthnCredentialsResponse) GetJSON200() *WebAuthnCredentialList {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListWebAuthnCredentialsResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListWebAuthnCredentialsResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ListWebAuthnCredentialsResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ListWebAuthnCredentialsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListWebAuthnCredentialsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListWebAuthnCredentialsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListWebAuthnCredentialsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RegisterWebAuthnCredentialResponse201Headers the declared response headers of an HTTP 201 response for RegisterWebAuthnCredential
+type RegisterWebAuthnCredentialResponse201Headers struct {
+	Location *string
+}
+
+type RegisterWebAuthnCredentialResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *WebAuthnCredentialRegistered
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers201 the parsed response headers for an HTTP 201 response
+	Headers201 *RegisterWebAuthnCredentialResponse201Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r RegisterWebAuthnCredentialResponse) GetJSON201() *WebAuthnCredentialRegistered {
+	return r.JSON201
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RegisterWebAuthnCredentialResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RegisterWebAuthnCredentialResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RegisterWebAuthnCredentialResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RegisterWebAuthnCredentialResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r RegisterWebAuthnCredentialResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RegisterWebAuthnCredentialResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RegisterWebAuthnCredentialResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RegisterWebAuthnCredentialResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RegisterWebAuthnCredentialResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RegisterWebAuthnCredentialResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type BeginWebAuthnRegistrationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *WebAuthnCreationOptions
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r BeginWebAuthnRegistrationResponse) GetJSON200() *WebAuthnCreationOptions {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r BeginWebAuthnRegistrationResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r BeginWebAuthnRegistrationResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r BeginWebAuthnRegistrationResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r BeginWebAuthnRegistrationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r BeginWebAuthnRegistrationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BeginWebAuthnRegistrationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r BeginWebAuthnRegistrationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RemoveWebAuthnCredentialResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RemoveWebAuthnCredentialResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RemoveWebAuthnCredentialResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RemoveWebAuthnCredentialResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RemoveWebAuthnCredentialResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RemoveWebAuthnCredentialResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RemoveWebAuthnCredentialResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RemoveWebAuthnCredentialResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemoveWebAuthnCredentialResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RemoveWebAuthnCredentialResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetWebAuthnCredentialResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *WebAuthnCredential
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetWebAuthnCredentialResponse) GetJSON200() *WebAuthnCredential {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetWebAuthnCredentialResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetWebAuthnCredentialResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetWebAuthnCredentialResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetWebAuthnCredentialResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetWebAuthnCredentialResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetWebAuthnCredentialResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetWebAuthnCredentialResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetWebAuthnCredentialResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RenameWebAuthnCredentialResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *WebAuthnCredential
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RenameWebAuthnCredentialResponse) GetJSON200() *WebAuthnCredential {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RenameWebAuthnCredentialResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RenameWebAuthnCredentialResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RenameWebAuthnCredentialResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RenameWebAuthnCredentialResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r RenameWebAuthnCredentialResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RenameWebAuthnCredentialResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RenameWebAuthnCredentialResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RenameWebAuthnCredentialResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RenameWebAuthnCredentialResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RenameWebAuthnCredentialResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type DeleteUserResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -28677,9 +29863,12 @@ func (c *ClientWithResponses) LoginWithResponse(ctx context.Context, body LoginJ
 //     code from the step before or after the current one is accepted,
 //     and each works once: a code of a step already used, or of an
 //     earlier one, is wrong.
-//   - `webauthn` is listed once it is available.
+//   - `webauthn`: send `credential`, the assertion for the `webauthn`
+//     request options in the login's problem document. A signature
+//     counter that goes backwards is audited, not refused.
 //
-// A wrong code returns `422` with an error on `/code` and counts
+// A wrong code or assertion returns `422` with an error on `/code`
+// (`/credential` for `webauthn`) and counts
 // toward login throttling (`429`); the login stays pending, so the user
 // can try again without the password. A method the user can't use
 // returns `422` with an error on `/method`. A missing, expired (after
@@ -28710,9 +29899,12 @@ func (c *ClientWithResponses) LoginSecondFactorWithBodyWithResponse(ctx context.
 //     code from the step before or after the current one is accepted,
 //     and each works once: a code of a step already used, or of an
 //     earlier one, is wrong.
-//   - `webauthn` is listed once it is available.
+//   - `webauthn`: send `credential`, the assertion for the `webauthn`
+//     request options in the login's problem document. A signature
+//     counter that goes backwards is audited, not refused.
 //
-// A wrong code returns `422` with an error on `/code` and counts
+// A wrong code or assertion returns `422` with an error on `/code`
+// (`/credential` for `webauthn`) and counts
 // toward login throttling (`429`); the login stays pending, so the user
 // can try again without the password. A method the user can't use
 // returns `422` with an error on `/method`. A missing, expired (after
@@ -31471,6 +32663,163 @@ func (c *ClientWithResponses) ConfirmTotpEnrollmentWithResponse(ctx context.Cont
 		return nil, err
 	}
 	return ParseConfirmTotpEnrollmentResponse(rsp)
+}
+
+// ListWebAuthnCredentialsWithResponse List the current user's security keys and passkeys
+//
+// Lists every credential, including any registered under a previous
+// dashboard domain (`rp_id`), which can no longer be used.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/users/me/two-factor/webauthn (the `ListWebAuthnCredentials` operationId).
+func (c *ClientWithResponses) ListWebAuthnCredentialsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListWebAuthnCredentialsResponse, error) {
+	rsp, err := c.ListWebAuthnCredentials(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListWebAuthnCredentialsResponse(rsp)
+}
+
+// RegisterWebAuthnCredentialWithBodyWithResponse Register a security key or passkey
+//
+// Checks the response of `navigator.credentials.create()` to the
+// options from `POST /api/v1/users/me/two-factor/webauthn/options` and
+// registers the credential under `name`. From then on the user needs
+// a second factor to log in.
+//
+// If this is the user's first second factor, the response includes
+// their first ten recovery codes, shown only this once.
+//
+// A response that doesn't verify (another origin or relying party ID,
+// an unknown, expired, or already used challenge, no user presence)
+// returns `422` with an error on `/credential`; a credential that is
+// already registered returns `409`. Only dashboard sessions may call
+// this; API tokens get `403`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/users/me/two-factor/webauthn (the `RegisterWebAuthnCredential` operationId).
+func (c *ClientWithResponses) RegisterWebAuthnCredentialWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterWebAuthnCredentialResponse, error) {
+	rsp, err := c.RegisterWebAuthnCredentialWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterWebAuthnCredentialResponse(rsp)
+}
+
+// RegisterWebAuthnCredentialWithResponse Register a security key or passkey
+//
+// Checks the response of `navigator.credentials.create()` to the
+// options from `POST /api/v1/users/me/two-factor/webauthn/options` and
+// registers the credential under `name`. From then on the user needs
+// a second factor to log in.
+//
+// If this is the user's first second factor, the response includes
+// their first ten recovery codes, shown only this once.
+//
+// A response that doesn't verify (another origin or relying party ID,
+// an unknown, expired, or already used challenge, no user presence)
+// returns `422` with an error on `/credential`; a credential that is
+// already registered returns `409`. Only dashboard sessions may call
+// this; API tokens get `403`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/users/me/two-factor/webauthn (the `RegisterWebAuthnCredential` operationId).
+func (c *ClientWithResponses) RegisterWebAuthnCredentialWithResponse(ctx context.Context, body RegisterWebAuthnCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterWebAuthnCredentialResponse, error) {
+	rsp, err := c.RegisterWebAuthnCredential(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterWebAuthnCredentialResponse(rsp)
+}
+
+// BeginWebAuthnRegistrationWithResponse Start registering a security key or passkey
+//
+// Returns the options for `navigator.credentials.create()`, in the JSON
+// form that `PublicKeyCredential.parseCreationOptionsFromJSON()` takes.
+// The relying party ID is the dashboard domain (`localhost` without
+// one), and the only accepted origin is `https://` followed by it.
+// The options prefer a discoverable credential (`residentKey:
+// preferred`) and user verification, ask for no attestation, and list
+// the user's registered credentials in `excludeCredentials`, so a key
+// isn't registered twice.
+//
+// Answer within 5 minutes with `POST
+// /api/v1/users/me/two-factor/webauthn`; each challenge works once.
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/users/me/two-factor/webauthn/options (the `BeginWebAuthnRegistration` operationId).
+func (c *ClientWithResponses) BeginWebAuthnRegistrationWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*BeginWebAuthnRegistrationResponse, error) {
+	rsp, err := c.BeginWebAuthnRegistration(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBeginWebAuthnRegistrationResponse(rsp)
+}
+
+// RemoveWebAuthnCredentialWithResponse Remove one of the current user's security keys or passkeys
+//
+// Removes the credential and signs the user out of their other
+// sessions; API tokens are kept. Removing the user's last second
+// factor while `two_factor.required` covers their role returns `409`.
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id} (the `RemoveWebAuthnCredential` operationId).
+func (c *ClientWithResponses) RemoveWebAuthnCredentialWithResponse(ctx context.Context, webauthnCredentialID WebAuthnCredentialID, reqEditors ...RequestEditorFn) (*RemoveWebAuthnCredentialResponse, error) {
+	rsp, err := c.RemoveWebAuthnCredential(ctx, webauthnCredentialID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveWebAuthnCredentialResponse(rsp)
+}
+
+// GetWebAuthnCredentialWithResponse Get one of the current user's security keys or passkeys
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id} (the `GetWebAuthnCredential` operationId).
+func (c *ClientWithResponses) GetWebAuthnCredentialWithResponse(ctx context.Context, webauthnCredentialID WebAuthnCredentialID, reqEditors ...RequestEditorFn) (*GetWebAuthnCredentialResponse, error) {
+	rsp, err := c.GetWebAuthnCredential(ctx, webauthnCredentialID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetWebAuthnCredentialResponse(rsp)
+}
+
+// RenameWebAuthnCredentialWithBodyWithResponse Rename one of the current user's security keys or passkeys
+//
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id} (the `RenameWebAuthnCredential` operationId).
+func (c *ClientWithResponses) RenameWebAuthnCredentialWithBodyWithResponse(ctx context.Context, webauthnCredentialID WebAuthnCredentialID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenameWebAuthnCredentialResponse, error) {
+	rsp, err := c.RenameWebAuthnCredentialWithBody(ctx, webauthnCredentialID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenameWebAuthnCredentialResponse(rsp)
+}
+
+// RenameWebAuthnCredentialWithResponse Rename one of the current user's security keys or passkeys
+//
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /api/v1/users/me/two-factor/webauthn/{webauthn_credential_id} (the `RenameWebAuthnCredential` operationId).
+func (c *ClientWithResponses) RenameWebAuthnCredentialWithResponse(ctx context.Context, webauthnCredentialID WebAuthnCredentialID, body RenameWebAuthnCredentialJSONRequestBody, reqEditors ...RequestEditorFn) (*RenameWebAuthnCredentialResponse, error) {
+	rsp, err := c.RenameWebAuthnCredential(ctx, webauthnCredentialID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenameWebAuthnCredentialResponse(rsp)
 }
 
 // DeleteUserWithResponse Delete a user
@@ -38829,6 +40178,360 @@ func ParseConfirmTotpEnrollmentResponse(rsp *http.Response) (*ConfirmTotpEnrollm
 			headers.CacheControl = &value
 		}
 		response.Headers200 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListWebAuthnCredentialsResponse parses an HTTP response from a ListWebAuthnCredentialsWithResponse call
+func ParseListWebAuthnCredentialsResponse(rsp *http.Response) (*ListWebAuthnCredentialsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListWebAuthnCredentialsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WebAuthnCredentialList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRegisterWebAuthnCredentialResponse parses an HTTP response from a RegisterWebAuthnCredentialWithResponse call
+func ParseRegisterWebAuthnCredentialResponse(rsp *http.Response) (*RegisterWebAuthnCredentialResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RegisterWebAuthnCredentialResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest WebAuthnCredentialRegistered
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 201:
+		var headers RegisterWebAuthnCredentialResponse201Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers201 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseBeginWebAuthnRegistrationResponse parses an HTTP response from a BeginWebAuthnRegistrationWithResponse call
+func ParseBeginWebAuthnRegistrationResponse(rsp *http.Response) (*BeginWebAuthnRegistrationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BeginWebAuthnRegistrationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WebAuthnCreationOptions
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRemoveWebAuthnCredentialResponse parses an HTTP response from a RemoveWebAuthnCredentialWithResponse call
+func ParseRemoveWebAuthnCredentialResponse(rsp *http.Response) (*RemoveWebAuthnCredentialResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemoveWebAuthnCredentialResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetWebAuthnCredentialResponse parses an HTTP response from a GetWebAuthnCredentialWithResponse call
+func ParseGetWebAuthnCredentialResponse(rsp *http.Response) (*GetWebAuthnCredentialResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetWebAuthnCredentialResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WebAuthnCredential
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRenameWebAuthnCredentialResponse parses an HTTP response from a RenameWebAuthnCredentialWithResponse call
+func ParseRenameWebAuthnCredentialResponse(rsp *http.Response) (*RenameWebAuthnCredentialResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RenameWebAuthnCredentialResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WebAuthnCredential
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
 	}
 
 	return response, nil

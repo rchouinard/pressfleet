@@ -40,7 +40,7 @@
 // with a TTL and a size bound that is keyed by challenge rather than by
 // user, so passwordless sign-in can reuse it. LoginSecondFactor dispatches
 // the proof to the FactorVerifier registered for its method (recovery
-// codes are built in; TOTP and WebAuthn plug in through Options.Factors)
+// codes and WebAuthn are built in; TOTP plugs in through Options.Factors)
 // and, if it passes, uses up the pending login. Every login, one step or
 // two, ends in the same function, which creates the session and sets its
 // verified_at.
@@ -51,6 +51,21 @@
 // allows no more guesses at the second factor than at the password. A
 // wrong proof leaves the pending login in place, so a mistyped code
 // doesn't mean entering the password again.
+//
+// Security keys and passkeys are WebAuthn credentials, verified with
+// github.com/go-webauthn/webauthn, the one dependency two-factor adds:
+// WebAuthn verification (CBOR, COSE keys, several signature algorithms,
+// flag and origin checks) is too easy to get wrong by hand. The relying
+// party comes from the dashboard domain (Options.RelyingParty), never
+// from a request. Challenges live in a challenge store like pending
+// logins, keyed by challenge and bound to the user they were made for but
+// not to a login, so reauthentication and passwordless sign-in can use
+// them; taking one makes it single use. Registration prefers resident
+// keys and gives each user a random 64-byte user handle, and each
+// credential's user verification and backup flags are stored, so
+// passwordless sign-in needs no migration. A signature counter that goes
+// backwards is logged and noted for the audit log, not refused, since
+// synced passkeys always report 0.
 //
 // Recovery codes are ten codes of 80 random bits, shown once as 16 base32
 // characters in groups of four and stored as SHA-256 hashes, like tokens.
