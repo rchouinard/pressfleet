@@ -227,11 +227,12 @@ func (p *Platform) BackupNetwork() string { return platform.BackupNetwork(p.Proj
 // Start skips the test unless the environment enables Docker tests.
 func Start(t *testing.T) *Platform {
 	t.Helper()
-	return start(t, false)
+	return start(t, false, 0)
 }
 
-// start is Start, and with withPebble, StartWithPebble.
-func start(t *testing.T, withPebble bool) *Platform {
+// start is Start, and with withPebble, StartWithPebble. A controlPlaneMemoryMB
+// of zero keeps the default limit.
+func start(t *testing.T, withPebble bool, controlPlaneMemoryMB int) *Platform {
 	t.Helper()
 	image := Image(t)
 
@@ -273,6 +274,7 @@ func start(t *testing.T, withPebble bool) *Platform {
 		PublicIP:          PublicIP,
 		ACME:              platform.ACMEConfig{CAServer: ACMECAServer},
 	}
+	cfg.ControlPlaneMemoryMB = controlPlaneMemoryMB
 	var o override
 	if withPebble {
 		cfg.ACME, o = preparePebble(t, dir)
@@ -623,4 +625,11 @@ func HostKey(t *testing.T) redact.Secret {
 // in Compose project names and passwords alike.
 func randomToken(n int) string {
 	return strings.ToLower(rand.Text())[:n]
+}
+
+// StartWithControlPlaneMemory is Start with the control plane's memory
+// limit set to mb MiB instead of the default.
+func StartWithControlPlaneMemory(t *testing.T, mb int) *Platform {
+	t.Helper()
+	return start(t, false, mb)
 }
