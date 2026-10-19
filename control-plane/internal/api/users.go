@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
@@ -118,4 +119,26 @@ func (h *Handlers) DeleteUser(ctx context.Context, req gen.DeleteUserRequestObje
 		return nil, authError(err, "")
 	}
 	return gen.DeleteUser204Response{}, nil
+}
+
+// ResetUserTwoFactor removes all of a user's second factors and signs them
+// out everywhere, for a user who lost theirs (design doc §6.2). authz
+// refuses an Admin's own account. A user with nothing to remove gets 409
+// (auth.ErrNoSecondFactor).
+func (h *Handlers) ResetUserTwoFactor(ctx context.Context, req gen.ResetUserTwoFactorRequestObject) (gen.ResetUserTwoFactorResponseObject, error) {
+	if _, err := h.authorizeAuth(ctx, authz.ResetUserTwoFactor, authz.User(req.UserID)); err != nil {
+		return nil, err
+	}
+	reset, err := h.auth.ResetTwoFactor(ctx, req.UserID)
+	if err != nil {
+		return nil, authError(err, "")
+	}
+	// Counts only: what was removed, never what it was.
+	setAuditDetails(ctx, map[string]string{
+		"totp_removed":                 strconv.FormatBool(reset.TOTP),
+		"webauthn_credentials_removed": strconv.Itoa(reset.WebAuthnCredentials),
+		"recovery_codes_removed":       strconv.Itoa(reset.RecoveryCodes),
+		"sessions_ended":               strconv.Itoa(reset.Sessions),
+	})
+	return gen.ResetUserTwoFactor204Response{}, nil
 }

@@ -7388,6 +7388,25 @@ type ClientInterface interface {
 	// Corresponds with DELETE /api/v1/users/{user_id}/ssh-keys/{ssh_key_id} (the `DeleteUserSSHKey` operationId).
 	DeleteUserSSHKey(ctx context.Context, userID UserID, sshKeyID SSHKeyID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ResetUserTwoFactor Reset a user's second factors (Admin only)
+	//
+	// For a user who lost their second factor: removes their
+	// authenticator app, every security key and passkey, and every
+	// recovery code, and signs them out everywhere. Their API tokens are
+	// kept. They log in next with their password alone, or, when
+	// `two_factor.required` covers their role, are restricted to
+	// enrolling a new factor.
+	//
+	// Only dashboard sessions may call this, and it is a sensitive
+	// action (see Reauthentication). An Admin can't reset their own
+	// second factors here (`403`): they remove them one at a time, and a
+	// locked-out Admin is recovered with `pressfleet user
+	// reset-two-factor` inside the control plane container. A user with
+	// nothing to remove gets `409`, and nothing changes.
+	//
+	// Corresponds with DELETE /api/v1/users/{user_id}/two-factor (the `ResetUserTwoFactor` operationId).
+	ResetUserTwoFactor(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetHealth Liveness probe
 	//
 	// Returns `200` while the process is running. Performs no dependency checks.
@@ -11466,6 +11485,35 @@ func (c *Client) AddUserSSHKey(ctx context.Context, userID UserID, body AddUserS
 // Corresponds with DELETE /api/v1/users/{user_id}/ssh-keys/{ssh_key_id} (the `DeleteUserSSHKey` operationId).
 func (c *Client) DeleteUserSSHKey(ctx context.Context, userID UserID, sshKeyID SSHKeyID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteUserSSHKeyRequest(c.Server, userID, sshKeyID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResetUserTwoFactor Reset a user's second factors (Admin only)
+//
+// For a user who lost their second factor: removes their
+// authenticator app, every security key and passkey, and every
+// recovery code, and signs them out everywhere. Their API tokens are
+// kept. They log in next with their password alone, or, when
+// `two_factor.required` covers their role, are restricted to
+// enrolling a new factor.
+//
+// Only dashboard sessions may call this, and it is a sensitive
+// action (see Reauthentication). An Admin can't reset their own
+// second factors here (`403`): they remove them one at a time, and a
+// locked-out Admin is recovered with `pressfleet user
+// reset-two-factor` inside the control plane container. A user with
+// nothing to remove gets `409`, and nothing changes.
+//
+// Corresponds with DELETE /api/v1/users/{user_id}/two-factor (the `ResetUserTwoFactor` operationId).
+func (c *Client) ResetUserTwoFactor(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResetUserTwoFactorRequest(c.Server, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -17453,6 +17501,40 @@ func NewDeleteUserSSHKeyRequest(server string, userID UserID, sshKeyID SSHKeyID)
 	return req, nil
 }
 
+// NewResetUserTwoFactorRequest constructs an http.Request for the ResetUserTwoFactor method
+func NewResetUserTwoFactorRequest(server string, userID UserID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "user_id", userID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/users/%s/two-factor", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetHealthRequest constructs an http.Request for the GetHealth method
 func NewGetHealthRequest(server string) (*http.Request, error) {
 	var err error
@@ -20221,6 +20303,27 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with DELETE /api/v1/users/{user_id}/ssh-keys/{ssh_key_id} (the `DeleteUserSSHKey` operationId).
 	DeleteUserSSHKeyWithResponse(ctx context.Context, userID UserID, sshKeyID SSHKeyID, reqEditors ...RequestEditorFn) (*DeleteUserSSHKeyResponse, error)
+
+	// ResetUserTwoFactorWithResponse Reset a user's second factors (Admin only)
+	//
+	// For a user who lost their second factor: removes their
+	// authenticator app, every security key and passkey, and every
+	// recovery code, and signs them out everywhere. Their API tokens are
+	// kept. They log in next with their password alone, or, when
+	// `two_factor.required` covers their role, are restricted to
+	// enrolling a new factor.
+	//
+	// Only dashboard sessions may call this, and it is a sensitive
+	// action (see Reauthentication). An Admin can't reset their own
+	// second factors here (`403`): they remove them one at a time, and a
+	// locked-out Admin is recovered with `pressfleet user
+	// reset-two-factor` inside the control plane container. A user with
+	// nothing to remove gets `409`, and nothing changes.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v1/users/{user_id}/two-factor (the `ResetUserTwoFactor` operationId).
+	ResetUserTwoFactorWithResponse(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*ResetUserTwoFactorResponse, error)
 
 	// GetHealthWithResponse Liveness probe
 	//
@@ -29796,6 +29899,75 @@ func (r DeleteUserSSHKeyResponse) ContentType() string {
 	return ""
 }
 
+type ResetUserTwoFactorResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ResetUserTwoFactorResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ResetUserTwoFactorResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ResetUserTwoFactorResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ResetUserTwoFactorResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ResetUserTwoFactorResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ResetUserTwoFactorResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResetUserTwoFactorResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResetUserTwoFactorResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResetUserTwoFactorResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetHealthResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -33502,6 +33674,33 @@ func (c *ClientWithResponses) DeleteUserSSHKeyWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseDeleteUserSSHKeyResponse(rsp)
+}
+
+// ResetUserTwoFactorWithResponse Reset a user's second factors (Admin only)
+//
+// For a user who lost their second factor: removes their
+// authenticator app, every security key and passkey, and every
+// recovery code, and signs them out everywhere. Their API tokens are
+// kept. They log in next with their password alone, or, when
+// `two_factor.required` covers their role, are restricted to
+// enrolling a new factor.
+//
+// Only dashboard sessions may call this, and it is a sensitive
+// action (see Reauthentication). An Admin can't reset their own
+// second factors here (`403`): they remove them one at a time, and a
+// locked-out Admin is recovered with `pressfleet user
+// reset-two-factor` inside the control plane container. A user with
+// nothing to remove gets `409`, and nothing changes.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v1/users/{user_id}/two-factor (the `ResetUserTwoFactor` operationId).
+func (c *ClientWithResponses) ResetUserTwoFactorWithResponse(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*ResetUserTwoFactorResponse, error) {
+	rsp, err := c.ResetUserTwoFactor(ctx, userID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResetUserTwoFactorResponse(rsp)
 }
 
 // GetHealthWithResponse Liveness probe
@@ -41597,6 +41796,63 @@ func ParseDeleteUserSSHKeyResponse(rsp *http.Response) (*DeleteUserSSHKeyRespons
 			return nil, err
 		}
 		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseResetUserTwoFactorResponse parses an HTTP response from a ResetUserTwoFactorWithResponse call
+func ParseResetUserTwoFactorResponse(rsp *http.Response) (*ResetUserTwoFactorResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResetUserTwoFactorResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Error

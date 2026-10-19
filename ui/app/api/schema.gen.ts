@@ -631,6 +631,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/users/{user_id}/two-factor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: components["parameters"]["UserID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Reset a user's second factors (Admin only)
+         * @description For a user who lost their second factor: removes their
+         *     authenticator app, every security key and passkey, and every
+         *     recovery code, and signs them out everywhere. Their API tokens are
+         *     kept. They log in next with their password alone, or, when
+         *     `two_factor.required` covers their role, are restricted to
+         *     enrolling a new factor.
+         *
+         *     Only dashboard sessions may call this, and it is a sensitive
+         *     action (see Reauthentication). An Admin can't reset their own
+         *     second factors here (`403`): they remove them one at a time, and a
+         *     locked-out Admin is recovered with `pressfleet user
+         *     reset-two-factor` inside the control plane container. A user with
+         *     nothing to remove gets `409`, and nothing changes.
+         */
+        delete: operations["resetUserTwoFactor"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/client-groups": {
         parameters: {
             query?: never;
@@ -6324,6 +6358,31 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    resetUserTwoFactor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: components["parameters"]["UserID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The user's second factors were removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             default: components["responses"]["Error"];
         };
     };
