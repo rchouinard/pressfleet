@@ -255,6 +255,10 @@ var enrollmentActions = map[Action]bool{
 	EnrollTOTP:                 true,
 	RemoveTOTP:                 true,
 	RegisterWebAuthnCredential: true,
+	// Enrolling is sensitive, so a session older than the reauthentication
+	// max age must be able to reauthenticate (with its password) first.
+	Reauthenticate:        true,
+	StartReauthentication: true,
 }
 
 // sensitiveActions are the actions a session may take only soon after its
@@ -272,8 +276,13 @@ var sensitiveActions = map[Action]bool{
 	DeleteUser:          true,
 	ManageOthersTokens:  true,
 	ManageOthersSSHKeys: true,
-	// The account's protection.
-	RegenerateRecoveryCodes: true,
+	// The account's protection: second factors and recovery codes.
+	RegenerateRecoveryCodes:    true,
+	EnrollTOTP:                 true,
+	RemoveTOTP:                 true,
+	RegisterWebAuthnCredential: true,
+	RenameWebAuthnCredential:   true,
+	RemoveWebAuthnCredential:   true,
 	// Direct write access to site data.
 	OpenReadWriteDatabaseSession: true,
 	// Destructive, and can delete backups.

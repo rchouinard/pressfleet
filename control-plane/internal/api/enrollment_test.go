@@ -166,6 +166,7 @@ func TestRestrictedSessionRefusedEveryOtherOperation(t *testing.T) {
 	allowed := map[authz.Action]bool{
 		authz.ViewSelf: true, authz.Logout: true, authz.RegenerateRecoveryCodes: true,
 		authz.EnrollTOTP: true, authz.RemoveTOTP: true, authz.RegisterWebAuthnCredential: true,
+		authz.Reauthenticate: true, authz.StartReauthentication: true,
 	}
 	for _, op := range ops {
 		if op.Public {
@@ -187,4 +188,27 @@ func TestRestrictedSessionRefusedEveryOtherOperation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRestrictedStaleSessionReauthenticatesAndEnrolls covers the two rules
+// together (design doc §6.2): enrolling is sensitive, so a session that
+// must enroll and is older than the reauthentication max age first
+// reauthenticates with its password, then enrolls.
+func TestRestrictedStaleSessionReauthenticatesAndEnrolls(t *testing.T) {
+	e := newAuthEnvWith(t, api.Options{}, auth.TwoFactorPolicy{
+		Required: auth.RequireAdmins, Reauthentication: true, ReauthenticationMaxAge: 10 * time.Minute,
+	})
+	s := e.mustLogin()
+	e.clock.add(11 * time.Minute)
+
+	w := e.do(http.MethodPost, "/api/v1/users/me/two-factor/totp", "", s.creds())
+	if w.Code != http.StatusForbidden || !isReauthProblem(t, w) {
+		t.Fatalf("stale restricted session enrolls: status %d, want 403 reauthentication-required; body: %s", w.Code, w.Body)
+	}
+	expectStatus(t, e.do(http.MethodPost, "/api/v1/auth/reauthenticate/options", "", s.creds()), http.StatusOK, "reauthentication options")
+	body := `{"method":"password","password":"` + testPassword + `"}`
+	expectStatus(t, e.do(http.MethodPost, "/api/v1/auth/reauthenticate", body, s.creds()), http.StatusOK, "reauthenticate with the password")
+	expectStatus(t, e.do(http.MethodPost, "/api/v1/users/me/two-factor/totp", "", s.creds()), http.StatusOK, "enroll after reauthenticating")
+	// Everything else stays refused until the user has a factor.
+	expectEnrollmentRequired(t, e.do(http.MethodGet, "/api/v1/sites", "", s.creds()), "list sites before confirming")
 }

@@ -108,8 +108,13 @@ var designTable = map[authz.Action]struct {
 // (docs/dashboard-two-factor-plan.md, design doc §6.2): the actions a
 // session takes only soon after its user last proved who they are.
 var sensitiveDesign = map[authz.Action]bool{
-	// Regenerate recovery codes.
-	authz.RegenerateRecoveryCodes: true,
+	// Add, remove, or reset second factors; regenerate recovery codes.
+	authz.RegenerateRecoveryCodes:    true,
+	authz.EnrollTOTP:                 true,
+	authz.RemoveTOTP:                 true,
+	authz.RegisterWebAuthnCredential: true,
+	authz.RenameWebAuthnCredential:   true,
+	authz.RemoveWebAuthnCredential:   true,
 	// Create API tokens; add SSH keys.
 	authz.CreateOwnToken: true,
 	authz.AddOwnSSHKey:   true,
@@ -336,6 +341,8 @@ var enrollmentOnlyActions = map[authz.Action]bool{
 	authz.EnrollTOTP:                 true,
 	authz.RemoveTOTP:                 true,
 	authz.RegisterWebAuthnCredential: true,
+	authz.Reauthenticate:             true,
+	authz.StartReauthentication:      true,
 }
 
 // TestCheckRestrictsSessionsThatMustEnroll checks every action for every
