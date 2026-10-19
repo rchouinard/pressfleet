@@ -139,7 +139,7 @@ func printUser(w io.Writer, verb string, u store.User, pw redact.Secret, generat
 
 // authOptions are the auth service's options from the configuration, for
 // the API and the in-container user commands alike, so both apply the same
-// two-factor policy.
+// two-factor policy and WebAuthn relying party.
 func (a *app) authOptions() auth.Options {
 	tf := a.cfg.TwoFactor
 	return auth.Options{
@@ -149,5 +149,7 @@ func (a *app) authOptions() auth.Options {
 			Reauthentication:       tf.ReauthenticationEnabled(),
 			ReauthenticationMaxAge: tf.ReauthenticationMaxAge,
 		},
+		// From the configured domain, never a request's Host header (§6.2).
+		RelyingParty: auth.RelyingPartyFor(a.cfg.DashboardDomain),
 	}
 }

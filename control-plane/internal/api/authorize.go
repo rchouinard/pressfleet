@@ -25,6 +25,13 @@ var operationActions = map[string]authz.Action{
 
 	"regenerateRecoveryCodes": authz.RegenerateRecoveryCodes,
 
+	"beginWebAuthnRegistration":  authz.RegisterWebAuthnCredential,
+	"registerWebAuthnCredential": authz.RegisterWebAuthnCredential,
+	"listWebAuthnCredentials":    authz.ViewSelf,
+	"getWebAuthnCredential":      authz.ViewSelf,
+	"renameWebAuthnCredential":   authz.RenameWebAuthnCredential,
+	"removeWebAuthnCredential":   authz.RemoveWebAuthnCredential,
+
 	"listUsers":  authz.ViewUsers,
 	"createUser": authz.CreateUser,
 	"getUser":    authz.ViewUsers,

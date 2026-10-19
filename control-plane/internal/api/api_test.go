@@ -122,7 +122,7 @@ func decodeProblem(t *testing.T, w *httptest.ResponseRecorder) problem {
 
 // samplePath fills in path parameters with a valid ID.
 func samplePath(path string) string {
-	for _, p := range []string{"{token_id}", "{user_id}", "{client_group_id}", "{site_id}", "{job_id}", "{upload_id}", "{export_id}", "{ssh_key_id}", "{session_id}", "{alert_rule_id}", "{alert_id}", "{alert_channel_id}", "{backup_id}"} {
+	for _, p := range []string{"{token_id}", "{user_id}", "{client_group_id}", "{site_id}", "{job_id}", "{upload_id}", "{export_id}", "{ssh_key_id}", "{session_id}", "{alert_rule_id}", "{alert_id}", "{alert_channel_id}", "{backup_id}", "{webauthn_credential_id}"} {
 		path = strings.ReplaceAll(path, p, "abc123")
 	}
 	return strings.ReplaceAll(path, "{file_name}", "database.sql.gz")
@@ -159,6 +159,9 @@ var sampleBodies = map[string]string{
 	"updateAlertRule":          `{"description":"hello"}`,
 	"createAlertChannel":       `{"name":"Ops","type":"email","email":{"to":["ops@example.com"]}}`,
 	"updateAlertChannel":       `{"name":"Ops"}`,
+
+	"registerWebAuthnCredential": `{"name":"Key","credential":{"id":"eA","type":"public-key"}}`,
+	"renameWebAuthnCredential":   `{"name":"Key"}`,
 }
 
 // sampleQueries are the required query parameters of operations that have

@@ -93,9 +93,12 @@ export interface paths {
          *
          *     * `recovery_code`: send `code`, a recovery code with or without its
          *       dashes. Each code works once.
-         *     * `totp` and `webauthn` are listed once they are available.
+         *     * `webauthn`: send `credential`, the assertion for the `webauthn`
+         *       request options in the login's problem document. A signature
+         *       counter that goes backwards is audited, not refused.
+         *     * `totp` is listed once it is available.
          *
-         *     A wrong code returns `422` with an error on `/code` and counts
+         *     A wrong code or assertion returns `422` with an error on `/code` (`/credential` for `webauthn`) and counts
          *     toward login throttling (`429`); the login stays pending, so the user
          *     can try again without the password. A method the user can't use
          *     returns `422` with an error on `/method`. A missing, expired (after
@@ -299,6 +302,104 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/me/two-factor/webauthn/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start registering a security key or passkey
+         * @description Returns the options for `navigator.credentials.create()`, in the JSON
+         *     form that `PublicKeyCredential.parseCreationOptionsFromJSON()` takes.
+         *     The relying party ID is the dashboard domain (`localhost` without
+         *     one), and the only accepted origin is `https://` followed by it.
+         *     The options prefer a discoverable credential (`residentKey:
+         *     preferred`) and user verification, ask for no attestation, and list
+         *     the user's registered credentials in `excludeCredentials`, so a key
+         *     isn't registered twice.
+         *
+         *     Answer within 5 minutes with `POST
+         *     /api/v1/users/me/two-factor/webauthn`; each challenge works once.
+         *     Only dashboard sessions may call this; API tokens get `403`.
+         */
+        post: operations["beginWebAuthnRegistration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/me/two-factor/webauthn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the current user's security keys and passkeys
+         * @description Lists every credential, including any registered under a previous
+         *     dashboard domain (`rp_id`), which can no longer be used.
+         */
+        get: operations["listWebAuthnCredentials"];
+        put?: never;
+        /**
+         * Register a security key or passkey
+         * @description Checks the response of `navigator.credentials.create()` to the
+         *     options from `POST /api/v1/users/me/two-factor/webauthn/options` and
+         *     registers the credential under `name`. From then on the user needs
+         *     a second factor to log in.
+         *
+         *     If this is the user's first second factor, the response includes
+         *     their first ten recovery codes, shown only this once.
+         *
+         *     A response that doesn't verify (another origin or relying party ID,
+         *     an unknown, expired, or already used challenge, no user presence)
+         *     returns `422` with an error on `/credential`; a credential that is
+         *     already registered returns `409`. Only dashboard sessions may call
+         *     this; API tokens get `403`.
+         */
+        post: operations["registerWebAuthnCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/me/two-factor/webauthn/{webauthn_credential_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                webauthn_credential_id: components["parameters"]["WebAuthnCredentialID"];
+            };
+            cookie?: never;
+        };
+        /** Get one of the current user's security keys or passkeys */
+        get: operations["getWebAuthnCredential"];
+        put?: never;
+        post?: never;
+        /**
+         * Remove one of the current user's security keys or passkeys
+         * @description Removes the credential and signs the user out of their other
+         *     sessions; API tokens are kept. Removing the user's last second
+         *     factor while `two_factor.required` covers their role returns `409`.
+         *     Only dashboard sessions may call this; API tokens get `403`.
+         */
+        delete: operations["removeWebAuthnCredential"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename one of the current user's security keys or passkeys
+         * @description Only dashboard sessions may call this; API tokens get `403`.
+         */
+        patch: operations["renameWebAuthnCredential"];
         trace?: never;
     };
     "/api/v1/users/me/ssh-keys": {
@@ -2918,6 +3019,12 @@ export interface components {
              *     this control plane.
              */
             methods?: components["schemas"]["SecondFactorMethod"][];
+            /**
+             * @description With `webauthn` in `methods`: the request options to pass to
+             *     `navigator.credentials.get()`. Their challenge lasts as long
+             *     as the login.
+             */
+            webauthn?: components["schemas"]["WebAuthnRequestOptions"];
         };
         /** @enum {string} */
         SecondFactorMethod: "totp" | "webauthn" | "recovery_code";
@@ -2928,10 +3035,104 @@ export interface components {
              * @description A TOTP code or recovery code, for those methods.
              */
             code?: string;
+            /**
+             * @description For `webauthn`: the `PublicKeyCredential` that
+             *     `navigator.credentials.get()` returned for the login's `webauthn`
+             *     request options, in its JSON form.
+             */
+            credential?: components["schemas"]["WebAuthnPublicKeyCredential"];
         };
         RecoveryCodes: {
             /** @description Ten single-use codes, each 16 characters in groups of four. Shown only once. */
             codes: string[];
+        };
+        /**
+         * @description WebAuthn credential creation options in the JSON form
+         *     (`PublicKeyCredentialCreationOptionsJSON`): `rp`, `user`, `challenge`,
+         *     `pubKeyCredParams`, `timeout`, `excludeCredentials`,
+         *     `authenticatorSelection`, and `attestation`. Binary members are
+         *     base64url without padding.
+         */
+        WebAuthnCreationOptions: {
+            [key: string]: unknown;
+        };
+        /**
+         * @description WebAuthn request options in the JSON form
+         *     (`PublicKeyCredentialRequestOptionsJSON`), for
+         *     `navigator.credentials.get()`: `challenge`, `timeout`, `rpId`,
+         *     `allowCredentials`, and `userVerification`. Binary members are
+         *     base64url without padding.
+         */
+        WebAuthnRequestOptions: {
+            [key: string]: unknown;
+        };
+        /**
+         * @description A `PublicKeyCredential` from `navigator.credentials.create()` or
+         *     `navigator.credentials.get()` in its JSON form (`toJSON()`):
+         *     `id`, `rawId`, `type`, `response`, `clientExtensionResults`, and
+         *     `authenticatorAttachment`, with binary members base64url without
+         *     padding.
+         */
+        WebAuthnPublicKeyCredential: {
+            [key: string]: unknown;
+        };
+        /**
+         * @description The user's name for the credential.
+         * @example YubiKey 5C
+         */
+        WebAuthnCredentialName: string;
+        WebAuthnRegistration: {
+            name: components["schemas"]["WebAuthnCredentialName"];
+            credential: components["schemas"]["WebAuthnPublicKeyCredential"];
+        };
+        WebAuthnCredentialUpdate: {
+            name: components["schemas"]["WebAuthnCredentialName"];
+        };
+        /**
+         * @description A security key or passkey. Public keys and credential IDs aren't
+         *     returned.
+         */
+        WebAuthnCredential: {
+            id: components["schemas"]["ID"];
+            name: components["schemas"]["WebAuthnCredentialName"];
+            /**
+             * @description The relying party ID (dashboard domain) the credential is bound
+             *     to. A credential for another ID than the current one can't be used.
+             * @example dashboard.example.com
+             */
+            rp_id: string;
+            /**
+             * @description The authenticator model's AAGUID, all zeros if it reported none.
+             * @example cb69481e-8ff7-4039-93ec-0a2729a154a8
+             */
+            aaguid: string;
+            /** @description How the browser can reach the authenticator, as it reported at registration. */
+            transports: string[];
+            /** @description Whether the authenticator verified the user (a PIN or biometric) at registration. */
+            user_verified: boolean;
+            /** @description Whether the credential can be synced (a synced passkey) rather than bound to one device. */
+            backup_eligible: boolean;
+            /** @description Whether the credential was backed up when last used. */
+            backup_state: boolean;
+            /**
+             * Format: int64
+             * @description The authenticator's signature counter when last used; synced passkeys keep 0.
+             */
+            sign_count: number;
+            created_at: components["schemas"]["Timestamp"];
+            /** @description When the credential last passed a second-factor check; null if never. */
+            last_used_at: components["schemas"]["Timestamp"] | null;
+        };
+        WebAuthnCredentialList: {
+            items: components["schemas"]["WebAuthnCredential"][];
+        };
+        WebAuthnCredentialRegistered: {
+            credential: components["schemas"]["WebAuthnCredential"];
+            /**
+             * @description Only when this was the user's first second factor: their first
+             *     ten single-use recovery codes, shown only this once.
+             */
+            recovery_codes?: string[];
         };
         User: {
             id: components["schemas"]["ID"];
@@ -4912,6 +5113,7 @@ export interface components {
         TokenID: components["schemas"]["ID"];
         UserID: components["schemas"]["ID"];
         SSHKeyID: components["schemas"]["ID"];
+        WebAuthnCredentialID: components["schemas"]["ID"];
         ClientGroupID: components["schemas"]["ID"];
         SiteID: components["schemas"]["ID"];
         JobID: components["schemas"]["ID"];
@@ -5423,6 +5625,166 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    beginWebAuthnRegistration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The credential creation options. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebAuthnCreationOptions"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listWebAuthnCredentials: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The credentials, oldest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebAuthnCredentialList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    registerWebAuthnCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebAuthnRegistration"];
+            };
+        };
+        responses: {
+            /** @description Credential registered. */
+            201: {
+                headers: {
+                    Location: components["headers"]["Location"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebAuthnCredentialRegistered"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableContent"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getWebAuthnCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                webauthn_credential_id: components["parameters"]["WebAuthnCredentialID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The credential. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebAuthnCredential"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            default: components["responses"]["Error"];
+        };
+    };
+    removeWebAuthnCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                webauthn_credential_id: components["parameters"]["WebAuthnCredentialID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Credential removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    renameWebAuthnCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                webauthn_credential_id: components["parameters"]["WebAuthnCredentialID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebAuthnCredentialUpdate"];
+            };
+        };
+        responses: {
+            /** @description The renamed credential. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebAuthnCredential"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["UnprocessableContent"];
             default: components["responses"]["Error"];
         };
     };

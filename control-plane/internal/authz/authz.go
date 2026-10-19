@@ -163,6 +163,12 @@ const (
 
 	// Replace their own recovery codes (design doc §6.2).
 	RegenerateRecoveryCodes Action = "self.two_factor.recovery_codes.regenerate"
+
+	// Register, rename, and remove their own security keys and passkeys
+	// (design doc §6.2).
+	RegisterWebAuthnCredential Action = "self.two_factor.webauthn.register"
+	RenameWebAuthnCredential   Action = "self.two_factor.webauthn.rename"
+	RemoveWebAuthnCredential   Action = "self.two_factor.webauthn.remove"
 )
 
 // sshActions are the only actions an SSH key (auth.MethodSSHKey) may take:
@@ -184,6 +190,10 @@ var sessionActions = map[Action]bool{
 	// Second factors are managed from sessions only (§6.2): a stolen token
 	// must not be able to swap the account's recovery codes for its own.
 	RegenerateRecoveryCodes: true,
+	// WebAuthn needs a browser anyway.
+	RegisterWebAuthnCredential: true,
+	RenameWebAuthnCredential:   true,
+	RemoveWebAuthnCredential:   true,
 }
 
 // rule says who may take an action.
@@ -285,6 +295,10 @@ var rules = map[Action]rule{
 	DeleteOwnSSHKey: {store.RoleViewer, true},
 
 	RegenerateRecoveryCodes: {store.RoleViewer, true},
+
+	RegisterWebAuthnCredential: {store.RoleViewer, true},
+	RenameWebAuthnCredential:   {store.RoleViewer, true},
+	RemoveWebAuthnCredential:   {store.RoleViewer, true},
 }
 
 // Actions returns every action, for tests and documentation.
@@ -344,6 +358,9 @@ const (
 	// TargetExport is an export (§5.7), which belongs to the client group
 	// of its site when it began.
 	TargetExport TargetType = "export"
+	// TargetWebAuthnCredential is one of the caller's security keys or
+	// passkeys.
+	TargetWebAuthnCredential TargetType = "webauthn_credential" //nolint:gosec // G101: a target type, not a credential
 )
 
 // Target is what an action applies to.
@@ -397,6 +414,10 @@ func Alert(id string) Target { return Target{Type: TargetAlert, ID: id} }
 
 // Export returns the target for an export.
 func Export(id string) Target { return Target{Type: TargetExport, ID: id} }
+
+// WebAuthnCredential returns the target for one of the caller's security
+// keys or passkeys.
+func WebAuthnCredential(id string) Target { return Target{Type: TargetWebAuthnCredential, ID: id} }
 
 // AlertChannel returns the target for an alert channel.
 func AlertChannel(id string) Target { return Target{Type: TargetAlertChannel, ID: id} }
