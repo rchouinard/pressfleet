@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -290,6 +291,51 @@ func TestUpgradeAppliesChangedConfigFile(t *testing.T) {
 	}
 	if len(e.platform.ups) != 2 {
 		t.Errorf("ups = %+v, want a second up", e.platform.ups)
+	}
+}
+
+// An invalid setting in the config file or the environment is refused
+// before anything changes, with an error naming the key.
+func TestUpgradeRefusesInvalidConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name, file string
+		env        map[string]string
+		want       string
+	}{
+		{name: "file", file: "two_factor:\n  required: sometimes\n", want: "two_factor.required"},
+		{name: "file duration", file: "two_factor:\n  reauthentication_max_age: 2h\n", want: "two_factor.reauthentication_max_age"},
+		{name: "environment", env: map[string]string{"PRESSFLEET_TWO_FACTOR_REAUTHENTICATION": "maybe"}, want: "two_factor.reauthentication"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newUpgradeEnv(t, "v1.2.2")
+			before := readFile(t, e.path("platform", "compose.yaml"))
+			if tc.file != "" {
+				f, err := os.OpenFile(e.configPath, os.O_APPEND|os.O_WRONLY, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := f.WriteString(tc.file); err != nil {
+					t.Fatal(err)
+				}
+				if err := f.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			maps.Copy(e.env, tc.env)
+			r := e.upgrade("", "--yes")
+			if r.code == 0 || !strings.Contains(r.stderr, "invalid configuration") || !strings.Contains(r.stderr, tc.want) {
+				t.Fatalf("exit %d, want an error about %s\n%s\n%s", r.code, tc.want, r.stdout, r.stderr)
+			}
+			if len(e.platform.ups) != 0 || e.platform.pulls != 0 {
+				t.Error("upgrade with an invalid config changed the platform")
+			}
+			if got := readFile(t, e.path("platform", "compose.yaml")); got != before {
+				t.Error("upgrade with an invalid config rendered the platform project")
+			}
+			if _, err := os.Stat(e.path("upgrade")); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("upgrade with an invalid config wrote %s: %v", e.path("upgrade"), err)
+			}
+		})
 	}
 }
 
