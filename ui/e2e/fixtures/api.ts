@@ -161,3 +161,36 @@ export async function startFailingImport(api: Api, apiURL: string, clientGroupId
   })
   return data!.job
 }
+
+export type Site = components['schemas']['Site']
+
+/** Provisions a site through the API, waits for its job, and returns the site. */
+export async function createSite(api: Api, clientGroupId: string, phpVersion: string, name = unique('E2E Site')): Promise<Site> {
+  const { data } = await api.client.POST('/api/v1/sites', {
+    body: { client_group_id: clientGroupId, name, admin_email: 'owner@e2e.test', php_version: phpVersion },
+  })
+  const job = await waitForJob(api, data!.job.id)
+  if (job.state !== 'succeeded') throw new Error(`provisioning ${name}: job ${job.id} ${job.state}: ${job.error}`)
+  const { data: site } = await api.client.GET('/api/v1/sites/{site_id}', { params: { path: { site_id: data!.site.id } } })
+  return site!
+}
+
+/** GETs a file from the API with the session (an export's files) and returns its bytes. */
+export async function downloadFile(api: Api, apiURL: string, path: string): Promise<Buffer> {
+  const res = await fetch(new URL(path, apiURL), { headers: { Cookie: `${SESSION_COOKIE}=${api.sessionToken}` } })
+  if (!res.ok) throw new Error(`GET ${path}: status ${res.status}: ${await res.text()}`)
+  return Buffer.from(await res.arrayBuffer())
+}
+
+/**
+ * Exports a site through the API, waits for the export, and returns its
+ * two files: what a site import takes.
+ */
+export async function exportSite(api: Api, apiURL: string, siteId: string): Promise<{ archive: Buffer, dump: Buffer }> {
+  const { data } = await api.client.POST('/api/v1/sites/{site_id}/export', { params: { path: { site_id: siteId } } })
+  const job = await waitForJob(api, data!.job.id)
+  const exportId = job.result?.export_id
+  if (job.state !== 'succeeded' || typeof exportId !== 'string') throw new Error(`exporting site ${siteId}: job ${job.id} ${job.state}: ${job.error}`)
+  const file = (name: string) => downloadFile(api, apiURL, `/api/v1/exports/${exportId}/files/${name}`)
+  return { archive: await file('wp-content.tar.gz'), dump: await file('database.sql.gz') }
+}

@@ -352,10 +352,12 @@ How the Phase 1–4 operations (design doc §8) are covered through the dashboar
 | Domains (#86) | Go live (the DNS check refuses, then skipped), add and remove aliases | `domains.spec.ts` › goes live, then adds and removes aliases | The API's site; through Traefik, the primary domain served with HSTS, the preview domain and aliases redirecting, a removed alias `404` |
 | Admin login (#130) | One-click wp-admin login | `admin-login.spec.ts` › the login button lands in wp-admin... | The tab reaches the administrator's profile and an admin-only page; WordPress has a session for the administrator |
 | Updates (#125) | Pending plugin and theme updates in the site's health | `site-updates.spec.ts` › pending plugin and theme updates show... | The API's update report and the site's counts, after a check started from the page |
-| Backups (#87) | Back up, list snapshots, restore | *pending: #176* | |
-| Exports (#133, #134) | Site export, export from a snapshot, database export | *pending: #176* | |
-| Import, deploy (#116) | Import a site; deploy a package | *pending: #176* | |
-| Database access (#116) | Open and close a database session | *pending: #176* | |
+| Backups (#87) | Back up, list snapshots, restore | `backups.spec.ts` › backs up a site, lists the backup, and restores... | The API's backup and its snapshot; after the restore, the site's option, files, and posts are the backup's (WP-CLI, harness), the site is out of maintenance, and a pre-restore backup is listed |
+| Exports (#133, #134) | Site export, export from a snapshot | `site-data.spec.ts` › exports a site and downloads its files; `backups.spec.ts` › exports a site as it was at a backup | The downloaded archive and dump hold the site's files and data (without the platform's drop-ins), or the backup's rather than the live site's; the API's export |
+| Exports (#133, #134) | Database export | `site-data.spec.ts` › downloads a database export | The downloaded dump holds the site's data, without `CREATE DATABASE` or `USE` |
+| Import, deploy (#116) | Import a site from a `wp-content` archive and a SQL dump | `site-data.spec.ts` › imports a site... | A new running site serves the imported post on its own preview domain, with the imported files (harness) |
+| Import, deploy (#116) | Deploy a package | `site-data.spec.ts` › deploys a theme package | The site serves the deployed theme, and it is active (harness) |
+| Database access (#116) | Open and close a database session | `site-data.spec.ts` › opens a database session... | The session's MariaDB user exists while it is open and is dropped when it ends (harness); the API's session list; the password is gone from the page |
 | Metrics (#88) | Platform charts (host memory and CPU, MariaDB connections) | `monitoring.spec.ts` › platform metrics charts render... | One table row per series the API has data for |
 | Metrics (#88) | Site charts, from the site's page (PHP-FPM workers, object cache memory; not CPU and memory, which need cgroup v2) | `monitoring.spec.ts` › a running site › site metrics charts render... | One table row per series the API has data for |
 | Logs (#89) | Logs page, site picker, the site's live stream showing a new line | `monitoring.spec.ts` › a running site › the logs page opens... | A visitor's request through Traefik (`harness.visitSite`); the same access line from the API |

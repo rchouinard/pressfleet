@@ -50,6 +50,10 @@ const platformFile = "e2e/.platform.json"
 // so CI uploads one directory.
 const resultsDir = "test-results"
 
+// controlPlaneMemoryMB is the control plane's memory limit for the suite,
+// in MiB (see TestDashboard).
+const controlPlaneMemoryMB = 512
+
 // suiteTimeout bounds one run of the suite, below make test-ui-e2e's
 // go test -timeout so teardown still runs.
 const suiteTimeout = 25 * time.Minute
@@ -66,7 +70,12 @@ func TestDashboard(t *testing.T) {
 	projectDir := t.TempDir()
 	t.Cleanup(func() { removeSites(t, siteProjects) })
 
-	p := e2e.Start(t)
+	// The specs run in parallel: several sites' jobs, logins, and restic
+	// at once. Their docker, docker compose, and restic processes count
+	// against the control plane's memory limit, and the default 192 MiB
+	// doesn't fit them: the control plane is killed, and comes back on
+	// another port.
+	p := e2e.StartWithControlPlaneMemory(t, controlPlaneMemoryMB)
 	t.Cleanup(func() {
 		siteProjects = listSiteProjects(t, p, projectDir)
 		if t.Failed() {

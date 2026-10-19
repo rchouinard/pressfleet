@@ -57,6 +57,7 @@ func startHarness(t *testing.T, p *e2e.Platform, projectDir string) string {
 	mux.HandleFunc("GET /exists", h.exists)
 	mux.HandleFunc("POST /sites/{id}/exec", h.siteExec)
 	mux.HandleFunc("POST /ingress", h.ingressGet)
+	mux.HandleFunc("POST /mariadb/query", h.mariadbQuery)
 	addMonitoringEndpoints(t, mux, p)
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -484,4 +485,23 @@ func (m *monitoring) visit(w http.ResponseWriter, r *http.Request) {
 	_ = resp.Body.Close()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]int{"status": resp.StatusCode})
+}
+
+// mariadbQuery runs the SQL in the request body on the platform MariaDB as
+// root and returns its output in batch format, without column names: what
+// a database session created or left behind.
+func (h *harness) mariadbQuery(w http.ResponseWriter, r *http.Request) {
+	query, err := io.ReadAll(r.Body)
+	if err != nil || len(query) == 0 {
+		http.Error(w, "the body must be the SQL to run", http.StatusBadRequest)
+		return
+	}
+	out, err := h.p.Project.ExecInput(r.Context(), bytes.NewReader(query), "mariadb", "sh", "-c",
+		`exec mariadb --user=root --password="$(cat /run/secrets/mariadb_root_password)" --batch --skip-column-names`)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("%v: %s", err, out), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"output": string(out)})
 }

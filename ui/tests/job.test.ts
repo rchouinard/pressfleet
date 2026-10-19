@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { formatDuration, isTerminal, jobStateView, jobTypeLabel, rollbackSummary, stepLabel, stepStateView, type JobState } from '../app/utils/job'
+import { computed } from 'vue'
+import { createEndedJobs, formatDuration, isTerminal, jobStateView, jobTypeLabel, rollbackSummary, stepLabel, stepStateView, type JobState } from '../app/utils/job'
 import { job, step } from './job-fixtures'
 
 describe('job states', () => {
@@ -77,5 +78,26 @@ describe('rollbackSummary', () => {
     expect(s.failed).toEqual(['create_database'])
     expect(s.text).toContain('Create database')
     expect(s.text).toContain('left behind')
+  })
+})
+
+describe('createEndedJobs', () => {
+  it('records a job once, when it ends', () => {
+    const ended = createEndedJobs()
+    expect(ended.add({ id: 'j1', state: 'running' })).toBe(false)
+    expect(ended.has('j1')).toBe(false)
+    expect(ended.add({ id: 'j1', state: 'succeeded' })).toBe(true)
+    expect(ended.add({ id: 'j1', state: 'succeeded' })).toBe(false)
+    expect(ended.has('j1')).toBe(true)
+  })
+
+  it('updates what is computed from it', () => {
+    // The backups page hid Restore and disabled "Back up now" until a
+    // reload, because this didn't recompute when the backup ended.
+    const ended = createEndedJobs()
+    const busy = computed(() => !ended.has('j1'))
+    expect(busy.value).toBe(true)
+    ended.add({ id: 'j1', state: 'failed' })
+    expect(busy.value).toBe(false)
   })
 })

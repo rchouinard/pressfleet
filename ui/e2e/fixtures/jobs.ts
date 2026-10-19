@@ -31,3 +31,18 @@ export function jobIdFromURL(url: string): string {
   if (!id) throw new Error(`not a job page: ${url}`)
   return id
 }
+
+/**
+ * The ID of the job whose progress view `scope` shows, once it shows one
+ * other than `previous` (the job it showed before this one started).
+ */
+export async function jobIdIn(scope: Locator, previous?: string): Promise<string> {
+  const view = scope.getByRole('region', { name: /^Progress of job / })
+  let id = ''
+  await expect.poll(async () => {
+    const label = await view.getAttribute('aria-label', { timeout: 1000 }).catch(() => null)
+    id = label?.replace('Progress of job ', '') ?? ''
+    return id !== '' && id !== previous
+  }).toBe(true)
+  return id
+}

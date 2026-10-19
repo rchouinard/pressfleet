@@ -8,7 +8,7 @@ import {
   canBackUpSite, canRestoreSite, restoreBlockedReason, restorePayload, scheduleFormPayload,
   type Backup, type BackupSchedule, type ScheduleFormValues,
 } from '../../../utils/backup'
-import { isTerminal, type Job } from '../../../utils/job'
+import { createEndedJobs, type Job } from '../../../utils/job'
 import { activeJob } from '../../../utils/site'
 import { createPagedList } from '../../../utils/paged-list'
 
@@ -107,14 +107,13 @@ watch(id, () => {
   jobId.value = undefined
 })
 
-const handled = new Set<string>()
+const ended = createEndedJobs()
 async function onJobUpdate(job: Job) {
-  if (!isTerminal(job.state) || handled.has(job.id)) return
-  handled.add(job.id)
+  if (!ended.add(job)) return
   await Promise.all([refreshSite(), backups.load(), loadSchedule()])
   if (job.type === 'site.restore' && job.state === 'succeeded') notify.success('Restore finished', name.value)
 }
-const busyWithJob = computed(() => jobId.value !== undefined && !handled.has(jobId.value))
+const busyWithJob = computed(() => jobId.value !== undefined && !ended.has(jobId.value))
 
 // Back up now.
 const backupBusy = ref(false)

@@ -49,6 +49,31 @@ export class Harness {
     return output.trim()
   }
 
+  /** Runs a command in a site's php container and returns its trimmed output; throws if it fails. */
+  async php(siteId: string, command: string[]): Promise<string> {
+    const { output, error } = await this.siteExec(siteId, 'php', command)
+    if (error) throw new Error(`harness: ${command.join(' ')}: ${error}: ${output}`)
+    return output.trim()
+  }
+
+  /**
+   * Fetches a page of a site from its nginx, on the site's network, as a
+   * visitor of its preview domain would over HTTPS, and returns the body.
+   */
+  async sitePage(siteId: string, previewDomain: string, path = '/'): Promise<string> {
+    // A query string of its own, so no page cache answers.
+    const url = `http://nginx:8080${path}${path.includes('?') ? '&' : '?'}pf-e2e=${Date.now()}`
+    return this.php(siteId, ['curl', '--silent', '--show-error', '--fail', '--max-time', '10',
+      '--header', `Host: ${previewDomain}`, '--header', 'X-Forwarded-Proto: https', url])
+  }
+
+  /** Runs SQL on the platform MariaDB as root; the output has one line per row, tab-separated. */
+  async mariadb(query: string): Promise<string> {
+    const res = await fetch(new URL('/mariadb/query', this.url), { method: 'POST', body: query })
+    if (!res.ok) throw new Error(`harness: MariaDB query: status ${res.status}: ${await res.text()}`)
+    return ((await res.json()) as { output: string }).output.trim()
+  }
+
   /**
    * GETs a URL through Traefik, as a browser would once the domain points
    * at the host, without following redirects. Header names are lower case.
