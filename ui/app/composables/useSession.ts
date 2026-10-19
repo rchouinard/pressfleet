@@ -1,3 +1,6 @@
+import type { components } from '../api/schema.gen'
+import { factorChallenge, type FactorChallenge, type FactorProof } from '../utils/two-factor'
+
 /**
  * The current session: who is signed in, their role and CSRF token, and the
  * actions that change it. The route middleware (`middleware/auth.global.ts`)
@@ -49,6 +52,33 @@ export function useSession() {
     return data
   }
 
+  /**
+   * Finishes a login that answered "second factor required" (see
+   * `secondFactorChallenge`). Throws ApiError: 422 for a wrong proof (the
+   * login stays pending), 429 throttled, 401 when the pending login expired.
+   */
+  async function loginSecondFactor(proof: FactorProof): Promise<CurrentUser> {
+    if (proof.method === 'password') throw new Error('A password is not a second factor.')
+    const { data } = await api.POST('/api/v1/auth/login/second-factor', { body: proof })
+    if (!data) throw toApiError(new Error('The login response was empty.'))
+    apply(data)
+    return data
+  }
+
+  /** The ways the signed-in user can reauthenticate, with a fresh WebAuthn challenge. */
+  async function reauthenticationOptions(): Promise<FactorChallenge> {
+    const { data } = await api.POST('/api/v1/auth/reauthenticate/options')
+    return factorChallenge(data ?? {})
+  }
+
+  /** Proves again who the user is, for sensitive actions. Throws ApiError (422 wrong proof, 429 throttled). */
+  async function reauthenticate(proof: FactorProof): Promise<void> {
+    // The spec types the credential as an empty object; it is the assertion's JSON form.
+    const body = proof as components['schemas']['Reauthentication']
+    const { data } = await api.POST('/api/v1/auth/reauthenticate', { body })
+    if (data) apply(data)
+  }
+
   /** Ends the session and returns to the login page. A 401 means it was already over. */
   async function logout(): Promise<void> {
     try {
@@ -69,6 +99,9 @@ export function useSession() {
     loaded: computed(() => user.value !== undefined),
     refresh,
     login,
+    loginSecondFactor,
+    reauthenticationOptions,
+    reauthenticate,
     logout,
   }
 }

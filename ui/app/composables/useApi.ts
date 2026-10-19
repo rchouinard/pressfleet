@@ -14,6 +14,10 @@ let client: ApiClient | undefined
  * disabled) clears the session and sends the user to /login with the page
  * they were on as `redirect`, unless it is the startup probe or the login
  * request itself, which handle their own 401.
+ *
+ * A sensitive action refused until the session reauthenticates opens the
+ * reauthentication dialog (useReauthentication, mounted in app.vue) and is
+ * sent again once the user has; see utils/api-client.ts.
  */
 export function useApi(): ApiClient {
   if (client) return client
@@ -21,6 +25,7 @@ export function useApi(): ApiClient {
   const user = useSessionUser()
   const reachable = useApiReachable()
   const router = useRouter()
+  const reauthentication = useReauthentication()
   client = createApiClient({
     getCsrfToken: () => csrf.value,
     onReachable: (ok) => {
@@ -35,6 +40,7 @@ export function useApi(): ApiClient {
       csrf.value = undefined
       void router.replace(loginLocation(route.fullPath, { expired: wasSignedIn }))
     },
+    onReauthenticationRequired: error => reauthentication.ask(error),
   })
   return client
 }

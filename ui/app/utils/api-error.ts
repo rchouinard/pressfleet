@@ -23,6 +23,11 @@ export class ApiError extends Error {
   readonly errors: readonly FieldError[]
   /** Seconds to wait before retrying, from a `429` or `503` (`Retry-After`). */
   readonly retryAfter: number | undefined
+  /**
+   * The whole problem document, extension members included, such as the
+   * `methods` of a login that needs a second factor.
+   */
+  readonly members: Readonly<Record<string, unknown>>
 
   constructor(problem: Problem, options?: ErrorOptions) {
     super(problem.detail || problem.title, options)
@@ -35,6 +40,7 @@ export class ApiError extends Error {
     this.requestId = problem.request_id
     this.errors = problem.errors ?? []
     this.retryAfter = problem.retry_after && problem.retry_after > 0 ? problem.retry_after : undefined
+    this.members = { ...problem }
   }
 
   /** The validation message for a JSON Pointer field such as `/php_version`. */

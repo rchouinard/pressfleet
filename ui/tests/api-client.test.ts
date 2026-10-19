@@ -183,3 +183,122 @@ describe('Retry-After', () => {
     expect(parseRetryAfter(null, now)).toBeUndefined()
   })
 })
+
+describe('reauthentication', () => {
+  const reauthRequired = {
+    type: 'https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#reauthenticating-for-sensitive-actions',
+    title: 'Reauthentication required',
+    status: 403,
+    request_id: 'req-reauth',
+  }
+  const created = () => Response.json({ id: 't1' }, { status: 201 })
+
+  // Answers each request with the next response; records method, body and CSRF header.
+  function server(...responses: Array<() => Response>) {
+    const seen: { method: string, url: string, body: string, csrf: string | null }[] = []
+    const fetch = vi.fn(async (req: Request) => {
+      seen.push({ method: req.method, url: req.url, body: await req.text(), csrf: req.headers.get('X-CSRF-Token') })
+      return (responses.shift() ?? created)()
+    })
+    return { fetch, seen }
+  }
+
+  it('asks once and replays the refused request, body and CSRF token included', async () => {
+    const { fetch, seen } = server(() => problem(403, reauthRequired), created)
+    let csrf = 'csrf-1'
+    const onReauthenticationRequired = vi.fn(async () => {
+      csrf = 'csrf-2'
+      return true
+    })
+    const api = createApiClient({ baseUrl: base, fetch, getCsrfToken: () => csrf, onReauthenticationRequired })
+
+    const { data } = await api.POST('/api/v1/auth/tokens', { body: { name: 'ci', scope: 'read' } as never })
+
+    expect(data).toEqual({ id: 't1' })
+    expect(onReauthenticationRequired).toHaveBeenCalledTimes(1)
+    expect((onReauthenticationRequired.mock.calls[0] as unknown as [ApiError])[0].requestId).toBe('req-reauth')
+    expect(seen).toEqual([
+      { method: 'POST', url: `${base}/api/v1/auth/tokens`, body: '{"name":"ci","scope":"read"}', csrf: 'csrf-1' },
+      { method: 'POST', url: `${base}/api/v1/auth/tokens`, body: '{"name":"ci","scope":"read"}', csrf: 'csrf-2' },
+    ])
+  })
+
+  it('retries only once: a second refusal is thrown', async () => {
+    const { fetch } = server(() => problem(403, reauthRequired), () => problem(403, reauthRequired))
+    const onReauthenticationRequired = vi.fn(async () => true)
+    const api = createApiClient({ baseUrl: base, fetch, onReauthenticationRequired })
+
+    const err = (await api.DELETE('/api/v1/users/{user_id}', { params: { path: { user_id: 'u1' } } }).catch((e: unknown) => e)) as ApiError
+
+    expect(err).toBeInstanceOf(ApiError)
+    expect(err.status).toBe(403)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(onReauthenticationRequired).toHaveBeenCalledTimes(1)
+  })
+
+  it('throws the original refusal when the user cancels, without retrying', async () => {
+    const { fetch } = server(() => problem(403, reauthRequired))
+    const api = createApiClient({ baseUrl: base, fetch, onReauthenticationRequired: async () => false })
+
+    const err = (await api.DELETE('/api/v1/users/{user_id}', { params: { path: { user_id: 'u1' } } }).catch((e: unknown) => e)) as ApiError
+
+    expect(err.type).toBe(reauthRequired.type)
+    expect(err.requestId).toBe('req-reauth')
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('treats a failing handler as cancelled', async () => {
+    const { fetch } = server(() => problem(403, reauthRequired))
+    const api = createApiClient({ baseUrl: base, fetch, onReauthenticationRequired: async () => {
+      throw new Error('dialog broke')
+    } })
+
+    const err = (await api.POST('/api/v1/auth/logout').catch((e: unknown) => e)) as ApiError
+    expect(err.type).toBe(reauthRequired.type)
+  })
+
+  it('leaves other 403s alone', async () => {
+    const { fetch } = server(() => problem(403, { type: 'about:blank', title: 'Forbidden', status: 403 }))
+    const onReauthenticationRequired = vi.fn(async () => true)
+    const api = createApiClient({ baseUrl: base, fetch, onReauthenticationRequired })
+
+    await expect(api.POST('/api/v1/auth/logout')).rejects.toBeInstanceOf(ApiError)
+    expect(onReauthenticationRequired).not.toHaveBeenCalled()
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('shares one prompt between concurrent refusals', async () => {
+    const refused = new Set<string>()
+    const fetch = vi.fn(async (req: Request) => {
+      const body = await req.text()
+      // Each request is refused the first time it arrives.
+      if (!refused.has(body)) {
+        refused.add(body)
+        return problem(403, reauthRequired)
+      }
+      return Response.json({ echo: body })
+    })
+    let answer!: (ok: boolean) => void
+    const onReauthenticationRequired = vi.fn(() => new Promise<boolean>((r) => {
+      answer = r
+    }))
+    const api = createApiClient({ baseUrl: base, fetch, onReauthenticationRequired })
+
+    const calls = ['a', 'b', 'c'].map(name => api.POST('/api/v1/auth/tokens', { body: { name } as never }))
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(3))
+    await new Promise(r => setTimeout(r, 0))
+    expect(onReauthenticationRequired).toHaveBeenCalledTimes(1)
+    answer(true)
+    const results = await Promise.all(calls)
+
+    expect(results.map(r => r.data)).toEqual([{ echo: '{"name":"a"}' }, { echo: '{"name":"b"}' }, { echo: '{"name":"c"}' }])
+    expect(fetch).toHaveBeenCalledTimes(6)
+
+    // A later refusal asks again.
+    refused.clear()
+    const later = api.POST('/api/v1/auth/tokens', { body: { name: 'd' } as never })
+    await vi.waitFor(() => expect(onReauthenticationRequired).toHaveBeenCalledTimes(2))
+    answer(false)
+    await expect(later).rejects.toBeInstanceOf(ApiError)
+  })
+})
