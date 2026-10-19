@@ -74,7 +74,7 @@ func TestDashboard(t *testing.T) {
 		}
 	})
 
-	php := siteImages(t)
+	php, otherPHP := siteImages(t)
 	harness := startHarness(t, p, projectDir)
 	env := map[string]string{
 		"PRESSFLEET_E2E_BASE_URL":       "https://" + e2e.DashboardDomain,
@@ -85,6 +85,7 @@ func TestDashboard(t *testing.T) {
 		"PRESSFLEET_E2E_ADMIN_PASSWORD": p.AdminPassword.Reveal(),
 		"PRESSFLEET_E2E_PHP_VERSION":    php,
 	}
+	env["PRESSFLEET_E2E_OTHER_PHP_VERSION"] = otherPHP
 
 	if os.Getenv(envHold) == "1" {
 		hold(t, filepath.Join(ui, platformFile), env)
@@ -132,8 +133,10 @@ func uiDir(t *testing.T) string {
 
 // siteImages makes the site images for the default PHP version and the
 // latest WordPress available, and returns that PHP version: the one the
-// specs provision sites on.
-func siteImages(t *testing.T) string {
+// specs provision sites on. It also makes another PHP version's php image
+// available, and returns that version, for the spec that changes a site's
+// PHP version (as TestSiteCreateDelete does).
+func siteImages(t *testing.T) (php, otherPHP string) {
 	t.Helper()
 	cat, err := catalog.Load()
 	if err != nil {
@@ -143,12 +146,26 @@ func siteImages(t *testing.T) string {
 	if !ok {
 		t.Fatal("no default PHP version")
 	}
-	images, err := cat.Images(php, cat.LatestWordPress().Version)
+	for _, v := range cat.AvailablePHPVersions(time.Now()) {
+		if v.Version != php {
+			otherPHP = v.Version
+			break
+		}
+	}
+	if otherPHP == "" {
+		t.Fatal("the catalog offers only one PHP version")
+	}
+	wp := cat.LatestWordPress().Version
+	images, err := cat.Images(php, wp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	e2e.EnsureImages(t, images.PHP, images.Nginx)
-	return php
+	other, err := cat.Images(otherPHP, wp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e2e.EnsureImages(t, images.PHP, images.Nginx, other.PHP)
+	return php, otherPHP
 }
 
 // hold writes the platform's details for playwright.config.ts and waits

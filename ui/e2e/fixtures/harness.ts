@@ -27,4 +27,46 @@ export class Harness {
     if (!res.ok) throw new Error(`harness: exists: status ${res.status}: ${await res.text()}`)
     return ((await res.json()) as { exists: boolean }).exists
   }
+
+  /**
+   * Runs a command in one of a site's running containers, as the
+   * container's user, and returns its output, and its error if it failed.
+   */
+  async siteExec(siteId: string, service: 'php' | 'nginx', command: string[]): Promise<{ output: string, error?: string }> {
+    const res = await fetch(new URL(`/sites/${encodeURIComponent(siteId)}/exec`, this.url), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ service, command }),
+    })
+    if (!res.ok) throw new Error(`harness: site exec: status ${res.status}: ${await res.text()}`)
+    return (await res.json()) as { output: string, error?: string }
+  }
+
+  /** Runs WP-CLI in a site's php container and returns its trimmed output; throws if it fails. */
+  async wp(siteId: string, ...args: string[]): Promise<string> {
+    const { output, error } = await this.siteExec(siteId, 'php', ['wp', ...args])
+    if (error) throw new Error(`harness: wp ${args.join(' ')}: ${error}: ${output}`)
+    return output.trim()
+  }
+
+  /**
+   * GETs a URL through Traefik, as a browser would once the domain points
+   * at the host, without following redirects. Header names are lower case.
+   */
+  async ingress(url: string, auth?: { username: string, password: string }): Promise<IngressResponse> {
+    const res = await fetch(new URL('/ingress', this.url), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, ...auth }),
+    })
+    if (!res.ok) throw new Error(`harness: ingress GET ${url}: status ${res.status}: ${await res.text()}`)
+    return (await res.json()) as IngressResponse
+  }
+}
+
+/** A response from Traefik, as Harness.ingress returns it. */
+export interface IngressResponse {
+  status: number
+  headers: Record<string, string>
+  body: string
 }

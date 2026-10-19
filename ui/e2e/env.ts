@@ -19,6 +19,8 @@ export interface PlatformEnv {
   adminPassword: string
   /** The PHP version whose site images the harness made available. */
   phpVersion: string
+  /** Another PHP version whose php image the harness made available, to change a site to. */
+  otherPhpVersion: string
 }
 
 const keys = {
@@ -29,6 +31,7 @@ const keys = {
   adminEmail: 'PRESSFLEET_E2E_ADMIN_EMAIL',
   adminPassword: 'PRESSFLEET_E2E_ADMIN_PASSWORD',
   phpVersion: 'PRESSFLEET_E2E_PHP_VERSION',
+  otherPhpVersion: 'PRESSFLEET_E2E_OTHER_PHP_VERSION',
 } as const satisfies Record<keyof PlatformEnv, string>
 
 const platformFile = fileURLToPath(new URL('./.platform.json', import.meta.url))

@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -37,16 +39,20 @@ type harness struct {
 	// name (see TestSiteCreateDelete): their own directories belong to
 	// root.
 	projectDir string
+	// ingress reaches Traefik's published ports (Platform.IngressClient).
+	ingress *http.Client
 }
 
 // startHarness serves the harness until the test ends and returns its URL.
 func startHarness(t *testing.T, p *e2e.Platform, projectDir string) string {
 	t.Helper()
-	h := &harness{p: p, projectDir: projectDir}
+	h := &harness{p: p, projectDir: projectDir, ingress: p.IngressClient(t)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /sites/{id}/leftovers", h.siteLeftovers)
 	mux.HandleFunc("POST /client-groups/{id}/backup-repository", h.createRepository)
 	mux.HandleFunc("GET /exists", h.exists)
+	mux.HandleFunc("POST /sites/{id}/exec", h.siteExec)
+	mux.HandleFunc("POST /ingress", h.ingressGet)
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -202,4 +208,82 @@ func (h *harness) cacheUsers(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("listing object cache users: %w", err)
 	}
 	return strings.Fields(string(out)), nil
+}
+
+// siteServices are the site containers siteExec runs commands in.
+var siteServices = []string{"php", "nginx"}
+
+// siteExec runs a command in one of a site's running containers, as the
+// container's user: WP-CLI in php, or a look at the container's own view
+// of its limits and caches. It answers 200 whether or not the command
+// succeeded, with its standard output and, if it failed, the error, so a
+// spec can check that a command fails (a purged cache key, say).
+func (h *harness) siteExec(w http.ResponseWriter, r *http.Request) {
+	siteID := r.PathValue("id")
+	if !id.Valid(siteID) {
+		http.Error(w, "invalid site ID", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Service string   `json:"service"`
+		Command []string `json:"command"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.Command) == 0 || !slices.Contains(siteServices, req.Service) {
+		http.Error(w, `want {"service": "php" or "nginx", "command": [...]}`, http.StatusBadRequest)
+		return
+	}
+	sp := compose.Project{Name: compose.SiteProjectName(siteID), Dir: h.projectDir}
+	out, err := sp.ExecService(r.Context(), req.Service, req.Command...)
+	res := map[string]string{"output": string(out)}
+	if err != nil {
+		res["error"] = err.Error()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+// ingressGet sends a GET through Traefik, as a browser would once DNS
+// points a domain at the host, and returns the response without following
+// redirects: its status, headers, and body. The browser only reaches the
+// dashboard domain this way; answers that it can't read, such as a 401
+// that asks for the preview password, come from here. Optional basic auth
+// credentials come in the request body, so they stay out of URLs.
+func (h *harness) ingressGet(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		URL      string `json:"url"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !strings.HasPrefix(req.URL, "https://") && !strings.HasPrefix(req.URL, "http://") {
+		http.Error(w, `want {"url": "https://..."}`, http.StatusBadRequest)
+		return
+	}
+	out, err := http.NewRequestWithContext(r.Context(), http.MethodGet, req.URL, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Username != "" || req.Password != "" {
+		out.SetBasicAuth(req.Username, req.Password)
+	}
+	// No cookie jar: each request is a fresh visitor.
+	c := *h.ingress
+	c.Jar = nil
+	resp, err := c.Do(out)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	headers := map[string]string{}
+	for k := range resp.Header {
+		headers[strings.ToLower(k)] = strings.Join(resp.Header.Values(k), ", ")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": resp.StatusCode, "headers": headers, "body": string(body)})
 }
