@@ -55,6 +55,7 @@ Each dependency has a reason (CLAUDE.md). Versions are in `package.json` and `pn
 - Unsafe methods (anything but GET/HEAD/OPTIONS) send `X-CSRF-Token` from `useCsrfToken()`. The login flow sets it from `csrf_token` in the login and `GET /api/v1/auth/me` responses.
 - 2xx responses resolve as `{ data }`; every other response, and every network failure, **throws `ApiError`** (`app/utils/api-error.ts`).
 - `onUnauthorized` is the hook for 401s; `useApi()` wires it to the login redirect (see "Session and roles").
+- `onReauthenticationRequired` is the hook for a sensitive action refused until the session reauthenticates (`403` with the reauthentication problem type). The client clones each request before sending it, calls the hook, and when it resolves true sends the copy once more (body included, with the current CSRF token); when it resolves false the original `ApiError` is thrown. Concurrent refusals share one call. `useApi()` wires it to the reauthentication dialog (see "Two-factor sign-in and reauthentication").
 
 **Not for streams or binary bodies.** The wrapper reads JSON. Server-sent events (the site log stream) are read with `fetch` by `utils/log-stream.ts` (see "Logs viewer"), not `EventSource`: `EventSource` hides HTTP statuses and Problem Details and can't be told when to stop retrying. The session cookie is sent (same origin); a GET needs no CSRF header. Uploads and downloads (site imports, deploy packages, database and site exports) use a plain `fetch` or an `<a href>` against `apiUrl(...)`, with the CSRF header added by hand for unsafe methods. Keep those uses small and in one composable each.
 
@@ -137,6 +138,15 @@ The server sends `script-src 'self'` plus the hashes of the few inline scripts N
 | viewer | view sites, client groups, jobs, backups, monitoring; own password, tokens, SSH keys |
 | operator | create/import/update sites, domains, start/stop, maintenance, cache purge, retrieve credentials; deploy code, export database, read-only DB sessions; create backups, restore, approve core updates; create/update client groups; manage alert rules |
 | admin | delete sites (also with their backups); read-write DB sessions; delete/offboard client groups; manage users and others' tokens, audit log; platform settings |
+
+### Two-factor sign-in and reauthentication
+
+Design doc §6.2 and docs/configuration.md "Dashboard two-factor authentication". Logic is in `utils/two-factor.ts` and `utils/webauthn.ts`; the components in `components/auth/` are Nuxt-free and tested with `mount` (`tests/login-second-factor.test.ts`, `tests/reauthenticate-dialog.test.ts`).
+
+- **Second step**: a login that answers `401` with the second-factor problem type (`secondFactorChallenge`) shows `AuthLoginSecondFactor` in `login.vue`, offering only the problem's `methods`: a code field for an authenticator app (`autocomplete="one-time-code"`), "Use a security key or passkey", and "Use a recovery code" (`AuthFactorForm`). A wrong proof (`422`) stays on the step; `429` counts down `Retry-After`; `401` (the pending login expired or was used) goes back to the password with a message. Users without a second factor sign in in one step, as before.
+- **Recovery codes**: after a recovery-code login, `AuthRecoveryCodesNotice` says how many codes are left (`recovery_codes_remaining`) and links to regenerate them (`RECOVERY_CODES_PAGE`, the account page until #159) before going on.
+- **WebAuthn**: `getAssertion` converts the API's JSON request options with `PublicKeyCredential.parseRequestOptionsFromJSON()` where the browser has it, else with the base64url helpers, calls `navigator.credentials.get()`, and sends the assertion in JSON form (`toJSON()` where available). Browser-side failures (no support, cancelled, timed out) are `WebAuthnError`s worded for the user.
+- **Reauthentication**: `AuthReauthenticateDialog` is mounted once in `app.vue` and opened by `useReauthentication().ask()`, which the API client's `onReauthenticationRequired` calls. Each time it opens it loads `POST /auth/reauthenticate/options` (a fresh WebAuthn challenge) and offers the user's factors, or the password for users without one, then `POST /auth/reauthenticate` and the refused request is sent again. Cancelling surfaces the original `403`; a `401` closes it and the usual redirect to the login page follows.
 
 ### Navigation registry
 

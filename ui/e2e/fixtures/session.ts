@@ -25,11 +25,25 @@ export async function signIn(context: BrowserContext, baseURL: string, apiURL: s
   return api
 }
 
-/** Signs in through the login form and waits for the dashboard. */
-export async function signInThroughForm(page: Page, user: Pick<TestUser, 'email' | 'password'>): Promise<void> {
+/**
+ * Passes the login's second step ("Two-factor authentication" heading,
+ * then e.g. the "Authentication code" field and "Verify and sign in", or
+ * "Use a security key or passkey"), for users with a second factor.
+ */
+export type SecondFactorStep = (page: Page) => Promise<void>
+
+/**
+ * Signs in through the login form and waits for the dashboard. Users with a
+ * second factor pass `secondFactor`, which runs once the second step shows.
+ */
+export async function signInThroughForm(page: Page, user: Pick<TestUser, 'email' | 'password'>, secondFactor?: SecondFactorStep): Promise<void> {
   await page.getByLabel('Email').fill(user.email)
   await page.getByLabel('Password', { exact: true }).fill(user.password)
   await page.getByRole('button', { name: 'Sign in' }).click()
+  if (secondFactor) {
+    await expect(page.getByRole('heading', { name: 'Two-factor authentication' })).toBeVisible()
+    await secondFactor(page)
+  }
   await expect(page.getByRole('button', { name: 'User menu' })).toBeVisible()
 }
 

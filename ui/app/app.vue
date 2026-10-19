@@ -1,6 +1,11 @@
 <script setup lang="ts">
 // "Jobs - PressFleet"; pages set only their own title.
 useHead({ titleTemplate: title => (title && title !== 'PressFleet' ? `${title} - PressFleet` : 'PressFleet') })
+
+// The reauthentication dialog the API client opens for sensitive actions
+// (composables/useReauthentication.ts); one for the whole app.
+const reauthentication = useReauthentication()
+const { reauthenticationOptions, reauthenticate } = useSession()
 </script>
 
 <template>
@@ -10,5 +15,11 @@ useHead({ titleTemplate: title => (title && title !== 'PressFleet' ? `${title} -
     <NuxtLayout>
       <NuxtPage />
     </NuxtLayout>
+    <AuthReauthenticateDialog
+      :open="!!reauthentication.pending.value"
+      :load-options="reauthenticationOptions"
+      :submit="reauthenticate"
+      @finish="reauthentication.finish"
+    />
   </UApp>
 </template>
