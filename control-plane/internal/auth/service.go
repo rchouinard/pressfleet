@@ -588,8 +588,9 @@ func (s *Service) ResetPassword(ctx context.Context, email string, pw redact.Sec
 	return s.UpdateUser(ctx, u.ID, UserChanges{Password: &pw})
 }
 
-// DeleteUser deletes a user; their sessions and tokens go with them. It
-// returns ErrLastAdmin for the last enabled admin.
+// DeleteUser deletes a user; their sessions, tokens, SSH keys, and second
+// factors (including the encrypted TOTP secret) go with them. It returns
+// ErrLastAdmin for the last enabled admin.
 func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 	err := s.db.InTx(ctx, func(q store.Querier) error {
 		users := store.NewUsers(q)
