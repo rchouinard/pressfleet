@@ -1,12 +1,14 @@
 <script setup lang="ts">
 // Users as a table: name (the email address below it, if there is a display
-// name), role, status, last sign-in, and an Edit button.
+// name), role, status, last sign-in, and Edit and Delete buttons. Whether
+// Delete shows is the page's decision (`canDelete`, from useCan); it never
+// shows for the signed-in user.
 // The table scrolls sideways inside its own region on narrow screens.
 import { formatTimestamp } from '../../utils/tokens'
 import { isSelf, roleColors, userLabel, userStatus, type User } from '../../utils/users'
 
-defineProps<{ users: readonly User[], caption: string, currentUserId?: string }>()
-defineEmits<{ edit: [user: User] }>()
+defineProps<{ users: readonly User[], caption: string, currentUserId?: string, canDelete?: boolean }>()
+defineEmits<{ edit: [user: User], delete: [user: User] }>()
 </script>
 
 <template>
@@ -45,6 +47,18 @@ defineEmits<{ edit: [user: User] }>()
               @click="$emit('edit', user)"
             >
               Edit
+            </UButton>
+            <UButton
+              v-if="canDelete && !isSelf(user, currentUserId ? { id: currentUserId } : undefined)"
+              color="error"
+              variant="ghost"
+              size="sm"
+              icon="i-lucide-trash-2"
+              :aria-label="`Delete ${userLabel(user)}`"
+              data-testid="delete"
+              @click="$emit('delete', user)"
+            >
+              Delete
             </UButton>
           </td>
         </tr>

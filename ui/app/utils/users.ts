@@ -92,3 +92,22 @@ export function userUpdateBody(
 export function isSelf(user: Pick<User, 'id'>, current: Pick<User, 'id'> | null | undefined): boolean {
   return !!current && user.id === current.id
 }
+
+export type PasswordChange = components['schemas']['PasswordChange']
+
+export interface PasswordChangeInput {
+  current: string
+  next: string
+  confirm: string
+}
+
+/** Early checks for the change-password form; the server's 422 field errors are shown as well. */
+export function validatePasswordChange(input: PasswordChangeInput): { current?: string, next?: string, confirm?: string } {
+  const errors: { current?: string, next?: string, confirm?: string } = {}
+  if (!input.current) errors.current = 'Enter your current password.'
+  if (input.next.length < PASSWORD_MIN) errors.next = `Use at least ${PASSWORD_MIN} characters.`
+  else if (input.next.length > PASSWORD_MAX) errors.next = `Use at most ${PASSWORD_MAX} characters.`
+  else if (input.next === input.current) errors.next = 'Choose a password different from the current one.'
+  if (!errors.next && input.confirm !== input.next) errors.confirm = 'The passwords don\'t match.'
+  return errors
+}

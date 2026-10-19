@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { isSelf, userCreateBody, userLabel, userStatus, userUpdateBody, validateCreateUser, validateDisplayName } from '../app/utils/users'
+import {
+  isSelf, userCreateBody, userLabel, userStatus, userUpdateBody, validateCreateUser, validateDisplayName, validatePasswordChange,
+} from '../app/utils/users'
 
 describe('validateCreateUser', () => {
   it('accepts a good email and a 12+ character password', () => {
@@ -78,5 +80,28 @@ describe('display names', () => {
   it('omits an empty display name when creating', () => {
     expect(userCreateBody({ email: 'a@b.co', displayName: ' ', password: 'x'.repeat(12), role: 'viewer' })).not.toHaveProperty('display_name')
     expect(userCreateBody({ email: 'a@b.co', displayName: 'Alex', password: 'x'.repeat(12), role: 'viewer' }).display_name).toBe('Alex')
+  })
+})
+
+describe('validatePasswordChange', () => {
+  const good = { current: 'old password 1', next: 'a new password', confirm: 'a new password' }
+
+  it('accepts a current password and a confirmed new one', () => {
+    expect(validatePasswordChange(good)).toEqual({})
+  })
+
+  it('asks for the current password', () => {
+    expect(validatePasswordChange({ ...good, current: '' }).current).toBeTruthy()
+  })
+
+  it('flags a short, over-long, or unchanged new password', () => {
+    expect(validatePasswordChange({ ...good, next: 'short', confirm: 'short' }).next).toContain('12')
+    expect(validatePasswordChange({ ...good, next: 'x'.repeat(257), confirm: 'x'.repeat(257) }).next).toBeTruthy()
+    expect(validatePasswordChange({ current: good.next, next: good.next, confirm: good.next }).next).toBeTruthy()
+  })
+
+  it('flags a confirmation that differs, unless the new password is already wrong', () => {
+    expect(validatePasswordChange({ ...good, confirm: 'something else' }).confirm).toBeTruthy()
+    expect(validatePasswordChange({ ...good, next: 'short', confirm: 'other' }).confirm).toBeUndefined()
   })
 })

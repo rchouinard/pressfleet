@@ -1,10 +1,10 @@
 <script setup lang="ts">
-// The signed-in user's account: who they are, their API tokens (create,
-// revoke), and sign out. A new token's secret is held in `secret` only while
-// the dialog is open; closing the dialog drops it. It is never stored, put in
-// a URL or logged.
+// The signed-in user's account: who they are, their password, their API
+// tokens (create, revoke), and sign out. A new token's secret is held in
+// `secret` only while the dialog is open; closing the dialog drops it. It is
+// never stored, put in a URL or logged.
 import { toApiError, type ApiError } from '../utils/api-error'
-import { DISPLAY_NAME_MAX, roleColors, validateDisplayName } from '../utils/users'
+import { DISPLAY_NAME_MAX, roleColors, validateDisplayName, type PasswordChange } from '../utils/users'
 import { formatTimestamp, type ApiToken, type ApiTokenCreate } from '../utils/tokens'
 
 useHead({ title: 'Account & tokens' })
@@ -135,6 +135,28 @@ async function saveName() {
   }
 }
 
+// Password. The server signs out the user's other sessions and revokes their
+// API tokens; this session stays signed in.
+const changingPassword = ref(false)
+const passwordError = ref<ApiError>()
+const passwordAttempts = ref(0)
+const generalPasswordError = computed(() => (passwordError.value && passwordError.value.errors.length === 0 ? passwordError.value : undefined))
+
+async function changePassword(body: PasswordChange) {
+  changingPassword.value = true
+  passwordError.value = undefined
+  try {
+    await api.POST('/api/v1/auth/password', { body })
+    notify.success('Password changed', 'Your other sessions were signed out and your API tokens revoked.')
+    await refresh()
+  } catch (e) {
+    passwordError.value = toApiError(e)
+  } finally {
+    passwordAttempts.value++
+    changingPassword.value = false
+  }
+}
+
 const signingOut = ref(false)
 async function signOut() {
   signingOut.value = true
@@ -180,6 +202,17 @@ async function signOut() {
       </form>
       <UButton color="neutral" variant="outline" icon="i-lucide-log-out" :loading="signingOut" @click="signOut">Sign out</UButton>
     </section>
+
+    <IfCan action="self.password.change">
+      <section aria-labelledby="password-heading" class="space-y-3">
+        <h2 id="password-heading" class="font-medium">Password</h2>
+        <p class="text-sm text-muted">
+          Changing your password signs you out everywhere else and revokes your API tokens. You stay signed in here.
+        </p>
+        <ProblemAlert v-if="generalPasswordError" :error="generalPasswordError" />
+        <UserPasswordChangeForm :submitting="changingPassword" :error="passwordError" :done="passwordAttempts" @submit="changePassword" />
+      </section>
+    </IfCan>
 
     <section aria-labelledby="tokens-heading" class="space-y-3">
       <div class="flex flex-wrap items-center justify-between gap-3">

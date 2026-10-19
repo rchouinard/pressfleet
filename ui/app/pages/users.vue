@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // User management (design doc §4.6): list, create, change role, disable or
-// re-enable. Admin only: the route is gated on `user.view`, and the server
+// re-enable, delete. Admin only: the route is gated on `user.view`, and the server
 // answers 403 to anyone else regardless.
 import { toApiError, type ApiError } from '../utils/api-error'
 import type { User, UserCreate, UserUpdate } from '../utils/users'
@@ -12,6 +12,7 @@ useBreadcrumbs([{ label: 'Users' }])
 const api = useApi()
 const notify = useNotify()
 const { user: me } = useSession()
+const { can } = useCan()
 
 const items = ref<User[]>([])
 const cursor = ref<string | null>(null)
@@ -103,6 +104,43 @@ async function update(body: UserUpdate) {
   }
 }
 
+// Delete, after a confirmation. The server refuses to delete the last Admin
+// (409); the dialog shows its reason.
+const deleting = ref<User>()
+const deleteOpen = computed({
+  get: () => deleting.value !== undefined,
+  set: (open: boolean) => {
+    if (!open && !deleteBusy.value) {
+      deleting.value = undefined
+      deleteError.value = undefined
+    }
+  },
+})
+const deleteBusy = ref(false)
+const deleteError = ref<ApiError>()
+
+function openDelete(user: User) {
+  deleteError.value = undefined
+  deleting.value = user
+}
+
+async function remove() {
+  const target = deleting.value
+  if (!target) return
+  deleteBusy.value = true
+  deleteError.value = undefined
+  try {
+    await api.DELETE('/api/v1/users/{user_id}', { params: { path: { user_id: target.id } } })
+    deleting.value = undefined
+    notify.success('User deleted', target.email)
+    await refresh()
+  } catch (e) {
+    deleteError.value = toApiError(e)
+  } finally {
+    deleteBusy.value = false
+  }
+}
+
 const generalFormError = computed(() => (formError.value && formError.value.errors.length === 0 ? formError.value : undefined))
 </script>
 
@@ -124,7 +162,7 @@ const generalFormError = computed(() => (formError.value && formError.value.erro
     <ProblemAlert v-if="loadError" :error="loadError" />
     <template v-else>
       <p v-if="pending && items.length === 0" class="text-sm text-muted" role="status">Loading users...</p>
-      <UserTable v-else :users="items" caption="Users" :current-user-id="me?.id" @edit="openEdit" />
+      <UserTable v-else :users="items" caption="Users" :current-user-id="me?.id" :can-delete="can('user.delete')" @edit="openEdit" @delete="openDelete" />
       <div v-if="cursor" class="flex justify-center">
         <UButton color="neutral" variant="outline" :loading="loadingMore" @click="loadMore()">Load more</UButton>
       </div>
@@ -152,5 +190,15 @@ const generalFormError = computed(() => (formError.value && formError.value.erro
         />
       </template>
     </UModal>
+
+    <ConfirmDialog
+      v-model:open="deleteOpen"
+      title="Delete this user?"
+      :description="deleting ? `${deleting.email} is signed out and loses their API tokens and SSH keys. This can't be undone.` : undefined"
+      confirm-label="Delete user"
+      :busy="deleteBusy"
+      :error="deleteError"
+      @confirm="remove"
+    />
   </div>
 </template>
