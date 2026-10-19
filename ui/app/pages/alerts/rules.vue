@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // Alert rules. Everyone can read them; operators and admins
-// (`alert_rule.manage`) can edit, enable/disable and delete custom rules.
-// Rules are created through the API (they need a PromQL expression), so an
-// install has only the built-in ones until someone adds more.
+// (`alert_rule.manage`) can create rules, edit and enable/disable any rule,
+// and delete custom ones. A new rule needs a PromQL expression; labels and
+// annotations stay API-only.
 import type { AlertRule } from '../../utils/alert'
 import { ANY } from '../../utils/alert-channel'
 
@@ -13,6 +13,7 @@ const api = useApi()
 const notify = useNotify()
 const { can } = useCan()
 const canManage = computed(() => can('alert_rule.manage'))
+const { groupItems } = useAlertLookups()
 
 const enabledFilter = ref<string>(ANY)
 const enabledItems = [
@@ -30,6 +31,8 @@ const list = useCursorList<AlertRule>(
 function replace(rule: AlertRule) {
   const i = list.items.value.findIndex(r => r.id === rule.id)
   if (i >= 0) list.items.value[i] = rule
+  // A new rule: the list is ordered by name, so let the server place it.
+  else void list.refresh()
 }
 
 const busyId = ref<string | null>(null)
@@ -50,7 +53,7 @@ async function toggle(rule: AlertRule) {
 
 const editing = ref<AlertRule | null>(null)
 const editOpen = ref(false)
-function edit(rule: AlertRule) {
+function edit(rule: AlertRule | null) {
   editing.value = rule
   editOpen.value = true
 }
@@ -88,7 +91,10 @@ async function confirmDelete() {
       <UFormField label="Show" name="enabled">
         <USelect v-model="enabledFilter" :items="enabledItems" class="w-52" />
       </UFormField>
-      <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :loading="list.pending.value" @click="list.refresh()">Refresh</UButton>
+      <div class="flex gap-2">
+        <UButton color="neutral" variant="outline" icon="i-lucide-refresh-cw" :loading="list.pending.value" @click="list.refresh()">Refresh</UButton>
+        <UButton v-if="canManage" icon="i-lucide-plus" @click="edit(null)">New rule</UButton>
+      </div>
     </div>
     <p v-if="!canManage" class="text-sm text-muted">Your role can view rules but not change them.</p>
 
@@ -114,7 +120,7 @@ async function confirmDelete() {
       </div>
     </template>
 
-    <AlertRuleForm v-if="canManage" v-model:open="editOpen" :rule="editing" @saved="replace" />
+    <AlertRuleForm v-if="canManage" v-model:open="editOpen" :rule="editing" :group-items="groupItems" @saved="replace" />
     <ConfirmDelete
       v-if="canManage"
       v-model:open="deleteOpen"
