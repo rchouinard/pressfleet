@@ -84,6 +84,16 @@ info:
 
     Role changes apply to the user's existing sessions and tokens at once. The
     last enabled Admin can't be demoted, disabled, or deleted (`409`).
+
+    When the two-factor policy requires a user to have a second factor and
+    they have none, their dashboard sessions may only view the user, log out,
+    and enroll; everything else answers `403` with the problem type
+    `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#two-factor-enrollment-required`
+    (`enrollment_required` in `GET /api/v1/auth/me`). The check is made on
+    every request, so role and policy changes apply at once. API tokens are
+    never restricted. Removing the last second factor while one is required
+    answers `409` with the problem type
+    `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#keeping-the-last-second-factor`.
   license:
     name: MIT
     identifier: MIT
@@ -5116,7 +5126,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/User"
         - type: object
-          required: [auth_method, csrf_token, verified_at, recovery_codes_remaining]
+          required: [auth_method, csrf_token, verified_at, recovery_codes_remaining, two_factor_required, enrollment_required]
           properties:
             auth_method:
               type: string
@@ -5134,6 +5144,22 @@ components:
               type: integer
               minimum: 0
               description: How many unused recovery codes the user has.
+            two_factor_required:
+              type: boolean
+              description: |
+                Whether the platform's two-factor policy (`two_factor.required`)
+                requires the user, with their current role, to have a second
+                factor.
+            enrollment_required:
+              type: boolean
+              description: |
+                Whether the user must enroll a second factor before their
+                dashboard sessions may do anything else: the policy requires
+                one and they have none. Until they enroll, a session may only
+                view the user, log out, and enroll; everything else answers
+                `403` with the problem type
+                `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#two-factor-enrollment-required`.
+                API tokens aren't restricted.
             csrf_token:
               description: |
                 The session's CSRF token. Send it in the `X-CSRF-Token` header

@@ -335,7 +335,29 @@ func (s *Service) AuthenticateSession(ctx context.Context, token redact.Secret) 
 			s.log.Warn("updating session last seen failed", "session_id", sess.ID, "error", err)
 		}
 	}
-	return Principal{UserID: user.ID, Email: user.Email, Role: user.Role, Method: MethodSession, SessionID: sess.ID, VerifiedAt: sess.VerifiedAt}, nil
+	enroll, err := s.enrollmentRequired(ctx, user)
+	if err != nil {
+		return Principal{}, err
+	}
+	return Principal{
+		UserID: user.ID, Email: user.Email, Role: user.Role,
+		Method: MethodSession, SessionID: sess.ID, VerifiedAt: sess.VerifiedAt,
+		EnrollmentRequired: enroll,
+	}, nil
+}
+
+// enrollmentRequired reports whether a session of user is restricted to
+// enrolling a second factor (Principal.EnrollmentRequired). Users the
+// policy doesn't cover cost no query.
+func (s *Service) enrollmentRequired(ctx context.Context, user store.User) (bool, error) {
+	if !s.twoFactor.Covers(user.Role) {
+		return false, nil
+	}
+	has, err := store.NewUsers(s.db).HasSecondFactor(ctx, user.ID)
+	if err != nil {
+		return false, fmt.Errorf("authenticate session: check second factors: %w", err)
+	}
+	return !has, nil
 }
 
 // AuthenticateToken returns the principal for an API token. It returns

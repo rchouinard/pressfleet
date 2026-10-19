@@ -2234,6 +2234,15 @@ type CurrentUser struct {
 	DisplayName DisplayName `json:"display_name"`
 	Email       Email       `json:"email"`
 
+	// EnrollmentRequired Whether the user must enroll a second factor before their
+	// dashboard sessions may do anything else: the policy requires
+	// one and they have none. Until they enroll, a session may only
+	// view the user, log out, and enroll; everything else answers
+	// `403` with the problem type
+	// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#two-factor-enrollment-required`.
+	// API tokens aren't restricted.
+	EnrollmentRequired bool `json:"enrollment_required"`
+
 	// ID Opaque, server-assigned identifier.
 	//
 	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
@@ -2252,6 +2261,11 @@ type CurrentUser struct {
 	// security key), so their logins take two steps. Recovery codes
 	// alone don't count.
 	TwoFactorEnabled bool `json:"two_factor_enabled"`
+
+	// TwoFactorRequired Whether the platform's two-factor policy (`two_factor.required`)
+	// requires the user, with their current role, to have a second
+	// factor.
+	TwoFactorRequired bool `json:"two_factor_required"`
 
 	// UpdatedAt Examples: 2026-09-26T17:25:00Z
 	UpdatedAt Timestamp `json:"updated_at"`

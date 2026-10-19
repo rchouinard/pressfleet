@@ -35,6 +35,13 @@ type Principal struct {
 	// by reauthenticating.
 	SessionID  string
 	VerifiedAt time.Time
+	// EnrollmentRequired is set for MethodSession when the two-factor
+	// policy covers the user's current role and the user has no second
+	// factor (design doc §6.2): authz then lets the session only enroll.
+	// It is decided on every request, never stored with the session, so
+	// role and policy changes apply at once. Tokens and SSH keys never
+	// have it, so turning the policy on doesn't break automation.
+	EnrollmentRequired bool
 	// TokenID and Scope are set for MethodToken. Sessions have no scope:
 	// they may do everything the user's role allows.
 	TokenID string

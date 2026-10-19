@@ -2964,6 +2964,22 @@ export interface components {
             /** @description How many unused recovery codes the user has. */
             recovery_codes_remaining: number;
             /**
+             * @description Whether the platform's two-factor policy (`two_factor.required`)
+             *     requires the user, with their current role, to have a second
+             *     factor.
+             */
+            two_factor_required: boolean;
+            /**
+             * @description Whether the user must enroll a second factor before their
+             *     dashboard sessions may do anything else: the policy requires
+             *     one and they have none. Until they enroll, a session may only
+             *     view the user, log out, and enroll; everything else answers
+             *     `403` with the problem type
+             *     `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#two-factor-enrollment-required`.
+             *     API tokens aren't restricted.
+             */
+            enrollment_required: boolean;
+            /**
              * @description The session's CSRF token. Send it in the `X-CSRF-Token` header
              *     with every cookie-authenticated unsafe request. Null for bearer
              *     token authentication, which needs none.
