@@ -17,6 +17,14 @@
 // request (package auth), so demoting a user restricts their existing
 // sessions and tokens at once.
 //
+// # Forced enrollment
+//
+// When the two-factor policy covers a user's role and the user has no
+// second factor, package auth marks their session principals
+// EnrollmentRequired, on every request. Such a session may take only
+// enrollmentActions; everything else is denied with ErrEnrollmentRequired
+// (design doc §6.2).
+//
 // # Targets and client groups
 //
 // Every check names a target, and [Resolver.Resolve] fills in the client
@@ -48,6 +56,23 @@ func (e *deniedError) Is(target error) bool { return target == ErrDenied }
 
 func denied(format string, args ...any) error {
 	return &deniedError{reason: fmt.Sprintf(format, args...)}
+}
+
+// ErrEnrollmentRequired means the caller is a session that must enroll a
+// second factor before it may take the action (design doc §6.2): the
+// two-factor policy covers the user's role and they have none. It is a
+// denial too, so it also matches ErrDenied.
+var ErrEnrollmentRequired = errors.New("two-factor enrollment required")
+
+// enrollmentError is the denial of a restricted session.
+type enrollmentError struct{ action Action }
+
+func (e *enrollmentError) Error() string {
+	return fmt.Sprintf("enroll a second factor before %s; until then a dashboard session may only enroll, view itself, and log out", e.action)
+}
+
+func (e *enrollmentError) Is(target error) bool {
+	return target == ErrEnrollmentRequired || target == ErrDenied
 }
 
 // Action is something a caller may be allowed to do. Actions are also the
@@ -183,6 +208,16 @@ var sessionActions = map[Action]bool{
 	CreateOwnToken: true,
 	// Second factors are managed from sessions only (§6.2): a stolen token
 	// must not be able to swap the account's recovery codes for its own.
+	RegenerateRecoveryCodes: true,
+}
+
+// enrollmentActions are the only actions a session that must enroll a
+// second factor (auth.Principal.EnrollmentRequired) may take: viewing
+// itself, logging out, and enrolling (design doc §6.2). Tokens and SSH keys
+// are never restricted, so the list only applies to sessions.
+var enrollmentActions = map[Action]bool{
+	ViewSelf:                true,
+	Logout:                  true,
 	RegenerateRecoveryCodes: true,
 }
 
@@ -407,11 +442,17 @@ func AlertChannel(id string) Target { return Target{Type: TargetAlertChannel, ID
 // here without touching callers.
 //
 // It fails closed: unknown actions, roles, authentication methods, and
-// token scopes are denied.
+// token scopes are denied. A session that must enroll a second factor is
+// denied with ErrEnrollmentRequired for everything outside
+// enrollmentActions, before its role is considered, so a client can always
+// tell it to enroll.
 func Check(p auth.Principal, action Action, t Target) error {
 	r, ok := rules[action]
 	if !ok {
 		return denied("unknown action %q", action)
+	}
+	if p.Method == auth.MethodSession && p.EnrollmentRequired && !enrollmentActions[action] {
+		return &enrollmentError{action: action}
 	}
 	have := rank(p.Role)
 	if have == 0 {

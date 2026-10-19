@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
+	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 )
 
@@ -69,5 +72,35 @@ func TestAuthenticationRunsBeforeValidation(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401 before any body validation; body: %s", w.Code, w.Body)
+	}
+}
+
+// TestTypedProblems checks the problem types of errors that callers branch
+// on, also when a handler wraps them in a sentinel.
+func TestTypedProblems(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    error
+		status int
+		typ    string
+	}{
+		{"last second factor", fmt.Errorf("remove TOTP: %w", auth.ErrLastSecondFactor), http.StatusConflict, LastSecondFactorProblemType},
+		{"last second factor as a conflict", fmt.Errorf("%w: %w", ErrConflict, auth.ErrLastSecondFactor), http.StatusConflict, LastSecondFactorProblemType},
+		{"enrollment required", forbidden(fmt.Errorf("check: %w", authz.ErrEnrollmentRequired)), http.StatusForbidden, TwoFactorEnrollmentRequiredProblemType},
+		{"other denial", forbidden(authz.ErrDenied), http.StatusForbidden, "about:blank"},
+		{"other conflict", fmt.Errorf("%w: %w", ErrConflict, auth.ErrLastAdmin), http.StatusConflict, "about:blank"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			responseErrorHandler(slog.New(slog.DiscardHandler))(w, httptest.NewRequest(http.MethodDelete, "/api/v1/users/me/two-factor/totp", nil), tt.err)
+			var p httpserver.Problem
+			if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
+				t.Fatal(err)
+			}
+			if w.Code != tt.status || p.Status != tt.status || p.Type != tt.typ || w.Header().Get("Content-Type") != httpserver.ContentTypeProblem {
+				t.Errorf("response %d %s, want %d with type %s", w.Code, w.Body, tt.status, tt.typ)
+			}
+		})
 	}
 }

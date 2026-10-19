@@ -427,6 +427,16 @@ For a user with a second factor, `POST /api/v1/auth/login` with the right passwo
 
 Each recovery code works once. `GET /api/v1/auth/me` reports how many are left, and `POST /api/v1/users/me/two-factor/recovery-codes`, from a dashboard session, replaces the set.
 
+### Two-factor enrollment required
+
+When `two_factor.required` covers a user's role (`admins` for Admins, `all` for everyone) and the user has no second factor, they still log in with their password alone, but their dashboard session is restricted until they enroll one: it may only view the user (`GET /api/v1/auth/me`), log out, and enroll. Every other request answers `403 Forbidden` with the problem type `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#two-factor-enrollment-required`. `GET /api/v1/auth/me` reports `two_factor_required` (the policy covers the user's role) and `enrollment_required` (it does, and the user has no second factor). Recovery codes don't count as a second factor.
+
+This is decided on every request, not when the session starts, so it follows the user's current role and factors: an Operator promoted to Admin under `admins` is restricted from their next request until they enroll, and a session gets full access as soon as its user has a factor. API tokens and SSH keys are never restricted, so turning the setting on doesn't break automation that uses tokens of users who haven't enrolled.
+
+### Keeping the last second factor
+
+While `two_factor.required` covers a user's role, they can't remove their last second factor: the request answers `409 Conflict` with the problem type `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#keeping-the-last-second-factor`, and nothing is removed. Add another factor first.
+
 ## Users
 
 Users are managed in the dashboard or the API. To create the first user, or to recover access, run inside the control plane container:

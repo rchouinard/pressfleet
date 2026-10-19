@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
+	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 )
 
@@ -71,6 +72,15 @@ var sentinelStatus = []struct {
 	{auth.ErrThrottled, http.StatusTooManyRequests},
 }
 
+// TwoFactorEnrollmentRequiredProblemType is the problem type of the 403
+// that refuses a session whose user must enroll a second factor first
+// (design doc §6.2, where it is called two-factor-enrollment-required).
+const TwoFactorEnrollmentRequiredProblemType = "https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#two-factor-enrollment-required"
+
+// LastSecondFactorProblemType is the problem type of the 409 that refuses
+// removing a user's last second factor while the policy requires one.
+const LastSecondFactorProblemType = "https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#keeping-the-last-second-factor"
+
 // problemFor converts a handler error to Problem Details. The second result
 // is false for unexpected errors, which should be logged.
 func problemFor(err error) (*httpserver.Problem, bool) {
@@ -95,6 +105,18 @@ func problemFor(err error) (*httpserver.Problem, bool) {
 		// Round up, so a client that waits this long is never throttled
 		// again, and never send 0.
 		p.RetryAfter = max(1, int(math.Ceil(te.RetryAfter.Seconds())))
+		return p, true
+	}
+	// These come before the sentinels, which they may also wrap, so they
+	// keep their types.
+	if errors.Is(err, authz.ErrEnrollmentRequired) {
+		p := httpserver.NewProblem(http.StatusForbidden, err.Error())
+		p.Type, p.Title = TwoFactorEnrollmentRequiredProblemType, "Two-factor enrollment required"
+		return p, true
+	}
+	if errors.Is(err, auth.ErrLastSecondFactor) {
+		p := httpserver.NewProblem(http.StatusConflict, err.Error())
+		p.Type, p.Title = LastSecondFactorProblemType, "Last second factor"
 		return p, true
 	}
 	for _, s := range sentinelStatus {

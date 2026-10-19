@@ -228,3 +228,52 @@ func TestResolve(t *testing.T) {
 		}
 	})
 }
+
+// enrollmentOnlyActions restates the actions a session that must enroll a
+// second factor may take (design doc §6.2).
+var enrollmentOnlyActions = map[authz.Action]bool{
+	authz.ViewSelf:                true,
+	authz.Logout:                  true,
+	authz.RegenerateRecoveryCodes: true,
+}
+
+// TestCheckRestrictsSessionsThatMustEnroll checks every action for every
+// role and credential when the principal is marked EnrollmentRequired:
+// sessions may take only the enrollment actions and are refused the rest
+// with ErrEnrollmentRequired; tokens and SSH keys are decided as without
+// the mark.
+func TestCheckRestrictsSessionsThatMustEnroll(t *testing.T) {
+	creds := []struct {
+		name   string
+		method auth.Method
+		scope  store.TokenScope
+	}{
+		{"session", auth.MethodSession, ""},
+		{"full token", auth.MethodToken, store.ScopeFull},
+		{"ssh key", auth.MethodSSHKey, ""},
+	}
+	for action := range designTable {
+		for _, role := range store.Roles {
+			for _, c := range creds {
+				t.Run(string(action)+"/"+string(role)+"/"+c.name, func(t *testing.T) {
+					p := auth.Principal{UserID: id.New(), Role: role, Method: c.method, Scope: c.scope}
+					unmarked := authz.Check(p, action, authz.Site(id.New()))
+					p.EnrollmentRequired = true
+					err := authz.Check(p, action, authz.Site(id.New()))
+					if c.method != auth.MethodSession || enrollmentOnlyActions[action] {
+						if (err == nil) != (unmarked == nil) {
+							t.Fatalf("Check = %v, want as without the mark (%v)", err, unmarked)
+						}
+						if errors.Is(err, authz.ErrEnrollmentRequired) {
+							t.Errorf("Check = %v, want no enrollment denial", err)
+						}
+						return
+					}
+					if !errors.Is(err, authz.ErrEnrollmentRequired) || !errors.Is(err, authz.ErrDenied) {
+						t.Fatalf("Check = %v, want ErrEnrollmentRequired wrapping ErrDenied", err)
+					}
+				})
+			}
+		}
+	}
+}

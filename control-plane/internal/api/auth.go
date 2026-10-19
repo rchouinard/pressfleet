@@ -370,11 +370,15 @@ func (h *Handlers) currentUser(ctx context.Context, u store.User, method gen.Cur
 	if err != nil {
 		return gen.CurrentUser{}, err
 	}
+	// Decided as auth decides Principal.EnrollmentRequired, but for the
+	// user, so token callers see whether their sessions would be restricted.
+	required := h.auth.TwoFactorPolicy().Covers(u.Role)
 	return gen.CurrentUser{
 		ID: g.ID, Email: g.Email, DisplayName: g.DisplayName, Role: g.Role, Disabled: g.Disabled,
 		TwoFactorEnabled: g.TwoFactorEnabled,
 		CreatedAt:        g.CreatedAt, UpdatedAt: g.UpdatedAt, LastLoginAt: g.LastLoginAt,
 		AuthMethod: method, CsrfToken: csrf, VerifiedAt: verified, RecoveryCodesRemaining: remaining,
+		TwoFactorRequired: required, EnrollmentRequired: required && !g.TwoFactorEnabled,
 	}, nil
 }
 
