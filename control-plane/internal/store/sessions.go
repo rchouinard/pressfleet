@@ -23,6 +23,9 @@ type Session struct {
 	LastSeenAt time.Time
 	// ExpiresAt is the absolute expiry, however active the session is.
 	ExpiresAt time.Time
+	// VerifiedAt is when the user last proved who they are in this session:
+	// at login, and when they reauthenticate for a sensitive action (§6.2).
+	VerifiedAt time.Time
 }
 
 // Sessions reads and writes sessions.
@@ -35,16 +38,17 @@ func NewSessions(q Querier) Sessions {
 	return Sessions{q: q}
 }
 
-const sessionColumns = "id, user_id, token_hash, source_ip, user_agent, created_at, last_seen_at, expires_at"
+const sessionColumns = "id, user_id, token_hash, source_ip, user_agent, created_at, last_seen_at, expires_at, verified_at"
 
 func scanSession(s scanner) (Session, error) {
 	var ss Session
-	err := s.Scan(&ss.ID, &ss.UserID, &ss.TokenHash, &ss.SourceIP, &ss.UserAgent, &ss.CreatedAt, &ss.LastSeenAt, &ss.ExpiresAt)
+	err := s.Scan(&ss.ID, &ss.UserID, &ss.TokenHash, &ss.SourceIP, &ss.UserAgent, &ss.CreatedAt, &ss.LastSeenAt, &ss.ExpiresAt, &ss.VerifiedAt)
 	return ss, err
 }
 
-// Create inserts s, filling in its ID. CreatedAt, LastSeenAt, and ExpiresAt
-// must be set. It returns ErrReference if the user doesn't exist.
+// Create inserts s, filling in its ID. CreatedAt and ExpiresAt must be set;
+// LastSeenAt and VerifiedAt default to CreatedAt. It returns ErrReference if
+// the user doesn't exist.
 func (r Sessions) Create(ctx context.Context, s *Session) error {
 	if s.UserID == "" || s.TokenHash == "" || s.CreatedAt.IsZero() || s.ExpiresAt.IsZero() {
 		return errors.New("create session: user, token hash, and times are required")
@@ -56,10 +60,14 @@ func (r Sessions) Create(ctx context.Context, s *Session) error {
 		created.LastSeenAt = created.CreatedAt
 	}
 	created.LastSeenAt = utc(created.LastSeenAt)
+	if created.VerifiedAt.IsZero() {
+		created.VerifiedAt = created.CreatedAt
+	}
+	created.VerifiedAt = utc(created.VerifiedAt)
 	_, err := r.q.ExecContext(ctx,
-		"INSERT INTO sessions ("+sessionColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO sessions ("+sessionColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		created.ID, created.UserID, created.TokenHash, created.SourceIP, created.UserAgent,
-		created.CreatedAt, created.LastSeenAt, created.ExpiresAt)
+		created.CreatedAt, created.LastSeenAt, created.ExpiresAt, created.VerifiedAt)
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
 	}
@@ -81,6 +89,13 @@ func (r Sessions) GetByTokenHash(ctx context.Context, tokenHash string) (Session
 func (r Sessions) Touch(ctx context.Context, sessionID string, at time.Time) error {
 	return execOne(ctx, r.q, "touch session "+sessionID,
 		"UPDATE sessions SET last_seen_at = ? WHERE id = ?", at, sessionID)
+}
+
+// SetVerified sets a session's VerifiedAt, when its user reauthenticates. It
+// returns ErrNotFound if the session doesn't exist.
+func (r Sessions) SetVerified(ctx context.Context, sessionID string, at time.Time) error {
+	return execOne(ctx, r.q, "set session "+sessionID+" verified",
+		"UPDATE sessions SET verified_at = ? WHERE id = ?", at, sessionID)
 }
 
 // Delete removes a session. It returns ErrNotFound if it doesn't exist.

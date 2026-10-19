@@ -172,7 +172,7 @@ func TestSessions(t *testing.T) {
 		if err := sessions.Create(ctx, &s1); err != nil {
 			t.Fatal(err)
 		}
-		if !id.Valid(s1.ID) || !s1.LastSeenAt.Equal(now) {
+		if !id.Valid(s1.ID) || !s1.LastSeenAt.Equal(now) || !s1.VerifiedAt.Equal(now) {
 			t.Errorf("Create: %+v", s1)
 		}
 		got, err := sessions.GetByTokenHash(ctx, "hash-1")
@@ -185,6 +185,20 @@ func TestSessions(t *testing.T) {
 		}
 		if got, _ := sessions.GetByTokenHash(ctx, "hash-1"); !got.LastSeenAt.Equal(later) {
 			t.Errorf("Touch: last seen %v, want %v", got.LastSeenAt, later)
+		}
+		if err := sessions.SetVerified(ctx, s1.ID, later); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := sessions.GetByTokenHash(ctx, "hash-1"); !got.VerifiedAt.Equal(later) || !got.CreatedAt.Equal(now) {
+			t.Errorf("SetVerified: verified %v, created %v", got.VerifiedAt, got.CreatedAt)
+		}
+		if err := sessions.SetVerified(ctx, id.New(), later); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("SetVerified on a missing session: %v, want ErrNotFound", err)
+		}
+		// The schema refuses a session without verified_at; on SQLite a
+		// trigger stands in for NOT NULL.
+		if _, err := db.ExecContext(ctx, "UPDATE sessions SET verified_at = NULL WHERE id = ?", s1.ID); err == nil {
+			t.Error("verified_at accepted NULL")
 		}
 
 		if err := sessions.Create(ctx, &store.Session{UserID: u.ID, TokenHash: "hash-1", CreatedAt: now, ExpiresAt: now}); !errors.Is(err, store.ErrConflict) {

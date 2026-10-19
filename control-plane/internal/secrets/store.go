@@ -42,6 +42,9 @@ const (
 	// KindPlatformLoginKey is the Ed25519 private key (its 32-byte seed,
 	// base64) that signs dashboard login tokens (#128, §5.9).
 	KindPlatformLoginKey Kind = "platform-login-key"
+	// KindTOTPSecret is a user's TOTP secret (§6.2), its raw bytes base32
+	// encoded. It can't be hashed, since checking a code needs it.
+	KindTOTPSecret Kind = "totp-secret"
 )
 
 // Kinds are validated by shape rather than against the list above, so a new

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -237,10 +238,74 @@ func (r Users) SetLastLogin(ctx context.Context, userID string, at time.Time) er
 		"UPDATE users SET last_login_at = ? WHERE id = ?", at, userID)
 }
 
-// Delete removes a user together with their sessions and API tokens. It
-// returns ErrNotFound if the user doesn't exist.
+// Delete removes a user together with their sessions, API tokens, and second
+// factors, including the encrypted TOTP secret. It returns ErrNotFound if the
+// user doesn't exist. Run it in a transaction ([DB.InTx]), so the user and
+// their TOTP secret go together.
 func (r Users) Delete(ctx context.Context, userID string) error {
+	// The cascade would remove user_totp and with it the only reference to
+	// the secret, so the secret goes first.
+	if _, err := deleteTOTP(ctx, r.q, "user_id = ?", userID); err != nil {
+		return fmt.Errorf("delete user %s: %w", userID, err)
+	}
 	return execOne(ctx, r.q, "delete user "+userID, "DELETE FROM users WHERE id = ?", userID)
+}
+
+// WebAuthnUserHandleSize is the length in bytes of a WebAuthn user handle,
+// the most the specification allows.
+const WebAuthnUserHandleSize = 64
+
+// WebAuthnUserHandle returns the user's WebAuthn user handle, or nil if
+// they haven't registered a credential yet. It returns ErrNotFound if the
+// user doesn't exist.
+func (r Users) WebAuthnUserHandle(ctx context.Context, userID string) ([]byte, error) {
+	var handle []byte
+	if err := r.q.QueryRowContext(ctx, "SELECT webauthn_user_handle FROM users WHERE id = ?", userID).Scan(&handle); err != nil {
+		return nil, fmt.Errorf("get WebAuthn user handle of user %s: %w", userID, err)
+	}
+	return handle, nil
+}
+
+// EnsureWebAuthnUserHandle returns the user's WebAuthn user handle,
+// generating a random one first if they don't have one. Credentials carry
+// the handle instead of the user ID, as the specification recommends. It
+// returns ErrNotFound if the user doesn't exist.
+func (r Users) EnsureWebAuthnUserHandle(ctx context.Context, userID string) ([]byte, error) {
+	handle := make([]byte, WebAuthnUserHandleSize)
+	_, _ = rand.Read(handle) // never fails
+	// If two registrations race, the first handle stays and both read it.
+	if _, err := r.q.ExecContext(ctx,
+		"UPDATE users SET webauthn_user_handle = ? WHERE id = ? AND webauthn_user_handle IS NULL", handle, userID); err != nil {
+		return nil, fmt.Errorf("set WebAuthn user handle of user %s: %w", userID, err)
+	}
+	return r.WebAuthnUserHandle(ctx, userID)
+}
+
+// GetByWebAuthnUserHandle returns the user with the given WebAuthn user
+// handle, or ErrNotFound.
+func (r Users) GetByWebAuthnUserHandle(ctx context.Context, handle []byte) (User, error) {
+	if len(handle) == 0 {
+		return User{}, fmt.Errorf("get user by WebAuthn user handle: %w", ErrNotFound)
+	}
+	u, err := scanUser(r.q.QueryRowContext(ctx, "SELECT "+userColumns+" FROM users WHERE webauthn_user_handle = ?", handle))
+	if err != nil {
+		return User{}, fmt.Errorf("get user by WebAuthn user handle: %w", err)
+	}
+	return u, nil
+}
+
+// HasSecondFactor reports whether the user has a confirmed TOTP or at least
+// one WebAuthn credential. Recovery codes don't count: they stand in for a
+// second factor but aren't one (§6.2).
+func (r Users) HasSecondFactor(ctx context.Context, userID string) (bool, error) {
+	var n int
+	err := r.q.QueryRowContext(ctx,
+		"SELECT (SELECT COUNT(*) FROM user_totp WHERE user_id = ? AND confirmed_at IS NOT NULL) + "+
+			"(SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = ?)", userID, userID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("check second factors of user %s: %w", userID, err)
+	}
+	return n > 0, nil
 }
 
 // execOne runs a statement that must affect exactly one row, returning
