@@ -119,12 +119,19 @@ export function isDnsCheckError(e: ApiError): boolean {
 }
 
 /**
- * The per-domain lines of a DNS check failure. `errors[].field` is a JSON
- * Pointer into the request (`/primary_domain`, `/aliases/1`), which is mapped
- * back to the domain that was sent so the line can name it.
+ * The per-domain lines of a DNS check failure. The server starts each
+ * entry's detail with the domain it is about (`www.example.com: it does not
+ * resolve ...`), and names the field it came from with a JSON Pointer into
+ * the request: `/primary_domain`, or `/aliases` for every alias. The line
+ * names the domain once, followed by the rest of the detail. A detail that
+ * doesn't start with a domain that was sent falls back to the pointer
+ * (`/aliases/1` is mapped back to the alias it indexes).
  */
 export function dnsFailures(e: ApiError, sent: { primary?: string, aliases: readonly string[] }): DnsFailure[] {
+  const sentDomains = [sent.primary, ...sent.aliases]
   return e.errors.map((fe) => {
+    const lead = /^([^\s:]+): ([\s\S]*)$/.exec(fe.detail)
+    if (lead && sentDomains.includes(lead[1])) return { domain: lead[1]!, detail: lead[2]! }
     let domain = fe.field
     if (fe.field === '/primary_domain' && sent.primary) domain = sent.primary
     const m = /^\/aliases\/(\d+)$/.exec(fe.field)
