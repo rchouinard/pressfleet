@@ -3172,8 +3172,11 @@ type Reauthentication struct {
 	// Code A TOTP code or recovery code, for those methods.
 	Code *string `json:"code,omitempty"`
 
-	// Credential For `webauthn`, the assertion (`PublicKeyCredential` as JSON).
-	Credential *map[string]interface{} `json:"credential,omitempty"`
+	// Credential For `webauthn`: the `PublicKeyCredential` that
+	// `navigator.credentials.get()` returned for the `webauthn`
+	// request options from `POST /api/v1/auth/reauthenticate/options`,
+	// in its JSON form.
+	Credential *WebAuthnPublicKeyCredential `json:"credential,omitempty"`
 
 	// Method A second-factor method, or `password` for users without a second factor.
 	Method ReauthenticationMethod `json:"method"`
@@ -3195,7 +3198,7 @@ type ReauthenticationOptions struct {
 	// Webauthn When `methods` includes `webauthn`: the request options
 	// (`PublicKeyCredentialRequestOptions` as JSON) to pass to
 	// `navigator.credentials.get`.
-	Webauthn interface{} `json:"webauthn,omitempty"`
+	Webauthn *WebAuthnRequestOptions `json:"webauthn,omitempty"`
 }
 
 // RecoveryCodes defines model for RecoveryCodes.

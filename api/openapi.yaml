@@ -5547,6 +5547,8 @@ components:
             When `methods` includes `webauthn`: the request options
             (`PublicKeyCredentialRequestOptions` as JSON) to pass to
             `navigator.credentials.get`.
+          allOf:
+            - $ref: "#/components/schemas/WebAuthnRequestOptions"
 
     Reauthentication:
       type: object
@@ -5563,9 +5565,13 @@ components:
           minLength: 1
           maxLength: 64
         credential:
-          description: For `webauthn`, the assertion (`PublicKeyCredential` as JSON).
-          type: object
-          writeOnly: true
+          description: |
+            For `webauthn`: the `PublicKeyCredential` that
+            `navigator.credentials.get()` returned for the `webauthn`
+            request options from `POST /api/v1/auth/reauthenticate/options`,
+            in its JSON form.
+          allOf:
+            - $ref: "#/components/schemas/WebAuthnPublicKeyCredential"
         password:
           description: For `password`, the user's password.
           type: string

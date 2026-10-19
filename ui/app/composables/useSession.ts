@@ -1,4 +1,3 @@
-import type { components } from '../api/schema.gen'
 import { factorChallenge, type FactorChallenge, type FactorProof } from '../utils/two-factor'
 
 /**
@@ -73,9 +72,7 @@ export function useSession() {
 
   /** Proves again who the user is, for sensitive actions. Throws ApiError (422 wrong proof, 429 throttled). */
   async function reauthenticate(proof: FactorProof): Promise<void> {
-    // The spec types the credential as an empty object; it is the assertion's JSON form.
-    const body = proof as components['schemas']['Reauthentication']
-    const { data } = await api.POST('/api/v1/auth/reauthenticate', { body })
+    const { data } = await api.POST('/api/v1/auth/reauthenticate', { body: proof })
     if (data) apply(data)
   }
 

@@ -3226,7 +3226,7 @@ export interface components {
              *     (`PublicKeyCredentialRequestOptions` as JSON) to pass to
              *     `navigator.credentials.get`.
              */
-            webauthn?: unknown;
+            webauthn?: components["schemas"]["WebAuthnRequestOptions"];
         };
         Reauthentication: {
             method: components["schemas"]["ReauthenticationMethod"];
@@ -3235,8 +3235,13 @@ export interface components {
              * @description A TOTP code or recovery code, for those methods.
              */
             code?: string;
-            /** @description For `webauthn`, the assertion (`PublicKeyCredential` as JSON). */
-            credential?: Record<string, never>;
+            /**
+             * @description For `webauthn`: the `PublicKeyCredential` that
+             *     `navigator.credentials.get()` returned for the `webauthn`
+             *     request options from `POST /api/v1/auth/reauthenticate/options`,
+             *     in its JSON form.
+             */
+            credential?: components["schemas"]["WebAuthnPublicKeyCredential"];
             /**
              * Format: password
              * @description For `password`, the user's password.

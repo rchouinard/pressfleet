@@ -37,7 +37,11 @@ func (h *Handlers) StartReauthentication(ctx context.Context, _ gen.StartReauthe
 	// The spec names a member for each method that has a challenge, as the
 	// login's second-factor problem does.
 	if c, ok := opts.Challenges[auth.FactorWebAuthn]; ok {
-		body.Webauthn = c
+		var o gen.WebAuthnRequestOptions
+		if err := json.Unmarshal(c, &o); err != nil {
+			return nil, fmt.Errorf("start reauthentication: decoding the WebAuthn options: %w", err)
+		}
+		body.Webauthn = &o
 	}
 	return gen.StartReauthentication200JSONResponse(body), nil
 }
