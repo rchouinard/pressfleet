@@ -1227,6 +1227,41 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/users/{user_id}/two-factor:
+    parameters:
+      - $ref: "#/components/parameters/UserID"
+    delete:
+      operationId: resetUserTwoFactor
+      tags: [users]
+      summary: Reset a user's second factors (Admin only)
+      description: |
+        For a user who lost their second factor: removes their
+        authenticator app, every security key and passkey, and every
+        recovery code, and signs them out everywhere. Their API tokens are
+        kept. They log in next with their password alone, or, when
+        `two_factor.required` covers their role, are restricted to
+        enrolling a new factor.
+
+        Only dashboard sessions may call this, and it is a sensitive
+        action (see Reauthentication). An Admin can't reset their own
+        second factors here (`403`): they remove them one at a time, and a
+        locked-out Admin is recovered with `pressfleet user
+        reset-two-factor` inside the control plane container. A user with
+        nothing to remove gets `409`, and nothing changes.
+      responses:
+        "204":
+          description: The user's second factors were removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/client-groups:
     get:
       operationId: listClientGroups

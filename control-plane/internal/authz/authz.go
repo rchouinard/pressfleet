@@ -175,6 +175,9 @@ const (
 	ViewOthersSSHKeys   Action = "user.ssh_keys.view"
 	ManageOthersSSHKeys Action = "user.ssh_keys.manage"
 	ViewAuditLog        Action = "audit.view"
+	// ResetUserTwoFactor is removing all of another user's second factors
+	// and recovery codes, for a user who lost theirs (design doc §6.2).
+	ResetUserTwoFactor Action = "user.two_factor.reset"
 
 	// Change platform settings (DNS and S3 credentials, SMTP, alert
 	// channels, backup location, retention).
@@ -240,6 +243,20 @@ var sessionActions = map[Action]bool{
 	// Only sessions are asked to reauthenticate.
 	Reauthenticate:        true,
 	StartReauthentication: true,
+	// An Admin's reset strips another account's protection. Tokens are
+	// never asked to reauthenticate, so a stolen Admin token could do it
+	// without any fresh check; the command line covers recovery without a
+	// session (pressfleet user reset-two-factor).
+	ResetUserTwoFactor: true,
+}
+
+// othersOnlyActions are actions on a user that the caller may not take on
+// themselves. Resetting one's own second factors would skip the rule that
+// a user the policy covers keeps one (auth.ErrLastSecondFactor), so users
+// remove their own factors one by one, and a locked-out Admin is recovered
+// from the command line, which doesn't go through Check.
+var othersOnlyActions = map[Action]bool{
+	ResetUserTwoFactor: true,
 }
 
 // enrollmentActions are the only actions a session that must enroll a
@@ -277,6 +294,7 @@ var sensitiveActions = map[Action]bool{
 	ManageOthersTokens:  true,
 	ManageOthersSSHKeys: true,
 	// The account's protection: second factors and recovery codes.
+	ResetUserTwoFactor:         true,
 	RegenerateRecoveryCodes:    true,
 	EnrollTOTP:                 true,
 	RemoveTOTP:                 true,
@@ -372,6 +390,7 @@ var rules = map[Action]rule{
 	ViewOthersSSHKeys:   {store.RoleAdmin, false},
 	ManageOthersSSHKeys: {store.RoleAdmin, true},
 	ViewAuditLog:        {store.RoleAdmin, false},
+	ResetUserTwoFactor:  {store.RoleAdmin, true},
 
 	ManagePlatformSettings: {store.RoleAdmin, true},
 
@@ -539,7 +558,8 @@ func AlertChannel(id string) Target { return Target{Type: TargetAlertChannel, ID
 // token scopes are denied. A session that must enroll a second factor is
 // denied with ErrEnrollmentRequired for everything outside
 // enrollmentActions, before its role is considered, so a client can always
-// tell it to enroll.
+// tell it to enroll. Actions in othersOnlyActions are denied on the
+// caller's own user.
 func Check(p auth.Principal, action Action, t Target) error {
 	r, ok := rules[action]
 	if !ok {
@@ -554,6 +574,9 @@ func Check(p auth.Principal, action Action, t Target) error {
 	}
 	if have < rank(r.min) {
 		return denied("the %s role doesn't allow %s", p.Role, action)
+	}
+	if othersOnlyActions[action] && t.Type == TargetUser && t.ID == p.UserID {
+		return denied("%s is for other users; remove your own second factors one at a time", action)
 	}
 	switch p.Method {
 	case auth.MethodSession:

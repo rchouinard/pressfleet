@@ -5198,6 +5198,9 @@ type ServerInterface interface {
 	// DeleteUserSSHKey Remove one of a user's SSH keys (Admin only)
 	// (DELETE /api/v1/users/{user_id}/ssh-keys/{ssh_key_id})
 	DeleteUserSSHKey(w http.ResponseWriter, r *http.Request, userID UserID, sshKeyID SSHKeyID)
+	// ResetUserTwoFactor Reset a user's second factors (Admin only)
+	// (DELETE /api/v1/users/{user_id}/two-factor)
+	ResetUserTwoFactor(w http.ResponseWriter, r *http.Request, userID UserID)
 	// GetHealth Liveness probe
 	// (GET /healthz)
 	GetHealth(w http.ResponseWriter, r *http.Request)
@@ -9366,6 +9369,32 @@ func (siw *ServerInterfaceWrapper) DeleteUserSSHKey(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// ResetUserTwoFactor operation middleware
+func (siw *ServerInterfaceWrapper) ResetUserTwoFactor(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "user_id" -------------
+	var userID UserID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "user_id", r.PathValue("user_id"), &userID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "user_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResetUserTwoFactor(w, r, userID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetHealth operation middleware
 func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Request) {
 
@@ -9548,6 +9577,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/users/{user_id}/ssh-keys", wrapper.ListUserSSHKeys)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/users/{user_id}/ssh-keys", wrapper.AddUserSSHKey)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/users/{user_id}/ssh-keys/{ssh_key_id}", wrapper.DeleteUserSSHKey)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/users/{user_id}/two-factor", wrapper.ResetUserTwoFactor)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/client-groups", wrapper.ListClientGroups)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/client-groups", wrapper.CreateClientGroup)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/client-groups/{client_group_id}", wrapper.DeleteClientGroup)
@@ -22662,6 +22692,103 @@ func (response DeleteUserSSHKeydefaultApplicationProblemPlusJSONResponse) VisitD
 	return err
 }
 
+type ResetUserTwoFactorRequestObject struct {
+	UserID UserID `json:"user_id"`
+}
+
+type ResetUserTwoFactorResponseObject interface {
+	VisitResetUserTwoFactorResponse(w http.ResponseWriter) error
+}
+
+type ResetUserTwoFactor204Response struct {
+}
+
+func (response ResetUserTwoFactor204Response) VisitResetUserTwoFactorResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type ResetUserTwoFactor401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ResetUserTwoFactor401ApplicationProblemPlusJSONResponse) VisitResetUserTwoFactorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResetUserTwoFactor403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ResetUserTwoFactor403ApplicationProblemPlusJSONResponse) VisitResetUserTwoFactorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResetUserTwoFactor404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response ResetUserTwoFactor404ApplicationProblemPlusJSONResponse) VisitResetUserTwoFactorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResetUserTwoFactor409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response ResetUserTwoFactor409ApplicationProblemPlusJSONResponse) VisitResetUserTwoFactorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ResetUserTwoFactordefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ResetUserTwoFactordefaultApplicationProblemPlusJSONResponse) VisitResetUserTwoFactorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetHealthRequestObject struct {
 }
 
@@ -23092,6 +23219,9 @@ type StrictServerInterface interface {
 	// DeleteUserSSHKey Remove one of a user's SSH keys (Admin only)
 	// (DELETE /api/v1/users/{user_id}/ssh-keys/{ssh_key_id})
 	DeleteUserSSHKey(ctx context.Context, request DeleteUserSSHKeyRequestObject) (DeleteUserSSHKeyResponseObject, error)
+	// ResetUserTwoFactor Reset a user's second factors (Admin only)
+	// (DELETE /api/v1/users/{user_id}/two-factor)
+	ResetUserTwoFactor(ctx context.Context, request ResetUserTwoFactorRequestObject) (ResetUserTwoFactorResponseObject, error)
 	// GetHealth Liveness probe
 	// (GET /healthz)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
@@ -26553,6 +26683,32 @@ func (sh *strictHandler) DeleteUserSSHKey(w http.ResponseWriter, r *http.Request
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(DeleteUserSSHKeyResponseObject); ok {
 		if err := validResponse.VisitDeleteUserSSHKeyResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ResetUserTwoFactor operation middleware
+func (sh *strictHandler) ResetUserTwoFactor(w http.ResponseWriter, r *http.Request, userID UserID) {
+	var request ResetUserTwoFactorRequestObject
+
+	request.UserID = userID
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ResetUserTwoFactor(ctx, request.(ResetUserTwoFactorRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ResetUserTwoFactor")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ResetUserTwoFactorResponseObject); ok {
+		if err := validResponse.VisitResetUserTwoFactorResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

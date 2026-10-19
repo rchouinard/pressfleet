@@ -46,6 +46,8 @@ var operationActions = map[string]authz.Action{
 	"updateUser": authz.UpdateUser,
 	"deleteUser": authz.DeleteUser,
 
+	"resetUserTwoFactor": authz.ResetUserTwoFactor,
+
 	"listOwnSshKeys":   authz.ViewOwnSSHKeys,
 	"addOwnSshKey":     authz.AddOwnSSHKey,
 	"deleteOwnSshKey":  authz.DeleteOwnSSHKey,

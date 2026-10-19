@@ -38,13 +38,15 @@ func allEvents(t *testing.T, db *store.DB) []store.AuditEvent {
 }
 
 // sessionOnlyOperations are the operations only dashboard sessions may
-// call: creating API tokens and managing second factors.
+// call: creating API tokens and managing second factors, including an
+// Admin's reset of another user's.
 var sessionOnlyOperations = map[string]bool{
 	"createApiToken": true, "regenerateRecoveryCodes": true,
 	"beginWebAuthnRegistration": true, "registerWebAuthnCredential": true,
 	"renameWebAuthnCredential": true, "removeWebAuthnCredential": true,
 	"startTotpEnrollment": true, "confirmTotpEnrollment": true, "removeTotp": true,
 	"startReauthentication": true, "reauthenticate": true,
+	"resetUserTwoFactor": true,
 }
 
 // auditedReads are the reads recorded like changes (auditRead).

@@ -77,6 +77,8 @@ var designTable = map[authz.Action]struct {
 	authz.ViewOthersSSHKeys:   {true, false, false, false},
 	authz.ManageOthersSSHKeys: {true, false, false, true},
 	authz.ViewAuditLog:        {true, false, false, false},
+	// Reset other users' second factors.
+	authz.ResetUserTwoFactor: {true, false, false, true},
 	// Change platform settings.
 	authz.ManagePlatformSettings: {true, false, false, true},
 	// Manage their own profile (display name), password, API tokens, and SSH keys.
@@ -115,6 +117,7 @@ var sensitiveDesign = map[authz.Action]bool{
 	authz.RegisterWebAuthnCredential: true,
 	authz.RenameWebAuthnCredential:   true,
 	authz.RemoveWebAuthnCredential:   true,
+	authz.ResetUserTwoFactor:         true,
 	// Create API tokens; add SSH keys.
 	authz.CreateOwnToken: true,
 	authz.AddOwnSSHKey:   true,
@@ -152,6 +155,7 @@ var sessionOnlyActions = map[authz.Action]bool{
 	authz.RemoveTOTP:                 true,
 	authz.Reauthenticate:             true,
 	authz.StartReauthentication:      true,
+	authz.ResetUserTwoFactor:         true,
 }
 
 func TestDesignTableCoversEveryAction(t *testing.T) {
@@ -383,5 +387,22 @@ func TestCheckRestrictsSessionsThatMustEnroll(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+// TestCheckRefusesResettingOwnSecondFactors checks that an Admin may reset
+// another user's second factors but not their own, which would skip the
+// rule that a user the policy covers keeps one.
+func TestCheckRefusesResettingOwnSecondFactors(t *testing.T) {
+	admin := auth.Principal{UserID: id.New(), Role: store.RoleAdmin, Method: auth.MethodSession}
+	if err := authz.Check(admin, authz.ResetUserTwoFactor, authz.User(id.New())); err != nil {
+		t.Errorf("resetting another user: %v", err)
+	}
+	if err := authz.Check(admin, authz.ResetUserTwoFactor, authz.User(admin.UserID)); !errors.Is(err, authz.ErrDenied) {
+		t.Errorf("resetting oneself = %v, want ErrDenied", err)
+	}
+	// Other actions on oneself are decided by the role alone.
+	if err := authz.Check(admin, authz.UpdateUser, authz.User(admin.UserID)); err != nil {
+		t.Errorf("updating oneself: %v", err)
 	}
 }
