@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
@@ -14,12 +15,12 @@ import (
 )
 
 // enrollAdmin gives the env's admin a second factor (a WebAuthn
-// credential bound to another dashboard domain, which can't be used here,
-// so only recovery codes work) and returns their recovery codes.
+// credential for the current relying party, localhost, whose key the tests
+// don't hold, so they use recovery codes) and returns their recovery codes.
 func (e *authEnv) enrollAdmin() []redact.Secret {
 	e.t.Helper()
 	ctx := context.Background()
-	c := store.WebAuthnCredential{UserID: e.user.ID, CredentialID: []byte("cred"), PublicKey: []byte("key"), Algorithm: -7, RPID: "old.example.com", Name: "key"}
+	c := store.WebAuthnCredential{UserID: e.user.ID, CredentialID: []byte("cred"), PublicKey: []byte("key"), Algorithm: -7, RPID: auth.DefaultRelyingPartyID, Name: "key"}
 	if err := store.NewWebAuthnCredentials(e.db).Create(ctx, &c); err != nil {
 		e.t.Fatal(err)
 	}
@@ -95,7 +96,7 @@ func TestTwoStepLoginOverHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	if problem.Type != "https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor" ||
-		problem.Status != 401 || len(problem.Methods) != 1 || problem.Methods[0] != "recovery_code" {
+		problem.Status != 401 || !slices.Equal(problem.Methods, []string{"webauthn", "recovery_code"}) {
 		t.Errorf("problem: %s", w.Body)
 	}
 	cookies := w.Result().Cookies()
@@ -256,10 +257,17 @@ func TestRegenerateRecoveryCodesOverHTTP(t *testing.T) {
 func TestUsersReportTwoFactor(t *testing.T) {
 	e := newAuthEnv(t, api.Options{})
 	s := e.mustLogin()
-	if _, err := e.svc.CreateUser(context.Background(), auth.NewUser{Email: "viewer@example.com", Password: testPassword, Role: store.RoleViewer}); err != nil {
+	viewer, err := e.svc.CreateUser(context.Background(), auth.NewUser{Email: "viewer@example.com", Password: testPassword, Role: store.RoleViewer})
+	if err != nil {
 		t.Fatal(err)
 	}
 	e.enrollAdmin()
+	// The viewer's only key is from a previous dashboard domain, so it
+	// isn't a second factor.
+	stale := store.WebAuthnCredential{UserID: viewer.ID, CredentialID: []byte("stale"), PublicKey: []byte("key"), Algorithm: -7, RPID: "old.example.com", Name: "key"}
+	if err := store.NewWebAuthnCredentials(e.db).Create(context.Background(), &stale); err != nil {
+		t.Fatal(err)
+	}
 	w := e.do(http.MethodGet, "/api/v1/users", "", s.creds())
 	expectStatus(t, w, http.StatusOK, "list users")
 	var list struct {
@@ -282,5 +290,9 @@ func TestUsersReportTwoFactor(t *testing.T) {
 	expectStatus(t, w, http.StatusOK, "get user")
 	if me := decodeMe(t, w); !me.TwoFactorEnabled {
 		t.Errorf("get user: %s", w.Body)
+	}
+	vs := e.mustLoginAs("viewer@example.com")
+	if me := decodeMe(t, e.do(http.MethodGet, "/api/v1/auth/me", "", vs.creds())); me.TwoFactorEnabled {
+		t.Errorf("viewer's /auth/me with only a stale key: two_factor_enabled = true")
 	}
 }

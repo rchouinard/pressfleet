@@ -260,7 +260,7 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (LoginResult, err
 	if rehash {
 		s.rehash(ctx, user, req.Password)
 	}
-	twoFactor, err := store.NewUsers(s.db).HasSecondFactor(ctx, user.ID)
+	twoFactor, err := s.hasSecondFactor(ctx, s.db, user.ID)
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("login: %w", err)
 	}
@@ -386,7 +386,7 @@ func (s *Service) enrollmentRequired(ctx context.Context, user store.User) (bool
 	if !s.twoFactor.Covers(user.Role) {
 		return false, nil
 	}
-	has, err := store.NewUsers(s.db).HasSecondFactor(ctx, user.ID)
+	has, err := s.hasSecondFactor(ctx, s.db, user.ID)
 	if err != nil {
 		return false, fmt.Errorf("authenticate session: check second factors: %w", err)
 	}

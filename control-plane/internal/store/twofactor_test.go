@@ -433,21 +433,22 @@ func TestWebAuthnUserHandle(t *testing.T) {
 
 func TestHasSecondFactor(t *testing.T) {
 	ctx := context.Background()
+	const rpID = "dashboard.example.com" // newCredential's
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
 		users := store.NewUsers(db)
-		check := func(userID string, want bool) {
+		check := func(userID, rpID string, want bool) {
 			t.Helper()
-			if got, err := users.HasSecondFactor(ctx, userID); err != nil || got != want {
-				t.Errorf("HasSecondFactor = %v, %v; want %v", got, err, want)
+			if got, err := users.HasSecondFactor(ctx, userID, rpID); err != nil || got != want {
+				t.Errorf("HasSecondFactor(%s) = %v, %v; want %v", rpID, got, err, want)
 			}
 			// IDsWithSecondFactor agrees.
-			if ids, err := users.IDsWithSecondFactor(ctx); err != nil || ids[userID] != want {
-				t.Errorf("IDsWithSecondFactor = %v, %v; want %s: %v", ids, err, userID, want)
+			if ids, err := users.IDsWithSecondFactor(ctx, rpID); err != nil || ids[userID] != want {
+				t.Errorf("IDsWithSecondFactor(%s) = %v, %v; want %s: %v", rpID, ids, err, userID, want)
 			}
 		}
 		u := createUser(t, db, "a@example.com", store.RoleAdmin)
-		check(u.ID, false)
-		check(id.New(), false)
+		check(u.ID, rpID, false)
+		check(id.New(), rpID, false)
 
 		// Recovery codes and an unconfirmed TOTP don't count.
 		if _, err := store.NewRecoveryCodes(db).Replace(ctx, u.ID, []string{"h1"}, time.Now()); err != nil {
@@ -457,18 +458,23 @@ func TestHasSecondFactor(t *testing.T) {
 		if err := totps.Create(ctx, &store.TOTP{UserID: u.ID, SecretID: putTOTPSecret(t, db)}); err != nil {
 			t.Fatal(err)
 		}
-		check(u.ID, false)
+		check(u.ID, rpID, false)
 		if err := totps.Confirm(ctx, u.ID, 1, time.Now()); err != nil {
 			t.Fatal(err)
 		}
-		check(u.ID, true)
+		check(u.ID, rpID, true)
+		// A TOTP counts whatever the relying party.
+		check(u.ID, "new.example.com", true)
 
+		// A credential counts only for its own relying party ID.
 		v := createUser(t, db, "b@example.com", store.RoleViewer)
 		c := newCredential(v.ID, "cred")
 		if err := store.NewWebAuthnCredentials(db).Create(ctx, &c); err != nil {
 			t.Fatal(err)
 		}
-		check(v.ID, true)
+		check(v.ID, rpID, true)
+		check(v.ID, "new.example.com", false)
+		check(v.ID, "", false)
 		// A user with both factors is listed once.
 		if err := store.NewWebAuthnCredentials(db).Create(ctx, &c); err == nil {
 			t.Fatal("credential ID reused")
@@ -477,9 +483,20 @@ func TestHasSecondFactor(t *testing.T) {
 		if err := store.NewWebAuthnCredentials(db).Create(ctx, &c2); err != nil {
 			t.Fatal(err)
 		}
-		if ids, err := users.IDsWithSecondFactor(ctx); err != nil || len(ids) != 2 || !ids[u.ID] || !ids[v.ID] {
+		if ids, err := users.IDsWithSecondFactor(ctx, rpID); err != nil || len(ids) != 2 || !ids[u.ID] || !ids[v.ID] {
 			t.Errorf("IDsWithSecondFactor = %v, %v; want %s and %s", ids, err, u.ID, v.ID)
 		}
+		if ids, err := users.IDsWithSecondFactor(ctx, "new.example.com"); err != nil || len(ids) != 1 || !ids[u.ID] {
+			t.Errorf("IDsWithSecondFactor(new domain) = %v, %v; want only %s", ids, err, u.ID)
+		}
+
+		// A credential for the new domain beside a stale one counts.
+		c3 := newCredential(v.ID, "cred3")
+		c3.RPID = "new.example.com"
+		if err := store.NewWebAuthnCredentials(db).Create(ctx, &c3); err != nil {
+			t.Fatal(err)
+		}
+		check(v.ID, "new.example.com", true)
 	})
 }
 
@@ -522,7 +539,7 @@ func TestDeleteUserRemovesSecondFactors(t *testing.T) {
 			}
 		}
 		// The other user's factors stay.
-		if ok, err := store.NewUsers(db).HasSecondFactor(ctx, other.ID); err != nil || !ok {
+		if ok, err := store.NewUsers(db).HasSecondFactor(ctx, other.ID, "dashboard.example.com"); err != nil || !ok {
 			t.Errorf("other user's factors: %v, %v", ok, err)
 		}
 		if n := countRows(t, db, "SELECT COUNT(*) FROM secrets"); n != 1 {

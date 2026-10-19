@@ -3344,7 +3344,8 @@ export interface components {
             /**
              * @description Whether the user has a second factor (an authenticator app or a
              *     security key), so their logins take two steps. Recovery codes
-             *     alone don't count.
+             *     alone don't count, and neither do security keys and passkeys
+             *     registered under a previous dashboard domain (`rp_id`).
              */
             two_factor_enabled: boolean;
             created_at: components["schemas"]["Timestamp"];

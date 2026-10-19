@@ -282,6 +282,25 @@ func (s *Service) takeWebAuthnCeremony(challenge, userID string, register bool) 
 	return key, c, expires, true
 }
 
+// usableRPID is the relying party ID whose credentials count as a second
+// factor: the current one, or none while WebAuthn is unavailable, matching
+// usableWebAuthnCredentials. Login must never ask for a factor it can't
+// offer.
+func (s *Service) usableRPID() string {
+	if s.webauthn == nil {
+		return ""
+	}
+	return s.rp.ID
+}
+
+// hasSecondFactor reports whether the user has a usable second factor
+// (store.Users.HasSecondFactor for the current relying party ID). Every
+// "has a second factor" decision goes through it, so credentials from a
+// previous dashboard domain never count.
+func (s *Service) hasSecondFactor(ctx context.Context, q store.Querier, userID string) (bool, error) {
+	return store.NewUsers(q).HasSecondFactor(ctx, userID, s.usableRPID())
+}
+
 // usableWebAuthnCredentials returns the user's credentials bound to the
 // current relying party ID.
 func (s *Service) usableWebAuthnCredentials(ctx context.Context, creds store.WebAuthnCredentials, userID string) ([]store.WebAuthnCredential, error) {
@@ -437,7 +456,7 @@ func (s *Service) FinishWebAuthnRegistration(ctx context.Context, userID, name s
 	}
 	var reg WebAuthnRegistration
 	err = s.db.InTx(ctx, func(q store.Querier) error {
-		had, err := store.NewUsers(q).HasSecondFactor(ctx, user.ID)
+		had, err := s.hasSecondFactor(ctx, q, user.ID)
 		if err != nil {
 			return err
 		}

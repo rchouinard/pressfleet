@@ -323,7 +323,7 @@ func (s *Service) ConfirmTOTP(ctx context.Context, userID string, code redact.Se
 		if !ok {
 			return &SecondFactorError{UserID: userID, Method: FactorTOTP}
 		}
-		hadFactor, err := store.NewUsers(q).HasSecondFactor(ctx, userID)
+		hadFactor, err := s.hasSecondFactor(ctx, q, userID)
 		if err != nil {
 			return err
 		}

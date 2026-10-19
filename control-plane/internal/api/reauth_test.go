@@ -203,10 +203,9 @@ func TestReauthenticateOverHTTP(t *testing.T) {
 		s := e.secondFactorSession(codes[0].Reveal())
 		w := e.do(http.MethodPost, path+"/options", "", s.creds())
 		expectStatus(t, w, http.StatusOK, "options")
-		// The WebAuthn credential has no verifier in this control plane,
-		// so only recovery codes are offered.
-		if got := decodeOptions(t, w); !slices.Equal(got.Methods, []string{"recovery_code"}) {
-			t.Errorf("options = %+v, want recovery codes", got)
+		// The user's methods: their security key and recovery codes.
+		if got := decodeOptions(t, w); !slices.Equal(got.Methods, []string{"webauthn", "recovery_code"}) || len(got.WebAuthn) == 0 {
+			t.Errorf("options = %+v, want WebAuthn and recovery codes", got)
 		}
 		w = e.do(http.MethodPost, path, `{"method":"password","password":"`+testPassword+`"}`, s.creds())
 		expectStatus(t, w, http.StatusUnprocessableEntity, "the password instead of the factor")

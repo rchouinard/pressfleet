@@ -61,14 +61,15 @@ func (s *Service) TwoFactorPolicy() TwoFactorPolicy { return s.twoFactor }
 // second factor under the policy and has none left. Every path that
 // removes a user's own factor (TOTP, a WebAuthn credential) calls it in the
 // same transaction, after the removal, so the removal rolls back when it
-// fails. Recovery codes don't count as a factor (store.Users.HasSecondFactor).
+// fails. Recovery codes and credentials from another relying party ID
+// don't count as a factor (Service.hasSecondFactor).
 // Admin resets (#155) don't call it: they remove everything on purpose, and
 // the user must enroll again at their next login.
 func (s *Service) ensureSecondFactorKept(ctx context.Context, q store.Querier, user store.User) error {
 	if !s.twoFactor.Covers(user.Role) {
 		return nil
 	}
-	ok, err := store.NewUsers(q).HasSecondFactor(ctx, user.ID)
+	ok, err := s.hasSecondFactor(ctx, q, user.ID)
 	if err != nil {
 		return fmt.Errorf("check second factors of user %s: %w", user.ID, err)
 	}

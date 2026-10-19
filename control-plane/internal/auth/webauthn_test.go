@@ -518,8 +518,8 @@ func TestWebAuthnOtherRelyingParty(t *testing.T) {
 		ctx := context.Background()
 		svc, _ := newWebAuthnService(t, db, auth.TwoFactorPolicy{})
 		u := mustCreate(t, svc, "a@example.com", store.RoleViewer)
-		// Registered under another dashboard domain: still a second factor,
-		// but it can't be used here, so the login doesn't offer it.
+		// Registered under another dashboard domain: it can't be used here,
+		// so it isn't a second factor and the password alone logs in.
 		c := store.WebAuthnCredential{
 			UserID: u.ID, CredentialID: []byte("old"), PublicKey: []byte("key"), Algorithm: -7,
 			RPID: "old.example.com", Name: "Old key",
@@ -527,10 +527,7 @@ func TestWebAuthnOtherRelyingParty(t *testing.T) {
 		if err := store.NewWebAuthnCredentials(db).Create(ctx, &c); err != nil {
 			t.Fatal(err)
 		}
-		pending := startLogin(t, svc, "a@example.com")
-		if len(pending.Methods) != 0 || pending.Challenges[auth.FactorWebAuthn] != nil {
-			t.Errorf("methods = %v, challenges = %v; want none", pending.Methods, pending.Challenges)
-		}
+		login(t, svc, "a@example.com")
 		// Registering a key for the current domain excludes only that
 		// domain's credentials.
 		opts, err := svc.BeginWebAuthnRegistration(ctx, u.ID)

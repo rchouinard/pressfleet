@@ -242,11 +242,11 @@ func (s *Service) LoginSecondFactor(ctx context.Context, req SecondFactorRequest
 
 // TwoFactorEnabled reports whether the user has a second factor.
 func (s *Service) TwoFactorEnabled(ctx context.Context, userID string) (bool, error) {
-	return store.NewUsers(s.db).HasSecondFactor(ctx, userID)
+	return s.hasSecondFactor(ctx, s.db, userID)
 }
 
 // UsersWithTwoFactor returns the IDs of every user with a second factor,
 // for user lists.
 func (s *Service) UsersWithTwoFactor(ctx context.Context) (map[string]bool, error) {
-	return store.NewUsers(s.db).IDsWithSecondFactor(ctx)
+	return store.NewUsers(s.db).IDsWithSecondFactor(ctx, s.usableRPID())
 }

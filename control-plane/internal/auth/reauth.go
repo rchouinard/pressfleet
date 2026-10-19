@@ -53,7 +53,7 @@ func (s *Service) StartReauthentication(ctx context.Context, p Principal) (Reaut
 	if err != nil {
 		return ReauthenticationOptions{}, err
 	}
-	has, err := store.NewUsers(s.db).HasSecondFactor(ctx, user.ID)
+	has, err := s.hasSecondFactor(ctx, s.db, user.ID)
 	if err != nil {
 		return ReauthenticationOptions{}, fmt.Errorf("reauthenticate: %w", err)
 	}
@@ -91,7 +91,7 @@ func (s *Service) Reauthenticate(ctx context.Context, p Principal, req Reauthent
 	if err := s.throttle.check(keys...); err != nil {
 		return time.Time{}, err
 	}
-	has, err := store.NewUsers(s.db).HasSecondFactor(ctx, user.ID)
+	has, err := s.hasSecondFactor(ctx, s.db, user.ID)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("reauthenticate: %w", err)
 	}
