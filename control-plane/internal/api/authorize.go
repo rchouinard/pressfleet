@@ -25,6 +25,11 @@ var operationActions = map[string]authz.Action{
 
 	"regenerateRecoveryCodes": authz.RegenerateRecoveryCodes,
 
+	// Starting and confirming are both enrolling.
+	"startTotpEnrollment":   authz.EnrollTOTP,
+	"confirmTotpEnrollment": authz.EnrollTOTP,
+	"removeTotp":            authz.RemoveTOTP,
+
 	"listUsers":  authz.ViewUsers,
 	"createUser": authz.CreateUser,
 	"getUser":    authz.ViewUsers,

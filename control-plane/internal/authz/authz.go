@@ -163,6 +163,11 @@ const (
 
 	// Replace their own recovery codes (design doc §6.2).
 	RegenerateRecoveryCodes Action = "self.two_factor.recovery_codes.regenerate"
+
+	// Enroll (start and confirm) and remove their own authenticator app
+	// (design doc §6.2).
+	EnrollTOTP Action = "self.two_factor.totp.enroll"
+	RemoveTOTP Action = "self.two_factor.totp.remove"
 )
 
 // sshActions are the only actions an SSH key (auth.MethodSSHKey) may take:
@@ -184,6 +189,8 @@ var sessionActions = map[Action]bool{
 	// Second factors are managed from sessions only (§6.2): a stolen token
 	// must not be able to swap the account's recovery codes for its own.
 	RegenerateRecoveryCodes: true,
+	EnrollTOTP:              true,
+	RemoveTOTP:              true,
 }
 
 // rule says who may take an action.
@@ -285,6 +292,9 @@ var rules = map[Action]rule{
 	DeleteOwnSSHKey: {store.RoleViewer, true},
 
 	RegenerateRecoveryCodes: {store.RoleViewer, true},
+
+	EnrollTOTP: {store.RoleViewer, true},
+	RemoveTOTP: {store.RoleViewer, true},
 }
 
 // Actions returns every action, for tests and documentation.

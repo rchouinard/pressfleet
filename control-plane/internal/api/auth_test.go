@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
+	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
 )
@@ -46,8 +48,22 @@ func newAuthServiceOn(db *store.DB) (*auth.Service, *testClock) {
 		Logger:         storetest.Logger(),
 		Now:            clk.now,
 		PasswordParams: auth.Params{Memory: 64, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32},
+		Factors:        []auth.FactorVerifier{auth.NewTOTPVerifier(testKeyring(), "dash.example.com")},
 	})
 	return svc, clk
+}
+
+// testKeyring is a fixed master keyring, for sealing TOTP secrets.
+func testKeyring() *secrets.Keyring {
+	k, err := secrets.NewMasterKey(bytes.Repeat([]byte{1}, secrets.KeySize))
+	if err != nil {
+		panic(err)
+	}
+	r, err := secrets.NewKeyring(k)
+	if err != nil {
+		panic(err)
+	}
+	return r
 }
 
 // authEnv is an API handler with real authentication and one admin user.

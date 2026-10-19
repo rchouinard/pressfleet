@@ -12,6 +12,7 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
+	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
 
@@ -107,7 +108,9 @@ func (a *app) withAuth(ctx context.Context, fn func(*auth.Service) error) error 
 		return err
 	}
 	defer func() { _ = db.Close() }()
-	return fn(auth.NewService(db, a.authOptions()))
+	// The user commands check no second factors, so they need no master
+	// key.
+	return fn(auth.NewService(db, a.authOptions(nil)))
 }
 
 // newPassword reads a password from stdin or generates one.
@@ -139,11 +142,18 @@ func printUser(w io.Writer, verb string, u store.User, pw redact.Secret, generat
 
 // authOptions are the auth service's options from the configuration, for
 // the API and the in-container user commands alike, so both apply the same
-// two-factor policy.
-func (a *app) authOptions() auth.Options {
+// two-factor policy. keys seal TOTP secrets; without them (nil) the
+// service has no TOTP verifier, which only callers that check no second
+// factors can do without.
+func (a *app) authOptions(keys *secrets.Keyring) auth.Options {
 	tf := a.cfg.TwoFactor
+	var factors []auth.FactorVerifier
+	if keys != nil {
+		factors = append(factors, auth.NewTOTPVerifier(keys, a.cfg.DashboardDomain))
+	}
 	return auth.Options{
-		Logger: a.log,
+		Logger:  a.log,
+		Factors: factors,
 		TwoFactor: auth.TwoFactorPolicy{
 			Required:               auth.TwoFactorRequirement(tf.Required),
 			Reauthentication:       tf.ReauthenticationEnabled(),

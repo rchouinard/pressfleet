@@ -427,6 +427,12 @@ For a user with a second factor, `POST /api/v1/auth/login` with the right passwo
 
 Each recovery code works once. `GET /api/v1/auth/me` reports how many are left, and `POST /api/v1/users/me/two-factor/recovery-codes`, from a dashboard session, replaces the set.
 
+### Authenticator apps
+
+A user adds an authenticator app (TOTP: SHA-1, 6 digits, 30-second steps) from a dashboard session in two steps. `POST /api/v1/users/me/two-factor/totp` returns a new secret and an `otpauth://` URI for a QR code, with the issuer `PressFleet` and an account name of the user's email and `dashboard_domain`. `POST /api/v1/users/me/two-factor/totp/confirm` with a code from the app activates it; until then it isn't a second factor, and after 15 minutes it expires. If it is the user's first second factor, the confirmation returns their recovery codes, shown once. At login the method is `totp`; a code from the 30 seconds before or after the current ones is accepted, to allow for clock drift, and each code works once. A user has one authenticator app; `DELETE /api/v1/users/me/two-factor/totp` removes it and signs the user out of their other sessions, unless it is their last second factor and `two_factor.required` covers their role.
+
+The server must read TOTP secrets to check codes, so they can't be hashed: they are stored encrypted with the master key, like other secrets. Losing the master key also loses every authenticator app enrollment.
+
 ## Users
 
 Users are managed in the dashboard or the API. To create the first user, or to recover access, run inside the control plane container:

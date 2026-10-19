@@ -3774,6 +3774,38 @@ type Timestamp = time.Time
 // `read-only` allows only read actions.
 type TokenScope string
 
+// TotpConfirmation defines model for TotpConfirmation.
+type TotpConfirmation struct {
+	// Code A code the authenticator app shows.
+	Code *string `json:"code,omitempty"`
+}
+
+// TotpConfirmed defines model for TotpConfirmed.
+type TotpConfirmed struct {
+	// RecoveryCodes On the user's first second factor only: ten single-use recovery
+	// codes, each 16 characters in groups of four. Shown only once.
+	RecoveryCodes *[]string `json:"recovery_codes,omitempty"`
+}
+
+// TotpEnrollment defines model for TotpEnrollment.
+type TotpEnrollment struct {
+	// ExpiresAt When the secret expires unless confirmed.
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// Secret The secret in base32 (160 bits), for typing into an app by hand. Shown only once.
+	//
+	// Examples: JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
+	Secret string `json:"secret"`
+
+	// URI The `otpauth://totp/` URI for a QR code, with the secret, the
+	// issuer `PressFleet`, and an account name of the user's email and
+	// the dashboard domain.
+	//
+	//
+	// Examples: otpauth://totp/PressFleet:admin@example.com%20%28dashboard.example.com%29?algorithm=SHA1&digits=6&issuer=PressFleet&period=30&secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
+	URI string `json:"uri"`
+}
+
 // UpdateWindow The daily maintenance window, in UTC; absent if there is none.
 type UpdateWindow struct {
 	Hours int `json:"hours"`
@@ -4568,6 +4600,9 @@ type CreateUserJSONRequestBody = UserCreate
 // AddOwnSSHKeyJSONRequestBody defines body for AddOwnSSHKey for application/json ContentType.
 type AddOwnSSHKeyJSONRequestBody = SSHKeyCreate
 
+// ConfirmTotpEnrollmentJSONRequestBody defines body for ConfirmTotpEnrollment for application/json ContentType.
+type ConfirmTotpEnrollmentJSONRequestBody = TotpConfirmation
+
 // UpdateUserJSONRequestBody defines body for UpdateUser for application/json ContentType.
 type UpdateUserJSONRequestBody = UserUpdate
 
@@ -4926,7 +4961,11 @@ type ClientInterface interface {
 	//
 	// * `recovery_code`: send `code`, a recovery code with or without its
 	//   dashes. Each code works once.
-	// * `totp` and `webauthn` are listed once they are available.
+	// * `totp`: send `code`, the 6 digits the authenticator app shows. A
+	//   code from the step before or after the current one is accepted,
+	//   and each works once: a code of a step already used, or of an
+	//   earlier one, is wrong.
+	// * `webauthn` is listed once it is available.
 	//
 	// A wrong code returns `422` with an error on `/code` and counts
 	// toward login throttling (`429`); the login stays pending, so the user
@@ -4949,7 +4988,11 @@ type ClientInterface interface {
 	//
 	// * `recovery_code`: send `code`, a recovery code with or without its
 	//   dashes. Each code works once.
-	// * `totp` and `webauthn` are listed once they are available.
+	// * `totp`: send `code`, the 6 digits the authenticator app shows. A
+	//   code from the step before or after the current one is accepted,
+	//   and each works once: a code of a step already used, or of an
+	//   earlier one, is wrong.
+	// * `webauthn` is listed once it is available.
 	//
 	// A wrong code returns `422` with an error on `/code` and counts
 	// toward login throttling (`429`); the login stays pending, so the user
@@ -6834,6 +6877,76 @@ type ClientInterface interface {
 	// Corresponds with POST /api/v1/users/me/two-factor/recovery-codes (the `RegenerateRecoveryCodes` operationId).
 	RegenerateRecoveryCodes(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RemoveTotp Remove the current user's authenticator app
+	//
+	// Removes the current user's authenticator app and signs them out of
+	// their other sessions; API tokens keep working. If it is the user's
+	// last second factor and `two_factor.required` covers their role, the
+	// call returns `409` and changes nothing. Without an authenticator app
+	// it returns `404`. Removing one that hasn't been confirmed only
+	// cancels the enrollment.
+	//
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Corresponds with DELETE /api/v1/users/me/two-factor/totp (the `RemoveTotp` operationId).
+	RemoveTotp(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartTotpEnrollment Start enrolling an authenticator app
+	//
+	// Creates a new TOTP secret (RFC 6238: SHA-1, 6 digits, 30-second
+	// steps) for the current user and returns it, with an `otpauth://` URI
+	// for a QR code. It is stored sealed with the master key, and isn't a
+	// second factor until `POST /api/v1/users/me/two-factor/totp/confirm`
+	// confirms it with a code, within 15 minutes; after that it expires.
+	// Calling this again before confirming replaces the secret. A user
+	// has at most one authenticator app: with one already confirmed, this
+	// returns `409`; remove it first to replace it.
+	//
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Corresponds with POST /api/v1/users/me/two-factor/totp (the `StartTotpEnrollment` operationId).
+	StartTotpEnrollment(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ConfirmTotpEnrollmentWithBody Confirm an authenticator app with a code
+	//
+	// Activates the authenticator app started with `POST
+	// /api/v1/users/me/two-factor/totp`, given a code from it. From then
+	// on, logins need a second factor. If it is the user's first second
+	// factor, the response also holds their recovery codes, shown only
+	// this once. The code can't be used again to log in.
+	//
+	// A wrong code returns `422` with an error on `/code`. Without a
+	// pending enrollment, or after it expired (15 minutes), the call
+	// returns `404`: start again. With an authenticator app already
+	// confirmed it returns `409`.
+	//
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/users/me/two-factor/totp/confirm (the `ConfirmTotpEnrollment` operationId).
+	ConfirmTotpEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ConfirmTotpEnrollment Confirm an authenticator app with a code
+	//
+	// Activates the authenticator app started with `POST
+	// /api/v1/users/me/two-factor/totp`, given a code from it. From then
+	// on, logins need a second factor. If it is the user's first second
+	// factor, the response also holds their recovery codes, shown only
+	// this once. The code can't be used again to log in.
+	//
+	// A wrong code returns `422` with an error on `/code`. Without a
+	// pending enrollment, or after it expired (15 minutes), the call
+	// returns `404`: start again. With an authenticator app already
+	// confirmed it returns `409`.
+	//
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/users/me/two-factor/totp/confirm (the `ConfirmTotpEnrollment` operationId).
+	ConfirmTotpEnrollment(ctx context.Context, body ConfirmTotpEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DeleteUser Delete a user
 	//
 	// Also revokes the user's sessions, tokens, and SSH keys. Deleting the last Admin returns `409`.
@@ -7443,7 +7556,11 @@ func (c *Client) Login(ctx context.Context, body LoginJSONRequestBody, reqEditor
 //
 //   - `recovery_code`: send `code`, a recovery code with or without its
 //     dashes. Each code works once.
-//   - `totp` and `webauthn` are listed once they are available.
+//   - `totp`: send `code`, the 6 digits the authenticator app shows. A
+//     code from the step before or after the current one is accepted,
+//     and each works once: a code of a step already used, or of an
+//     earlier one, is wrong.
+//   - `webauthn` is listed once it is available.
 //
 // A wrong code returns `422` with an error on `/code` and counts
 // toward login throttling (`429`); the login stays pending, so the user
@@ -7476,7 +7593,11 @@ func (c *Client) LoginSecondFactorWithBody(ctx context.Context, params *LoginSec
 //
 //   - `recovery_code`: send `code`, a recovery code with or without its
 //     dashes. Each code works once.
-//   - `totp` and `webauthn` are listed once they are available.
+//   - `totp`: send `code`, the 6 digits the authenticator app shows. A
+//     code from the step before or after the current one is accepted,
+//     and each works once: a code of a step already used, or of an
+//     earlier one, is wrong.
+//   - `webauthn` is listed once it is available.
 //
 // A wrong code returns `422` with an error on `/code` and counts
 // toward login throttling (`429`); the login stays pending, so the user
@@ -10441,6 +10562,116 @@ func (c *Client) DeleteOwnSSHKey(ctx context.Context, sshKeyID SSHKeyID, reqEdit
 // Corresponds with POST /api/v1/users/me/two-factor/recovery-codes (the `RegenerateRecoveryCodes` operationId).
 func (c *Client) RegenerateRecoveryCodes(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRegenerateRecoveryCodesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RemoveTotp Remove the current user's authenticator app
+//
+// Removes the current user's authenticator app and signs them out of
+// their other sessions; API tokens keep working. If it is the user's
+// last second factor and `two_factor.required` covers their role, the
+// call returns `409` and changes nothing. Without an authenticator app
+// it returns `404`. Removing one that hasn't been confirmed only
+// cancels the enrollment.
+//
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Corresponds with DELETE /api/v1/users/me/two-factor/totp (the `RemoveTotp` operationId).
+func (c *Client) RemoveTotp(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveTotpRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StartTotpEnrollment Start enrolling an authenticator app
+//
+// Creates a new TOTP secret (RFC 6238: SHA-1, 6 digits, 30-second
+// steps) for the current user and returns it, with an `otpauth://` URI
+// for a QR code. It is stored sealed with the master key, and isn't a
+// second factor until `POST /api/v1/users/me/two-factor/totp/confirm`
+// confirms it with a code, within 15 minutes; after that it expires.
+// Calling this again before confirming replaces the secret. A user
+// has at most one authenticator app: with one already confirmed, this
+// returns `409`; remove it first to replace it.
+//
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Corresponds with POST /api/v1/users/me/two-factor/totp (the `StartTotpEnrollment` operationId).
+func (c *Client) StartTotpEnrollment(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartTotpEnrollmentRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ConfirmTotpEnrollmentWithBody Confirm an authenticator app with a code
+//
+// Activates the authenticator app started with `POST
+// /api/v1/users/me/two-factor/totp`, given a code from it. From then
+// on, logins need a second factor. If it is the user's first second
+// factor, the response also holds their recovery codes, shown only
+// this once. The code can't be used again to log in.
+//
+// A wrong code returns `422` with an error on `/code`. Without a
+// pending enrollment, or after it expired (15 minutes), the call
+// returns `404`: start again. With an authenticator app already
+// confirmed it returns `409`.
+//
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/users/me/two-factor/totp/confirm (the `ConfirmTotpEnrollment` operationId).
+func (c *Client) ConfirmTotpEnrollmentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConfirmTotpEnrollmentRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ConfirmTotpEnrollment Confirm an authenticator app with a code
+//
+// Activates the authenticator app started with `POST
+// /api/v1/users/me/two-factor/totp`, given a code from it. From then
+// on, logins need a second factor. If it is the user's first second
+// factor, the response also holds their recovery codes, shown only
+// this once. The code can't be used again to log in.
+//
+// A wrong code returns `422` with an error on `/code`. Without a
+// pending enrollment, or after it expired (15 minutes), the call
+// returns `404`: start again. With an authenticator app already
+// confirmed it returns `409`.
+//
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/users/me/two-factor/totp/confirm (the `ConfirmTotpEnrollment` operationId).
+func (c *Client) ConfirmTotpEnrollment(ctx context.Context, body ConfirmTotpEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewConfirmTotpEnrollmentRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -15928,6 +16159,100 @@ func NewRegenerateRecoveryCodesRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewRemoveTotpRequest constructs an http.Request for the RemoveTotp method
+func NewRemoveTotpRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/users/me/two-factor/totp")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStartTotpEnrollmentRequest constructs an http.Request for the StartTotpEnrollment method
+func NewStartTotpEnrollmentRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/users/me/two-factor/totp")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewConfirmTotpEnrollmentRequest calls the generic ConfirmTotpEnrollment builder with application/json body
+func NewConfirmTotpEnrollmentRequest(server string, body ConfirmTotpEnrollmentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewConfirmTotpEnrollmentRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewConfirmTotpEnrollmentRequestWithBody constructs an http.Request for the ConfirmTotpEnrollment method, with any body, and a specified content type
+func NewConfirmTotpEnrollmentRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/users/me/two-factor/totp/confirm")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewDeleteUserRequest constructs an http.Request for the DeleteUser method
 func NewDeleteUserRequest(server string, userID UserID) (*http.Request, error) {
 	var err error
@@ -16610,7 +16935,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// * `recovery_code`: send `code`, a recovery code with or without its
 	//   dashes. Each code works once.
-	// * `totp` and `webauthn` are listed once they are available.
+	// * `totp`: send `code`, the 6 digits the authenticator app shows. A
+	//   code from the step before or after the current one is accepted,
+	//   and each works once: a code of a step already used, or of an
+	//   earlier one, is wrong.
+	// * `webauthn` is listed once it is available.
 	//
 	// A wrong code returns `422` with an error on `/code` and counts
 	// toward login throttling (`429`); the login stays pending, so the user
@@ -16633,7 +16962,11 @@ type ClientWithResponsesInterface interface {
 	//
 	// * `recovery_code`: send `code`, a recovery code with or without its
 	//   dashes. Each code works once.
-	// * `totp` and `webauthn` are listed once they are available.
+	// * `totp`: send `code`, the 6 digits the authenticator app shows. A
+	//   code from the step before or after the current one is accepted,
+	//   and each works once: a code of a step already used, or of an
+	//   earlier one, is wrong.
+	// * `webauthn` is listed once it is available.
 	//
 	// A wrong code returns `422` with an error on `/code` and counts
 	// toward login throttling (`429`); the login stays pending, so the user
@@ -18643,6 +18976,80 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/users/me/two-factor/recovery-codes (the `RegenerateRecoveryCodes` operationId).
 	RegenerateRecoveryCodesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RegenerateRecoveryCodesResponse, error)
+
+	// RemoveTotpWithResponse Remove the current user's authenticator app
+	//
+	// Removes the current user's authenticator app and signs them out of
+	// their other sessions; API tokens keep working. If it is the user's
+	// last second factor and `two_factor.required` covers their role, the
+	// call returns `409` and changes nothing. Without an authenticator app
+	// it returns `404`. Removing one that hasn't been confirmed only
+	// cancels the enrollment.
+	//
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v1/users/me/two-factor/totp (the `RemoveTotp` operationId).
+	RemoveTotpWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RemoveTotpResponse, error)
+
+	// StartTotpEnrollmentWithResponse Start enrolling an authenticator app
+	//
+	// Creates a new TOTP secret (RFC 6238: SHA-1, 6 digits, 30-second
+	// steps) for the current user and returns it, with an `otpauth://` URI
+	// for a QR code. It is stored sealed with the master key, and isn't a
+	// second factor until `POST /api/v1/users/me/two-factor/totp/confirm`
+	// confirms it with a code, within 15 minutes; after that it expires.
+	// Calling this again before confirming replaces the secret. A user
+	// has at most one authenticator app: with one already confirmed, this
+	// returns `409`; remove it first to replace it.
+	//
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/users/me/two-factor/totp (the `StartTotpEnrollment` operationId).
+	StartTotpEnrollmentWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*StartTotpEnrollmentResponse, error)
+
+	// ConfirmTotpEnrollmentWithBodyWithResponse Confirm an authenticator app with a code
+	//
+	// Activates the authenticator app started with `POST
+	// /api/v1/users/me/two-factor/totp`, given a code from it. From then
+	// on, logins need a second factor. If it is the user's first second
+	// factor, the response also holds their recovery codes, shown only
+	// this once. The code can't be used again to log in.
+	//
+	// A wrong code returns `422` with an error on `/code`. Without a
+	// pending enrollment, or after it expired (15 minutes), the call
+	// returns `404`: start again. With an authenticator app already
+	// confirmed it returns `409`.
+	//
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/users/me/two-factor/totp/confirm (the `ConfirmTotpEnrollment` operationId).
+	ConfirmTotpEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfirmTotpEnrollmentResponse, error)
+
+	// ConfirmTotpEnrollmentWithResponse Confirm an authenticator app with a code
+	//
+	// Activates the authenticator app started with `POST
+	// /api/v1/users/me/two-factor/totp`, given a code from it. From then
+	// on, logins need a second factor. If it is the user's first second
+	// factor, the response also holds their recovery codes, shown only
+	// this once. The code can't be used again to log in.
+	//
+	// A wrong code returns `422` with an error on `/code`. Without a
+	// pending enrollment, or after it expired (15 minutes), the call
+	// returns `404`: start again. With an authenticator app already
+	// confirmed it returns `409`.
+	//
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/users/me/two-factor/totp/confirm (the `ConfirmTotpEnrollment` operationId).
+	ConfirmTotpEnrollmentWithResponse(ctx context.Context, body ConfirmTotpEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmTotpEnrollmentResponse, error)
 
 	// DeleteUserWithResponse Delete a user
 	//
@@ -27000,6 +27407,248 @@ func (r RegenerateRecoveryCodesResponse) ContentType() string {
 	return ""
 }
 
+type RemoveTotpResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RemoveTotpResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RemoveTotpResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RemoveTotpResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RemoveTotpResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RemoveTotpResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RemoveTotpResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RemoveTotpResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemoveTotpResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RemoveTotpResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// StartTotpEnrollmentResponse200Headers the declared response headers of an HTTP 200 response for StartTotpEnrollment
+type StartTotpEnrollmentResponse200Headers struct {
+	CacheControl *string
+}
+
+type StartTotpEnrollmentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TotpEnrollment
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *StartTotpEnrollmentResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StartTotpEnrollmentResponse) GetJSON200() *TotpEnrollment {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r StartTotpEnrollmentResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r StartTotpEnrollmentResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r StartTotpEnrollmentResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r StartTotpEnrollmentResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r StartTotpEnrollmentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StartTotpEnrollmentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StartTotpEnrollmentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StartTotpEnrollmentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ConfirmTotpEnrollmentResponse200Headers the declared response headers of an HTTP 200 response for ConfirmTotpEnrollment
+type ConfirmTotpEnrollmentResponse200Headers struct {
+	CacheControl *string
+}
+
+type ConfirmTotpEnrollmentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TotpConfirmed
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ConfirmTotpEnrollmentResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ConfirmTotpEnrollmentResponse) GetJSON200() *TotpConfirmed {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ConfirmTotpEnrollmentResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ConfirmTotpEnrollmentResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ConfirmTotpEnrollmentResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ConfirmTotpEnrollmentResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ConfirmTotpEnrollmentResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ConfirmTotpEnrollmentResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ConfirmTotpEnrollmentResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ConfirmTotpEnrollmentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ConfirmTotpEnrollmentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ConfirmTotpEnrollmentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ConfirmTotpEnrollmentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type DeleteUserResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -28010,7 +28659,11 @@ func (c *ClientWithResponses) LoginWithResponse(ctx context.Context, body LoginJ
 //
 //   - `recovery_code`: send `code`, a recovery code with or without its
 //     dashes. Each code works once.
-//   - `totp` and `webauthn` are listed once they are available.
+//   - `totp`: send `code`, the 6 digits the authenticator app shows. A
+//     code from the step before or after the current one is accepted,
+//     and each works once: a code of a step already used, or of an
+//     earlier one, is wrong.
+//   - `webauthn` is listed once it is available.
 //
 // A wrong code returns `422` with an error on `/code` and counts
 // toward login throttling (`429`); the login stays pending, so the user
@@ -28039,7 +28692,11 @@ func (c *ClientWithResponses) LoginSecondFactorWithBodyWithResponse(ctx context.
 //
 //   - `recovery_code`: send `code`, a recovery code with or without its
 //     dashes. Each code works once.
-//   - `totp` and `webauthn` are listed once they are available.
+//   - `totp`: send `code`, the 6 digits the authenticator app shows. A
+//     code from the step before or after the current one is accepted,
+//     and each works once: a code of a step already used, or of an
+//     earlier one, is wrong.
+//   - `webauthn` is listed once it is available.
 //
 // A wrong code returns `422` with an error on `/code` and counts
 // toward login throttling (`429`); the login stays pending, so the user
@@ -30702,6 +31359,104 @@ func (c *ClientWithResponses) RegenerateRecoveryCodesWithResponse(ctx context.Co
 		return nil, err
 	}
 	return ParseRegenerateRecoveryCodesResponse(rsp)
+}
+
+// RemoveTotpWithResponse Remove the current user's authenticator app
+//
+// Removes the current user's authenticator app and signs them out of
+// their other sessions; API tokens keep working. If it is the user's
+// last second factor and `two_factor.required` covers their role, the
+// call returns `409` and changes nothing. Without an authenticator app
+// it returns `404`. Removing one that hasn't been confirmed only
+// cancels the enrollment.
+//
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v1/users/me/two-factor/totp (the `RemoveTotp` operationId).
+func (c *ClientWithResponses) RemoveTotpWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RemoveTotpResponse, error) {
+	rsp, err := c.RemoveTotp(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveTotpResponse(rsp)
+}
+
+// StartTotpEnrollmentWithResponse Start enrolling an authenticator app
+//
+// Creates a new TOTP secret (RFC 6238: SHA-1, 6 digits, 30-second
+// steps) for the current user and returns it, with an `otpauth://` URI
+// for a QR code. It is stored sealed with the master key, and isn't a
+// second factor until `POST /api/v1/users/me/two-factor/totp/confirm`
+// confirms it with a code, within 15 minutes; after that it expires.
+// Calling this again before confirming replaces the secret. A user
+// has at most one authenticator app: with one already confirmed, this
+// returns `409`; remove it first to replace it.
+//
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/users/me/two-factor/totp (the `StartTotpEnrollment` operationId).
+func (c *ClientWithResponses) StartTotpEnrollmentWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*StartTotpEnrollmentResponse, error) {
+	rsp, err := c.StartTotpEnrollment(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartTotpEnrollmentResponse(rsp)
+}
+
+// ConfirmTotpEnrollmentWithBodyWithResponse Confirm an authenticator app with a code
+//
+// Activates the authenticator app started with `POST
+// /api/v1/users/me/two-factor/totp`, given a code from it. From then
+// on, logins need a second factor. If it is the user's first second
+// factor, the response also holds their recovery codes, shown only
+// this once. The code can't be used again to log in.
+//
+// A wrong code returns `422` with an error on `/code`. Without a
+// pending enrollment, or after it expired (15 minutes), the call
+// returns `404`: start again. With an authenticator app already
+// confirmed it returns `409`.
+//
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/users/me/two-factor/totp/confirm (the `ConfirmTotpEnrollment` operationId).
+func (c *ClientWithResponses) ConfirmTotpEnrollmentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ConfirmTotpEnrollmentResponse, error) {
+	rsp, err := c.ConfirmTotpEnrollmentWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConfirmTotpEnrollmentResponse(rsp)
+}
+
+// ConfirmTotpEnrollmentWithResponse Confirm an authenticator app with a code
+//
+// Activates the authenticator app started with `POST
+// /api/v1/users/me/two-factor/totp`, given a code from it. From then
+// on, logins need a second factor. If it is the user's first second
+// factor, the response also holds their recovery codes, shown only
+// this once. The code can't be used again to log in.
+//
+// A wrong code returns `422` with an error on `/code`. Without a
+// pending enrollment, or after it expired (15 minutes), the call
+// returns `404`: start again. With an authenticator app already
+// confirmed it returns `409`.
+//
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/users/me/two-factor/totp/confirm (the `ConfirmTotpEnrollment` operationId).
+func (c *ClientWithResponses) ConfirmTotpEnrollmentWithResponse(ctx context.Context, body ConfirmTotpEnrollmentJSONRequestBody, reqEditors ...RequestEditorFn) (*ConfirmTotpEnrollmentResponse, error) {
+	rsp, err := c.ConfirmTotpEnrollment(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseConfirmTotpEnrollmentResponse(rsp)
 }
 
 // DeleteUserWithResponse Delete a user
@@ -37848,6 +38603,218 @@ func ParseRegenerateRecoveryCodesResponse(rsp *http.Response) (*RegenerateRecove
 		}
 		response.ApplicationProblemJSONDefault = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseRemoveTotpResponse parses an HTTP response from a RemoveTotpWithResponse call
+func ParseRemoveTotpResponse(rsp *http.Response) (*RemoveTotpResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemoveTotpResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStartTotpEnrollmentResponse parses an HTTP response from a StartTotpEnrollmentWithResponse call
+func ParseStartTotpEnrollmentResponse(rsp *http.Response) (*StartTotpEnrollmentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StartTotpEnrollmentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TotpEnrollment
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers StartTotpEnrollmentResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers200 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseConfirmTotpEnrollmentResponse parses an HTTP response from a ConfirmTotpEnrollmentWithResponse call
+func ParseConfirmTotpEnrollmentResponse(rsp *http.Response) (*ConfirmTotpEnrollmentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ConfirmTotpEnrollmentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TotpConfirmed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ConfirmTotpEnrollmentResponse200Headers
+		if values := rsp.Header.Values("Cache-Control"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Cache-Control", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.CacheControl = &value
+		}
+		response.Headers200 = &headers
 	}
 
 	return response, nil

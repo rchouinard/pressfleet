@@ -93,7 +93,11 @@ export interface paths {
          *
          *     * `recovery_code`: send `code`, a recovery code with or without its
          *       dashes. Each code works once.
-         *     * `totp` and `webauthn` are listed once they are available.
+         *     * `totp`: send `code`, the 6 digits the authenticator app shows. A
+         *       code from the step before or after the current one is accepted,
+         *       and each works once: a code of a step already used, or of an
+         *       earlier one, is wrong.
+         *     * `webauthn` is listed once it is available.
          *
          *     A wrong code returns `422` with an error on `/code` and counts
          *     toward login throttling (`429`); the login stays pending, so the user
@@ -295,6 +299,77 @@ export interface paths {
          *     Only dashboard sessions may call this; API tokens get `403`.
          */
         post: operations["regenerateRecoveryCodes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/me/two-factor/totp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start enrolling an authenticator app
+         * @description Creates a new TOTP secret (RFC 6238: SHA-1, 6 digits, 30-second
+         *     steps) for the current user and returns it, with an `otpauth://` URI
+         *     for a QR code. It is stored sealed with the master key, and isn't a
+         *     second factor until `POST /api/v1/users/me/two-factor/totp/confirm`
+         *     confirms it with a code, within 15 minutes; after that it expires.
+         *     Calling this again before confirming replaces the secret. A user
+         *     has at most one authenticator app: with one already confirmed, this
+         *     returns `409`; remove it first to replace it.
+         *
+         *     Only dashboard sessions may call this; API tokens get `403`.
+         */
+        post: operations["startTotpEnrollment"];
+        /**
+         * Remove the current user's authenticator app
+         * @description Removes the current user's authenticator app and signs them out of
+         *     their other sessions; API tokens keep working. If it is the user's
+         *     last second factor and `two_factor.required` covers their role, the
+         *     call returns `409` and changes nothing. Without an authenticator app
+         *     it returns `404`. Removing one that hasn't been confirmed only
+         *     cancels the enrollment.
+         *
+         *     Only dashboard sessions may call this; API tokens get `403`.
+         */
+        delete: operations["removeTotp"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/me/two-factor/totp/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm an authenticator app with a code
+         * @description Activates the authenticator app started with `POST
+         *     /api/v1/users/me/two-factor/totp`, given a code from it. From then
+         *     on, logins need a second factor. If it is the user's first second
+         *     factor, the response also holds their recovery codes, shown only
+         *     this once. The code can't be used again to log in.
+         *
+         *     A wrong code returns `422` with an error on `/code`. Without a
+         *     pending enrollment, or after it expired (15 minutes), the call
+         *     returns `404`: start again. With an authenticator app already
+         *     confirmed it returns `409`.
+         *
+         *     Only dashboard sessions may call this; API tokens get `403`.
+         */
+        post: operations["confirmTotpEnrollment"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2933,6 +3008,39 @@ export interface components {
             /** @description Ten single-use codes, each 16 characters in groups of four. Shown only once. */
             codes: string[];
         };
+        TotpEnrollment: {
+            /**
+             * @description The secret in base32 (160 bits), for typing into an app by hand. Shown only once.
+             * @example JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
+             */
+            secret: string;
+            /**
+             * @description The `otpauth://totp/` URI for a QR code, with the secret, the
+             *     issuer `PressFleet`, and an account name of the user's email and
+             *     the dashboard domain.
+             * @example otpauth://totp/PressFleet:admin@example.com%20%28dashboard.example.com%29?algorithm=SHA1&digits=6&issuer=PressFleet&period=30&secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
+             */
+            uri: string;
+            /**
+             * Format: date-time
+             * @description When the secret expires unless confirmed.
+             */
+            expires_at: string;
+        };
+        TotpConfirmation: {
+            /**
+             * Format: password
+             * @description A code the authenticator app shows.
+             */
+            code: string;
+        };
+        TotpConfirmed: {
+            /**
+             * @description On the user's first second factor only: ten single-use recovery
+             *     codes, each 16 characters in groups of four. Shown only once.
+             */
+            recovery_codes?: string[];
+        };
         User: {
             id: components["schemas"]["ID"];
             email: components["schemas"]["Email"];
@@ -5423,6 +5531,88 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    startTotpEnrollment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The unconfirmed secret. It is shown only this once. */
+            200: {
+                headers: {
+                    /** @description Always `no-store`. */
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TotpEnrollment"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    removeTotp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            default: components["responses"]["Error"];
+        };
+    };
+    confirmTotpEnrollment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TotpConfirmation"];
+            };
+        };
+        responses: {
+            /** @description The authenticator app is active. */
+            200: {
+                headers: {
+                    /** @description Always `no-store`. */
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TotpConfirmed"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableContent"];
             default: components["responses"]["Error"];
         };
     };
