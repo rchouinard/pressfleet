@@ -212,6 +212,8 @@ func TestSomething(t *testing.T) {
 
 `e2e.Start` is slow (seconds locally, longer on a cold CI runner), so group related checks as subtests of one test. `p.NewClient` gives an unauthenticated client, `p.Login` logs in another user, and `p.BearerClient` uses an API token. `p.Project` is the platform's `compose.Project`, for checks on the containers themselves.
 
+Session clients (`p.Client`, and every client `p.Login` returns, including after `Restart`) reauthenticate on demand. The platform keeps `two_factor.reauthentication` on, as it ships, so sensitive actions (deleting sites, creating users, tokens, and SSH keys, read-write database sessions) are refused with the `reauthentication-required` problem type once the session's last check is older than 10 minutes, and many tests take them later than that. When that happens, the client posts the user's password to `POST /api/v1/auth/reauthenticate` and sends the request once more, body included. Harness users have no second factor, so the password is enough. Bearer clients are never asked.
+
 The harness never runs the `docker` CLI itself. It goes through `compose.Project`, like all other Docker access (design doc §4.2).
 
 ### In CI
@@ -312,6 +314,8 @@ The fixtures (`ui/e2e/fixtures/`):
 | `session.ts` | `signIn` (a session from the API handed to the browser as its cookie, which is fast), `signInThroughForm`, `signOut` |
 | `jobs.ts` | `waitForJobInUI` (waits on a job's progress view until it shows the state), `jobProgress`, `jobIdIn` (the job a progress view shows), `jobIdFromURL`, `JobState` |
 | `ui.ts` | `choose` (Nuxt UI selects), `toast`, `expectLoginPage`, `download` (a download a link starts, as bytes) |
+
+The API clients `login` returns (`adminApi` and each `asRole(...).api`) reauthenticate on demand like the Go harness's session clients (`fixtures/reauth.ts`): `adminApi` lasts as long as its worker, longer than the 10-minute `two_factor.reauthentication_max_age`, so a sensitive action through it, such as `createUser`, would otherwise be refused late in a run. Browser pages don't need it, since each test signs in fresh. The dashboard's own reauthentication dialog is #158.
 
 Two-factor authentication (#160) will add a step after the password; it goes into `session.ts` (`signInThroughForm` and `signIn`), and the virtual WebAuthn authenticator becomes a fixture of its own in `fixtures/index.ts`, created over CDP on a page's context (`context.newCDPSession(page)`, then `WebAuthn.enable` and `WebAuthn.addVirtualAuthenticator`), so specs keep calling the same helpers.
 
