@@ -1,8 +1,10 @@
 name: E2E
 
-# End-to-end tests (control-plane/internal/e2e, docs/testing.md): build the
-# control plane image, boot the platform with Docker Compose, and drive it
-# through the API.
+# End-to-end tests (docs/testing.md): build the control plane image, boot
+# the platform with Docker Compose, and drive it through the API
+# (control-plane/internal/e2e, job e2e) and through the dashboard in
+# Chromium (ui/e2e with Playwright, job dashboard). The two jobs run side
+# by side, each on its own runner.
 #
 #   push to main       always
 #   manual             always
@@ -97,3 +99,66 @@ jobs:
           # TestUpgradeRecovery downloads the CLI of the minimum
           # upgradable-from release, from a private repository for now.
           GH_TOKEN: ${{ github.token }}
+
+  dashboard:
+    name: Dashboard E2E
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e')
+    runs-on: ubuntu-latest
+    # The suite takes about five minutes on a workstation (go test's own
+    # limit is 30m, in the Makefile); building the image and, when images/
+    # changed, the site images, takes most of the rest.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # to diff against the base or previous commit
+      - uses: jdx/mise-action@v4
+      - uses: ./.github/actions/go-cache
+      - uses: ./.github/actions/pnpm-cache
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: pnpm -C ui install --frozen-lockfile
+      # Chromium only, the build matching the pinned Playwright, with its
+      # system libraries.
+      - run: pnpm -C ui exec playwright install --with-deps chromium
+      # Same decision as the e2e job: test the tree's site images when
+      # images/ changed.
+      - id: sites
+        name: Decide whether to build the site images
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+          pull_request)
+            changed="$(git diff --name-only "$BASE" HEAD)" ;;
+          push)
+            if git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              changed="$(git diff --name-only "$BEFORE" HEAD)"
+            else
+              changed="images/"
+            fi ;;
+          *)
+            changed="images/" ;;
+          esac
+          if grep -q '^images/' <<<"$changed"; then build=true; else build=false; fi
+          echo "build=$build" >>"$GITHUB_OUTPUT"
+      - if: steps.sites.outputs.build == 'true'
+        name: Build the site images the suite uses
+        run: make images SITE_PHP="$(images/matrix.sh php | head -n 2 | xargs)"
+      - run: make test-ui-e2e
+      # Traces and screenshots of the failed tests, the HTML report, and the
+      # platform's container logs (ui/test-results/platform-logs.txt).
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dashboard-e2e
+          path: |
+            ui/test-results/
+            ui/playwright-report/
+          retention-days: 14
+          if-no-files-found: ignore

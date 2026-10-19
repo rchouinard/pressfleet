@@ -78,6 +78,7 @@ func TestLoadPrecedence(t *testing.T) {
 		// default
 		PlatformProject:   "pressfleet",
 		WordPressSecurity: config.DefaultWordPressSecurity(),             // default
+		TwoFactor:         config.DefaultTwoFactor(),                     // default
 		Uploads:           config.DefaultUploads(),                       // default
 		Alerts:            config.DefaultAlerts(),                        // default
 		DatabaseExport:    config.DatabaseExportConfig{TTLSeconds: 3600}, // default

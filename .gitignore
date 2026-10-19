@@ -16,6 +16,9 @@ go.work.sum
 /ui/.output/
 /ui/.data/
 /ui/dist
+/ui/test-results/
+/ui/playwright-report/
+/ui/e2e/.platform.json
 
 # Local configuration and runtime data
 .env

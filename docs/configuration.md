@@ -223,6 +223,9 @@ Old names are accepted for at least one minor release after the change, and unti
 | `wordpress_security.headers` | `PRESSFLEET_WORDPRESS_SECURITY_HEADERS` | | `true` | Send `Referrer-Policy`, `X-Frame-Options`, and `Permissions-Policy` from every site, and HSTS from live sites' primary domains and aliases. |
 | `wordpress_security.two_factor` | `PRESSFLEET_WORDPRESS_SECURITY_TWO_FACTOR` | | `off` | The Two Factor plugin: `off`, `optional` (installed and activated; users opt in), or `required_for_admins` (also: every administrator must set up a second factor at their next login, including the one provisioning creates, and the plugin can't be deactivated). Reaches existing sites when the control plane restarts. Turning it off later stops requiring it but leaves the plugin installed. |
 | `wordpress_security.disable_application_passwords` | `PRESSFLEET_WORDPRESS_SECURITY_DISABLE_APPLICATION_PASSWORDS` | | `false` | Turn off WordPress application passwords. Off by default because integrations rely on them. |
+| `two_factor.required` | `PRESSFLEET_TWO_FACTOR_REQUIRED` | | `off` | Who must use a second factor to log in to the dashboard: `off` (optional for everyone), `admins` (admins must enroll), or `all` (every user must). See [Dashboard two-factor authentication](#dashboard-two-factor-authentication). |
+| `two_factor.reauthentication` | `PRESSFLEET_TWO_FACTOR_REAUTHENTICATION` | | `on` | `on` or `off`: ask for a fresh check (a second factor, or the password for users without one) before sensitive dashboard actions. |
+| `two_factor.reauthentication_max_age` | `PRESSFLEET_TWO_FACTOR_REAUTHENTICATION_MAX_AGE` | | `10m` | How long a check counts as fresh, as a duration from `1m` to `1h`. |
 
 ## Changing settings
 
@@ -239,7 +242,7 @@ Edit the file with care: it must stay valid YAML. `upgrade` refuses an invalid o
 
 | Settings | Takes effect |
 | --- | --- |
-| Control plane settings: `jobs`, `audit`, `alerts`, `backup.schedule`, `backup.retention`, `backup.check`, `uploads`, `updates`, `database_export`, `site_export`, `sftp.idle_timeout_minutes`, `sftp.max_session_hours`, `metrics.enabled`, `metrics.interval_seconds`, `log`, `public_ip` | When the recreated control plane starts. Scheduled work (backups, retention, checks, audit cleanup) uses the new values from its next run. |
+| Control plane settings: `jobs`, `audit`, `two_factor`, `alerts`, `backup.schedule`, `backup.retention`, `backup.check`, `uploads`, `updates`, `database_export`, `site_export`, `sftp.idle_timeout_minutes`, `sftp.max_session_hours`, `metrics.enabled`, `metrics.interval_seconds`, `log`, `public_ip` | When the recreated control plane starts. Scheduled work (backups, retention, checks, audit cleanup) uses the new values from its next run. |
 | `wordpress_security`, `smtp` | When the control plane starts, it re-renders every site with the new values (see [WordPress security set](#wordpress-security-set)). |
 | `metrics.retention_days`, `metrics.public_domain`, `sftp.port`, `acme.email`, `acme.dns_resolvers` | When `upgrade` recreates the service they configure (VictoriaMetrics, Traefik, or the control plane, which publishes the SFTP port). |
 | `backup.backend`, `backup.s3` (other than the secret access key) | For backup repositories created afterwards. Existing repositories keep the location they were created with. |
@@ -252,7 +255,7 @@ These describe the installation itself. Changing them on an installed platform i
 
 - `data_dir`, `master_key_file`, `platform_project`, `listen`, `task_image`, and the `mariadb` and `redis` connection settings.
 - `database`: moving the state database between SQLite and PostgreSQL needs a migration that PressFleet doesn't provide.
-- `dashboard_domain` and `preview_base_domain`: sites keep the preview domains they were created with, and the new domain needs DNS records and certificates first.
+- `dashboard_domain` and `preview_base_domain`: sites keep the preview domains they were created with, and the new domain needs DNS records and certificates first. Changing `dashboard_domain` also makes every registered security key and passkey unusable, since WebAuthn credentials are bound to the domain they were registered on; their users must register them again.
 - `image_manifest_file` and `metrics.url`, for tests and development. A path in the config file that the control plane reads, such as `image_manifest_file`, is a path inside the control plane container.
 
 ### Rotating secrets and credentials
@@ -404,6 +407,19 @@ The dashboard logs in with a session cookie, `pressfleet_session`. It is always 
 `X-Forwarded-For` and `X-Forwarded-Proto` are only believed when the connection comes from `http.trusted_proxies`. The default, loopback and private networks, fits the Compose deployment: the control plane's port isn't published on the host, so only containers on its Docker network, Traefik among them, can reach it. The client address taken from `X-Forwarded-For` is used for login throttling and recorded with each session. If you publish the control plane port or put it behind another proxy, list exactly the proxy's addresses.
 
 Sessions end after 12 hours without use, 7 days after login, on logout, and when the user's password is changed or reset or the user is disabled. Failed logins are throttled in memory (5 failures per account and 20 per client address in 15 minutes); restarting the control plane resets the counters.
+
+## Dashboard two-factor authentication
+
+The `two_factor` settings control second factors for dashboard logins (design doc §6.2). They are separate from `wordpress_security.two_factor`, which is about wp-admin on sites.
+
+```yaml
+two_factor:
+  required: admins           # off, admins, or all
+  reauthentication: on       # on or off
+  reauthentication_max_age: 10m
+```
+
+Like the other control plane settings, a change applies when `pressfleet upgrade` recreates the control plane (see [Changing settings](#changing-settings)), and `upgrade` refuses an invalid value before it changes anything. Security keys and passkeys are bound to `dashboard_domain` (`localhost` without one), so changing that domain makes them unusable.
 
 ## Users
 

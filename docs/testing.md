@@ -1,12 +1,13 @@
 # Testing
 
-PressFleet has three kinds of tests.
+PressFleet has four kinds of tests.
 
 | Kind | Command | Needs | Runs in CI |
 | --- | --- | --- | --- |
 | Unit | `make test` | A C compiler (race detector) | Every push and PR |
 | Docker | `make test-platform`, `make images-test`, `PRESSFLEET_DOCKER_TESTS=1 go test ./...` | Docker Engine with Compose v2 | `images-test` in the Images workflow |
 | End to end | `make test-e2e` | Docker Engine with Compose v2 | Push to `main`, manual runs, and PRs labeled `e2e` |
+| Dashboard end to end | `make test-ui-e2e` | Docker Engine with Compose v2, Node.js and pnpm, Chromium | Push to `main`, manual runs, and PRs labeled `e2e` |
 
 Unit tests never need Docker. Besides `make test-platform`, a few packages have Docker tests that start the pinned platform image they need, such as `sitedb/mariadb` and `objectcache/redis` (the object cache isolation test: one site can't read, list, or flush another's keys). Tests that do are skipped unless `PRESSFLEET_DOCKER_TESTS=1`. The `sitedb/mariadb` dump and import round trip also runs the `mariadb-dump` and `mariadb` client programs, from `PATH` or from the directory in `PRESSFLEET_TEST_MARIADB_CLIENT_DIR`, and is skipped if they aren't found. State database tests run against SQLite, and also against PostgreSQL when `PRESSFLEET_TEST_POSTGRES_DSN` is set.
 
@@ -217,4 +218,153 @@ The harness never runs the `docker` CLI itself. It goes through `compose.Project
 
 The `E2E` workflow (`.github/workflows/e2e.yml`) runs `make test-e2e` on the runner's own Docker Engine. Add the `e2e` label to a PR to run it there. When the push or PR changes `images/`, it first builds the site images the tests use from the tree (`make images SITE_PHP="<two newest PHP branches>"`), since the published ones are stale or, on `main`, still being published by the Images workflow; otherwise the tests pull them from GHCR. It doesn't use Docker-in-Docker: the control plane mounts the data directory at the host's path and drives the host's Docker daemon, and with a `docker:dind` service those paths would have to exist inside the dind container instead of on the runner.
 
+The dashboard suite runs in the same workflow as its own job, `Dashboard E2E`, side by side with this one (see [Dashboard end-to-end tests](#dashboard-end-to-end-tests)).
+
 The tests run one after another. `make test-e2e` gives `go test` 60 minutes and the job 75, room for a cold runner that also builds the site images; raise both together when the suite outgrows them. Besides the site images, the tests pull the platform's pinned images, Pebble and its DNS server (`ghcr.io/letsencrypt`), and RustFS (Docker Hub) for `TestSiteBackupS3`. They need no MariaDB client on the runner: SQL runs in the platform's MariaDB container, or through the Go driver for database sessions.
+
+## Dashboard end-to-end tests
+
+The dashboard's end-to-end tests are [Playwright](https://playwright.dev) specs in `ui/e2e/`, run in Chromium against a real platform: the control plane image under test, booted by the e2e harness with fresh data, and the **embedded** dashboard served by that image through Traefik on `https://fleet.e2e.test`. They never run against `pnpm dev`, so the embedding, the Content-Security-Policy, `Secure` cookies, and CSRF are tested as they ship. They are kept apart from the Vitest unit tests in `ui/tests/`: `make ui-check` lints and typechecks them (`tsc -p e2e`) but doesn't run them, and Vitest only looks in `tests/`.
+
+### How Playwright and the Go harness connect
+
+A Go test, `TestDashboard` in `control-plane/internal/e2e/dashboard`, owns the platform and runs the suite:
+
+1. It calls `e2e.Start` (skipped unless `PRESSFLEET_DOCKER_TESTS=1` and `PRESSFLEET_TEST_CONTROL_PLANE_IMAGE` are set), makes the site images for the default PHP version available with `e2e.EnsureImages`, and starts the **harness server**, a small HTTP server on a loopback port (see below).
+2. It runs `pnpm exec playwright test` in `ui/` with the platform's details in the environment (read by `ui/e2e/env.ts`): `PRESSFLEET_E2E_BASE_URL` (`https://fleet.e2e.test`), `PRESSFLEET_E2E_INGRESS_ADDR` (Traefik's published HTTPS port), `PRESSFLEET_E2E_API_URL` (the control plane's published port), `PRESSFLEET_E2E_HARNESS_URL`, the admin's email and password, and `PRESSFLEET_E2E_PHP_VERSION`.
+3. When the suite ends, pass or fail, the usual e2e teardown runs: `docker compose down --volumes` and a check that nothing with the project's label is left. Before it, the test lists the sites that still exist and removes their projects afterwards, so a spec that failed halfway leaves nothing behind either. If the suite failed, the platform's container logs are written to `ui/test-results/platform-logs.txt` too, next to Playwright's traces and screenshots.
+
+This way round (Go starts Playwright, rather than a Playwright global setup starting a Go command) keeps one owner for the platform's lifetime, so teardown runs through `t.Cleanup` like every other e2e test, and keeps all Docker access in Go, through `compose.Project`: nothing in the specs runs the `docker` CLI (design doc §4.2). It lives in its own package so `make test-e2e` (the API suite, `./control-plane/internal/e2e/`) doesn't need Node.js or a browser.
+
+The browser reaches the dashboard by its real name. `playwright.config.ts` launches Chromium with `--host-resolver-rules=MAP fleet.e2e.test:443 <Traefik's HTTPS address>`, so the page's origin is `https://fleet.e2e.test` exactly as in production, and `ignoreHTTPSErrors` accepts Traefik's self-signed default certificate (the harness never asks a CA for one). It also turns off QUIC (only Traefik's TCP ports are published) and any proxy the environment sets (the page needs no other origin).
+
+### Running them
+
+```sh
+mise exec -- make test-ui-e2e
+```
+
+This installs the UI's dependencies if needed, builds the control plane image as `pressfleet-control-plane:ui-e2e` (which builds and embeds the dashboard), runs `TestDashboard`, and removes the image. It needs the site images, like `TestSiteCreateDelete` (`make images SITE_PHP=<default PHP version>` builds them). The suite takes about a minute locally once the images are present, most of it the site spec's provisioning and deletion. `PLAYWRIGHT_ARGS` goes to `playwright test`, split on spaces:
+
+```sh
+make test-ui-e2e PLAYWRIGHT_ARGS="-g offboard"
+make test-ui-e2e PLAYWRIGHT_ARGS="--headed --workers=1"
+```
+
+Playwright needs its Chromium: run `pnpm -C ui exec playwright install chromium` once (CI installs it with `--with-deps`). To use a Chromium you already have instead, set `PRESSFLEET_E2E_CHROMIUM` to its executable; it should be close to the revision the pinned Playwright expects.
+
+**While writing specs**, boot a platform once and run the specs against it as often as you like:
+
+```sh
+make image IMAGE=pressfleet-control-plane:dev
+PRESSFLEET_UI_E2E_HOLD=1 PRESSFLEET_DOCKER_TESTS=1 PRESSFLEET_TEST_CONTROL_PLANE_IMAGE=pressfleet-control-plane:dev \
+  go test -count=1 -v -timeout 4h -run TestDashboard ./control-plane/internal/e2e/dashboard/
+```
+
+In hold mode the test doesn't run the suite. It writes the platform's details to `ui/e2e/.platform.json` (git-ignored), which `playwright.config.ts` reads when the environment names no platform, and waits. In another terminal, run `pnpm -C ui test:e2e` with any Playwright options (`--headed`, `--ui`, `--debug`, `-g ...`). Press Ctrl-C in the first terminal to tear the platform down; the file is removed with it. Rebuild the image and restart hold mode after changing the dashboard itself: the specs test the embedded build, not your working tree.
+
+### Debugging a failure
+
+- **Traces.** A failed test keeps its trace (`trace: 'retain-on-failure'`) and a screenshot in `ui/test-results/<test>/`. Open a trace with `pnpm -C ui exec playwright show-trace ui/test-results/<test>/trace.zip`: every action, the DOM before and after it, network requests, and console messages (a CSP violation shows there). `ui/test-results/<test>/error-context.md` has the page's accessibility tree at the failure, which is usually enough to fix a locator.
+- **The HTML report** is in `ui/playwright-report/` (`pnpm -C ui exec playwright show-report`).
+- **Control plane logs.** `ui/test-results/platform-logs.txt` has every container's logs from a failed run; the Go test's log has them too.
+- **In CI** the `Dashboard E2E` job uploads `ui/test-results/` and `ui/playwright-report/` as the `dashboard-e2e` artifact when it fails.
+- **Headed and step by step.** In hold mode, `pnpm -C ui test:e2e --headed -g <name>` or `--debug` (the Playwright inspector) or `--ui`.
+
+### Writing a spec
+
+```ts
+import { createClientGroup } from './fixtures/api'
+import { waitForJobInUI } from './fixtures/jobs'
+import { expect, test } from './fixtures'
+
+test('does the thing', async ({ adminPage: page, adminApi, harness }) => {
+  const group = await createClientGroup(adminApi) // setup through the API
+  await page.goto('/client-groups')
+  await page.getByRole('button', { name: `Delete ${group.name}` }).click() // the operation, through the UI
+  // ...
+  // the outcome, against platform state
+})
+```
+
+Conventions, for this suite and the ones that build on it (#175, #176, #177, #160):
+
+- **The operation under test goes through the UI.** Setup and checking the outcome may go through the API (`adminApi`, or a role's own `api`) or the harness.
+- **Outcomes are checked against platform state**, not only against text on the page: the API shows the record changed, a revoked token gets `401`, a deleted site leaves nothing on Docker, on disk, in MariaDB, or in the object cache (`harness.siteLeftovers`), an offboarded group's repository is gone from disk (`harness.exists`).
+- **Locators use roles and labels** (`getByRole`, `getByLabel`), never CSS classes or Nuxt UI's markup. If a control can't be found by role and name, give it an accessible name in the component: that fixes it for screen readers too.
+- **No fixed sleeps.** Wait on visible state (`expect(...).toBeVisible()`, `toHaveURL`) or on a job's end (`waitForJobInUI`, or `waitForJob` through the API for setup).
+- **Specs run in parallel on one platform.** Give records unique names (`unique()`, `uniqueEmail()`), create the users you change (`asRole` or `createUser`) rather than changing the platform admin, and don't rely on a list being empty.
+
+The fixtures (`ui/e2e/fixtures/`):
+
+| Fixture or helper | What it does |
+| --- | --- |
+| `env` | The platform's details (`e2e/env.ts`) |
+| `adminApi` | The API as the platform's admin: the dashboard's own typed client (`app/utils/api-client.ts`) pointed at the control plane's published port, with a session |
+| `adminPage` | The default page, signed in as the platform's admin |
+| `asRole(role)` | Creates a user with the role and returns `{ user, page, api }`: a browser context of its own, signed in, and an API client with the user's session |
+| `harness` | Platform state the API doesn't show, from the Go harness server |
+| `api.ts` | `login`, `withToken`, `createUser`, `createClientGroup`, `waitForJob`, `uploadFile`, `startFailingImport`, `apiError` (the `ApiError` of a call that should fail), `unique` |
+| `session.ts` | `signIn` (a session from the API handed to the browser as its cookie, which is fast), `signInThroughForm`, `signOut` |
+| `jobs.ts` | `waitForJobInUI` (waits on a job's progress view until it shows the state), `jobProgress`, `JobState` |
+| `ui.ts` | `choose` (Nuxt UI selects), `toast`, `expectLoginPage` |
+
+Two-factor authentication (#160) will add a step after the password; it goes into `session.ts` (`signInThroughForm` and `signIn`), and the virtual WebAuthn authenticator becomes a fixture of its own in `fixtures/index.ts`, created over CDP on a page's context (`context.newCDPSession(page)`, then `WebAuthn.enable` and `WebAuthn.addVirtualAuthenticator`), so specs keep calling the same helpers.
+
+The harness server (`control-plane/internal/e2e/dashboard/harness_test.go`, client in `ui/e2e/fixtures/harness.ts`) answers what only the host can see:
+
+| Endpoint | Answers |
+| --- | --- |
+| `GET /sites/{id}/leftovers` | What is left of a site, one entry per object: containers, networks, and volumes with its project's label, its directory under `sites/`, platform services on its network, its MariaDB database, user, and grants, and its object cache user. Empty once it is gone |
+| `POST /client-groups/{id}/backup-repository` | Creates the group's backup repository with `pressfleet repository create` in the control plane container, as an operator would before the group's first backup |
+| `GET /exists?path=` | Whether a path under the data directory exists, as the control plane sees it |
+
+Add an endpoint there, and a method to `harness.ts`, when a spec needs another such check.
+
+### In CI
+
+The `Dashboard E2E` job of the E2E workflow (`.github/workflows/e2e.yml`) runs on the same events as the API suite (push to `main`, manual runs, and PRs labeled `e2e`), on its own runner, side by side with it. It installs the UI's dependencies and Playwright's Chromium with its system libraries, builds the site images from the tree when `images/` changed (as the `E2E` job does), and runs `make test-ui-e2e`. `make test-ui-e2e` gives `go test` 30 minutes and Playwright 20 (`globalTimeout`), and the job has 45; raise them together when the suite outgrows them. On failure it uploads the traces, screenshots, HTML report, and control plane logs as the `dashboard-e2e` artifact.
+
+### Coverage
+
+How the Phase 1–4 operations (design doc §8) are covered through the dashboard. Rows marked *pending* belong to the follow-up issues.
+
+| Area | Operation | Spec | Checked against |
+| --- | --- | --- | --- |
+| Auth (#82) | Sign in (wrong password refused), sign out | `auth.spec.ts` › signs in through the form and out again | `Secure`, `HttpOnly`, `SameSite=Lax` session cookie; `last_login_at`; the old cookie gets `401` |
+| Auth (#82) | An ended session redirects to sign in, and back | `auth.spec.ts` › an ended session... | The session deleted on the server while the browser keeps its cookie |
+| Auth (#82) | Change your own password | `auth.spec.ts` › changes your own password | Old password refused, new one works, other sessions signed out |
+| Users (#82) | Create a user of each role | `users.spec.ts` › creates a user of each role | The user signs in with the role |
+| Users (#82) | Change a role; delete a user | `users.spec.ts` › changes a user's role, deletes a user | The API's user; `404` and refused sign-in after deletion |
+| Roles (§4.6) | Viewers and Operators don't see forbidden actions | `users.spec.ts` › a Viewer..., an Operator... | The API refuses the same actions with `403` |
+| API tokens (#82) | Create (shown once), revoke | `tokens.spec.ts` › creates an API token... | The token authenticates, then gets `401`; the secret is gone from the page |
+| SSH keys (#116) | Add, remove | `tokens.spec.ts` › adds an SSH key and removes it | The API's key list and fingerprint |
+| Client groups (#83) | Create, rename, delete | `client-groups.spec.ts` › creates, renames, and deletes... | The API's group, `404` after deletion |
+| Client groups (#83, #139) | Offboard (delete with the backup repository) | `client-groups.spec.ts` › offboards a client group... | The job succeeds; the group is `404` and its repository gone from disk |
+| Sites and jobs (#84) | Provision a site, follow its job, site status, jobs list and job page | `sites.spec.ts` › provisions a site... | The API's site `running`; its containers exist |
+| Sites and jobs (#84) | Delete a site | `sites.spec.ts` › provisions a site... | `404`; nothing left on Docker, on disk, in MariaDB, or in the object cache |
+| Jobs (#84) | A failed job shows its error | `sites.spec.ts` › a failed job shows its error | The API's job error; the rolled-back site left nothing |
+| Site settings (#85) | PHP version, resources, preview password, security set, core update policy and holds, cache purge | *pending: #175* | |
+| Domains (#86) | Aliases, go-live | *pending: #175* | |
+| Admin login (#130) | One-click wp-admin login | *pending: #175* | |
+| Updates (#125) | Pending plugin and theme updates | *pending: #175* | |
+| Backups (#87) | Back up, list snapshots, restore | *pending: #176* | |
+| Exports (#133, #134) | Site export, export from a snapshot, database export | *pending: #176* | |
+| Import, deploy (#116) | Import a site; deploy a package | *pending: #176* | |
+| Database access (#116) | Open and close a database session | *pending: #176* | |
+| Metrics (#88) | Site and platform charts | *pending: #177* | |
+| Logs (#89) | Site log stream, platform logs | *pending: #177* | |
+| Alerts (#90) | Channels, test notification, rules, firing and resolving alerts | *pending: #177* | |
+| Overview (#91) | Platform overview, capacity warning | *pending: #177* | |
+| Audit log (#105) | UI actions appear, filtering | *pending: #177* | |
+| Two-factor (#160) | Enrollment, sign-in with a security key | *pending: #160* | |
+
+Left out of the dashboard on purpose, so not covered here (their own e2e or unit tests cover them):
+
+| Operation | Why it isn't in the dashboard |
+| --- | --- |
+| `pressfleet init`, `doctor`, `upgrade` | Host CLI commands: they install, check, or replace the platform the dashboard runs on (§4.7). `TestInit`, `TestUpgrade`, and `TestUpgradeRecovery` cover them; the overview page shows the control plane's own doctor checks (#177) |
+| `pressfleet user create` (the first admin), `user reset-password` | Recovery and bootstrap paths for when nobody can sign in (§4.7) |
+| `pressfleet repository create`, `export`, `check`, `prune` | Operator tools for a client group's backup repository; exports hand the client a copy on the host. The group page shows the commands; prune and check also run on a schedule |
+| `pressfleet state restore`, `key generate`, `metrics-access rotate` | Restoring the state database from a backup, making a master key, and replacing the public metrics password: platform administration on the host or in the control plane container (§4.7) |
+| SFTP and database tunnels themselves | They are SSH, not the dashboard; the dashboard manages the keys and sessions (`TestSFTPGateway`, `TestDatabaseSessions`) |

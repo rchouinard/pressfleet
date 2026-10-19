@@ -93,8 +93,19 @@ test-e2e: ## Run the end-to-end tests against a freshly built image and real Doc
 	$(MAKE) image IMAGE=pressfleet-control-plane:e2e
 	GH_TOKEN="$${GH_TOKEN:-$$(gh auth token 2>/dev/null)}" \
 	PRESSFLEET_DOCKER_TESTS=1 PRESSFLEET_TEST_CONTROL_PLANE_IMAGE=pressfleet-control-plane:e2e \
-		go test -count=1 -v -timeout 60m ./control-plane/internal/e2e/...; \
+		go test -count=1 -v -timeout 60m ./control-plane/internal/e2e/; \
 		status=$$?; docker image rm pressfleet-control-plane:e2e >/dev/null; exit $$status
+
+# The Playwright suite in ui/e2e, against a platform booted by the e2e
+# harness (control-plane/internal/e2e/dashboard). PLAYWRIGHT_ARGS go to
+# `playwright test`, e.g. PLAYWRIGHT_ARGS="--headed -g provision".
+.PHONY: test-ui-e2e
+test-ui-e2e: ui/node_modules/.modules.yaml ## Run the dashboard's end-to-end tests (Playwright) against a freshly built image and real Docker
+	$(MAKE) image IMAGE=pressfleet-control-plane:ui-e2e
+	PRESSFLEET_DOCKER_TESTS=1 PRESSFLEET_TEST_CONTROL_PLANE_IMAGE=pressfleet-control-plane:ui-e2e \
+	PRESSFLEET_UI_E2E_ARGS="$(PLAYWRIGHT_ARGS)" \
+		go test -count=1 -v -timeout 30m ./control-plane/internal/e2e/dashboard/; \
+		status=$$?; docker image rm pressfleet-control-plane:ui-e2e >/dev/null; exit $$status
 
 .PHONY: lint
 lint: ## Run golangci-lint

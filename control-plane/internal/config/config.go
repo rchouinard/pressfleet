@@ -90,6 +90,8 @@ type Config struct {
 	SMTP SMTPConfig `yaml:"smtp"`
 	// WordPressSecurity is the install-wide WordPress security set (§6.1).
 	WordPressSecurity WordPressSecurityConfig `yaml:"wordpress_security"`
+	// TwoFactor is the dashboard two-factor policy (§6.2).
+	TwoFactor TwoFactorConfig `yaml:"two_factor"`
 	// ACME configures how Traefik obtains TLS certificates.
 	ACME ACMEConfig `yaml:"acme"`
 	// Backup configures where client group backup repositories live
@@ -602,6 +604,7 @@ func Default() Config {
 			Retention: DefaultBackupRetention(), Check: DefaultBackupCheck(),
 		},
 		WordPressSecurity: DefaultWordPressSecurity(),
+		TwoFactor:         DefaultTwoFactor(),
 		Uploads:           DefaultUploads(),
 		Alerts:            DefaultAlerts(),
 		DatabaseExport:    DatabaseExportConfig{TTLSeconds: 3600},
@@ -801,7 +804,7 @@ func ApplyEnv(cfg *Config, env LookupEnv) error {
 			*v.field(cfg) = splitList(val)
 		}
 	}
-	return cfg.WordPressSecurity.applyEnv(env)
+	return errors.Join(cfg.WordPressSecurity.applyEnv(env), cfg.TwoFactor.applyEnv(env))
 }
 
 // envVarNames returns the name of every environment variable ApplyEnv
@@ -829,6 +832,7 @@ func envVarNames() []string {
 	for _, v := range wpSecurityStrings {
 		names = append(names, envWPSecurity+v.name)
 	}
+	names = append(names, twoFactorEnvVars...)
 	return names
 }
 
@@ -971,6 +975,9 @@ func (c Config) Validate() error {
 		errs = append(errs, err)
 	}
 	if err := c.WordPressSecurity.validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.TwoFactor.validate(); err != nil {
 		errs = append(errs, err)
 	}
 	if err := c.Backup.Validate(); err != nil {
