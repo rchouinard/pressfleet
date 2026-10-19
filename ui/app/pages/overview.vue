@@ -103,7 +103,7 @@ const busy = computed(() => [metricsStatus.value, capacityStatus.value, readySta
       <h2 id="capacity-heading" class="font-medium">Capacity</h2>
       <ProblemAlert v-if="capacity?.error" :error="capacity.error" />
       <p v-else-if="!assessment" class="text-sm text-muted" role="status">Loading reservations...</p>
-      <CapacityWarning v-else :assessment="assessment" :sites="capacity?.capacity?.counted_sites ?? 0" />
+      <OverviewCapacityWarning v-else :assessment="assessment" :sites="capacity?.capacity?.counted_sites ?? 0" />
 
       <ProblemAlert v-if="metrics?.error" :error="metrics.error" />
       <p v-else-if="!metrics" class="text-sm text-muted" role="status">Loading host figures...</p>
@@ -123,14 +123,14 @@ const busy = computed(() => [metricsStatus.value, capacityStatus.value, readySta
       <ProblemAlert v-if="ready?.error" :error="ready.error" />
       <p v-else-if="!ready" class="text-sm text-muted" role="status">Checking...</p>
       <p v-else-if="!ready.readiness" class="text-sm text-muted">The control plane did not return a readiness report.</p>
-      <ReadinessList v-else :readiness="ready.readiness" />
+      <OverviewReadinessList v-else :readiness="ready.readiness" />
     </section>
 
     <section aria-labelledby="doctor-heading" class="space-y-3">
       <h2 id="doctor-heading" class="font-medium">Host checks (doctor)</h2>
       <ProblemAlert v-if="doctorResult?.error" :error="doctorResult.error" />
       <p v-else-if="!doctorResult" class="text-sm text-muted" role="status">Running checks...</p>
-      <DoctorChecks v-else-if="doctorResult.report" :report="doctorResult.report" />
+      <OverviewDoctorChecks v-else-if="doctorResult.report" :report="doctorResult.report" />
     </section>
   </div>
 </template>
