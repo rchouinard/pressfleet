@@ -107,7 +107,7 @@ func (a *app) withAuth(ctx context.Context, fn func(*auth.Service) error) error 
 		return err
 	}
 	defer func() { _ = db.Close() }()
-	return fn(auth.NewService(db, auth.Options{Logger: a.log}))
+	return fn(auth.NewService(db, a.authOptions()))
 }
 
 // newPassword reads a password from stdin or generates one.
@@ -135,4 +135,19 @@ func printUser(w io.Writer, verb string, u store.User, pw redact.Secret, generat
 	}
 	_, err := fmt.Fprintf(w, "Password: %s\nStore it now; it can't be shown again.\n", pw.Reveal())
 	return err
+}
+
+// authOptions are the auth service's options from the configuration, for
+// the API and the in-container user commands alike, so both apply the same
+// two-factor policy.
+func (a *app) authOptions() auth.Options {
+	tf := a.cfg.TwoFactor
+	return auth.Options{
+		Logger: a.log,
+		TwoFactor: auth.TwoFactorPolicy{
+			Required:               auth.TwoFactorRequirement(tf.Required),
+			Reauthentication:       tf.ReauthenticationEnabled(),
+			ReauthenticationMaxAge: tf.ReauthenticationMaxAge,
+		},
+	}
 }

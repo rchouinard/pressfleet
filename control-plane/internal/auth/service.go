@@ -83,6 +83,9 @@ type Options struct {
 	// built-in recovery codes. A user whose only factors have no verifier
 	// here can still log in only with a recovery code.
 	Factors []FactorVerifier
+	// TwoFactor is the platform's two-factor policy. The zero value
+	// requires nothing (see TwoFactorPolicy).
+	TwoFactor TwoFactorPolicy
 }
 
 // Service implements authentication on top of the state database. It is
@@ -97,6 +100,8 @@ type Service struct {
 	maxAge   time.Duration
 	factors  map[FactorMethod]FactorVerifier
 	pending  *challengeStore[pendingLogin]
+
+	twoFactor TwoFactorPolicy
 
 	dummyOnce sync.Once
 	dummyHash redact.Secret
@@ -127,6 +132,8 @@ func NewService(db *store.DB, opts Options) *Service {
 		maxAge:   opts.SessionMaxAge,
 		factors:  map[FactorMethod]FactorVerifier{},
 		pending:  newChallengeStore[pendingLogin](now),
+
+		twoFactor: opts.TwoFactor,
 	}
 	for _, f := range opts.Factors {
 		s.factors[f.Method()] = f
