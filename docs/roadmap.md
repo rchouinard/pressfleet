@@ -223,7 +223,10 @@ Done when: every Phase 1–4 operation can be performed from the UI. (Design doc
 | [#91](https://github.com/rchouinard/pressfleet/issues/91) | UI: platform overview and capacity warnings | P1 | M | #81, #9, #72 |
 | [#92](https://github.com/rchouinard/pressfleet/issues/92) | ~~Decision: plugin/theme update visibility~~ Resolved | P2 | S | — |
 | [#125](https://github.com/rchouinard/pressfleet/issues/125) | Report pending plugin and theme updates as part of site health | P1 | M | #92, #84 |
-| [#93](https://github.com/rchouinard/pressfleet/issues/93) | UI end-to-end tests (Playwright) | P1 | L | #82, #85, #86, #87, #88, #89, #90, #91, #116, #125, #130, #134 |
+| [#93](https://github.com/rchouinard/pressfleet/issues/93) | UI end-to-end tests (Playwright): harness and core flows | P1 | L | #82, #84 |
+| [#175](https://github.com/rchouinard/pressfleet/issues/175) | UI e2e: site settings, go-live, one-click login, and plugin updates | P1 | M | #93 |
+| [#176](https://github.com/rchouinard/pressfleet/issues/176) | UI e2e: backups, restore, import, deploy, exports, and database access | P1 | M | #93 |
+| [#177](https://github.com/rchouinard/pressfleet/issues/177) | UI e2e: metrics, logs, alerts, overview, and audit log | P1 | M | #93 |
 | [#105](https://github.com/rchouinard/pressfleet/issues/105) | UI: audit log viewer | P1 | S | #81, #104 |
 | [#116](https://github.com/rchouinard/pressfleet/issues/116) | UI: site import, code deployment, SSH keys, and database access | P1 | M | #84, #82, #112, #113, #114, #115, #62 |
 | [#126](https://github.com/rchouinard/pressfleet/issues/126) | Design: one-click WordPress admin login from the dashboard | P1 | S | — |
@@ -248,9 +251,11 @@ Done when: every Phase 1–4 operation can be performed from the UI. (Design doc
 | [#157](https://github.com/rchouinard/pressfleet/issues/157) | Doctor: WebAuthn credentials bound to another relying party ID | P1 | S | #152 |
 | [#158](https://github.com/rchouinard/pressfleet/issues/158) | UI: login second step and reauthentication dialog | P1 | M | #151, #152, #154 |
 | [#159](https://github.com/rchouinard/pressfleet/issues/159) | UI: two-factor settings, forced enrollment, and Admin reset | P1 | M | #151, #152, #153, #155 |
-| [#160](https://github.com/rchouinard/pressfleet/issues/160) | Integration and end-to-end tests: dashboard two-factor | P1 | M | #147, #156, #158, #159 |
+| [#160](https://github.com/rchouinard/pressfleet/issues/160) | Integration and end-to-end tests: dashboard two-factor | P1 | M | #93, #147, #156, #158, #159 |
 
 **Two-factor (2026-10-18):** dashboard logins get TOTP, WebAuthn security keys and passkeys, and recovery codes, with an optional requirement, reauthentication for sensitive actions, and session-only API token creation (design doc §6.2, [#146](https://github.com/rchouinard/pressfleet/issues/146), [plan](dashboard-two-factor-plan.md)). #147 is independent and can land first. The security review (#97) depends on #160. Passwordless passkey sign-in is post-MVP (#161).
+
+**Dashboard end-to-end tests (2026-10-19):** #93 builds the Playwright harness on the e2e platform and covers auth, users, client groups, sites, and jobs. #175, #176, and #177 cover the remaining Phase 1–4 operations, and #160 the two-factor flows; all four build on #93. The M5 done-when is met when #93 and #175–#177 are closed.
 
 ### MVP Release Gate
 
