@@ -160,6 +160,9 @@ const (
 	ViewOwnSSHKeys    Action = "self.ssh_keys.view"
 	AddOwnSSHKey      Action = "self.ssh_keys.create"
 	DeleteOwnSSHKey   Action = "self.ssh_keys.delete"
+
+	// Replace their own recovery codes (design doc §6.2).
+	RegenerateRecoveryCodes Action = "self.two_factor.recovery_codes.regenerate"
 )
 
 // sshActions are the only actions an SSH key (auth.MethodSSHKey) may take:
@@ -178,6 +181,9 @@ var sshActions = map[Action]bool{
 // must trace back to a login (design doc §6.2).
 var sessionActions = map[Action]bool{
 	CreateOwnToken: true,
+	// Second factors are managed from sessions only (§6.2): a stolen token
+	// must not be able to swap the account's recovery codes for its own.
+	RegenerateRecoveryCodes: true,
 }
 
 // rule says who may take an action.
@@ -277,6 +283,8 @@ var rules = map[Action]rule{
 	ViewOwnSSHKeys:  {store.RoleViewer, false},
 	AddOwnSSHKey:    {store.RoleViewer, true},
 	DeleteOwnSSHKey: {store.RoleViewer, true},
+
+	RegenerateRecoveryCodes: {store.RoleViewer, true},
 }
 
 // Actions returns every action, for tests and documentation.

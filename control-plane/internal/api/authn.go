@@ -15,9 +15,11 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 )
 
-// Names of the session cookie and the CSRF header (see api/openapi.yaml).
+// Names of the session and pending-login cookies and the CSRF header (see
+// api/openapi.yaml).
 const (
 	SessionCookieName = "pressfleet_session"
+	LoginCookieName   = "pressfleet_login"
 	HeaderCSRFToken   = "X-CSRF-Token" //nolint:gosec // G101: a header name, not a credential
 )
 
@@ -201,6 +203,22 @@ func lastValue(vs []string) string {
 	}
 	parts := strings.Split(vs[len(vs)-1], ",")
 	return parts[len(parts)-1]
+}
+
+// loginCookie builds the pending-login cookie, which carries a login from
+// the password step to the second factor. Unlike the session cookie it is
+// SameSite=Strict, since no link from elsewhere needs to carry it, and its
+// path limits it to the login endpoints. Secure follows the session cookie.
+func (h *Handlers) loginCookie(ctx context.Context, value string, expires time.Time) *http.Cookie {
+	return &http.Cookie{ //nolint:gosec // G124: Secure is deliberately conditional on HTTPS, as for sessionCookie
+		Name:     LoginCookieName,
+		Value:    value,
+		Path:     "/api/v1/auth/login",
+		Expires:  expires,
+		HttpOnly: true,
+		Secure:   h.secureCookies || clientFromContext(ctx).HTTPS,
+		SameSite: http.SameSiteStrictMode,
+	}
 }
 
 // sessionCookie builds the session cookie. SameSite=Lax rather than Strict:

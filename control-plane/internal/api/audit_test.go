@@ -68,6 +68,14 @@ func TestEveryStateChangingOperationIsAudited(t *testing.T) {
 				before := len(allEvents(t, db))
 				w := do(t, h, sampleRequest(op, true))
 				events := allEvents(t, db)
+				if op.ID == "loginSecondFactor" {
+					// Public, and without a pending login there is no user
+					// to attribute it to, so nothing is recorded.
+					if len(events) != before {
+						t.Errorf("second step without a pending login recorded %d audit events", len(events)-before)
+					}
+					return
+				}
 				if !isUnsafe(op.Method) && !auditedReads[op.ID] {
 					if len(events) != before {
 						t.Errorf("read recorded %d audit events: %+v", len(events)-before, events[0])
@@ -88,9 +96,9 @@ func TestEveryStateChangingOperationIsAudited(t *testing.T) {
 				if w.Code >= 400 {
 					want.Result = store.AuditFailure
 				}
-				if op.ID == "createApiToken" {
-					// Only sessions may create tokens, so the token caller
-					// is denied.
+				if op.ID == "createApiToken" || op.ID == "regenerateRecoveryCodes" {
+					// Only sessions may create tokens and manage second
+					// factors, so the token caller is denied.
 					want.Result = store.AuditDenied
 				}
 				if op.ID == "login" {

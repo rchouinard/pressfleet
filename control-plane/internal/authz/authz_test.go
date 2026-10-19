@@ -90,6 +90,8 @@ var designTable = map[authz.Action]struct {
 	authz.ViewOwnSSHKeys:    {true, true, true, false},
 	authz.AddOwnSSHKey:      {true, true, true, true},
 	authz.DeleteOwnSSHKey:   {true, true, true, true},
+	// Replace their own recovery codes.
+	authz.RegenerateRecoveryCodes: {true, true, true, true},
 }
 
 // sshKeyActions are the actions an SSH key authenticates for; it can't
@@ -101,7 +103,8 @@ var sshKeyActions = map[authz.Action]bool{
 // sessionOnlyActions are the actions API tokens can't take whatever their
 // scope, because a token that could take them could outlive its revocation.
 var sessionOnlyActions = map[authz.Action]bool{
-	authz.CreateOwnToken: true,
+	authz.CreateOwnToken:          true,
+	authz.RegenerateRecoveryCodes: true,
 }
 
 func TestDesignTableCoversEveryAction(t *testing.T) {

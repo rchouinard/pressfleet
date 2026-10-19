@@ -30,6 +30,33 @@
 // The CSRF token for a session is an HMAC of the session token, so it is
 // tied to the session, changes with it, and needs no storage.
 //
+// # Second factors
+//
+// A user with a second factor (design doc §6.2) logs in in two steps. A
+// right password starts no session: Login returns a
+// *SecondFactorRequiredError holding a pending-login token (256 random
+// bits, valid for five minutes) and the methods the user can use. The
+// pending login is kept in memory, keyed by the token's hash, in a store
+// with a TTL and a size bound that is keyed by challenge rather than by
+// user, so passwordless sign-in can reuse it. LoginSecondFactor dispatches
+// the proof to the FactorVerifier registered for its method (recovery
+// codes are built in; TOTP and WebAuthn plug in through Options.Factors)
+// and, if it passes, uses up the pending login. Every login, one step or
+// two, ends in the same function, which creates the session and sets its
+// verified_at.
+//
+// Failed factor checks count against the same per-account and per-address
+// throttle as wrong passwords, and a right password doesn't reset the
+// account's count while a second step is pending, so knowing the password
+// allows no more guesses at the second factor than at the password. A
+// wrong proof leaves the pending login in place, so a mistyped code
+// doesn't mean entering the password again.
+//
+// Recovery codes are ten codes of 80 random bits, shown once as 16 base32
+// characters in groups of four and stored as SHA-256 hashes, like tokens.
+// Each logs in once. They stand in for a second factor but aren't one: a
+// user with only recovery codes logs in with the password alone.
+//
 // # API tokens
 //
 // API tokens are "pft_" followed by 256 random bits in lowercase base32.

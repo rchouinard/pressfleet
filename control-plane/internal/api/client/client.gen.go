@@ -846,6 +846,27 @@ func (e Role) Valid() bool {
 	}
 }
 
+// Defines values for SecondFactorMethod.
+const (
+	SecondFactorMethodRecoveryCode SecondFactorMethod = "recovery_code"
+	SecondFactorMethodTotp         SecondFactorMethod = "totp"
+	SecondFactorMethodWebauthn     SecondFactorMethod = "webauthn"
+)
+
+// Valid indicates whether the value is a known member of the SecondFactorMethod enum.
+func (e SecondFactorMethod) Valid() bool {
+	switch e {
+	case SecondFactorMethodRecoveryCode:
+		return true
+	case SecondFactorMethodTotp:
+		return true
+	case SecondFactorMethodWebauthn:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SiteCoreDecidedBy.
 const (
 	SiteCoreDecidedByAuto        SiteCoreDecidedBy = "auto"
@@ -2220,11 +2241,24 @@ type CurrentUser struct {
 	// LastLoginAt Null if the user has never logged in.
 	LastLoginAt *Timestamp `json:"last_login_at,omitempty"`
 
+	// RecoveryCodesRemaining How many unused recovery codes the user has.
+	RecoveryCodesRemaining int `json:"recovery_codes_remaining"`
+
 	// Role Platform-wide role (design doc §4.6).
 	Role Role `json:"role"`
 
+	// TwoFactorEnabled Whether the user has a second factor (an authenticator app or a
+	// security key), so their logins take two steps. Recovery codes
+	// alone don't count.
+	TwoFactorEnabled bool `json:"two_factor_enabled"`
+
 	// UpdatedAt Examples: 2026-09-26T17:25:00Z
 	UpdatedAt Timestamp `json:"updated_at"`
+
+	// VerifiedAt When the user last proved who they are in this session: at
+	// login, with every step it took. Null for bearer token
+	// authentication.
+	VerifiedAt *Timestamp `json:"verified_at"`
 }
 
 // CurrentUserAuthMethod defines model for CurrentUser.AuthMethod.
@@ -3086,6 +3120,12 @@ type ReadinessCheck struct {
 // ReadinessCheckStatus defines model for ReadinessCheck.Status.
 type ReadinessCheckStatus string
 
+// RecoveryCodes defines model for RecoveryCodes.
+type RecoveryCodes struct {
+	// Codes Ten single-use codes, each 16 characters in groups of four. Shown only once.
+	Codes []string `json:"codes"`
+}
+
 // ResourceLimits Limits for the site as a whole; the platform splits them between the site's containers.
 type ResourceLimits struct {
 	// CPU CPU limit in cores.
@@ -3113,6 +3153,57 @@ type ResourceLimitsUpdate struct {
 
 // Role Platform-wide role (design doc §4.6).
 type Role string
+
+// SecondFactorLogin defines model for SecondFactorLogin.
+type SecondFactorLogin struct {
+	// Code A TOTP code or recovery code, for those methods.
+	Code   *string            `json:"code,omitempty"`
+	Method SecondFactorMethod `json:"method"`
+}
+
+// SecondFactorMethod defines model for SecondFactorMethod.
+type SecondFactorMethod string
+
+// SecondFactorRequired A login problem. With the type `second-factor-required`, the password
+// was right and the user must pass a second factor with one of
+// `methods`; otherwise the members beyond Problem are absent.
+type SecondFactorRequired struct {
+	// Detail Human-readable explanation of this occurrence.
+	Detail *string `json:"detail,omitempty"`
+
+	// Errors Validation errors, one per invalid field (`422` only).
+	Errors *[]FieldError `json:"errors,omitempty"`
+
+	// Instance The request path that produced the problem.
+	Instance *string `json:"instance,omitempty"`
+
+	// Methods The second-factor methods the user can use, in the order to
+	// offer them. Empty if the user's factors aren't supported by
+	// this control plane.
+	Methods *[]SecondFactorMethod `json:"methods,omitempty"`
+
+	// RequestID The request ID (also in the `X-Request-ID` response header). Include it when reporting issues.
+	RequestID *string `json:"request_id,omitempty"`
+
+	// RetryAfter Seconds to wait before retrying (`429` and some `503`). The same
+	// value is in the `Retry-After` header.
+	RetryAfter *int `json:"retry_after,omitempty"`
+
+	// Status The HTTP status code.
+	//
+	// Examples: 404
+	Status int `json:"status"`
+
+	// Title Short, human-readable summary of the problem type.
+	//
+	// Examples: Not Found
+	Title string `json:"title"`
+
+	// Type Identifies the problem type. `about:blank` means the HTTP status says it all.
+	//
+	// Examples: about:blank
+	Type string `json:"type"`
+}
 
 // Site defines model for Site.
 type Site struct {
@@ -3813,6 +3904,11 @@ type User struct {
 	// Role Platform-wide role (design doc §4.6).
 	Role Role `json:"role"`
 
+	// TwoFactorEnabled Whether the user has a second factor (an authenticator app or a
+	// security key), so their logins take two steps. Recovery codes
+	// alone don't count.
+	TwoFactorEnabled bool `json:"two_factor_enabled"`
+
 	// UpdatedAt Examples: 2026-09-26T17:25:00Z
 	UpdatedAt Timestamp `json:"updated_at"`
 }
@@ -4086,6 +4182,12 @@ type ListAuditEventsParams struct {
 
 	// Until Only return events before this time.
 	Until *Timestamp `form:"until,omitempty" json:"until,omitempty"`
+}
+
+// LoginSecondFactorParams defines parameters for LoginSecondFactor.
+type LoginSecondFactorParams struct {
+	// PressfleetLogin The pending-login cookie set by `POST /api/v1/auth/login`.
+	PressfleetLogin *string `form:"pressfleet_login,omitempty" json:"pressfleet_login,omitempty"`
 }
 
 // ListAPITokensParams defines parameters for ListAPITokens.
@@ -4394,6 +4496,9 @@ type UpdateAlertRuleJSONRequestBody = AlertRuleUpdate
 
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
+
+// LoginSecondFactorJSONRequestBody defines body for LoginSecondFactor for application/json ContentType.
+type LoginSecondFactorJSONRequestBody = SecondFactorLogin
 
 // UpdateCurrentUserJSONRequestBody defines body for UpdateCurrentUser for application/json ContentType.
 type UpdateCurrentUserJSONRequestBody = ProfileUpdate
@@ -4777,6 +4882,12 @@ type ClientInterface interface {
 	// is the logged-in user. Failed logins return `401` without revealing
 	// whether the email exists.
 	//
+	// For a user with a second factor, a right password returns `401` with
+	// the problem type `second-factor-required` instead, and sets the
+	// `pressfleet_login` cookie; finish with `POST
+	// /api/v1/auth/login/second-factor`. The account's failed-attempt count
+	// isn't reset until the second step passes.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/v1/auth/login (the `Login` operationId).
@@ -4788,10 +4899,60 @@ type ClientInterface interface {
 	// is the logged-in user. Failed logins return `401` without revealing
 	// whether the email exists.
 	//
+	// For a user with a second factor, a right password returns `401` with
+	// the problem type `second-factor-required` instead, and sets the
+	// `pressfleet_login` cookie; finish with `POST
+	// /api/v1/auth/login/second-factor`. The account's failed-attempt count
+	// isn't reset until the second step passes.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /api/v1/auth/login (the `Login` operationId).
 	Login(ctx context.Context, body LoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LoginSecondFactorWithBody Pass the second step of a login
+	//
+	// Finishes a login that answered `second-factor-required`, with one of
+	// the `methods` it listed, and sets the session cookie like a one-step
+	// login. The `pressfleet_login` cookie from that response identifies
+	// the login.
+	//
+	// * `recovery_code`: send `code`, a recovery code with or without its
+	//   dashes. Each code works once.
+	// * `totp` and `webauthn` are listed once they are available.
+	//
+	// A wrong code returns `422` with an error on `/code` and counts
+	// toward login throttling (`429`); the login stays pending, so the user
+	// can try again without the password. A method the user can't use
+	// returns `422` with an error on `/method`. A missing, expired (after
+	// 5 minutes), or already used login returns `401`: log in again.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/auth/login/second-factor (the `LoginSecondFactor` operationId).
+	LoginSecondFactorWithBody(ctx context.Context, params *LoginSecondFactorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LoginSecondFactor Pass the second step of a login
+	//
+	// Finishes a login that answered `second-factor-required`, with one of
+	// the `methods` it listed, and sets the session cookie like a one-step
+	// login. The `pressfleet_login` cookie from that response identifies
+	// the login.
+	//
+	// * `recovery_code`: send `code`, a recovery code with or without its
+	//   dashes. Each code works once.
+	// * `totp` and `webauthn` are listed once they are available.
+	//
+	// A wrong code returns `422` with an error on `/code` and counts
+	// toward login throttling (`429`); the login stays pending, so the user
+	// can try again without the password. A method the user can't use
+	// returns `422` with an error on `/method`. A missing, expired (after
+	// 5 minutes), or already used login returns `401`: log in again.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/auth/login/second-factor (the `LoginSecondFactor` operationId).
+	LoginSecondFactor(ctx context.Context, params *LoginSecondFactorParams, body LoginSecondFactorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Logout End the current session
 	//
@@ -6652,6 +6813,19 @@ type ClientInterface interface {
 	// Corresponds with DELETE /api/v1/users/me/ssh-keys/{ssh_key_id} (the `DeleteOwnSSHKey` operationId).
 	DeleteOwnSSHKey(ctx context.Context, sshKeyID SSHKeyID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RegenerateRecoveryCodes Replace the current user's recovery codes
+	//
+	// Replaces the user's recovery codes with ten new ones and returns them.
+	// They are shown only this once; the old codes stop working. Each code
+	// logs in once in place of a second factor (`POST
+	// /api/v1/auth/login/second-factor`). A user gets a first set when they
+	// enroll their first second factor; a user without one gets `409`.
+	//
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Corresponds with POST /api/v1/users/me/two-factor/recovery-codes (the `RegenerateRecoveryCodes` operationId).
+	RegenerateRecoveryCodes(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DeleteUser Delete a user
 	//
 	// Also revokes the user's sessions, tokens, and SSH keys. Deleting the last Admin returns `409`.
@@ -7199,6 +7373,12 @@ func (c *Client) ListAuditEvents(ctx context.Context, params *ListAuditEventsPar
 // is the logged-in user. Failed logins return `401` without revealing
 // whether the email exists.
 //
+// For a user with a second factor, a right password returns `401` with
+// the problem type `second-factor-required` instead, and sets the
+// `pressfleet_login` cookie; finish with `POST
+// /api/v1/auth/login/second-factor`. The account's failed-attempt count
+// isn't reset until the second step passes.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /api/v1/auth/login (the `Login` operationId).
@@ -7220,11 +7400,81 @@ func (c *Client) LoginWithBody(ctx context.Context, contentType string, body io.
 // is the logged-in user. Failed logins return `401` without revealing
 // whether the email exists.
 //
+// For a user with a second factor, a right password returns `401` with
+// the problem type `second-factor-required` instead, and sets the
+// `pressfleet_login` cookie; finish with `POST
+// /api/v1/auth/login/second-factor`. The account's failed-attempt count
+// isn't reset until the second step passes.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /api/v1/auth/login (the `Login` operationId).
 func (c *Client) Login(ctx context.Context, body LoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewLoginRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LoginSecondFactorWithBody Pass the second step of a login
+//
+// Finishes a login that answered `second-factor-required`, with one of
+// the `methods` it listed, and sets the session cookie like a one-step
+// login. The `pressfleet_login` cookie from that response identifies
+// the login.
+//
+//   - `recovery_code`: send `code`, a recovery code with or without its
+//     dashes. Each code works once.
+//   - `totp` and `webauthn` are listed once they are available.
+//
+// A wrong code returns `422` with an error on `/code` and counts
+// toward login throttling (`429`); the login stays pending, so the user
+// can try again without the password. A method the user can't use
+// returns `422` with an error on `/method`. A missing, expired (after
+// 5 minutes), or already used login returns `401`: log in again.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/auth/login/second-factor (the `LoginSecondFactor` operationId).
+func (c *Client) LoginSecondFactorWithBody(ctx context.Context, params *LoginSecondFactorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLoginSecondFactorRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LoginSecondFactor Pass the second step of a login
+//
+// Finishes a login that answered `second-factor-required`, with one of
+// the `methods` it listed, and sets the session cookie like a one-step
+// login. The `pressfleet_login` cookie from that response identifies
+// the login.
+//
+//   - `recovery_code`: send `code`, a recovery code with or without its
+//     dashes. Each code works once.
+//   - `totp` and `webauthn` are listed once they are available.
+//
+// A wrong code returns `422` with an error on `/code` and counts
+// toward login throttling (`429`); the login stays pending, so the user
+// can try again without the password. A method the user can't use
+// returns `422` with an error on `/method`. A missing, expired (after
+// 5 minutes), or already used login returns `401`: log in again.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/auth/login/second-factor (the `LoginSecondFactor` operationId).
+func (c *Client) LoginSecondFactor(ctx context.Context, params *LoginSecondFactorParams, body LoginSecondFactorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLoginSecondFactorRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -10164,6 +10414,29 @@ func (c *Client) DeleteOwnSSHKey(ctx context.Context, sshKeyID SSHKeyID, reqEdit
 	return c.Client.Do(req)
 }
 
+// RegenerateRecoveryCodes Replace the current user's recovery codes
+//
+// Replaces the user's recovery codes with ten new ones and returns them.
+// They are shown only this once; the old codes stop working. Each code
+// logs in once in place of a second factor (`POST
+// /api/v1/auth/login/second-factor`). A user gets a first set when they
+// enroll their first second factor; a user without one gets `409`.
+//
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Corresponds with POST /api/v1/users/me/two-factor/recovery-codes (the `RegenerateRecoveryCodes` operationId).
+func (c *Client) RegenerateRecoveryCodes(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegenerateRecoveryCodesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // DeleteUser Delete a user
 //
 // Also revokes the user's sessions, tokens, and SSH keys. Deleting the last Admin returns `409`.
@@ -11465,6 +11738,63 @@ func NewLoginRequestWithBody(server string, contentType string, body io.Reader) 
 
 	req.Header.Add("Content-Type", contentType)
 
+	return req, nil
+}
+
+// NewLoginSecondFactorRequest calls the generic LoginSecondFactor builder with application/json body
+func NewLoginSecondFactorRequest(server string, params *LoginSecondFactorParams, body LoginSecondFactorJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewLoginSecondFactorRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewLoginSecondFactorRequestWithBody constructs an http.Request for the LoginSecondFactor method, with any body, and a specified content type
+func NewLoginSecondFactorRequestWithBody(server string, params *LoginSecondFactorParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/auth/login/second-factor")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.PressfleetLogin != nil {
+			var cookieParam0 string
+
+			cookieParam0, err = runtime.StyleParamWithOptions("simple", true, "pressfleet_login", *params.PressfleetLogin, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationCookie, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			cookie0 := &http.Cookie{
+				Name:  "pressfleet_login",
+				Value: cookieParam0,
+			}
+			req.AddCookie(cookie0)
+		}
+	}
 	return req, nil
 }
 
@@ -15557,6 +15887,33 @@ func NewDeleteOwnSSHKeyRequest(server string, sshKeyID SSHKeyID) (*http.Request,
 	return req, nil
 }
 
+// NewRegenerateRecoveryCodesRequest constructs an http.Request for the RegenerateRecoveryCodes method
+func NewRegenerateRecoveryCodesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/users/me/two-factor/recovery-codes")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewDeleteUserRequest constructs an http.Request for the DeleteUser method
 func NewDeleteUserRequest(server string, userID UserID) (*http.Request, error) {
 	var err error
@@ -16197,6 +16554,12 @@ type ClientWithResponsesInterface interface {
 	// is the logged-in user. Failed logins return `401` without revealing
 	// whether the email exists.
 	//
+	// For a user with a second factor, a right password returns `401` with
+	// the problem type `second-factor-required` instead, and sets the
+	// `pressfleet_login` cookie; finish with `POST
+	// /api/v1/auth/login/second-factor`. The account's failed-attempt count
+	// isn't reset until the second step passes.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v1/auth/login (the `Login` operationId).
@@ -16208,10 +16571,60 @@ type ClientWithResponsesInterface interface {
 	// is the logged-in user. Failed logins return `401` without revealing
 	// whether the email exists.
 	//
+	// For a user with a second factor, a right password returns `401` with
+	// the problem type `second-factor-required` instead, and sets the
+	// `pressfleet_login` cookie; finish with `POST
+	// /api/v1/auth/login/second-factor`. The account's failed-attempt count
+	// isn't reset until the second step passes.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v1/auth/login (the `Login` operationId).
 	LoginWithResponse(ctx context.Context, body LoginJSONRequestBody, reqEditors ...RequestEditorFn) (*LoginResponse, error)
+
+	// LoginSecondFactorWithBodyWithResponse Pass the second step of a login
+	//
+	// Finishes a login that answered `second-factor-required`, with one of
+	// the `methods` it listed, and sets the session cookie like a one-step
+	// login. The `pressfleet_login` cookie from that response identifies
+	// the login.
+	//
+	// * `recovery_code`: send `code`, a recovery code with or without its
+	//   dashes. Each code works once.
+	// * `totp` and `webauthn` are listed once they are available.
+	//
+	// A wrong code returns `422` with an error on `/code` and counts
+	// toward login throttling (`429`); the login stays pending, so the user
+	// can try again without the password. A method the user can't use
+	// returns `422` with an error on `/method`. A missing, expired (after
+	// 5 minutes), or already used login returns `401`: log in again.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/auth/login/second-factor (the `LoginSecondFactor` operationId).
+	LoginSecondFactorWithBodyWithResponse(ctx context.Context, params *LoginSecondFactorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LoginSecondFactorResponse, error)
+
+	// LoginSecondFactorWithResponse Pass the second step of a login
+	//
+	// Finishes a login that answered `second-factor-required`, with one of
+	// the `methods` it listed, and sets the session cookie like a one-step
+	// login. The `pressfleet_login` cookie from that response identifies
+	// the login.
+	//
+	// * `recovery_code`: send `code`, a recovery code with or without its
+	//   dashes. Each code works once.
+	// * `totp` and `webauthn` are listed once they are available.
+	//
+	// A wrong code returns `422` with an error on `/code` and counts
+	// toward login throttling (`429`); the login stays pending, so the user
+	// can try again without the password. A method the user can't use
+	// returns `422` with an error on `/method`. A missing, expired (after
+	// 5 minutes), or already used login returns `401`: log in again.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/auth/login/second-factor (the `LoginSecondFactor` operationId).
+	LoginSecondFactorWithResponse(ctx context.Context, params *LoginSecondFactorParams, body LoginSecondFactorJSONRequestBody, reqEditors ...RequestEditorFn) (*LoginSecondFactorResponse, error)
 
 	// LogoutWithResponse End the current session
 	//
@@ -18196,6 +18609,21 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /api/v1/users/me/ssh-keys/{ssh_key_id} (the `DeleteOwnSSHKey` operationId).
 	DeleteOwnSSHKeyWithResponse(ctx context.Context, sshKeyID SSHKeyID, reqEditors ...RequestEditorFn) (*DeleteOwnSSHKeyResponse, error)
 
+	// RegenerateRecoveryCodesWithResponse Replace the current user's recovery codes
+	//
+	// Replaces the user's recovery codes with ten new ones and returns them.
+	// They are shown only this once; the old codes stop working. Each code
+	// logs in once in place of a second factor (`POST
+	// /api/v1/auth/login/second-factor`). A user gets a first set when they
+	// enroll their first second factor; a user without one gets `409`.
+	//
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/users/me/two-factor/recovery-codes (the `RegenerateRecoveryCodes` operationId).
+	RegenerateRecoveryCodesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RegenerateRecoveryCodesResponse, error)
+
 	// DeleteUserWithResponse Delete a user
 	//
 	// Also revokes the user's sessions, tokens, and SSH keys. Deleting the last Admin returns `409`.
@@ -19682,6 +20110,11 @@ type LoginResponse200Headers struct {
 	SetCookie *string
 }
 
+// LoginResponse401Headers the declared response headers of an HTTP 401 response for Login
+type LoginResponse401Headers struct {
+	SetCookie *string
+}
+
 // LoginResponse429Headers the declared response headers of an HTTP 429 response for Login
 type LoginResponse429Headers struct {
 	RetryAfter int
@@ -19695,7 +20128,7 @@ type LoginResponse struct {
 	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationProblemJSON400 *BadRequest
 	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
-	ApplicationProblemJSON401 *Unauthorized
+	ApplicationProblemJSON401 *SecondFactorRequired
 	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationProblemJSON403 *Forbidden
 	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
@@ -19706,6 +20139,8 @@ type LoginResponse struct {
 	ApplicationProblemJSONDefault *Error
 	// Headers200 the parsed response headers for an HTTP 200 response
 	Headers200 *LoginResponse200Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *LoginResponse401Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *LoginResponse429Headers
 }
@@ -19721,7 +20156,7 @@ func (r LoginResponse) GetApplicationProblemJSON400() *BadRequest {
 }
 
 // GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
-func (r LoginResponse) GetApplicationProblemJSON401() *Unauthorized {
+func (r LoginResponse) GetApplicationProblemJSON401() *SecondFactorRequired {
 	return r.ApplicationProblemJSON401
 }
 
@@ -19768,6 +20203,103 @@ func (r LoginResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r LoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// LoginSecondFactorResponse200Headers the declared response headers of an HTTP 200 response for LoginSecondFactor
+type LoginSecondFactorResponse200Headers struct {
+	SetCookie *string
+}
+
+// LoginSecondFactorResponse429Headers the declared response headers of an HTTP 429 response for LoginSecondFactor
+type LoginSecondFactorResponse429Headers struct {
+	RetryAfter int
+}
+
+type LoginSecondFactorResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CurrentUser
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationProblemJSON429 *TooManyRequests
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *LoginSecondFactorResponse200Headers
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *LoginSecondFactorResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r LoginSecondFactorResponse) GetJSON200() *CurrentUser {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r LoginSecondFactorResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r LoginSecondFactorResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r LoginSecondFactorResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r LoginSecondFactorResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r LoginSecondFactorResponse) GetApplicationProblemJSON429() *TooManyRequests {
+	return r.ApplicationProblemJSON429
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r LoginSecondFactorResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r LoginSecondFactorResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LoginSecondFactorResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LoginSecondFactorResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LoginSecondFactorResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -26379,6 +26911,75 @@ func (r DeleteOwnSSHKeyResponse) ContentType() string {
 	return ""
 }
 
+type RegenerateRecoveryCodesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RecoveryCodes
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RegenerateRecoveryCodesResponse) GetJSON200() *RecoveryCodes {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RegenerateRecoveryCodesResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RegenerateRecoveryCodesResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RegenerateRecoveryCodesResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RegenerateRecoveryCodesResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RegenerateRecoveryCodesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RegenerateRecoveryCodesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RegenerateRecoveryCodesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RegenerateRecoveryCodesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type DeleteUserResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -27335,6 +27936,12 @@ func (c *ClientWithResponses) ListAuditEventsWithResponse(ctx context.Context, p
 // is the logged-in user. Failed logins return `401` without revealing
 // whether the email exists.
 //
+// For a user with a second factor, a right password returns `401` with
+// the problem type `second-factor-required` instead, and sets the
+// `pressfleet_login` cookie; finish with `POST
+// /api/v1/auth/login/second-factor`. The account's failed-attempt count
+// isn't reset until the second step passes.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v1/auth/login (the `Login` operationId).
@@ -27352,6 +27959,12 @@ func (c *ClientWithResponses) LoginWithBodyWithResponse(ctx context.Context, con
 // is the logged-in user. Failed logins return `401` without revealing
 // whether the email exists.
 //
+// For a user with a second factor, a right password returns `401` with
+// the problem type `second-factor-required` instead, and sets the
+// `pressfleet_login` cookie; finish with `POST
+// /api/v1/auth/login/second-factor`. The account's failed-attempt count
+// isn't reset until the second step passes.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v1/auth/login (the `Login` operationId).
@@ -27361,6 +27974,62 @@ func (c *ClientWithResponses) LoginWithResponse(ctx context.Context, body LoginJ
 		return nil, err
 	}
 	return ParseLoginResponse(rsp)
+}
+
+// LoginSecondFactorWithBodyWithResponse Pass the second step of a login
+//
+// Finishes a login that answered `second-factor-required`, with one of
+// the `methods` it listed, and sets the session cookie like a one-step
+// login. The `pressfleet_login` cookie from that response identifies
+// the login.
+//
+//   - `recovery_code`: send `code`, a recovery code with or without its
+//     dashes. Each code works once.
+//   - `totp` and `webauthn` are listed once they are available.
+//
+// A wrong code returns `422` with an error on `/code` and counts
+// toward login throttling (`429`); the login stays pending, so the user
+// can try again without the password. A method the user can't use
+// returns `422` with an error on `/method`. A missing, expired (after
+// 5 minutes), or already used login returns `401`: log in again.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/auth/login/second-factor (the `LoginSecondFactor` operationId).
+func (c *ClientWithResponses) LoginSecondFactorWithBodyWithResponse(ctx context.Context, params *LoginSecondFactorParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LoginSecondFactorResponse, error) {
+	rsp, err := c.LoginSecondFactorWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLoginSecondFactorResponse(rsp)
+}
+
+// LoginSecondFactorWithResponse Pass the second step of a login
+//
+// Finishes a login that answered `second-factor-required`, with one of
+// the `methods` it listed, and sets the session cookie like a one-step
+// login. The `pressfleet_login` cookie from that response identifies
+// the login.
+//
+//   - `recovery_code`: send `code`, a recovery code with or without its
+//     dashes. Each code works once.
+//   - `totp` and `webauthn` are listed once they are available.
+//
+// A wrong code returns `422` with an error on `/code` and counts
+// toward login throttling (`429`); the login stays pending, so the user
+// can try again without the password. A method the user can't use
+// returns `422` with an error on `/method`. A missing, expired (after
+// 5 minutes), or already used login returns `401`: log in again.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/auth/login/second-factor (the `LoginSecondFactor` operationId).
+func (c *ClientWithResponses) LoginSecondFactorWithResponse(ctx context.Context, params *LoginSecondFactorParams, body LoginSecondFactorJSONRequestBody, reqEditors ...RequestEditorFn) (*LoginSecondFactorResponse, error) {
+	rsp, err := c.LoginSecondFactor(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLoginSecondFactorResponse(rsp)
 }
 
 // LogoutWithResponse End the current session
@@ -29988,6 +30657,27 @@ func (c *ClientWithResponses) DeleteOwnSSHKeyWithResponse(ctx context.Context, s
 	return ParseDeleteOwnSSHKeyResponse(rsp)
 }
 
+// RegenerateRecoveryCodesWithResponse Replace the current user's recovery codes
+//
+// Replaces the user's recovery codes with ten new ones and returns them.
+// They are shown only this once; the old codes stop working. Each code
+// logs in once in place of a second factor (`POST
+// /api/v1/auth/login/second-factor`). A user gets a first set when they
+// enroll their first second factor; a user without one gets `409`.
+//
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/users/me/two-factor/recovery-codes (the `RegenerateRecoveryCodes` operationId).
+func (c *ClientWithResponses) RegenerateRecoveryCodesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RegenerateRecoveryCodesResponse, error) {
+	rsp, err := c.RegenerateRecoveryCodes(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegenerateRecoveryCodesResponse(rsp)
+}
+
 // DeleteUserWithResponse Delete a user
 //
 // Also revokes the user's sessions, tokens, and SSH keys. Deleting the last Admin returns `409`.
@@ -31290,7 +31980,7 @@ func ParseLoginResponse(rsp *http.Response) (*LoginResponse, error) {
 		response.ApplicationProblemJSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
+		var dest SecondFactorRequired
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -31337,8 +32027,109 @@ func ParseLoginResponse(rsp *http.Response) (*LoginResponse, error) {
 			headers.SetCookie = &value
 		}
 		response.Headers200 = &headers
+	case rsp.StatusCode == 401:
+		var headers LoginResponse401Headers
+		if values := rsp.Header.Values("Set-Cookie"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Set-Cookie", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.SetCookie = &value
+		}
+		response.Headers401 = &headers
 	case rsp.StatusCode == 429:
 		var headers LoginResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseLoginSecondFactorResponse parses an HTTP response from a LoginSecondFactorWithResponse call
+func ParseLoginSecondFactorResponse(rsp *http.Response) (*LoginSecondFactorResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LoginSecondFactorResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CurrentUser
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest TooManyRequests
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers LoginSecondFactorResponse200Headers
+		if values := rsp.Header.Values("Set-Cookie"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Set-Cookie", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.SetCookie = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 429:
+		var headers LoginSecondFactorResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
@@ -36969,6 +37760,60 @@ func ParseDeleteOwnSSHKeyResponse(rsp *http.Response) (*DeleteOwnSSHKeyResponse,
 			return nil, err
 		}
 		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRegenerateRecoveryCodesResponse parses an HTTP response from a RegenerateRecoveryCodesWithResponse call
+func ParseRegenerateRecoveryCodesResponse(rsp *http.Response) (*RegenerateRecoveryCodesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RegenerateRecoveryCodesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RecoveryCodes
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Error

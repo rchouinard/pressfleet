@@ -131,6 +131,7 @@ func samplePath(path string) string {
 // sampleBodies are minimal valid request bodies for operations that take one.
 var sampleBodies = map[string]string{
 	"login":                    `{"email":"a@example.com","password":"x"}`,
+	"loginSecondFactor":        `{"method":"recovery_code","code":"AAAA-BBBB-CCCC-DDDD"}`,
 	"createApiToken":           `{"name":"ci","scope":"read-only","expires_at":null}`,
 	"createUser":               `{"email":"a@example.com","password":"correct horse battery","role":"viewer"}`,
 	"updateCurrentUser":        `{"display_name":"x"}`,
@@ -195,7 +196,7 @@ func TestOperationsRequireAuthExceptLoginAndHealth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	public := []string{"getHealth", "getReadiness", "login"}
+	public := []string{"getHealth", "getReadiness", "login", "loginSecondFactor"}
 	var gotPublic []string
 	for _, op := range ops {
 		if op.Public {
@@ -240,8 +241,9 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 				if len(fa.calls) != 0 {
 					t.Errorf("authenticator called for public operation")
 				}
-				// Login answers 401 for the sample's wrong credentials.
-				if w.Code == http.StatusUnauthorized && op.ID != "login" {
+				// Login answers 401 for the sample's wrong credentials,
+				// and its second step for the missing pending login.
+				if w.Code == http.StatusUnauthorized && op.ID != "login" && op.ID != "loginSecondFactor" {
 					t.Errorf("public operation returned 401")
 				}
 			} else {
@@ -277,8 +279,8 @@ func TestEveryOperationIsRoutedAndAuthenticated(t *testing.T) {
 				if w.Code == http.StatusUnauthorized || w.Code == http.StatusNotImplemented {
 					t.Errorf("status = %d; body: %s", w.Code, w.Body)
 				}
-			case op.ID == "login":
-				// The sample credentials are wrong.
+			case op.ID == "login" || op.ID == "loginSecondFactor":
+				// The sample credentials are wrong, and no login is pending.
 				if w.Code != http.StatusUnauthorized {
 					t.Errorf("status = %d, want 401; body: %s", w.Code, w.Body)
 				}

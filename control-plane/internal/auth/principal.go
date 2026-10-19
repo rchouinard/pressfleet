@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
@@ -29,8 +30,11 @@ type Principal struct {
 	Email  string
 	Role   store.Role
 	Method Method
-	// SessionID is set for MethodSession.
-	SessionID string
+	// SessionID and VerifiedAt are set for MethodSession. VerifiedAt is
+	// when the user last proved who they are in the session: at login, or
+	// by reauthenticating.
+	SessionID  string
+	VerifiedAt time.Time
 	// TokenID and Scope are set for MethodToken. Sessions have no scope:
 	// they may do everything the user's role allows.
 	TokenID string

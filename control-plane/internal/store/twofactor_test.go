@@ -440,6 +440,10 @@ func TestHasSecondFactor(t *testing.T) {
 			if got, err := users.HasSecondFactor(ctx, userID); err != nil || got != want {
 				t.Errorf("HasSecondFactor = %v, %v; want %v", got, err, want)
 			}
+			// IDsWithSecondFactor agrees.
+			if ids, err := users.IDsWithSecondFactor(ctx); err != nil || ids[userID] != want {
+				t.Errorf("IDsWithSecondFactor = %v, %v; want %s: %v", ids, err, userID, want)
+			}
 		}
 		u := createUser(t, db, "a@example.com", store.RoleAdmin)
 		check(u.ID, false)
@@ -465,6 +469,17 @@ func TestHasSecondFactor(t *testing.T) {
 			t.Fatal(err)
 		}
 		check(v.ID, true)
+		// A user with both factors is listed once.
+		if err := store.NewWebAuthnCredentials(db).Create(ctx, &c); err == nil {
+			t.Fatal("credential ID reused")
+		}
+		c2 := newCredential(u.ID, "cred2")
+		if err := store.NewWebAuthnCredentials(db).Create(ctx, &c2); err != nil {
+			t.Fatal(err)
+		}
+		if ids, err := users.IDsWithSecondFactor(ctx); err != nil || len(ids) != 2 || !ids[u.ID] || !ids[v.ID] {
+			t.Errorf("IDsWithSecondFactor = %v, %v; want %s and %s", ids, err, u.ID, v.ID)
+		}
 	})
 }
 

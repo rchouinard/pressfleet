@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -19,6 +20,17 @@ import (
 
 // Sessions, the current user, and the current user's API tokens (#13).
 
+// SecondFactorRequiredProblemType is the problem type of the 401 that
+// asks for the second step of a login (design doc §6.2). It is a short
+// name rather than a URL, as the design names it; clients compare it as a
+// string.
+const SecondFactorRequiredProblemType = "second-factor-required"
+
+// auditSecondFactor is the details key that login audit events use for
+// the second step: "required" when the password was right and a factor is
+// needed, otherwise the factor method checked.
+const auditSecondFactor = "second_factor"
+
 // Login verifies credentials and starts a session. It is public, so it
 // needs no authorization check.
 func (h *Handlers) Login(ctx context.Context, req gen.LoginRequestObject) (gen.LoginResponseObject, error) {
@@ -29,23 +41,127 @@ func (h *Handlers) Login(ctx context.Context, req gen.LoginRequestObject) (gen.L
 		ClientIP:  client.IP,
 		UserAgent: client.UserAgent,
 	})
-	if errors.Is(err, auth.ErrInvalidCredentials) {
+	var pending *auth.SecondFactorRequiredError
+	switch {
+	case errors.Is(err, auth.ErrInvalidCredentials):
 		// Failed logins are audited without an actor (the email may not
 		// belong to anyone, and isn't recorded). Throttled attempts cost
 		// the attacker nothing, so they aren't recorded, keeping an
 		// unauthenticated client from filling the audit log.
 		noteLogin(ctx, "")
 		return nil, httpserver.NewProblem(http.StatusUnauthorized, "Invalid email or password.")
-	} else if err != nil {
+	case errors.As(err, &pending):
+		// The password was right, so the user is the actor: an event the
+		// user didn't cause means someone else knows their password.
+		noteLogin(ctx, pending.UserID)
+		setAuditDetails(ctx, map[string]string{auditSecondFactor: "required"})
+		return nil, h.secondFactorRequired(ctx, pending)
+	case err != nil:
 		return nil, err
 	}
 	noteLogin(ctx, res.User.ID)
+	return h.loginResponse(ctx, res)
+}
+
+// secondFactorRequired returns the 401 that starts the second step of a
+// login, with the pending-login cookie.
+func (h *Handlers) secondFactorRequired(ctx context.Context, pending *auth.SecondFactorRequiredError) error {
+	methods := make([]string, 0, len(pending.Methods))
+	for _, m := range pending.Methods {
+		methods = append(methods, string(m))
+	}
+	p := &httpserver.Problem{
+		Type:       SecondFactorRequiredProblemType,
+		Title:      "Second factor required",
+		Status:     http.StatusUnauthorized,
+		Detail:     "Pass a second factor to finish logging in.",
+		Extensions: map[string]any{"methods": methods},
+	}
+	// Methods that need a challenge (WebAuthn request options, #152) get
+	// a member named after the method.
+	for m, c := range pending.Challenges {
+		p.Extensions[string(m)] = c
+	}
+	return &cookieError{err: p, cookie: h.loginCookie(ctx, pending.Token.Reveal(), pending.ExpiresAt)}
+}
+
+// LoginSecondFactor checks the second factor of a pending login and starts
+// the session. It is public: the pressfleet_login cookie, set by Login
+// after a right password, identifies the login.
+func (h *Handlers) LoginSecondFactor(ctx context.Context, req gen.LoginSecondFactorRequestObject) (gen.LoginSecondFactorResponseObject, error) {
+	expired := httpserver.NewProblem(http.StatusUnauthorized, "The login has expired or was already used. Log in again.")
+	token := deref(req.Params.PressfleetLogin)
+	if token == "" {
+		return nil, expired
+	}
+	method := auth.FactorMethod(req.Body.Method)
+	codeField := "/code"
+	switch method {
+	case auth.FactorTOTP, auth.FactorRecoveryCode:
+		if deref(req.Body.Code) == "" {
+			return nil, fieldError(codeField, "is required for "+string(method))
+		}
+	case auth.FactorWebAuthn:
+		codeField = "/credential"
+	}
+	client := clientFromContext(ctx)
+	res, err := h.auth.LoginSecondFactor(ctx, auth.SecondFactorRequest{
+		PendingToken: redact.Secret(token),
+		Proof:        auth.FactorProof{Method: method, Code: redact.Secret(deref(req.Body.Code))},
+		ClientIP:     client.IP,
+		UserAgent:    client.UserAgent,
+	})
+	var failed *auth.SecondFactorError
+	switch {
+	case errors.Is(err, auth.ErrLoginExpired):
+		// Not audited: without a pending login there is no user to name,
+		// and an unknown token costs the client nothing to send.
+		return nil, expired
+	case errors.Is(err, auth.ErrFactorUnavailable):
+		return nil, fieldError("/method", "isn't available for this account")
+	case errors.As(err, &failed):
+		// Audited like a failed login, but with the user as the actor,
+		// since their password was right.
+		noteLogin(ctx, failed.UserID)
+		setAuditDetails(ctx, map[string]string{auditSecondFactor: string(method)})
+		return nil, fieldError(codeField, "is incorrect")
+	case err != nil:
+		return nil, err
+	}
+	noteLogin(ctx, res.User.ID)
+	details := map[string]string{auditSecondFactor: string(method)}
+	if method == auth.FactorRecoveryCode {
+		n, err := h.auth.RecoveryCodesRemaining(ctx, res.User.ID)
+		if err != nil {
+			return nil, err
+		}
+		details["recovery_codes_remaining"] = strconv.Itoa(n)
+	}
+	setAuditDetails(ctx, details)
+	body, cookie, err := h.loginBody(ctx, res)
+	if err != nil {
+		return nil, err
+	}
+	return gen.LoginSecondFactor200JSONResponse{Body: body, Headers: gen.LoginSecondFactor200ResponseHeaders{SetCookie: &cookie}}, nil
+}
+
+// loginResponse is the 200 of a one-step login.
+func (h *Handlers) loginResponse(ctx context.Context, res auth.LoginResult) (gen.LoginResponseObject, error) {
+	body, cookie, err := h.loginBody(ctx, res)
+	if err != nil {
+		return nil, err
+	}
+	return gen.Login200JSONResponse{Body: body, Headers: gen.Login200ResponseHeaders{SetCookie: &cookie}}, nil
+}
+
+// loginBody returns the body and session cookie of a successful login,
+// whichever step finished it.
+func (h *Handlers) loginBody(ctx context.Context, res auth.LoginResult) (gen.CurrentUser, string, error) {
 	cookie := h.sessionCookie(ctx, res.Token.Reveal(), res.Session.ExpiresAt).String()
 	csrf := res.CSRFToken.Reveal()
-	return gen.Login200JSONResponse{
-		Body:    currentUser(res.User, gen.AuthMethodSession, &csrf),
-		Headers: gen.Login200ResponseHeaders{SetCookie: &cookie},
-	}, nil
+	verified := res.Session.VerifiedAt
+	body, err := h.currentUser(ctx, res.User, gen.AuthMethodSession, &csrf, &verified)
+	return body, cookie, err
 }
 
 // Logout ends the current session and clears the cookie.
@@ -76,15 +192,19 @@ func (h *Handlers) GetCurrentUser(ctx context.Context, _ gen.GetCurrentUserReque
 	} else if err != nil {
 		return nil, err
 	}
-	method, csrf := gen.AuthMethodToken, (*string)(nil)
+	method, csrf, verified := gen.AuthMethodToken, (*string)(nil), (*time.Time)(nil)
 	if p.Method == auth.MethodSession {
-		method = gen.AuthMethodSession
+		method, verified = gen.AuthMethodSession, &p.VerifiedAt
 		if t, ok := csrfFromContext(ctx); ok {
 			s := t.Reveal()
 			csrf = &s
 		}
 	}
-	return gen.GetCurrentUser200JSONResponse(currentUser(u, method, csrf)), nil
+	body, err := h.currentUser(ctx, u, method, csrf, verified)
+	if err != nil {
+		return nil, err
+	}
+	return gen.GetCurrentUser200JSONResponse(body), nil
 }
 
 // UpdateCurrentUser changes the caller's own display name.
@@ -99,7 +219,11 @@ func (h *Handlers) UpdateCurrentUser(ctx context.Context, req gen.UpdateCurrentU
 	} else if err != nil {
 		return nil, authError(err, "")
 	}
-	return gen.UpdateCurrentUser200JSONResponse(user(u)), nil
+	g, err := h.userWithTwoFactor(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	return gen.UpdateCurrentUser200JSONResponse(g), nil
 }
 
 // ChangePassword changes the caller's own password.
@@ -177,6 +301,24 @@ func (h *Handlers) RevokeAPIToken(ctx context.Context, req gen.RevokeAPITokenReq
 	return gen.RevokeAPIToken204Response{}, nil
 }
 
+// RegenerateRecoveryCodes replaces the current user's recovery codes and
+// returns the new ones, once.
+func (h *Handlers) RegenerateRecoveryCodes(ctx context.Context, _ gen.RegenerateRecoveryCodesRequestObject) (gen.RegenerateRecoveryCodesResponseObject, error) {
+	p, err := h.authorizeAuth(ctx, authz.RegenerateRecoveryCodes, self(ctx))
+	if err != nil {
+		return nil, err
+	}
+	codes, err := h.auth.RegenerateRecoveryCodes(ctx, p.UserID)
+	if err != nil {
+		return nil, authError(err, "")
+	}
+	body := gen.RecoveryCodes{Codes: make([]string, len(codes))}
+	for i, c := range codes {
+		body.Codes[i] = c.Reveal()
+	}
+	return gen.RegenerateRecoveryCodes200JSONResponse(body), nil
+}
+
 // authorizeAuth is authorize for handlers that need the auth service.
 func (h *Handlers) authorizeAuth(ctx context.Context, action authz.Action, target authz.Target) (auth.Principal, error) {
 	p, err := h.authorize(ctx, action, target)
@@ -192,7 +334,7 @@ func authError(err error, passwordField string) error {
 	switch {
 	case errors.Is(err, auth.ErrUserNotFound), errors.Is(err, auth.ErrTokenNotFound), errors.Is(err, auth.ErrSSHKeyNotFound):
 		return fmt.Errorf("%w: %w", ErrNotFound, err)
-	case errors.Is(err, auth.ErrEmailTaken), errors.Is(err, auth.ErrLastAdmin):
+	case errors.Is(err, auth.ErrEmailTaken), errors.Is(err, auth.ErrLastAdmin), errors.Is(err, auth.ErrNoSecondFactor):
 		return fmt.Errorf("%w: %w", ErrConflict, err)
 	case errors.Is(err, auth.ErrUnauthenticated):
 		return ErrUnauthenticated
@@ -218,25 +360,45 @@ func fieldError(field, detail string) error {
 	return &ValidationError{Fields: []httpserver.FieldError{{Field: field, Detail: detail}}}
 }
 
-func currentUser(u store.User, method gen.CurrentUserAuthMethod, csrf *string) gen.CurrentUser {
-	g := user(u)
+// currentUser describes the caller. verified is when the session was last
+// verified, nil for API tokens.
+func (h *Handlers) currentUser(ctx context.Context, u store.User, method gen.CurrentUserAuthMethod, csrf *string, verified *time.Time) (gen.CurrentUser, error) {
+	g, err := h.userWithTwoFactor(ctx, u)
+	if err != nil {
+		return gen.CurrentUser{}, err
+	}
+	remaining, err := h.auth.RecoveryCodesRemaining(ctx, u.ID)
+	if err != nil {
+		return gen.CurrentUser{}, err
+	}
 	return gen.CurrentUser{
 		ID: g.ID, Email: g.Email, DisplayName: g.DisplayName, Role: g.Role, Disabled: g.Disabled,
-		CreatedAt: g.CreatedAt, UpdatedAt: g.UpdatedAt, LastLoginAt: g.LastLoginAt,
-		AuthMethod: method, CsrfToken: csrf,
-	}
+		TwoFactorEnabled: g.TwoFactorEnabled,
+		CreatedAt:        g.CreatedAt, UpdatedAt: g.UpdatedAt, LastLoginAt: g.LastLoginAt,
+		AuthMethod: method, CsrfToken: csrf, VerifiedAt: verified, RecoveryCodesRemaining: remaining,
+	}, nil
 }
 
-func user(u store.User) gen.User {
+// userWithTwoFactor is user for one user, looking up their second factors.
+func (h *Handlers) userWithTwoFactor(ctx context.Context, u store.User) (gen.User, error) {
+	twoFactor, err := h.auth.TwoFactorEnabled(ctx, u.ID)
+	if err != nil {
+		return gen.User{}, err
+	}
+	return user(u, twoFactor), nil
+}
+
+func user(u store.User, twoFactor bool) gen.User {
 	return gen.User{
-		ID:          u.ID,
-		Email:       openapi_types.Email(u.Email),
-		DisplayName: u.DisplayName,
-		Role:        gen.Role(u.Role),
-		Disabled:    u.Disabled(),
-		CreatedAt:   u.CreatedAt,
-		UpdatedAt:   u.UpdatedAt,
-		LastLoginAt: u.LastLoginAt,
+		ID:               u.ID,
+		Email:            openapi_types.Email(u.Email),
+		DisplayName:      u.DisplayName,
+		Role:             gen.Role(u.Role),
+		Disabled:         u.Disabled(),
+		TwoFactorEnabled: twoFactor,
+		CreatedAt:        u.CreatedAt,
+		UpdatedAt:        u.UpdatedAt,
+		LastLoginAt:      u.LastLoginAt,
 	}
 }
 
