@@ -182,6 +182,64 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/reauthenticate/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Get the ways to reauthenticate
+         * @description Lists the methods the current user can reauthenticate with: their
+         *     second factors (`totp`, `webauthn`, `recovery_code`), or only
+         *     `password` for a user without one. For `webauthn` it starts a
+         *     challenge and returns its request options as `webauthn`.
+         *
+         *     Only dashboard sessions may call this; API tokens get `403`.
+         */
+        post: operations["startReauthentication"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/reauthenticate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prove who you are again for sensitive actions
+         * @description Checks the current user again and resets the session's
+         *     `verified_at`, so sensitive actions refused with the problem type
+         *     `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#reauthenticating-for-sensitive-actions`
+         *     go through when retried. A user with a second factor sends one of
+         *     their methods (see `startReauthentication`): `{"method": "totp",
+         *     "code": "123456"}`, a recovery code the same way, or `{"method":
+         *     "webauthn", "credential": {...}}`. A user without one sends
+         *     `{"method": "password", "password": "..."}`.
+         *
+         *     A wrong code or password returns `422` with an error on `/code`,
+         *     `/credential`, or `/password`, and counts toward login throttling
+         *     (`429`). A method the user can't use returns `422` with an error on
+         *     `/method`. Only dashboard sessions may call this; API tokens get
+         *     `403`.
+         */
+        post: operations["reauthenticate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/tokens": {
         parameters: {
             query?: never;
@@ -3117,6 +3175,40 @@ export interface components {
              */
             credential?: components["schemas"]["WebAuthnPublicKeyCredential"];
         };
+        /**
+         * @description A second-factor method, or `password` for users without a second factor.
+         * @enum {string}
+         */
+        ReauthenticationMethod: "totp" | "webauthn" | "recovery_code" | "password";
+        ReauthenticationOptions: {
+            /**
+             * @description The methods the user can reauthenticate with, in the order to
+             *     offer them: their second factors, or only `password` for a user
+             *     without one.
+             */
+            methods: components["schemas"]["ReauthenticationMethod"][];
+            /**
+             * @description When `methods` includes `webauthn`: the request options
+             *     (`PublicKeyCredentialRequestOptions` as JSON) to pass to
+             *     `navigator.credentials.get`.
+             */
+            webauthn?: unknown;
+        };
+        Reauthentication: {
+            method: components["schemas"]["ReauthenticationMethod"];
+            /**
+             * Format: password
+             * @description A TOTP code or recovery code, for those methods.
+             */
+            code?: string;
+            /** @description For `webauthn`, the assertion (`PublicKeyCredential` as JSON). */
+            credential?: Record<string, never>;
+            /**
+             * Format: password
+             * @description For `password`, the user's password.
+             */
+            password?: string;
+        };
         RecoveryCodes: {
             /** @description Ten single-use codes, each 16 characters in groups of four. Shown only once. */
             codes: string[];
@@ -3288,6 +3380,14 @@ export interface components {
              *     API tokens aren't restricted.
              */
             enrollment_required: boolean;
+            /**
+             * @description How long after `verified_at` the session may take sensitive
+             *     actions without reauthenticating
+             *     (`two_factor.reauthentication_max_age`). Null for bearer token
+             *     authentication and when `two_factor.reauthentication` is off,
+             *     since nothing asks.
+             */
+            reauthentication_max_age_seconds: number | null;
             /**
              * @description The session's CSRF token. Send it in the `X-CSRF-Token` header
              *     with every cookie-authenticated unsafe request. Null for bearer
@@ -5089,7 +5189,12 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
-        /** @description The caller's role or token scope doesn't allow this action. */
+        /**
+         * @description The caller's role or token scope doesn't allow this action, or (with
+         *     the problem type
+         *     `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#reauthenticating-for-sensitive-actions`)
+         *     the action is sensitive and the session must reauthenticate first.
+         */
         Forbidden: {
             headers: {
                 [name: string]: unknown;
@@ -5490,6 +5595,59 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["UnprocessableContent"];
+            429: components["responses"]["TooManyRequests"];
+            default: components["responses"]["Error"];
+        };
+    };
+    startReauthentication: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The ways to reauthenticate. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReauthenticationOptions"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    reauthenticate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Reauthentication"];
+            };
+        };
+        responses: {
+            /** @description Reauthenticated. The body is the current user, with the new `verified_at`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CurrentUser"];
+                };
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];

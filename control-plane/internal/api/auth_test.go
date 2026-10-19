@@ -43,12 +43,18 @@ func newAuthService(t *testing.T) (*auth.Service, *testClock) {
 
 // newAuthServiceOn is newAuthService on db.
 func newAuthServiceOn(db *store.DB) (*auth.Service, *testClock) {
+	return newAuthServiceWith(db, auth.TwoFactorPolicy{})
+}
+
+// newAuthServiceWith is newAuthServiceOn with a two-factor policy.
+func newAuthServiceWith(db *store.DB, policy auth.TwoFactorPolicy) (*auth.Service, *testClock) {
 	clk := &testClock{t: time.Now()}
 	svc := auth.NewService(db, auth.Options{
 		Logger:         storetest.Logger(),
 		Now:            clk.now,
 		PasswordParams: auth.Params{Memory: 64, Time: 1, Threads: 1, SaltLen: 16, KeyLen: 32},
 		Factors:        []auth.FactorVerifier{auth.NewTOTPVerifier(testKeyring(), "dash.example.com")},
+		TwoFactor:      policy,
 	})
 	return svc, clk
 }
@@ -80,13 +86,19 @@ type authEnv struct {
 // if it is nil.
 func newAuthEnv(t *testing.T, opts api.Options) *authEnv {
 	t.Helper()
+	return newAuthEnvWith(t, opts, auth.TwoFactorPolicy{})
+}
+
+// newAuthEnvWith is newAuthEnv with a two-factor policy.
+func newAuthEnvWith(t *testing.T, opts api.Options, policy auth.TwoFactorPolicy) *authEnv {
+	t.Helper()
 	if opts.DB == nil {
 		opts.DB = storetest.Open(t, store.SQLite)
 	}
 	if opts.Sites == nil {
 		opts.Sites = newSiteEnv(t, opts.DB, testPreviewBase).svc
 	}
-	svc, clk := newAuthServiceOn(opts.DB)
+	svc, clk := newAuthServiceWith(opts.DB, policy)
 	u, err := svc.CreateUser(context.Background(), auth.NewUser{Email: "admin@example.com", Password: testPassword, Role: store.RoleAdmin})
 	if err != nil {
 		t.Fatal(err)

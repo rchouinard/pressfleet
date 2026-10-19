@@ -133,6 +133,7 @@ var sampleBodies = map[string]string{
 	"login":                    `{"email":"a@example.com","password":"x"}`,
 	"loginSecondFactor":        `{"method":"recovery_code","code":"AAAA-BBBB-CCCC-DDDD"}`,
 	"confirmTotpEnrollment":    `{"code":"123456"}`,
+	"reauthenticate":           `{"method":"password","password":"x"}`,
 	"createApiToken":           `{"name":"ci","scope":"read-only","expires_at":null}`,
 	"createUser":               `{"email":"a@example.com","password":"correct horse battery","role":"viewer"}`,
 	"updateCurrentUser":        `{"display_name":"x"}`,

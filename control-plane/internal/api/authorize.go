@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
 	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
+	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 )
 
 // operationActions declares the authorization action of every protected
@@ -35,6 +37,8 @@ var operationActions = map[string]authz.Action{
 	"startTotpEnrollment":   authz.EnrollTOTP,
 	"confirmTotpEnrollment": authz.EnrollTOTP,
 	"removeTotp":            authz.RemoveTOTP,
+	"startReauthentication": authz.StartReauthentication,
+	"reauthenticate":        authz.Reauthenticate,
 
 	"listUsers":  authz.ViewUsers,
 	"createUser": authz.CreateUser,
@@ -207,7 +211,8 @@ var errActionMismatch = errors.New("api: handler checked an action its operation
 // authorize is the single authorization check (design doc §4.6). Every
 // protected handler calls it first, before reading or changing anything,
 // and returns its error as is: ErrForbidden (403) when the caller may not
-// take the action on the target. It returns the caller.
+// take the action on the target, with the reauthentication-required problem
+// type when only a fresh check is missing. It returns the caller.
 func (h *Handlers) authorize(ctx context.Context, action authz.Action, target authz.Target) (auth.Principal, error) {
 	if op, ok := OperationFromContext(ctx); ok && !op.allows(action) {
 		return auth.Principal{}, fmt.Errorf("%w: %s declares %q, handler checked %q", errActionMismatch, op.ID, op.Action, action)
@@ -221,11 +226,31 @@ func (h *Handlers) authorize(ctx context.Context, action authz.Action, target au
 		return auth.Principal{}, err
 	}
 	err = authz.Check(p, action, target)
+	if err == nil && h.auth != nil {
+		err = authz.CheckReauthentication(p, action, h.auth.TwoFactorPolicy(), h.auth.Now())
+	}
 	noteCheck(ctx, action, target, err != nil)
-	if err != nil {
+	if errors.Is(err, authz.ErrReauthenticationRequired) {
+		return auth.Principal{}, reauthenticationRequired(err)
+	} else if err != nil {
 		return auth.Principal{}, forbidden(err)
 	}
 	return p, nil
+}
+
+// ReauthenticationRequiredProblemType is the problem type of the 403 that
+// refuses a sensitive action from a session that last proved who its user
+// is too long ago (design doc §6.2, where it is called
+// reauthentication-required). POST /api/v1/auth/reauthenticate, then the
+// same request again, gets past it.
+const ReauthenticationRequiredProblemType = "https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#reauthenticating-for-sensitive-actions"
+
+// reauthenticationRequired converts a reauthentication denial into its
+// 403.
+func reauthenticationRequired(err error) error {
+	p := httpserver.NewProblem(http.StatusForbidden, "Confirm it's you to continue: reauthenticate, then try again.")
+	p.Type, p.Title = ReauthenticationRequiredProblemType, "Reauthentication required"
+	return fmt.Errorf("%w: %w", p, forbidden(err))
 }
 
 // self is the target of actions on the caller's own account.

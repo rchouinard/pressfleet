@@ -826,6 +826,30 @@ func (e ReadinessCheckStatus) Valid() bool {
 	}
 }
 
+// Defines values for ReauthenticationMethod.
+const (
+	ReauthenticationMethodPassword     ReauthenticationMethod = "password"
+	ReauthenticationMethodRecoveryCode ReauthenticationMethod = "recovery_code"
+	ReauthenticationMethodTotp         ReauthenticationMethod = "totp"
+	ReauthenticationMethodWebauthn     ReauthenticationMethod = "webauthn"
+)
+
+// Valid indicates whether the value is a known member of the ReauthenticationMethod enum.
+func (e ReauthenticationMethod) Valid() bool {
+	switch e {
+	case ReauthenticationMethodPassword:
+		return true
+	case ReauthenticationMethodRecoveryCode:
+		return true
+	case ReauthenticationMethodTotp:
+		return true
+	case ReauthenticationMethodWebauthn:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Role.
 const (
 	Admin    Role = "admin"
@@ -2251,6 +2275,13 @@ type CurrentUser struct {
 	// LastLoginAt Null if the user has never logged in.
 	LastLoginAt *Timestamp `json:"last_login_at,omitempty"`
 
+	// ReauthenticationMaxAgeSeconds How long after `verified_at` the session may take sensitive
+	// actions without reauthenticating
+	// (`two_factor.reauthentication_max_age`). Null for bearer token
+	// authentication and when `two_factor.reauthentication` is off,
+	// since nothing asks.
+	ReauthenticationMaxAgeSeconds *int `json:"reauthentication_max_age_seconds"`
+
 	// RecoveryCodesRemaining How many unused recovery codes the user has.
 	RecoveryCodesRemaining int `json:"recovery_codes_remaining"`
 
@@ -3134,6 +3165,37 @@ type ReadinessCheck struct {
 
 // ReadinessCheckStatus defines model for ReadinessCheck.Status.
 type ReadinessCheckStatus string
+
+// Reauthentication defines model for Reauthentication.
+type Reauthentication struct {
+	// Code A TOTP code or recovery code, for those methods.
+	Code *string `json:"code,omitempty"`
+
+	// Credential For `webauthn`, the assertion (`PublicKeyCredential` as JSON).
+	Credential *map[string]interface{} `json:"credential,omitempty"`
+
+	// Method A second-factor method, or `password` for users without a second factor.
+	Method ReauthenticationMethod `json:"method"`
+
+	// Password For `password`, the user's password.
+	Password *string `json:"password,omitempty"`
+}
+
+// ReauthenticationMethod A second-factor method, or `password` for users without a second factor.
+type ReauthenticationMethod string
+
+// ReauthenticationOptions defines model for ReauthenticationOptions.
+type ReauthenticationOptions struct {
+	// Methods The methods the user can reauthenticate with, in the order to
+	// offer them: their second factors, or only `password` for a user
+	// without one.
+	Methods []ReauthenticationMethod `json:"methods"`
+
+	// Webauthn When `methods` includes `webauthn`: the request options
+	// (`PublicKeyCredentialRequestOptions` as JSON) to pass to
+	// `navigator.credentials.get`.
+	Webauthn interface{} `json:"webauthn,omitempty"`
+}
 
 // RecoveryCodes defines model for RecoveryCodes.
 type RecoveryCodes struct {
@@ -4682,6 +4744,9 @@ type UpdateCurrentUserJSONRequestBody = ProfileUpdate
 // ChangePasswordJSONRequestBody defines body for ChangePassword for application/json ContentType.
 type ChangePasswordJSONRequestBody = PasswordChange
 
+// ReauthenticateJSONRequestBody defines body for Reauthenticate for application/json ContentType.
+type ReauthenticateJSONRequestBody = Reauthentication
+
 // CreateAPITokenJSONRequestBody defines body for CreateAPIToken for application/json ContentType.
 type CreateAPITokenJSONRequestBody = APITokenCreate
 
@@ -4834,6 +4899,12 @@ type ServerInterface interface {
 	// ChangePassword Change the current user's password
 	// (POST /api/v1/auth/password)
 	ChangePassword(w http.ResponseWriter, r *http.Request)
+	// Reauthenticate Prove who you are again for sensitive actions
+	// (POST /api/v1/auth/reauthenticate)
+	Reauthenticate(w http.ResponseWriter, r *http.Request)
+	// StartReauthentication Get the ways to reauthenticate
+	// (POST /api/v1/auth/reauthenticate/options)
+	StartReauthentication(w http.ResponseWriter, r *http.Request)
 	// ListAPITokens List the current user's API tokens
 	// (GET /api/v1/auth/tokens)
 	ListAPITokens(w http.ResponseWriter, r *http.Request, params ListAPITokensParams)
@@ -6068,6 +6139,34 @@ func (siw *ServerInterfaceWrapper) ChangePassword(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ChangePassword(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// Reauthenticate operation middleware
+func (siw *ServerInterfaceWrapper) Reauthenticate(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Reauthenticate(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartReauthentication operation middleware
+func (siw *ServerInterfaceWrapper) StartReauthentication(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartReauthentication(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -9421,6 +9520,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/auth/me", wrapper.GetCurrentUser)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/v1/auth/me", wrapper.UpdateCurrentUser)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/password", wrapper.ChangePassword)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/reauthenticate/options", wrapper.StartReauthentication)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/reauthenticate", wrapper.Reauthenticate)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/auth/tokens", wrapper.ListAPITokens)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/tokens", wrapper.CreateAPIToken)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/auth/tokens/{token_id}", wrapper.RevokeAPIToken)
@@ -12037,6 +12138,196 @@ type ChangePassworddefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response ChangePassworddefaultApplicationProblemPlusJSONResponse) VisitChangePasswordResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReauthenticateRequestObject struct {
+	Body *ReauthenticateJSONRequestBody
+}
+
+type ReauthenticateResponseObject interface {
+	VisitReauthenticateResponse(w http.ResponseWriter) error
+}
+
+type Reauthenticate200JSONResponse CurrentUser
+
+func (response Reauthenticate200JSONResponse) VisitReauthenticateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Reauthenticate400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response Reauthenticate400ApplicationProblemPlusJSONResponse) VisitReauthenticateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Reauthenticate401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response Reauthenticate401ApplicationProblemPlusJSONResponse) VisitReauthenticateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Reauthenticate403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response Reauthenticate403ApplicationProblemPlusJSONResponse) VisitReauthenticateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Reauthenticate422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response Reauthenticate422ApplicationProblemPlusJSONResponse) VisitReauthenticateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Reauthenticate429ApplicationProblemPlusJSONResponse struct {
+	TooManyRequestsApplicationProblemPlusJSONResponse
+}
+
+func (response Reauthenticate429ApplicationProblemPlusJSONResponse) VisitReauthenticateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReauthenticatedefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ReauthenticatedefaultApplicationProblemPlusJSONResponse) VisitReauthenticateResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartReauthenticationRequestObject struct {
+}
+
+type StartReauthenticationResponseObject interface {
+	VisitStartReauthenticationResponse(w http.ResponseWriter) error
+}
+
+type StartReauthentication200JSONResponse ReauthenticationOptions
+
+func (response StartReauthentication200JSONResponse) VisitStartReauthenticationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartReauthentication401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response StartReauthentication401ApplicationProblemPlusJSONResponse) VisitStartReauthenticationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartReauthentication403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response StartReauthentication403ApplicationProblemPlusJSONResponse) VisitStartReauthenticationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartReauthenticationdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response StartReauthenticationdefaultApplicationProblemPlusJSONResponse) VisitStartReauthenticationResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -22502,6 +22793,12 @@ type StrictServerInterface interface {
 	// ChangePassword Change the current user's password
 	// (POST /api/v1/auth/password)
 	ChangePassword(ctx context.Context, request ChangePasswordRequestObject) (ChangePasswordResponseObject, error)
+	// Reauthenticate Prove who you are again for sensitive actions
+	// (POST /api/v1/auth/reauthenticate)
+	Reauthenticate(ctx context.Context, request ReauthenticateRequestObject) (ReauthenticateResponseObject, error)
+	// StartReauthentication Get the ways to reauthenticate
+	// (POST /api/v1/auth/reauthenticate/options)
+	StartReauthentication(ctx context.Context, request StartReauthenticationRequestObject) (StartReauthenticationResponseObject, error)
 	// ListAPITokens List the current user's API tokens
 	// (GET /api/v1/auth/tokens)
 	ListAPITokens(ctx context.Context, request ListAPITokensRequestObject) (ListAPITokensResponseObject, error)
@@ -23525,6 +23822,61 @@ func (sh *strictHandler) ChangePassword(w http.ResponseWriter, r *http.Request) 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ChangePasswordResponseObject); ok {
 		if err := validResponse.VisitChangePasswordResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// Reauthenticate operation middleware
+func (sh *strictHandler) Reauthenticate(w http.ResponseWriter, r *http.Request) {
+	var request ReauthenticateRequestObject
+
+	var body ReauthenticateJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.Reauthenticate(ctx, request.(ReauthenticateRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "Reauthenticate")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ReauthenticateResponseObject); ok {
+		if err := validResponse.VisitReauthenticateResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StartReauthentication operation middleware
+func (sh *strictHandler) StartReauthentication(w http.ResponseWriter, r *http.Request) {
+	var request StartReauthenticationRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StartReauthentication(ctx, request.(StartReauthenticationRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StartReauthentication")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StartReauthenticationResponseObject); ok {
+		if err := validResponse.VisitStartReauthenticationResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

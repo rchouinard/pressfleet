@@ -109,7 +109,8 @@ type FactorVerifier interface {
 
 // FactorChallenger is implemented by verifiers whose method needs a
 // server challenge before the client can answer, such as WebAuthn. Login
-// calls it when a pending login starts and passes the result to the client.
+// calls it when a pending login starts, and StartReauthentication when a
+// session is about to reauthenticate, and passes the result to the client.
 type FactorChallenger interface {
 	Challenge(ctx context.Context, user store.User) (json.RawMessage, error)
 }
@@ -134,7 +135,24 @@ type SecondFactorRequest struct {
 // startPendingLogin begins the second step for a user whose password was
 // right and returns it as a *SecondFactorRequiredError.
 func (s *Service) startPendingLogin(ctx context.Context, user store.User, email string) error {
-	e := &SecondFactorRequiredError{UserID: user.ID, Challenges: map[FactorMethod]json.RawMessage{}}
+	methods, challenges, err := s.factorMethods(ctx, user)
+	if err != nil {
+		return fmt.Errorf("login: %w", err)
+	}
+	e := &SecondFactorRequiredError{UserID: user.ID, Methods: methods, Challenges: challenges}
+	e.Token = newSessionToken()
+	e.ExpiresAt = s.now().Add(pendingLoginTTL)
+	s.pending.put(hashToken(e.Token), pendingLogin{userID: user.ID, email: email}, e.ExpiresAt)
+	s.log.Info("login waiting for second factor", "user_id", user.ID)
+	return e
+}
+
+// factorMethods returns the second-factor methods user can pass, in
+// factorOrder, and starts the challenges of those that need one. Logins
+// and reauthentication offer the same ones.
+func (s *Service) factorMethods(ctx context.Context, user store.User) ([]FactorMethod, map[FactorMethod]json.RawMessage, error) {
+	var methods []FactorMethod
+	challenges := map[FactorMethod]json.RawMessage{}
 	for _, m := range factorOrder {
 		v, ok := s.factors[m]
 		if !ok {
@@ -142,25 +160,21 @@ func (s *Service) startPendingLogin(ctx context.Context, user store.User, email 
 		}
 		enrolled, err := v.Enrolled(ctx, user.ID)
 		if err != nil {
-			return fmt.Errorf("login: %w", err)
+			return nil, nil, err
 		}
 		if !enrolled {
 			continue
 		}
-		e.Methods = append(e.Methods, m)
+		methods = append(methods, m)
 		if c, ok := v.(FactorChallenger); ok {
 			opts, err := c.Challenge(ctx, user)
 			if err != nil {
-				return fmt.Errorf("login: %s challenge: %w", m, err)
+				return nil, nil, fmt.Errorf("%s challenge: %w", m, err)
 			}
-			e.Challenges[m] = opts
+			challenges[m] = opts
 		}
 	}
-	e.Token = newSessionToken()
-	e.ExpiresAt = s.now().Add(pendingLoginTTL)
-	s.pending.put(hashToken(e.Token), pendingLogin{userID: user.ID, email: email}, e.ExpiresAt)
-	s.log.Info("login waiting for second factor", "user_id", user.ID)
-	return e
+	return methods, challenges, nil
 }
 
 // LoginSecondFactor finishes a pending login by checking a second factor,

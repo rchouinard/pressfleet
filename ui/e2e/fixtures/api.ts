@@ -6,6 +6,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { createApiClient, type ApiClient } from '../../app/utils/api-client'
 import { toApiError, type ApiError } from '../../app/utils/api-error'
 import type { components } from '../../app/api/schema.gen'
+import { fetchReauthenticating } from './reauth'
 
 export type Role = components['schemas']['Role']
 export type User = components['schemas']['User']
@@ -30,23 +31,42 @@ export interface TestUser {
   role: Role
 }
 
-/** An API client that sends the given headers on every request. */
-function client(apiURL: string, headers: () => Record<string, string>, getCsrfToken?: () => string | undefined): ApiClient {
+/**
+ * An API client that sends the given headers on every request, and for a
+ * session, reauthenticates on demand (reauth.ts).
+ */
+function client(
+  apiURL: string,
+  headers: () => Record<string, string>,
+  getCsrfToken?: () => string | undefined,
+  reauthenticate?: () => Promise<void>,
+): ApiClient {
   return createApiClient({
     baseUrl: apiURL,
     getCsrfToken,
     fetch: (request) => {
       for (const [k, v] of Object.entries(headers())) request.headers.set(k, v)
-      return fetch(request)
+      return reauthenticate ? fetchReauthenticating(request, r => fetch(r), reauthenticate) : fetch(request)
     },
   })
 }
 
-/** Logs in through the API and returns a client that uses the session. */
+/**
+ * Logs in through the API and returns a client that uses the session. The
+ * client reauthenticates with the password when a sensitive action finds
+ * the session's last check too old, so the user must have no second factor.
+ */
 export async function login(apiURL: string, email: string, password: string): Promise<Api> {
-  const api: Api = {
-    client: client(apiURL, (): Record<string, string> => (api.sessionToken ? { Cookie: `${SESSION_COOKIE}=${api.sessionToken}` } : {}), () => api.csrfToken),
+  const sessionCookie = (): Record<string, string> => (api.sessionToken ? { Cookie: `${SESSION_COOKIE}=${api.sessionToken}` } : {})
+  const reauthenticate = async () => {
+    const res = await fetch(new URL('/api/v1/auth/reauthenticate', apiURL), {
+      method: 'POST',
+      headers: { ...sessionCookie(), 'Content-Type': 'application/json', 'X-CSRF-Token': api.csrfToken ?? '' },
+      body: JSON.stringify({ method: 'password', password }),
+    })
+    if (!res.ok) throw new Error(`reauthenticate as ${email}: status ${res.status}: ${await res.text()}`)
   }
+  const api: Api = { client: client(apiURL, sessionCookie, () => api.csrfToken, reauthenticate) }
   const res = await fetch(new URL('/api/v1/auth/login', apiURL), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

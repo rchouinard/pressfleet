@@ -44,6 +44,7 @@ var sessionOnlyOperations = map[string]bool{
 	"beginWebAuthnRegistration": true, "registerWebAuthnCredential": true,
 	"renameWebAuthnCredential": true, "removeWebAuthnCredential": true,
 	"startTotpEnrollment": true, "confirmTotpEnrollment": true, "removeTotp": true,
+	"startReauthentication": true, "reauthenticate": true,
 }
 
 // auditedReads are the reads recorded like changes (auditRead).
@@ -106,8 +107,9 @@ func TestEveryStateChangingOperationIsAudited(t *testing.T) {
 					want.Result = store.AuditFailure
 				}
 				if sessionOnlyOperations[op.ID] {
-					// Only sessions may create tokens and manage second
-					// factors, so the token caller is denied.
+					// Only sessions may create tokens, manage second
+					// factors, and reauthenticate, so the token caller is
+					// denied.
 					want.Result = store.AuditDenied
 				}
 				if op.ID == "login" {
