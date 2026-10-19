@@ -482,6 +482,15 @@ func (s *Service) FinishWebAuthnRegistration(ctx context.Context, userID, name s
 	return reg, nil
 }
 
+// StaleWebAuthnCredentials returns the current relying party ID and counts
+// the credentials bound to another one (registered before the dashboard
+// domain changed), and the users who have them, for doctor. Such
+// credentials can't be used and aren't a second factor.
+func (s *Service) StaleWebAuthnCredentials(ctx context.Context) (rpID string, credentials, users int, err error) {
+	credentials, users, err = store.NewWebAuthnCredentials(s.db).CountBoundElsewhere(ctx, s.rp.ID)
+	return s.rp.ID, credentials, users, err
+}
+
 // ListWebAuthnCredentials returns the user's security keys and passkeys,
 // including any bound to another relying party ID.
 func (s *Service) ListWebAuthnCredentials(ctx context.Context, userID string) ([]store.WebAuthnCredential, error) {

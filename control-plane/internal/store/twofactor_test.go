@@ -500,6 +500,39 @@ func TestHasSecondFactor(t *testing.T) {
 	})
 }
 
+func TestWebAuthnCredentialsCountBoundElsewhere(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		creds := store.NewWebAuthnCredentials(db)
+		check := func(rpID string, wantCreds, wantUsers int) {
+			t.Helper()
+			if n, users, err := creds.CountBoundElsewhere(ctx, rpID); err != nil || n != wantCreds || users != wantUsers {
+				t.Errorf("CountBoundElsewhere(%s) = %d, %d, %v; want %d, %d", rpID, n, users, err, wantCreds, wantUsers)
+			}
+		}
+		check("new.example.com", 0, 0)
+		u := createUser(t, db, "a@example.com", store.RoleAdmin)
+		v := createUser(t, db, "b@example.com", store.RoleViewer)
+		for _, c := range []store.WebAuthnCredential{
+			newCredential(u.ID, "u1"), newCredential(u.ID, "u2"), newCredential(v.ID, "v1"),
+		} {
+			if err := creds.Create(ctx, &c); err != nil {
+				t.Fatal(err)
+			}
+		}
+		check("dashboard.example.com", 0, 0)
+		check("new.example.com", 3, 2)
+		// v registers again on the new domain; their old key is still stale.
+		c := newCredential(v.ID, "v2")
+		c.RPID = "new.example.com"
+		if err := creds.Create(ctx, &c); err != nil {
+			t.Fatal(err)
+		}
+		check("new.example.com", 3, 2)
+		check("dashboard.example.com", 1, 1)
+	})
+}
+
 func TestDeleteUserRemovesSecondFactors(t *testing.T) {
 	ctx := context.Background()
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
