@@ -4861,10 +4861,10 @@ type ClientInterface interface {
 	// The response contains the plaintext token. It is shown only once and
 	// cannot be retrieved again; only a hash is stored.
 	//
-	// When the request itself is authenticated with an API token, the new
-	// token can't be broader than it: a read-only token can't create tokens
-	// at all, and a token with an expiry can only create tokens that expire
-	// no later. Violations return `403`.
+	// Requires a dashboard session: requests authenticated with an API
+	// token, whatever its scope, get `403` and create nothing. A token
+	// that could create tokens could outlive its own revocation by
+	// creating replacements. Tokens can still list and revoke tokens.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -4876,10 +4876,10 @@ type ClientInterface interface {
 	// The response contains the plaintext token. It is shown only once and
 	// cannot be retrieved again; only a hash is stored.
 	//
-	// When the request itself is authenticated with an API token, the new
-	// token can't be broader than it: a read-only token can't create tokens
-	// at all, and a token with an expiry can only create tokens that expire
-	// no later. Violations return `403`.
+	// Requires a dashboard session: requests authenticated with an API
+	// token, whatever its scope, get `403` and create nothing. A token
+	// that could create tokens could outlive its own revocation by
+	// creating replacements. Tokens can still list and revoke tokens.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7373,10 +7373,10 @@ func (c *Client) ListAPITokens(ctx context.Context, params *ListAPITokensParams,
 // The response contains the plaintext token. It is shown only once and
 // cannot be retrieved again; only a hash is stored.
 //
-// When the request itself is authenticated with an API token, the new
-// token can't be broader than it: a read-only token can't create tokens
-// at all, and a token with an expiry can only create tokens that expire
-// no later. Violations return `403`.
+// Requires a dashboard session: requests authenticated with an API
+// token, whatever its scope, get `403` and create nothing. A token
+// that could create tokens could outlive its own revocation by
+// creating replacements. Tokens can still list and revoke tokens.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7398,10 +7398,10 @@ func (c *Client) CreateAPITokenWithBody(ctx context.Context, contentType string,
 // The response contains the plaintext token. It is shown only once and
 // cannot be retrieved again; only a hash is stored.
 //
-// When the request itself is authenticated with an API token, the new
-// token can't be broader than it: a read-only token can't create tokens
-// at all, and a token with an expiry can only create tokens that expire
-// no later. Violations return `403`.
+// Requires a dashboard session: requests authenticated with an API
+// token, whatever its scope, get `403` and create nothing. A token
+// that could create tokens could outlive its own revocation by
+// creating replacements. Tokens can still list and revoke tokens.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -16287,10 +16287,10 @@ type ClientWithResponsesInterface interface {
 	// The response contains the plaintext token. It is shown only once and
 	// cannot be retrieved again; only a hash is stored.
 	//
-	// When the request itself is authenticated with an API token, the new
-	// token can't be broader than it: a read-only token can't create tokens
-	// at all, and a token with an expiry can only create tokens that expire
-	// no later. Violations return `403`.
+	// Requires a dashboard session: requests authenticated with an API
+	// token, whatever its scope, get `403` and create nothing. A token
+	// that could create tokens could outlive its own revocation by
+	// creating replacements. Tokens can still list and revoke tokens.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -16302,10 +16302,10 @@ type ClientWithResponsesInterface interface {
 	// The response contains the plaintext token. It is shown only once and
 	// cannot be retrieved again; only a hash is stored.
 	//
-	// When the request itself is authenticated with an API token, the new
-	// token can't be broader than it: a read-only token can't create tokens
-	// at all, and a token with an expiry can only create tokens that expire
-	// no later. Violations return `403`.
+	// Requires a dashboard session: requests authenticated with an API
+	// token, whatever its scope, get `403` and create nothing. A token
+	// that could create tokens could outlive its own revocation by
+	// creating replacements. Tokens can still list and revoke tokens.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -27479,10 +27479,10 @@ func (c *ClientWithResponses) ListAPITokensWithResponse(ctx context.Context, par
 // The response contains the plaintext token. It is shown only once and
 // cannot be retrieved again; only a hash is stored.
 //
-// When the request itself is authenticated with an API token, the new
-// token can't be broader than it: a read-only token can't create tokens
-// at all, and a token with an expiry can only create tokens that expire
-// no later. Violations return `403`.
+// Requires a dashboard session: requests authenticated with an API
+// token, whatever its scope, get `403` and create nothing. A token
+// that could create tokens could outlive its own revocation by
+// creating replacements. Tokens can still list and revoke tokens.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -27500,10 +27500,10 @@ func (c *ClientWithResponses) CreateAPITokenWithBodyWithResponse(ctx context.Con
 // The response contains the plaintext token. It is shown only once and
 // cannot be retrieved again; only a hash is stored.
 //
-// When the request itself is authenticated with an API token, the new
-// token can't be broader than it: a read-only token can't create tokens
-// at all, and a token with an expiry can only create tokens that expire
-// no later. Violations return `403`.
+// Requires a dashboard session: requests authenticated with an API
+// token, whatever its scope, get `403` and create nothing. A token
+// that could create tokens could outlive its own revocation by
+// creating replacements. Tokens can still list and revoke tokens.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

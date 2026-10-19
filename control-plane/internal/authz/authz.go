@@ -30,7 +30,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
@@ -171,6 +170,14 @@ var sshActions = map[Action]bool{
 	// losing the role ends access to open sessions too.
 	TunnelDatabase:          true,
 	TunnelDatabaseReadWrite: true,
+}
+
+// sessionActions are actions only a dashboard session (auth.MethodSession)
+// may take, whatever a token's scope. A token that could create tokens
+// could outlive its own revocation by minting replacements, so every token
+// must trace back to a login (design doc §6.2).
+var sessionActions = map[Action]bool{
+	CreateOwnToken: true,
 }
 
 // rule says who may take an action.
@@ -408,6 +415,9 @@ func Check(p auth.Principal, action Action, t Target) error {
 	switch p.Method {
 	case auth.MethodSession:
 	case auth.MethodToken:
+		if sessionActions[action] {
+			return denied("an API token doesn't allow %s; use a dashboard session", action)
+		}
 		switch p.Scope {
 		case store.ScopeFull:
 		case store.ScopeReadOnly:
@@ -427,36 +437,6 @@ func Check(p auth.Principal, action Action, t Target) error {
 	// Client-group scoping (post-MVP) goes here, using t.ClientGroupID.
 	_ = t
 	return nil
-}
-
-// CheckNewToken refuses to let a caller authenticated by an API token mint
-// a token that can do more than the caller's own: a broader scope, or a
-// longer (or no) expiry. Sessions may create any token their role allows;
-// the role still caps what the token can do.
-func CheckNewToken(p auth.Principal, scope store.TokenScope, expiresAt *time.Time) error {
-	if p.Method != auth.MethodToken {
-		return nil
-	}
-	if scopeRank(scope) > scopeRank(p.Scope) {
-		return denied("an API token with scope %s can't create a token with scope %s", p.Scope, scope)
-	}
-	if p.TokenExpiresAt != nil && (expiresAt == nil || expiresAt.After(*p.TokenExpiresAt)) {
-		return denied("a token created with an API token can't expire later than that token (%s)",
-			p.TokenExpiresAt.UTC().Format(time.RFC3339))
-	}
-	return nil
-}
-
-// scopeRank orders scopes by breadth; unknown scopes are broadest, so they
-// are never considered within another scope.
-func scopeRank(s store.TokenScope) int {
-	switch s {
-	case store.ScopeReadOnly:
-		return 1
-	case store.ScopeFull:
-		return 2
-	}
-	return 3
 }
 
 // Resolver fills in the client group of a target.

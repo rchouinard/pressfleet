@@ -98,6 +98,12 @@ var sshKeyActions = map[authz.Action]bool{
 	authz.ConnectSFTP: true, authz.TunnelDatabase: true, authz.TunnelDatabaseReadWrite: true,
 }
 
+// sessionOnlyActions are the actions API tokens can't take whatever their
+// scope, because a token that could take them could outlive its revocation.
+var sessionOnlyActions = map[authz.Action]bool{
+	authz.CreateOwnToken: true,
+}
+
 func TestDesignTableCoversEveryAction(t *testing.T) {
 	actions := authz.Actions()
 	if len(actions) != len(designTable) {
@@ -128,7 +134,8 @@ func TestCheckEveryActionRoleAndCredential(t *testing.T) {
 					allowed := map[store.Role]bool{store.RoleAdmin: row.admin, store.RoleOperator: row.operator, store.RoleViewer: row.viewer}[role]
 					readOnlyWrite := c.scope == store.ScopeReadOnly && row.write
 					sshElsewhere := c.method == auth.MethodSSHKey && !sshKeyActions[action]
-					want := allowed && !readOnlyWrite && !sshElsewhere
+					tokenSessionOnly := c.method == auth.MethodToken && sessionOnlyActions[action]
+					want := allowed && !readOnlyWrite && !sshElsewhere && !tokenSessionOnly
 					p := auth.Principal{UserID: id.New(), Role: role, Method: c.method, Scope: c.scope}
 					if c.method == auth.MethodToken {
 						p.TokenID = id.New()
@@ -173,45 +180,6 @@ func TestCheckFailsClosed(t *testing.T) {
 	}
 	if authz.Action("site.explode").Known() || !authz.Action("site.explode").Writes() {
 		t.Error("unknown actions must be unknown and count as writes")
-	}
-}
-
-func TestCheckNewToken(t *testing.T) {
-	now := time.Now()
-	soon, later := now.Add(time.Hour), now.Add(48*time.Hour)
-	session := auth.Principal{Role: store.RoleViewer, Method: auth.MethodSession}
-	full := auth.Principal{Role: store.RoleAdmin, Method: auth.MethodToken, Scope: store.ScopeFull}
-	readOnly := auth.Principal{Role: store.RoleAdmin, Method: auth.MethodToken, Scope: store.ScopeReadOnly}
-	expiring := auth.Principal{Role: store.RoleAdmin, Method: auth.MethodToken, Scope: store.ScopeFull, TokenExpiresAt: &soon}
-	earlier := now.Add(30 * time.Minute)
-	tests := []struct {
-		name    string
-		p       auth.Principal
-		scope   store.TokenScope
-		expires *time.Time
-		ok      bool
-	}{
-		{"session, full, no expiry", session, store.ScopeFull, nil, true},
-		{"full token mints full", full, store.ScopeFull, nil, true},
-		{"full token mints read-only", full, store.ScopeReadOnly, &later, true},
-		{"read-only token mints read-only", readOnly, store.ScopeReadOnly, nil, true},
-		{"read-only token mints full", readOnly, store.ScopeFull, nil, false},
-		{"token mints unknown scope", full, "admin", nil, false},
-		{"expiring token mints non-expiring", expiring, store.ScopeFull, nil, false},
-		{"expiring token mints longer-lived", expiring, store.ScopeReadOnly, &later, false},
-		{"expiring token mints same expiry", expiring, store.ScopeFull, &soon, true},
-		{"expiring token mints shorter-lived", expiring, store.ScopeFull, &earlier, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := authz.CheckNewToken(tt.p, tt.scope, tt.expires)
-			if (err == nil) != tt.ok {
-				t.Fatalf("CheckNewToken = %v, want ok = %v", err, tt.ok)
-			}
-			if err != nil && !errors.Is(err, authz.ErrDenied) {
-				t.Errorf("error %v doesn't wrap ErrDenied", err)
-			}
-		})
 	}
 }
 

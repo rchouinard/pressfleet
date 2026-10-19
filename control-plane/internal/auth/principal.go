@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
@@ -36,9 +35,6 @@ type Principal struct {
 	// they may do everything the user's role allows.
 	TokenID string
 	Scope   store.TokenScope
-	// TokenExpiresAt is the token's expiry, if it has one. Authorization
-	// uses it so a token can't mint a token that outlives it.
-	TokenExpiresAt *time.Time
 	// SSHKeyID is set for MethodSSHKey: the registered key the client
 	// proved it holds.
 	SSHKeyID string

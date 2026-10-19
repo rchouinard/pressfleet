@@ -144,15 +144,9 @@ func (h *Handlers) CreateAPIToken(ctx context.Context, req gen.CreateAPITokenReq
 	if err != nil {
 		return nil, err
 	}
-	scope := store.TokenScope(req.Body.Scope)
-	// A token must not mint one that can do more, or last longer, than
-	// itself.
-	if err := authz.CheckNewToken(p, scope, req.Body.ExpiresAt); err != nil {
-		return nil, deny(ctx, err)
-	}
 	tok, plain, err := h.auth.CreateAPIToken(ctx, p.UserID, auth.NewAPIToken{
 		Name:      req.Body.Name,
-		Scope:     scope,
+		Scope:     store.TokenScope(req.Body.Scope),
 		ExpiresAt: req.Body.ExpiresAt,
 	})
 	if err != nil {

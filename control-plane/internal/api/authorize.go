@@ -215,16 +215,6 @@ func (h *Handlers) authorize(ctx context.Context, action authz.Action, target au
 	return p, nil
 }
 
-// deny refuses a request after authorize allowed it, for checks that depend
-// on the request body (see authz.CheckNewToken). It is recorded in the
-// audit log as a denial, like one from authorize.
-func deny(ctx context.Context, err error) error {
-	if rec := auditFromContext(ctx); rec != nil {
-		rec.denied = true
-	}
-	return forbidden(err)
-}
-
 // self is the target of actions on the caller's own account.
 func self(ctx context.Context) authz.Target {
 	p, _ := auth.PrincipalFromContext(ctx)

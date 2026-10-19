@@ -323,7 +323,7 @@ func (s *Service) AuthenticateToken(ctx context.Context, token redact.Secret) (P
 	}
 	return Principal{
 		UserID: user.ID, Email: user.Email, Role: user.Role,
-		Method: MethodToken, TokenID: tok.ID, Scope: tok.Scope, TokenExpiresAt: tok.ExpiresAt,
+		Method: MethodToken, TokenID: tok.ID, Scope: tok.Scope,
 	}, nil
 }
 

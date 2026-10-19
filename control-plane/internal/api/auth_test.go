@@ -277,7 +277,8 @@ func TestCSRF(t *testing.T) {
 	expectStatus(t, e.do(http.MethodPost, "/api/v1/auth/tokens", body, sameOrigin), http.StatusCreated, "same-origin")
 
 	// Bearer requests need no CSRF token, and ignore any cookie.
-	expectStatus(t, e.do(http.MethodPost, "/api/v1/auth/tokens", body, creds{bearer: token}), http.StatusCreated, "bearer without CSRF")
+	revocable, _ := e.createToken(s, body)
+	expectStatus(t, e.do(http.MethodDelete, "/api/v1/auth/tokens/"+revocable, "", creds{bearer: token}), http.StatusNoContent, "bearer without CSRF")
 	expectStatus(t, e.do(http.MethodPost, "/api/v1/auth/tokens", body, creds{bearer: "pft_bogus", cookie: s.cookie.Value, csrf: s.csrf}),
 		http.StatusUnauthorized, "bad bearer with a good cookie")
 }
@@ -326,6 +327,41 @@ func TestAPITokensOverHTTP(t *testing.T) {
 	expectStatus(t, e.do(http.MethodGet, "/api/v1/auth/me", "", creds{bearer: "not-a-token"}), http.StatusUnauthorized, "garbage token")
 	w = e.do(http.MethodGet, "/api/v1/auth/me", "", creds{header: map[string]string{"Authorization": "Basic YTpi"}})
 	expectStatus(t, w, http.StatusUnauthorized, "basic auth")
+}
+
+func TestTokensCantCreateTokens(t *testing.T) {
+	e := newAuthEnv(t, api.Options{})
+	s := e.mustLogin()
+	_, full := e.createToken(s, `{"name":"ci","scope":"full"}`)
+	_, readOnly := e.createToken(s, `{"name":"metrics","scope":"read-only"}`)
+
+	for _, body := range []string{`{"name":"x","scope":"full"}`, `{"name":"x","scope":"read-only","expires_at":null}`} {
+		expectStatus(t, e.do(http.MethodPost, "/api/v1/auth/tokens", body, creds{bearer: full}), http.StatusForbidden, "full token creates "+body)
+		expectStatus(t, e.do(http.MethodPost, "/api/v1/auth/tokens", body, creds{bearer: readOnly}), http.StatusForbidden, "read-only token creates "+body)
+	}
+	w := e.do(http.MethodGet, "/api/v1/auth/tokens", "", creds{bearer: readOnly})
+	expectStatus(t, w, http.StatusOK, "list with a token")
+	var list struct {
+		Items []struct{ ID string } `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 2 {
+		t.Errorf("refused requests created tokens: %d tokens, want 2", len(list.Items))
+	}
+
+	// Tokens can still revoke tokens, and full tokens manage SSH keys.
+	victim, _ := e.createToken(s, `{"name":"old","scope":"read-only"}`)
+	expectStatus(t, e.do(http.MethodDelete, "/api/v1/auth/tokens/"+victim, "", creds{bearer: full}), http.StatusNoContent, "full token revokes")
+	line, _ := newAuthorizedKey(t, "ci@runner")
+	w = e.do(http.MethodPost, "/api/v1/users/me/ssh-keys", keyJSON(t, "", line), creds{bearer: full})
+	expectStatus(t, w, http.StatusCreated, "full token adds an SSH key")
+	var key struct{ ID string }
+	if err := json.Unmarshal(w.Body.Bytes(), &key); err != nil {
+		t.Fatal(err)
+	}
+	expectStatus(t, e.do(http.MethodDelete, "/api/v1/users/me/ssh-keys/"+key.ID, "", creds{bearer: full}), http.StatusNoContent, "full token removes an SSH key")
 }
 
 func TestSessionLifecycle(t *testing.T) {

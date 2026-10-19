@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
@@ -170,22 +169,4 @@ func TestLastAdminOverHTTP(t *testing.T) {
 	expectStatus(t, e.do(http.MethodPatch, me, `{"role":"operator"}`, admin.creds()), http.StatusOK, "demote with another admin")
 	// The demoted caller's own session can't manage users any more.
 	expectStatus(t, e.do(http.MethodGet, "/api/v1/users", "", admin.creds()), http.StatusForbidden, "list users after self-demotion")
-}
-
-func TestTokenCantMintBroaderToken(t *testing.T) {
-	e := newAuthEnv(t, api.Options{})
-	s := e.mustLogin()
-	exp := e.clock.now().Add(time.Hour).UTC()
-	_, expiring := e.createToken(s, `{"name":"short","scope":"full","expires_at":"`+exp.Format(time.RFC3339)+`"}`)
-	c := creds{bearer: expiring}
-
-	expectStatus(t, e.do(http.MethodPost, "/api/v1/auth/tokens", `{"name":"forever","scope":"full"}`, c), http.StatusForbidden, "no expiry")
-	later := exp.Add(time.Minute).Format(time.RFC3339)
-	expectStatus(t, e.do(http.MethodPost, "/api/v1/auth/tokens", `{"name":"later","scope":"read-only","expires_at":"`+later+`"}`, c),
-		http.StatusForbidden, "later expiry")
-	sooner := exp.Add(-time.Minute).Format(time.RFC3339)
-	expectStatus(t, e.do(http.MethodPost, "/api/v1/auth/tokens", `{"name":"sooner","scope":"read-only","expires_at":"`+sooner+`"}`, c),
-		http.StatusCreated, "sooner expiry")
-	// Sessions aren't limited.
-	expectStatus(t, e.do(http.MethodPost, "/api/v1/auth/tokens", `{"name":"forever","scope":"full"}`, s.creds()), http.StatusCreated, "session")
 }

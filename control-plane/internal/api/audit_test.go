@@ -88,6 +88,11 @@ func TestEveryStateChangingOperationIsAudited(t *testing.T) {
 				if w.Code >= 400 {
 					want.Result = store.AuditFailure
 				}
+				if op.ID == "createApiToken" {
+					// Only sessions may create tokens, so the token caller
+					// is denied.
+					want.Result = store.AuditDenied
+				}
 				if op.ID == "login" {
 					// Public: the sample credentials are wrong, so there is
 					// no actor.
