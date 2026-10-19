@@ -33,6 +33,41 @@ type Problem struct {
 	// again, for 429 and 503. The writer also sends it as the Retry-After
 	// header, so clients that only see the body (or only the header) get it.
 	RetryAfter int `json:"retry_after,omitempty"`
+	// Extensions are extra members of a problem type (RFC 9457 §3.2),
+	// such as the methods a second-factor-required problem offers. They
+	// are written beside the standard members and can't replace them.
+	Extensions map[string]any `json:"-"`
+}
+
+// MarshalJSON writes the standard members and then the extensions.
+func (p Problem) MarshalJSON() ([]byte, error) {
+	type standard Problem // without the method, so this doesn't recurse
+	body, err := json.Marshal(standard(p))
+	if err != nil || len(p.Extensions) == 0 {
+		return body, err
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(body, &members); err != nil {
+		return nil, err
+	}
+	for k, v := range p.Extensions {
+		if standardMembers[k] {
+			continue
+		}
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return nil, err
+		}
+		members[k] = raw
+	}
+	return json.Marshal(members)
+}
+
+// standardMembers are the members Problem defines, which extensions can't
+// use even when the standard member is empty and omitted.
+var standardMembers = map[string]bool{
+	"type": true, "title": true, "status": true, "detail": true, "instance": true,
+	"request_id": true, "errors": true, "retry_after": true,
 }
 
 // FieldError describes one invalid request field.
@@ -75,7 +110,8 @@ func WriteProblem(w http.ResponseWriter, r *http.Request, p *Problem) {
 	}
 	body, err := json.Marshal(out)
 	if err != nil {
-		// Problem only holds strings and ints; this can't happen.
+		// Problem holds strings, ints, and extensions that callers build
+		// from plain values; this can't happen.
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}

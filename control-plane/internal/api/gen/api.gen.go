@@ -847,6 +847,27 @@ func (e Role) Valid() bool {
 	}
 }
 
+// Defines values for SecondFactorMethod.
+const (
+	SecondFactorMethodRecoveryCode SecondFactorMethod = "recovery_code"
+	SecondFactorMethodTotp         SecondFactorMethod = "totp"
+	SecondFactorMethodWebauthn     SecondFactorMethod = "webauthn"
+)
+
+// Valid indicates whether the value is a known member of the SecondFactorMethod enum.
+func (e SecondFactorMethod) Valid() bool {
+	switch e {
+	case SecondFactorMethodRecoveryCode:
+		return true
+	case SecondFactorMethodTotp:
+		return true
+	case SecondFactorMethodWebauthn:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SiteCoreDecidedBy.
 const (
 	SiteCoreDecidedByAuto        SiteCoreDecidedBy = "auto"
@@ -2221,11 +2242,24 @@ type CurrentUser struct {
 	// LastLoginAt Null if the user has never logged in.
 	LastLoginAt *Timestamp `json:"last_login_at,omitempty"`
 
+	// RecoveryCodesRemaining How many unused recovery codes the user has.
+	RecoveryCodesRemaining int `json:"recovery_codes_remaining"`
+
 	// Role Platform-wide role (design doc §4.6).
 	Role Role `json:"role"`
 
+	// TwoFactorEnabled Whether the user has a second factor (an authenticator app or a
+	// security key), so their logins take two steps. Recovery codes
+	// alone don't count.
+	TwoFactorEnabled bool `json:"two_factor_enabled"`
+
 	// UpdatedAt Examples: 2026-09-26T17:25:00Z
 	UpdatedAt Timestamp `json:"updated_at"`
+
+	// VerifiedAt When the user last proved who they are in this session: at
+	// login, with every step it took. Null for bearer token
+	// authentication.
+	VerifiedAt *Timestamp `json:"verified_at"`
 }
 
 // CurrentUserAuthMethod defines model for CurrentUser.AuthMethod.
@@ -3087,6 +3121,12 @@ type ReadinessCheck struct {
 // ReadinessCheckStatus defines model for ReadinessCheck.Status.
 type ReadinessCheckStatus string
 
+// RecoveryCodes defines model for RecoveryCodes.
+type RecoveryCodes struct {
+	// Codes Ten single-use codes, each 16 characters in groups of four. Shown only once.
+	Codes []string `json:"codes"`
+}
+
 // ResourceLimits Limits for the site as a whole; the platform splits them between the site's containers.
 type ResourceLimits struct {
 	// CPU CPU limit in cores.
@@ -3114,6 +3154,59 @@ type ResourceLimitsUpdate struct {
 
 // Role Platform-wide role (design doc §4.6).
 type Role string
+
+// SecondFactorLogin defines model for SecondFactorLogin.
+type SecondFactorLogin struct {
+	// Code A TOTP code or recovery code, for those methods.
+	Code   *string            `json:"code,omitempty"`
+	Method SecondFactorMethod `json:"method"`
+}
+
+// SecondFactorMethod defines model for SecondFactorMethod.
+type SecondFactorMethod string
+
+// SecondFactorRequired A login problem. With the type
+// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor`,
+// the password
+// was right and the user must pass a second factor with one of
+// `methods`; otherwise the members beyond Problem are absent.
+type SecondFactorRequired struct {
+	// Detail Human-readable explanation of this occurrence.
+	Detail *string `json:"detail,omitempty"`
+
+	// Errors Validation errors, one per invalid field (`422` only).
+	Errors *[]FieldError `json:"errors,omitempty"`
+
+	// Instance The request path that produced the problem.
+	Instance *string `json:"instance,omitempty"`
+
+	// Methods The second-factor methods the user can use, in the order to
+	// offer them. Empty if the user's factors aren't supported by
+	// this control plane.
+	Methods *[]SecondFactorMethod `json:"methods,omitempty"`
+
+	// RequestID The request ID (also in the `X-Request-ID` response header). Include it when reporting issues.
+	RequestID *string `json:"request_id,omitempty"`
+
+	// RetryAfter Seconds to wait before retrying (`429` and some `503`). The same
+	// value is in the `Retry-After` header.
+	RetryAfter *int `json:"retry_after,omitempty"`
+
+	// Status The HTTP status code.
+	//
+	// Examples: 404
+	Status int `json:"status"`
+
+	// Title Short, human-readable summary of the problem type.
+	//
+	// Examples: Not Found
+	Title string `json:"title"`
+
+	// Type Identifies the problem type. `about:blank` means the HTTP status says it all.
+	//
+	// Examples: about:blank
+	Type string `json:"type"`
+}
 
 // Site defines model for Site.
 type Site struct {
@@ -3814,6 +3907,11 @@ type User struct {
 	// Role Platform-wide role (design doc §4.6).
 	Role Role `json:"role"`
 
+	// TwoFactorEnabled Whether the user has a second factor (an authenticator app or a
+	// security key), so their logins take two steps. Recovery codes
+	// alone don't count.
+	TwoFactorEnabled bool `json:"two_factor_enabled"`
+
 	// UpdatedAt Examples: 2026-09-26T17:25:00Z
 	UpdatedAt Timestamp `json:"updated_at"`
 }
@@ -4087,6 +4185,12 @@ type ListAuditEventsParams struct {
 
 	// Until Only return events before this time.
 	Until *Timestamp `form:"until,omitempty" json:"until,omitempty"`
+}
+
+// LoginSecondFactorParams defines parameters for LoginSecondFactor.
+type LoginSecondFactorParams struct {
+	// PressfleetLogin The pending-login cookie set by `POST /api/v1/auth/login`.
+	PressfleetLogin *string `form:"pressfleet_login,omitempty" json:"pressfleet_login,omitempty"`
 }
 
 // ListAPITokensParams defines parameters for ListAPITokens.
@@ -4396,6 +4500,9 @@ type UpdateAlertRuleJSONRequestBody = AlertRuleUpdate
 // LoginJSONRequestBody defines body for Login for application/json ContentType.
 type LoginJSONRequestBody = LoginRequest
 
+// LoginSecondFactorJSONRequestBody defines body for LoginSecondFactor for application/json ContentType.
+type LoginSecondFactorJSONRequestBody = SecondFactorLogin
+
 // UpdateCurrentUserJSONRequestBody defines body for UpdateCurrentUser for application/json ContentType.
 type UpdateCurrentUserJSONRequestBody = ProfileUpdate
 
@@ -4530,6 +4637,9 @@ type ServerInterface interface {
 	// Login Log in and start a session
 	// (POST /api/v1/auth/login)
 	Login(w http.ResponseWriter, r *http.Request)
+	// LoginSecondFactor Pass the second step of a login
+	// (POST /api/v1/auth/login/second-factor)
+	LoginSecondFactor(w http.ResponseWriter, r *http.Request, params LoginSecondFactorParams)
 	// Logout End the current session
 	// (POST /api/v1/auth/logout)
 	Logout(w http.ResponseWriter, r *http.Request)
@@ -4785,6 +4895,9 @@ type ServerInterface interface {
 	// DeleteOwnSSHKey Remove one of the current user's SSH keys
 	// (DELETE /api/v1/users/me/ssh-keys/{ssh_key_id})
 	DeleteOwnSSHKey(w http.ResponseWriter, r *http.Request, sshKeyID SSHKeyID)
+	// RegenerateRecoveryCodes Replace the current user's recovery codes
+	// (POST /api/v1/users/me/two-factor/recovery-codes)
+	RegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request)
 	// DeleteUser Delete a user
 	// (DELETE /api/v1/users/{user_id})
 	DeleteUser(w http.ResponseWriter, r *http.Request, userID UserID)
@@ -5655,6 +5768,41 @@ func (siw *ServerInterfaceWrapper) Login(w http.ResponseWriter, r *http.Request)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.Login(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// LoginSecondFactor operation middleware
+func (siw *ServerInterfaceWrapper) LoginSecondFactor(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params LoginSecondFactorParams
+
+	{
+		var cookie *http.Cookie
+
+		if cookie, err = r.Cookie("pressfleet_login"); err == nil {
+			var value string
+			err = runtime.BindStyledParameterWithOptions("simple", "pressfleet_login", cookie.Value, &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationCookie, Explode: true, Required: false, Type: "string", Format: ""})
+			if err != nil {
+				siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "pressfleet_login", Err: err})
+				return
+			}
+			params.PressfleetLogin = &value
+
+		}
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.LoginSecondFactor(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -8538,6 +8686,20 @@ func (siw *ServerInterfaceWrapper) DeleteOwnSSHKey(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// RegenerateRecoveryCodes operation middleware
+func (siw *ServerInterfaceWrapper) RegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RegenerateRecoveryCodes(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteUser operation middleware
 func (siw *ServerInterfaceWrapper) DeleteUser(w http.ResponseWriter, r *http.Request) {
 
@@ -8883,6 +9045,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/healthz", wrapper.GetHealth)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/readyz", wrapper.GetReadiness)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/login", wrapper.Login)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/login/second-factor", wrapper.LoginSecondFactor)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/auth/logout", wrapper.Logout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/auth/me", wrapper.GetCurrentUser)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/v1/auth/me", wrapper.UpdateCurrentUser)
@@ -8895,6 +9058,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/users/{user_id}", wrapper.DeleteUser)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/users/{user_id}", wrapper.GetUser)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/v1/users/{user_id}", wrapper.UpdateUser)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/users/me/two-factor/recovery-codes", wrapper.RegenerateRecoveryCodes)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/users/me/ssh-keys", wrapper.ListOwnSSHKeys)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/users/me/ssh-keys", wrapper.AddOwnSSHKey)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/users/me/ssh-keys/{ssh_key_id}", wrapper.DeleteOwnSSHKey)
@@ -10924,17 +11088,25 @@ func (response Login400ApplicationProblemPlusJSONResponse) VisitLoginResponse(w 
 	return err
 }
 
+type Login401ResponseHeaders struct {
+	SetCookie *string
+}
+
 type Login401ApplicationProblemPlusJSONResponse struct {
-	UnauthorizedApplicationProblemPlusJSONResponse
+	Body    SecondFactorRequired
+	Headers Login401ResponseHeaders
 }
 
 func (response Login401ApplicationProblemPlusJSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.SetCookie != nil {
+		w.Header().Set("Set-Cookie", fmt.Sprint(*response.Headers.SetCookie))
+	}
 	w.WriteHeader(401)
 	_, err := buf.WriteTo(w)
 	return err
@@ -10995,6 +11167,137 @@ type LogindefaultApplicationProblemPlusJSONResponse struct {
 }
 
 func (response LogindefaultApplicationProblemPlusJSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LoginSecondFactorRequestObject struct {
+	Params LoginSecondFactorParams
+	Body   *LoginSecondFactorJSONRequestBody
+}
+
+type LoginSecondFactorResponseObject interface {
+	VisitLoginSecondFactorResponse(w http.ResponseWriter) error
+}
+
+type LoginSecondFactor200ResponseHeaders struct {
+	SetCookie *string
+}
+
+type LoginSecondFactor200JSONResponse struct {
+	Body    CurrentUser
+	Headers LoginSecondFactor200ResponseHeaders
+}
+
+func (response LoginSecondFactor200JSONResponse) VisitLoginSecondFactorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.SetCookie != nil {
+		w.Header().Set("Set-Cookie", fmt.Sprint(*response.Headers.SetCookie))
+	}
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LoginSecondFactor400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response LoginSecondFactor400ApplicationProblemPlusJSONResponse) VisitLoginSecondFactorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LoginSecondFactor401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response LoginSecondFactor401ApplicationProblemPlusJSONResponse) VisitLoginSecondFactorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LoginSecondFactor403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response LoginSecondFactor403ApplicationProblemPlusJSONResponse) VisitLoginSecondFactorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LoginSecondFactor422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response LoginSecondFactor422ApplicationProblemPlusJSONResponse) VisitLoginSecondFactorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LoginSecondFactor429ApplicationProblemPlusJSONResponse struct {
+	TooManyRequestsApplicationProblemPlusJSONResponse
+}
+
+func (response LoginSecondFactor429ApplicationProblemPlusJSONResponse) VisitLoginSecondFactorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LoginSecondFactordefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response LoginSecondFactordefaultApplicationProblemPlusJSONResponse) VisitLoginSecondFactorResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -20038,6 +20341,92 @@ func (response DeleteOwnSSHKeydefaultApplicationProblemPlusJSONResponse) VisitDe
 	return err
 }
 
+type RegenerateRecoveryCodesRequestObject struct {
+}
+
+type RegenerateRecoveryCodesResponseObject interface {
+	VisitRegenerateRecoveryCodesResponse(w http.ResponseWriter) error
+}
+
+type RegenerateRecoveryCodes200JSONResponse RecoveryCodes
+
+func (response RegenerateRecoveryCodes200JSONResponse) VisitRegenerateRecoveryCodesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegenerateRecoveryCodes401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response RegenerateRecoveryCodes401ApplicationProblemPlusJSONResponse) VisitRegenerateRecoveryCodesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegenerateRecoveryCodes403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response RegenerateRecoveryCodes403ApplicationProblemPlusJSONResponse) VisitRegenerateRecoveryCodesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegenerateRecoveryCodes409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response RegenerateRecoveryCodes409ApplicationProblemPlusJSONResponse) VisitRegenerateRecoveryCodesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegenerateRecoveryCodesdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response RegenerateRecoveryCodesdefaultApplicationProblemPlusJSONResponse) VisitRegenerateRecoveryCodesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type DeleteUserRequestObject struct {
 	UserID UserID `json:"user_id"`
 }
@@ -20808,6 +21197,9 @@ type StrictServerInterface interface {
 	// Login Log in and start a session
 	// (POST /api/v1/auth/login)
 	Login(ctx context.Context, request LoginRequestObject) (LoginResponseObject, error)
+	// LoginSecondFactor Pass the second step of a login
+	// (POST /api/v1/auth/login/second-factor)
+	LoginSecondFactor(ctx context.Context, request LoginSecondFactorRequestObject) (LoginSecondFactorResponseObject, error)
 	// Logout End the current session
 	// (POST /api/v1/auth/logout)
 	Logout(ctx context.Context, request LogoutRequestObject) (LogoutResponseObject, error)
@@ -21063,6 +21455,9 @@ type StrictServerInterface interface {
 	// DeleteOwnSSHKey Remove one of the current user's SSH keys
 	// (DELETE /api/v1/users/me/ssh-keys/{ssh_key_id})
 	DeleteOwnSSHKey(ctx context.Context, request DeleteOwnSSHKeyRequestObject) (DeleteOwnSSHKeyResponseObject, error)
+	// RegenerateRecoveryCodes Replace the current user's recovery codes
+	// (POST /api/v1/users/me/two-factor/recovery-codes)
+	RegenerateRecoveryCodes(ctx context.Context, request RegenerateRecoveryCodesRequestObject) (RegenerateRecoveryCodesResponseObject, error)
 	// DeleteUser Delete a user
 	// (DELETE /api/v1/users/{user_id})
 	DeleteUser(ctx context.Context, request DeleteUserRequestObject) (DeleteUserResponseObject, error)
@@ -21670,6 +22065,39 @@ func (sh *strictHandler) Login(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(LoginResponseObject); ok {
 		if err := validResponse.VisitLoginResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// LoginSecondFactor operation middleware
+func (sh *strictHandler) LoginSecondFactor(w http.ResponseWriter, r *http.Request, params LoginSecondFactorParams) {
+	var request LoginSecondFactorRequestObject
+
+	request.Params = params
+
+	var body LoginSecondFactorJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.LoginSecondFactor(ctx, request.(LoginSecondFactorRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "LoginSecondFactor")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(LoginSecondFactorResponseObject); ok {
+		if err := validResponse.VisitLoginSecondFactorResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -24015,6 +24443,30 @@ func (sh *strictHandler) DeleteOwnSSHKey(w http.ResponseWriter, r *http.Request,
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(DeleteOwnSSHKeyResponseObject); ok {
 		if err := validResponse.VisitDeleteOwnSSHKeyResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RegenerateRecoveryCodes operation middleware
+func (sh *strictHandler) RegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
+	var request RegenerateRecoveryCodesRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RegenerateRecoveryCodes(ctx, request.(RegenerateRecoveryCodesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RegenerateRecoveryCodes")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RegenerateRecoveryCodesResponseObject); ok {
+		if err := validResponse.VisitRegenerateRecoveryCodesResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

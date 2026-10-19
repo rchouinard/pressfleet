@@ -58,8 +58,50 @@ export interface paths {
          * @description Verifies the credentials and sets the session cookie. The response body
          *     is the logged-in user. Failed logins return `401` without revealing
          *     whether the email exists.
+         *
+         *     For a user with a second factor, a right password returns `401` with
+         *     the problem type
+         *     `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor`
+         *     instead, and sets the
+         *     `pressfleet_login` cookie; finish with `POST
+         *     /api/v1/auth/login/second-factor`. The account's failed-attempt count
+         *     isn't reset until the second step passes.
          */
         post: operations["login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/login/second-factor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pass the second step of a login
+         * @description Finishes a login that answered with the second-factor problem type
+         *     (see `login`), with one of
+         *     the `methods` it listed, and sets the session cookie like a one-step
+         *     login. The `pressfleet_login` cookie from that response identifies
+         *     the login.
+         *
+         *     * `recovery_code`: send `code`, a recovery code with or without its
+         *       dashes. Each code works once.
+         *     * `totp` and `webauthn` are listed once they are available.
+         *
+         *     A wrong code returns `422` with an error on `/code` and counts
+         *     toward login throttling (`429`); the login stays pending, so the user
+         *     can try again without the password. A method the user can't use
+         *     returns `422` with an error on `/method`. A missing, expired (after
+         *     5 minutes), or already used login returns `401`: log in again.
+         */
+        post: operations["loginSecondFactor"];
         delete?: never;
         options?: never;
         head?: never;
@@ -231,6 +273,32 @@ export interface paths {
          *     Demoting or disabling the last Admin returns `409`.
          */
         patch: operations["updateUser"];
+        trace?: never;
+    };
+    "/api/v1/users/me/two-factor/recovery-codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replace the current user's recovery codes
+         * @description Replaces the user's recovery codes with ten new ones and returns them.
+         *     They are shown only this once; the old codes stop working. Each code
+         *     logs in once in place of a second factor (`POST
+         *     /api/v1/auth/login/second-factor`). A user gets a first set when they
+         *     enroll their first second factor; a user without one gets `409`.
+         *
+         *     Only dashboard sessions may call this; API tokens get `403`.
+         */
+        post: operations["regenerateRecoveryCodes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/users/me/ssh-keys": {
@@ -2836,6 +2904,35 @@ export interface components {
             /** Format: password */
             password: string;
         };
+        /**
+         * @description A login problem. With the type
+         *     `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor`,
+         *     the password
+         *     was right and the user must pass a second factor with one of
+         *     `methods`; otherwise the members beyond Problem are absent.
+         */
+        SecondFactorRequired: components["schemas"]["Problem"] & {
+            /**
+             * @description The second-factor methods the user can use, in the order to
+             *     offer them. Empty if the user's factors aren't supported by
+             *     this control plane.
+             */
+            methods?: components["schemas"]["SecondFactorMethod"][];
+        };
+        /** @enum {string} */
+        SecondFactorMethod: "totp" | "webauthn" | "recovery_code";
+        SecondFactorLogin: {
+            method: components["schemas"]["SecondFactorMethod"];
+            /**
+             * Format: password
+             * @description A TOTP code or recovery code, for those methods.
+             */
+            code?: string;
+        };
+        RecoveryCodes: {
+            /** @description Ten single-use codes, each 16 characters in groups of four. Shown only once. */
+            codes: string[];
+        };
         User: {
             id: components["schemas"]["ID"];
             email: components["schemas"]["Email"];
@@ -2843,6 +2940,12 @@ export interface components {
             role: components["schemas"]["Role"];
             /** @description Disabled users can't log in and their tokens are rejected. */
             disabled: boolean;
+            /**
+             * @description Whether the user has a second factor (an authenticator app or a
+             *     security key), so their logins take two steps. Recovery codes
+             *     alone don't count.
+             */
+            two_factor_enabled: boolean;
             created_at: components["schemas"]["Timestamp"];
             updated_at: components["schemas"]["Timestamp"];
             /** @description Null if the user has never logged in. */
@@ -2852,6 +2955,14 @@ export interface components {
         CurrentUser: components["schemas"]["User"] & {
             /** @enum {string} */
             auth_method: "session" | "token";
+            /**
+             * @description When the user last proved who they are in this session: at
+             *     login, with every step it took. Null for bearer token
+             *     authentication.
+             */
+            verified_at: components["schemas"]["Timestamp"] | null;
+            /** @description How many unused recovery codes the user has. */
+            recovery_codes_remaining: number;
             /**
              * @description The session's CSRF token. Send it in the `X-CSRF-Token` header
              *     with every cookie-authenticated unsafe request. Null for bearer
@@ -4897,6 +5008,61 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            /**
+             * @description The credentials are wrong (problem type `about:blank`), or they are
+             *     right and the user must pass a second factor (problem type
+             *     `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor`,
+             *     with `methods` and the
+             *     `pressfleet_login` cookie).
+             */
+            401: {
+                headers: {
+                    /**
+                     * @description With the second-factor problem type only: the pending-login cookie
+                     *     `pressfleet_login` (`HttpOnly`, `SameSite=Strict`,
+                     *     `Path=/api/v1/auth/login`, `Secure` over HTTPS, 5 minutes).
+                     */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["SecondFactorRequired"];
+                };
+            };
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["UnprocessableContent"];
+            429: components["responses"]["TooManyRequests"];
+            default: components["responses"]["Error"];
+        };
+    };
+    loginSecondFactor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                /** @description The pending-login cookie set by `POST /api/v1/auth/login`. */
+                pressfleet_login?: string;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SecondFactorLogin"];
+            };
+        };
+        responses: {
+            /** @description Logged in. */
+            200: {
+                headers: {
+                    /** @description The session cookie (`HttpOnly`, `SameSite=Lax`, and `Secure` over HTTPS). */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CurrentUser"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             422: components["responses"]["UnprocessableContent"];
@@ -5233,6 +5399,30 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             422: components["responses"]["UnprocessableContent"];
+            default: components["responses"]["Error"];
+        };
+    };
+    regenerateRecoveryCodes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The new recovery codes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecoveryCodes"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
             default: components["responses"]["Error"];
         };
     };

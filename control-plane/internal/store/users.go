@@ -308,6 +308,30 @@ func (r Users) HasSecondFactor(ctx context.Context, userID string) (bool, error)
 	return n > 0, nil
 }
 
+// IDsWithSecondFactor returns the IDs of every user with a second factor,
+// as HasSecondFactor decides, in one query, so a list of users doesn't
+// need one per user.
+func (r Users) IDsWithSecondFactor(ctx context.Context) (map[string]bool, error) {
+	rows, err := r.q.QueryContext(ctx,
+		"SELECT user_id FROM user_totp WHERE confirmed_at IS NOT NULL UNION SELECT user_id FROM webauthn_credentials")
+	if err != nil {
+		return nil, fmt.Errorf("list users with second factors: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	ids := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("list users with second factors: %w", err)
+		}
+		ids[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list users with second factors: %w", err)
+	}
+	return ids, nil
+}
+
 // execOne runs a statement that must affect exactly one row, returning
 // ErrNotFound if it affected none.
 func execOne(ctx context.Context, q Querier, what, query string, args ...any) error {

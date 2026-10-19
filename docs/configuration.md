@@ -421,6 +421,12 @@ two_factor:
 
 Like the other control plane settings, a change applies when `pressfleet upgrade` recreates the control plane (see [Changing settings](#changing-settings)), and `upgrade` refuses an invalid value before it changes anything. Security keys and passkeys are bound to `dashboard_domain` (`localhost` without one), so changing that domain makes them unusable.
 
+### Logging in with a second factor
+
+For a user with a second factor, `POST /api/v1/auth/login` with the right password starts no session. It answers `401 Unauthorized` with the problem type `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor`, whose `methods` member lists the ways the user can pass the second step (`totp`, `webauthn`, `recovery_code`), and sets the `pressfleet_login` cookie (`HttpOnly`, `SameSite=Strict`, `Path=/api/v1/auth/login`, `Secure` like the session cookie). The client then sends `POST /api/v1/auth/login/second-factor` with one of the methods, such as `{"method": "recovery_code", "code": "ABCD-EFGH-IJKL-MNOP"}`, within 5 minutes, and gets the session as from a one-step login. A wrong code answers `422` and can be retried without the password; an expired or already used login answers `401` with the plain `about:blank` type, and the client starts again from the password. Wrong codes count against the same throttle as wrong passwords, and a right password doesn't reset the count while the second step is pending. Users without a second factor log in in one step, and any other `401` from login keeps the `about:blank` type.
+
+Each recovery code works once. `GET /api/v1/auth/me` reports how many are left, and `POST /api/v1/users/me/two-factor/recovery-codes`, from a dashboard session, replaces the set.
+
 ## Users
 
 Users are managed in the dashboard or the API. To create the first user, or to recover access, run inside the control plane container:

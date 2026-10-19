@@ -263,6 +263,34 @@ func TestWriteProblem(t *testing.T) {
 	}
 }
 
+func TestWriteProblemExtensions(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "/login", nil)
+	w := httptest.NewRecorder()
+	p := &httpserver.Problem{Type: "second-factor-required", Status: http.StatusUnauthorized, Extensions: map[string]any{
+		"methods": []string{"totp"},
+		// Extensions can't replace standard members, set or not.
+		"status": 200, "detail": "forged",
+	}}
+	httpserver.WriteProblem(w, r, p)
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	methods, _ := got["methods"].([]any)
+	if got["type"] != "second-factor-required" || got["status"] != float64(401) || got["instance"] != "/login" ||
+		len(methods) != 1 || methods[0] != "totp" {
+		t.Errorf("unexpected problem: %v", got)
+	}
+	if _, ok := got["detail"]; ok {
+		t.Errorf("an extension set the detail: %v", got)
+	}
+	// Without extensions, the output is unchanged.
+	plain, err := json.Marshal(httpserver.Problem{Status: 404, Title: "Not Found"})
+	if err != nil || string(plain) != `{"type":"","title":"Not Found","status":404}` {
+		t.Errorf("Marshal = %s, %v", plain, err)
+	}
+}
+
 func TestReadiness(t *testing.T) {
 	var ready httpserver.Readiness
 	if res := ready.Check(context.Background()); len(res) != 0 {

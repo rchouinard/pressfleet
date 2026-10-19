@@ -79,6 +79,10 @@ type Options struct {
 	// SessionIdleTimeout and SessionMaxAge bound session lifetimes.
 	SessionIdleTimeout time.Duration
 	SessionMaxAge      time.Duration
+	// Factors are the second-factor methods logins may use, besides the
+	// built-in recovery codes. A user whose only factors have no verifier
+	// here can still log in only with a recovery code.
+	Factors []FactorVerifier
 }
 
 // Service implements authentication on top of the state database. It is
@@ -91,6 +95,8 @@ type Service struct {
 	throttle *throttle
 	idle     time.Duration
 	maxAge   time.Duration
+	factors  map[FactorMethod]FactorVerifier
+	pending  *challengeStore[pendingLogin]
 
 	dummyOnce sync.Once
 	dummyHash redact.Secret
@@ -111,7 +117,7 @@ func NewService(db *store.DB, opts Options) *Service {
 		opts.SessionMaxAge = DefaultSessionMaxAge
 	}
 	now := func() time.Time { return opts.Now().UTC().Truncate(time.Microsecond) }
-	return &Service{
+	s := &Service{
 		db:       db,
 		log:      opts.Logger,
 		now:      now,
@@ -119,7 +125,14 @@ func NewService(db *store.DB, opts Options) *Service {
 		throttle: newThrottle(now),
 		idle:     opts.SessionIdleTimeout,
 		maxAge:   opts.SessionMaxAge,
+		factors:  map[FactorMethod]FactorVerifier{},
+		pending:  newChallengeStore[pendingLogin](now),
 	}
+	for _, f := range opts.Factors {
+		s.factors[f.Method()] = f
+	}
+	s.factors[FactorRecoveryCode] = recoveryCodeVerifier{s: s}
+	return s
 }
 
 // NormalizeEmail returns the canonical form of an email address, as stored.
@@ -164,6 +177,9 @@ type LoginRequest struct {
 type LoginResult struct {
 	User    store.User
 	Session store.Session
+	// SecondFactor is the method that passed the second step, or empty for
+	// a user without a second factor.
+	SecondFactor FactorMethod
 	// Token goes in the session cookie. It is never stored.
 	Token redact.Secret
 	// CSRFToken must accompany cookie-authenticated unsafe requests.
@@ -172,7 +188,9 @@ type LoginResult struct {
 
 // Login checks credentials and starts a session. Failures return an error
 // wrapping ErrInvalidCredentials, or a *ThrottledError after too many
-// recent failures.
+// recent failures. For a user with a second factor, a right password
+// starts no session: Login returns a *SecondFactorRequiredError, and
+// LoginSecondFactor finishes the login.
 func (s *Service) Login(ctx context.Context, req LoginRequest) (LoginResult, error) {
 	email := NormalizeEmail(req.Email)
 	keys := []throttleKey{accountKey(email), addressKey(req.ClientIP)}
@@ -199,22 +217,41 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (LoginResult, err
 		s.throttle.fail(keys...)
 		return LoginResult{}, ErrInvalidCredentials
 	}
-	s.throttle.reset(accountKey(email))
-
 	if rehash {
 		s.rehash(ctx, user, req.Password)
 	}
+	twoFactor, err := store.NewUsers(s.db).HasSecondFactor(ctx, user.ID)
+	if err != nil {
+		return LoginResult{}, fmt.Errorf("login: %w", err)
+	}
+	if twoFactor {
+		// The account's failures aren't reset until the second step
+		// passes: otherwise entering a known password again would reset
+		// the count of guesses at the second factor.
+		return LoginResult{}, s.startPendingLogin(ctx, user, email)
+	}
+	s.throttle.reset(accountKey(email))
+	return s.finishLogin(ctx, user, req.ClientIP, req.UserAgent, "")
+}
+
+// finishLogin starts a session for a user who has proved who they are,
+// with factor the second factor they used, if any. Every way of logging in
+// ends here, so sessions are created, and verified_at set, in one place.
+func (s *Service) finishLogin(ctx context.Context, user store.User, clientIP, userAgent string, factor FactorMethod) (LoginResult, error) {
 	now := s.now()
 	token := newSessionToken()
 	sess := store.Session{
 		UserID:    user.ID,
 		TokenHash: hashToken(token),
-		SourceIP:  req.ClientIP,
-		UserAgent: truncate(req.UserAgent, 512),
+		SourceIP:  clientIP,
+		UserAgent: truncate(userAgent, 512),
 		CreatedAt: now,
 		ExpiresAt: now.Add(s.maxAge),
+		// Logging in is proving who one is; reauthentication (#154)
+		// measures from here.
+		VerifiedAt: now,
 	}
-	err = s.db.InTx(ctx, func(q store.Querier) error {
+	err := s.db.InTx(ctx, func(q store.Querier) error {
 		if err := store.NewSessions(q).Create(ctx, &sess); err != nil {
 			return err
 		}
@@ -229,8 +266,8 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (LoginResult, err
 	if _, err := store.NewSessions(s.db).DeleteExpired(ctx, now, now.Add(-s.idle)); err != nil {
 		s.log.Warn("deleting expired sessions failed", "error", err)
 	}
-	s.log.Info("user logged in", "user_id", user.ID, "session_id", sess.ID)
-	return LoginResult{User: user, Session: sess, Token: token, CSRFToken: CSRFToken(token)}, nil
+	s.log.Info("user logged in", "user_id", user.ID, "session_id", sess.ID, "second_factor", string(factor))
+	return LoginResult{User: user, Session: sess, SecondFactor: factor, Token: token, CSRFToken: CSRFToken(token)}, nil
 }
 
 // dummy returns a hash to verify against for unknown emails, made with the
@@ -291,7 +328,7 @@ func (s *Service) AuthenticateSession(ctx context.Context, token redact.Secret) 
 			s.log.Warn("updating session last seen failed", "session_id", sess.ID, "error", err)
 		}
 	}
-	return Principal{UserID: user.ID, Email: user.Email, Role: user.Role, Method: MethodSession, SessionID: sess.ID}, nil
+	return Principal{UserID: user.ID, Email: user.Email, Role: user.Role, Method: MethodSession, SessionID: sess.ID, VerifiedAt: sess.VerifiedAt}, nil
 }
 
 // AuthenticateToken returns the principal for an API token. It returns

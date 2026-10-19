@@ -42,6 +42,16 @@ func (e *ValidationError) Error() string {
 	return fmt.Sprintf("validation failed on %d field(s)", len(e.Fields))
 }
 
+// cookieError is an error whose response also sets a cookie, such as the
+// 401 that starts the second step of a login.
+type cookieError struct {
+	err    error
+	cookie *http.Cookie
+}
+
+func (e *cookieError) Error() string { return e.err.Error() }
+func (e *cookieError) Unwrap() error { return e.err }
+
 // notImplemented is returned by handlers whose feature lands in a later
 // issue.
 func notImplemented(issue int) error {
@@ -98,6 +108,10 @@ func problemFor(err error) (*httpserver.Problem, bool) {
 // writeError writes err as Problem Details, logging unexpected errors.
 func writeError(log *slog.Logger, w http.ResponseWriter, r *http.Request, err error) {
 	p, expected := problemFor(err)
+	var ce *cookieError
+	if errors.As(err, &ce) {
+		http.SetCookie(w, ce.cookie)
+	}
 	if !expected {
 		httpserver.LoggerFromContext(r.Context(), log).Error("request failed",
 			"method", r.Method, "path", r.URL.Path, "error", err)

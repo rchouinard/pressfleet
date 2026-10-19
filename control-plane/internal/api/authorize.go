@@ -23,6 +23,8 @@ var operationActions = map[string]authz.Action{
 	"createApiToken":    authz.CreateOwnToken,
 	"revokeApiToken":    authz.RevokeOwnToken,
 
+	"regenerateRecoveryCodes": authz.RegenerateRecoveryCodes,
+
 	"listUsers":  authz.ViewUsers,
 	"createUser": authz.CreateUser,
 	"getUser":    authz.ViewUsers,

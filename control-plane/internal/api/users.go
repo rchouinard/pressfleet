@@ -29,9 +29,13 @@ func (h *Handlers) ListUsers(ctx context.Context, req gen.ListUsersRequestObject
 		return nil, authError(err, "")
 	}
 	users, next := page(users, limit, func(u store.User) string { return u.ID })
+	twoFactor, err := h.auth.UsersWithTwoFactor(ctx)
+	if err != nil {
+		return nil, err
+	}
 	body := gen.UserList{Items: make([]gen.User, 0, len(users)), NextCursor: next}
 	for _, u := range users {
-		body.Items = append(body.Items, user(u))
+		body.Items = append(body.Items, user(u, twoFactor[u.ID]))
 	}
 	return gen.ListUsers200JSONResponse(body), nil
 }
@@ -52,7 +56,8 @@ func (h *Handlers) CreateUser(ctx context.Context, req gen.CreateUserRequestObje
 	}
 	setAuditTarget(ctx, authz.User(u.ID))
 	location := "/api/v1/users/" + u.ID
-	return gen.CreateUser201JSONResponse{Body: user(u), Headers: gen.CreateUser201ResponseHeaders{Location: &location}}, nil
+	// A new user has no second factor yet.
+	return gen.CreateUser201JSONResponse{Body: user(u, false), Headers: gen.CreateUser201ResponseHeaders{Location: &location}}, nil
 }
 
 // GetUser returns a user.
@@ -64,7 +69,11 @@ func (h *Handlers) GetUser(ctx context.Context, req gen.GetUserRequestObject) (g
 	if err != nil {
 		return nil, authError(err, "")
 	}
-	return gen.GetUser200JSONResponse(user(u)), nil
+	g, err := h.userWithTwoFactor(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	return gen.GetUser200JSONResponse(g), nil
 }
 
 // UpdateUser changes a user's email, display name, password, role, or disabled flag.
@@ -93,7 +102,11 @@ func (h *Handlers) UpdateUser(ctx context.Context, req gen.UpdateUserRequestObje
 	if err != nil {
 		return nil, authError(err, "/password")
 	}
-	return gen.UpdateUser200JSONResponse(user(u)), nil
+	g, err := h.userWithTwoFactor(ctx, u)
+	if err != nil {
+		return nil, err
+	}
+	return gen.UpdateUser200JSONResponse(g), nil
 }
 
 // DeleteUser deletes a user and, with them, their sessions and tokens.
