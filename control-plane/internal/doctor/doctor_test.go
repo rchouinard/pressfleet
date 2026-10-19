@@ -317,6 +317,24 @@ func TestSiteReservations(t *testing.T) {
 	})
 }
 
+func TestWebAuthnRelyingParty(t *testing.T) {
+	runCases(t, "webauthn-relying-party", []checkCase{
+		{name: "no provider (the host)", wantStatus: doctor.StatusUnavailable, wantMessage: "needs the state database"},
+		{name: "nothing stale", setup: func(f *fixture) { f.opts.WebAuthn = doctortest.WebAuthn{RPID: "pf.example.com"} },
+			wantStatus: doctor.StatusPass, wantMessage: "registered for pf.example.com"},
+		{name: "stale keys", setup: func(f *fixture) {
+			f.opts.WebAuthn = doctortest.WebAuthn{RPID: "pf.example.com", Credentials: 3, Users: 2}
+		}, wantStatus: doctor.StatusWarn,
+			wantMessage: "3 security keys and passkeys of 2 users can't be used: registered under another dashboard domain than pf.example.com",
+			wantFix:     "register their security keys and passkeys again"},
+		{name: "one stale key", setup: func(f *fixture) {
+			f.opts.WebAuthn = doctortest.WebAuthn{RPID: "pf.example.com", Credentials: 1, Users: 1}
+		}, wantStatus: doctor.StatusWarn, wantMessage: "1 security key or passkey of 1 user can't", wantFix: "reset their second factors"},
+		{name: "provider error", setup: func(f *fixture) { f.opts.WebAuthn = doctortest.WebAuthn{Err: errors.New("db down")} },
+			wantStatus: doctor.StatusWarn, wantMessage: "db down"},
+	})
+}
+
 func TestScopes(t *testing.T) {
 	f := newFixture()
 	opts := doctor.Options{Host: f.host, Docker: f.docker, DataDir: "/data"}
@@ -334,8 +352,10 @@ func TestScopes(t *testing.T) {
 			t.Errorf("%s: runtime=%v install=%v, want install only", id, runtime[id], install[id])
 		}
 	}
-	if !runtime["site-reservations"] || install["site-reservations"] {
-		t.Error("site-reservations should be runtime only")
+	for _, id := range []string{"site-reservations", "webauthn-relying-party"} {
+		if !runtime[id] || install[id] {
+			t.Errorf("%s should be runtime only", id)
+		}
 	}
 	for _, id := range []string{"platform", "docker", "compose", "cgroup", "address-pools", "disk", "memory"} {
 		if !runtime[id] || !install[id] {

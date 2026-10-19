@@ -94,7 +94,7 @@ func (s *Service) IssueRecoveryCodes(ctx context.Context, q store.Querier, userI
 func (s *Service) RegenerateRecoveryCodes(ctx context.Context, userID string) ([]redact.Secret, error) {
 	var codes []redact.Secret
 	err := s.db.InTx(ctx, func(q store.Querier) error {
-		has, err := store.NewUsers(q).HasSecondFactor(ctx, userID)
+		has, err := s.hasSecondFactor(ctx, q, userID)
 		if err != nil {
 			return err
 		}

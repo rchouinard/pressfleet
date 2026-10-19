@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/doctor"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 )
@@ -75,11 +76,15 @@ func (a *app) doctorOptions() doctor.Options {
 
 // platformDoctor backs the API's doctor endpoint. The control plane runs in a
 // container with no docker CLI, so host-only checks are reported as
-// unavailable rather than run (and failed).
-func (a *app) platformDoctor(ctx context.Context) doctor.Report {
-	opts := a.doctorOptions()
-	opts.SkipHostOnly = true
-	return doctor.Run(ctx, opts, doctor.ScopeInstall, doctor.ScopeRuntime)
+// unavailable rather than run (and failed). It has the state database, so
+// it runs the checks that need it, through webauthn.
+func (a *app) platformDoctor(webauthn doctor.WebAuthnProvider) api.DoctorFunc {
+	return func(ctx context.Context) doctor.Report {
+		opts := a.doctorOptions()
+		opts.SkipHostOnly = true
+		opts.WebAuthn = webauthn
+		return doctor.Run(ctx, opts, doctor.ScopeInstall, doctor.ScopeRuntime)
+	}
 }
 
 // preflight runs runtime-scope checks before the control plane starts and

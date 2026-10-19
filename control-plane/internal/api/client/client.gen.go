@@ -2289,7 +2289,8 @@ type CurrentUser struct {
 
 	// TwoFactorEnabled Whether the user has a second factor (an authenticator app or a
 	// security key), so their logins take two steps. Recovery codes
-	// alone don't count.
+	// alone don't count, and neither do security keys and passkeys
+	// registered under a previous dashboard domain (`rp_id`).
 	TwoFactorEnabled bool `json:"two_factor_enabled"`
 
 	// TwoFactorRequired Whether the platform's two-factor policy (`two_factor.required`)
@@ -4026,7 +4027,8 @@ type User struct {
 
 	// TwoFactorEnabled Whether the user has a second factor (an authenticator app or a
 	// security key), so their logins take two steps. Recovery codes
-	// alone don't count.
+	// alone don't count, and neither do security keys and passkeys
+	// registered under a previous dashboard domain (`rp_id`).
 	TwoFactorEnabled bool `json:"two_factor_enabled"`
 
 	// UpdatedAt Examples: 2026-09-26T17:25:00Z

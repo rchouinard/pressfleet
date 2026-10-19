@@ -70,6 +70,7 @@ func Checks() []Check {
 		{ID: "disk", Name: "Free disk space", Severity: Recommended, Scopes: both, run: checkDisk},
 		{ID: "memory", Name: "Host memory", Severity: Recommended, Scopes: both, run: checkMemory},
 		{ID: "site-reservations", Name: "Site memory reservations", Severity: Recommended, Scopes: runtimeOnly, run: checkReservations},
+		{ID: "webauthn-relying-party", Name: "Security keys and passkeys", Severity: Recommended, Scopes: runtimeOnly, run: checkWebAuthn},
 	}
 }
 
@@ -397,6 +398,31 @@ func checkReservations(ctx context.Context, e *env) outcome {
 			sites, formatGiB(reserved), formatGiB(platformMemory), formatGiB(total))
 	}
 	return pass("%d sites reserve %s of %s", sites, formatGiB(reserved), formatGiB(total))
+}
+
+func checkWebAuthn(ctx context.Context, e *env) outcome {
+	if e.WebAuthn == nil {
+		return outcome{status: StatusUnavailable,
+			message: "needs the state database; the dashboard's platform overview (GET /api/v1/platform/doctor) shows this check"}
+	}
+	rpID, creds, users, err := e.WebAuthn.StaleWebAuthnCredentials(ctx)
+	if err != nil {
+		return warn("Check the control plane logs.", "could not count security keys and passkeys: %v", err)
+	}
+	if creds == 0 {
+		return pass("every security key and passkey is registered for %s", rpID)
+	}
+	keys, whose := "security keys and passkeys", "users"
+	if creds == 1 {
+		keys = "security key or passkey"
+	}
+	if users == 1 {
+		whose = "user"
+	}
+	return warn("Ask those users to register their security keys and passkeys again, have an Admin reset their second factors, "+
+		"or change dashboard_domain back to the domain they were registered on.",
+		"%d %s of %d %s can't be used: registered under another dashboard domain than %s, "+
+			"so not counted as a second factor", creds, keys, users, whose, rpID)
 }
 
 func formatGiB(b uint64) string {

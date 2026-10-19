@@ -295,13 +295,15 @@ func (r Users) GetByWebAuthnUserHandle(ctx context.Context, handle []byte) (User
 }
 
 // HasSecondFactor reports whether the user has a confirmed TOTP or at least
-// one WebAuthn credential. Recovery codes don't count: they stand in for a
-// second factor but aren't one (§6.2).
-func (r Users) HasSecondFactor(ctx context.Context, userID string) (bool, error) {
+// one WebAuthn credential bound to rpID, the current relying party ID.
+// Credentials bound to another relying party ID (registered before the
+// dashboard domain changed) can't be used, so they don't count. Neither do
+// recovery codes: they stand in for a second factor but aren't one (§6.2).
+func (r Users) HasSecondFactor(ctx context.Context, userID, rpID string) (bool, error) {
 	var n int
 	err := r.q.QueryRowContext(ctx,
 		"SELECT (SELECT COUNT(*) FROM user_totp WHERE user_id = ? AND confirmed_at IS NOT NULL) + "+
-			"(SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = ?)", userID, userID).Scan(&n)
+			"(SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = ? AND rp_id = ?)", userID, userID, rpID).Scan(&n)
 	if err != nil {
 		return false, fmt.Errorf("check second factors of user %s: %w", userID, err)
 	}
@@ -309,11 +311,12 @@ func (r Users) HasSecondFactor(ctx context.Context, userID string) (bool, error)
 }
 
 // IDsWithSecondFactor returns the IDs of every user with a second factor,
-// as HasSecondFactor decides, in one query, so a list of users doesn't
-// need one per user.
-func (r Users) IDsWithSecondFactor(ctx context.Context) (map[string]bool, error) {
+// as HasSecondFactor decides for rpID, in one query, so a list of users
+// doesn't need one per user.
+func (r Users) IDsWithSecondFactor(ctx context.Context, rpID string) (map[string]bool, error) {
 	rows, err := r.q.QueryContext(ctx,
-		"SELECT user_id FROM user_totp WHERE confirmed_at IS NOT NULL UNION SELECT user_id FROM webauthn_credentials")
+		"SELECT user_id FROM user_totp WHERE confirmed_at IS NOT NULL "+
+			"UNION SELECT user_id FROM webauthn_credentials WHERE rp_id = ?", rpID)
 	if err != nil {
 		return nil, fmt.Errorf("list users with second factors: %w", err)
 	}

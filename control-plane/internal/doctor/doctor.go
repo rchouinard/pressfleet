@@ -89,12 +89,23 @@ type ReservationProvider interface {
 	MemoryReservations(ctx context.Context) (totalBytes uint64, sites int, err error)
 }
 
+// WebAuthnProvider counts the security keys and passkeys bound to another
+// relying party ID than the current one, which a dashboard domain change
+// leaves unusable. It needs the state database, so only the control plane
+// can provide it (§4.7).
+type WebAuthnProvider interface {
+	StaleWebAuthnCredentials(ctx context.Context) (rpID string, credentials, users int, err error)
+}
+
 // Options are the inputs to a preflight run.
 type Options struct {
 	Host   HostProbe
 	Docker DockerProbe
 	// Reservations feeds the site reservations check; nil skips it.
 	Reservations ReservationProvider
+	// WebAuthn feeds the security key check. Without it (on the host,
+	// which never reads the state database) the check is unavailable.
+	WebAuthn WebAuthnProvider
 	// DataDir is where sites, backups, and metrics are stored.
 	DataDir string
 	// DashboardDomain and PreviewBaseDomain are checked for DNS records

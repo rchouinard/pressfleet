@@ -123,3 +123,16 @@ type Reservations struct {
 func (r Reservations) MemoryReservations(context.Context) (totalBytes uint64, sites int, err error) {
 	return r.Total, r.Sites, r.Err
 }
+
+// WebAuthn is a fake doctor.WebAuthnProvider.
+type WebAuthn struct {
+	RPID        string
+	Credentials int
+	Users       int
+	Err         error
+}
+
+// StaleWebAuthnCredentials implements doctor.WebAuthnProvider.
+func (w WebAuthn) StaleWebAuthnCredentials(context.Context) (rpID string, credentials, users int, err error) {
+	return w.RPID, w.Credentials, w.Users, w.Err
+}

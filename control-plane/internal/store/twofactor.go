@@ -340,6 +340,18 @@ func (r WebAuthnCredentials) DeleteAllForUser(ctx context.Context, userID string
 	return res.RowsAffected()
 }
 
+// CountBoundElsewhere counts the credentials bound to a relying party ID
+// other than rpID, and the users who have them. Such credentials were
+// registered before the dashboard domain changed and can't be used.
+func (r WebAuthnCredentials) CountBoundElsewhere(ctx context.Context, rpID string) (credentials, users int, err error) {
+	err = r.q.QueryRowContext(ctx,
+		"SELECT COUNT(*), COUNT(DISTINCT user_id) FROM webauthn_credentials WHERE rp_id <> ?", rpID).Scan(&credentials, &users)
+	if err != nil {
+		return 0, 0, fmt.Errorf("count WebAuthn credentials bound to another relying party: %w", err)
+	}
+	return credentials, users, nil
+}
+
 // RecoveryCode is a single-use code that stands in for a second factor at
 // login (design doc §6.2). Only a hash of the code is stored.
 type RecoveryCode struct {
