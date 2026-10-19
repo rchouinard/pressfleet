@@ -92,7 +92,7 @@ func TestTwoStepLoginOverHTTP(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &problem); err != nil {
 		t.Fatal(err)
 	}
-	if problem.Type != "second-factor-required" ||
+	if problem.Type != "https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor" ||
 		problem.Status != 401 || len(problem.Methods) != 1 || problem.Methods[0] != "recovery_code" {
 		t.Errorf("problem: %s", w.Body)
 	}

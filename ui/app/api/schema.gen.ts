@@ -60,7 +60,9 @@ export interface paths {
          *     whether the email exists.
          *
          *     For a user with a second factor, a right password returns `401` with
-         *     the problem type `second-factor-required` instead, and sets the
+         *     the problem type
+         *     `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor`
+         *     instead, and sets the
          *     `pressfleet_login` cookie; finish with `POST
          *     /api/v1/auth/login/second-factor`. The account's failed-attempt count
          *     isn't reset until the second step passes.
@@ -83,7 +85,8 @@ export interface paths {
         put?: never;
         /**
          * Pass the second step of a login
-         * @description Finishes a login that answered `second-factor-required`, with one of
+         * @description Finishes a login that answered with the second-factor problem type
+         *     (see `login`), with one of
          *     the `methods` it listed, and sets the session cookie like a one-step
          *     login. The `pressfleet_login` cookie from that response identifies
          *     the login.
@@ -2902,7 +2905,9 @@ export interface components {
             password: string;
         };
         /**
-         * @description A login problem. With the type `second-factor-required`, the password
+         * @description A login problem. With the type
+         *     `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor`,
+         *     the password
          *     was right and the user must pass a second factor with one of
          *     `methods`; otherwise the members beyond Problem are absent.
          */
@@ -5006,13 +5011,14 @@ export interface operations {
             /**
              * @description The credentials are wrong (problem type `about:blank`), or they are
              *     right and the user must pass a second factor (problem type
-             *     `second-factor-required`, with `methods` and the
+             *     `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor`,
+             *     with `methods` and the
              *     `pressfleet_login` cookie).
              */
             401: {
                 headers: {
                     /**
-                     * @description With `second-factor-required` only: the pending-login cookie
+                     * @description With the second-factor problem type only: the pending-login cookie
                      *     `pressfleet_login` (`HttpOnly`, `SameSite=Strict`,
                      *     `Path=/api/v1/auth/login`, `Secure` over HTTPS, 5 minutes).
                      */

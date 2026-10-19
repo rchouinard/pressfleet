@@ -3165,7 +3165,9 @@ type SecondFactorLogin struct {
 // SecondFactorMethod defines model for SecondFactorMethod.
 type SecondFactorMethod string
 
-// SecondFactorRequired A login problem. With the type `second-factor-required`, the password
+// SecondFactorRequired A login problem. With the type
+// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor`,
+// the password
 // was right and the user must pass a second factor with one of
 // `methods`; otherwise the members beyond Problem are absent.
 type SecondFactorRequired struct {

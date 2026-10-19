@@ -3164,7 +3164,9 @@ type SecondFactorLogin struct {
 // SecondFactorMethod defines model for SecondFactorMethod.
 type SecondFactorMethod string
 
-// SecondFactorRequired A login problem. With the type `second-factor-required`, the password
+// SecondFactorRequired A login problem. With the type
+// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor`,
+// the password
 // was right and the user must pass a second factor with one of
 // `methods`; otherwise the members beyond Problem are absent.
 type SecondFactorRequired struct {
@@ -4883,7 +4885,9 @@ type ClientInterface interface {
 	// whether the email exists.
 	//
 	// For a user with a second factor, a right password returns `401` with
-	// the problem type `second-factor-required` instead, and sets the
+	// the problem type
+	// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor`
+	// instead, and sets the
 	// `pressfleet_login` cookie; finish with `POST
 	// /api/v1/auth/login/second-factor`. The account's failed-attempt count
 	// isn't reset until the second step passes.
@@ -4900,7 +4904,9 @@ type ClientInterface interface {
 	// whether the email exists.
 	//
 	// For a user with a second factor, a right password returns `401` with
-	// the problem type `second-factor-required` instead, and sets the
+	// the problem type
+	// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor`
+	// instead, and sets the
 	// `pressfleet_login` cookie; finish with `POST
 	// /api/v1/auth/login/second-factor`. The account's failed-attempt count
 	// isn't reset until the second step passes.
@@ -4912,7 +4918,8 @@ type ClientInterface interface {
 
 	// LoginSecondFactorWithBody Pass the second step of a login
 	//
-	// Finishes a login that answered `second-factor-required`, with one of
+	// Finishes a login that answered with the second-factor problem type
+	// (see `login`), with one of
 	// the `methods` it listed, and sets the session cookie like a one-step
 	// login. The `pressfleet_login` cookie from that response identifies
 	// the login.
@@ -4934,7 +4941,8 @@ type ClientInterface interface {
 
 	// LoginSecondFactor Pass the second step of a login
 	//
-	// Finishes a login that answered `second-factor-required`, with one of
+	// Finishes a login that answered with the second-factor problem type
+	// (see `login`), with one of
 	// the `methods` it listed, and sets the session cookie like a one-step
 	// login. The `pressfleet_login` cookie from that response identifies
 	// the login.
@@ -7374,7 +7382,9 @@ func (c *Client) ListAuditEvents(ctx context.Context, params *ListAuditEventsPar
 // whether the email exists.
 //
 // For a user with a second factor, a right password returns `401` with
-// the problem type `second-factor-required` instead, and sets the
+// the problem type
+// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor`
+// instead, and sets the
 // `pressfleet_login` cookie; finish with `POST
 // /api/v1/auth/login/second-factor`. The account's failed-attempt count
 // isn't reset until the second step passes.
@@ -7401,7 +7411,9 @@ func (c *Client) LoginWithBody(ctx context.Context, contentType string, body io.
 // whether the email exists.
 //
 // For a user with a second factor, a right password returns `401` with
-// the problem type `second-factor-required` instead, and sets the
+// the problem type
+// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor`
+// instead, and sets the
 // `pressfleet_login` cookie; finish with `POST
 // /api/v1/auth/login/second-factor`. The account's failed-attempt count
 // isn't reset until the second step passes.
@@ -7423,7 +7435,8 @@ func (c *Client) Login(ctx context.Context, body LoginJSONRequestBody, reqEditor
 
 // LoginSecondFactorWithBody Pass the second step of a login
 //
-// Finishes a login that answered `second-factor-required`, with one of
+// Finishes a login that answered with the second-factor problem type
+// (see `login`), with one of
 // the `methods` it listed, and sets the session cookie like a one-step
 // login. The `pressfleet_login` cookie from that response identifies
 // the login.
@@ -7455,7 +7468,8 @@ func (c *Client) LoginSecondFactorWithBody(ctx context.Context, params *LoginSec
 
 // LoginSecondFactor Pass the second step of a login
 //
-// Finishes a login that answered `second-factor-required`, with one of
+// Finishes a login that answered with the second-factor problem type
+// (see `login`), with one of
 // the `methods` it listed, and sets the session cookie like a one-step
 // login. The `pressfleet_login` cookie from that response identifies
 // the login.
@@ -16555,7 +16569,9 @@ type ClientWithResponsesInterface interface {
 	// whether the email exists.
 	//
 	// For a user with a second factor, a right password returns `401` with
-	// the problem type `second-factor-required` instead, and sets the
+	// the problem type
+	// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor`
+	// instead, and sets the
 	// `pressfleet_login` cookie; finish with `POST
 	// /api/v1/auth/login/second-factor`. The account's failed-attempt count
 	// isn't reset until the second step passes.
@@ -16572,7 +16588,9 @@ type ClientWithResponsesInterface interface {
 	// whether the email exists.
 	//
 	// For a user with a second factor, a right password returns `401` with
-	// the problem type `second-factor-required` instead, and sets the
+	// the problem type
+	// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor`
+	// instead, and sets the
 	// `pressfleet_login` cookie; finish with `POST
 	// /api/v1/auth/login/second-factor`. The account's failed-attempt count
 	// isn't reset until the second step passes.
@@ -16584,7 +16602,8 @@ type ClientWithResponsesInterface interface {
 
 	// LoginSecondFactorWithBodyWithResponse Pass the second step of a login
 	//
-	// Finishes a login that answered `second-factor-required`, with one of
+	// Finishes a login that answered with the second-factor problem type
+	// (see `login`), with one of
 	// the `methods` it listed, and sets the session cookie like a one-step
 	// login. The `pressfleet_login` cookie from that response identifies
 	// the login.
@@ -16606,7 +16625,8 @@ type ClientWithResponsesInterface interface {
 
 	// LoginSecondFactorWithResponse Pass the second step of a login
 	//
-	// Finishes a login that answered `second-factor-required`, with one of
+	// Finishes a login that answered with the second-factor problem type
+	// (see `login`), with one of
 	// the `methods` it listed, and sets the session cookie like a one-step
 	// login. The `pressfleet_login` cookie from that response identifies
 	// the login.
@@ -27937,7 +27957,9 @@ func (c *ClientWithResponses) ListAuditEventsWithResponse(ctx context.Context, p
 // whether the email exists.
 //
 // For a user with a second factor, a right password returns `401` with
-// the problem type `second-factor-required` instead, and sets the
+// the problem type
+// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor`
+// instead, and sets the
 // `pressfleet_login` cookie; finish with `POST
 // /api/v1/auth/login/second-factor`. The account's failed-attempt count
 // isn't reset until the second step passes.
@@ -27960,7 +27982,9 @@ func (c *ClientWithResponses) LoginWithBodyWithResponse(ctx context.Context, con
 // whether the email exists.
 //
 // For a user with a second factor, a right password returns `401` with
-// the problem type `second-factor-required` instead, and sets the
+// the problem type
+// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor`
+// instead, and sets the
 // `pressfleet_login` cookie; finish with `POST
 // /api/v1/auth/login/second-factor`. The account's failed-attempt count
 // isn't reset until the second step passes.
@@ -27978,7 +28002,8 @@ func (c *ClientWithResponses) LoginWithResponse(ctx context.Context, body LoginJ
 
 // LoginSecondFactorWithBodyWithResponse Pass the second step of a login
 //
-// Finishes a login that answered `second-factor-required`, with one of
+// Finishes a login that answered with the second-factor problem type
+// (see `login`), with one of
 // the `methods` it listed, and sets the session cookie like a one-step
 // login. The `pressfleet_login` cookie from that response identifies
 // the login.
@@ -28006,7 +28031,8 @@ func (c *ClientWithResponses) LoginSecondFactorWithBodyWithResponse(ctx context.
 
 // LoginSecondFactorWithResponse Pass the second step of a login
 //
-// Finishes a login that answered `second-factor-required`, with one of
+// Finishes a login that answered with the second-factor problem type
+// (see `login`), with one of
 // the `methods` it listed, and sets the session cookie like a one-step
 // login. The `pressfleet_login` cookie from that response identifies
 // the login.

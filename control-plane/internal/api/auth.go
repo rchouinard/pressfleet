@@ -21,10 +21,9 @@ import (
 // Sessions, the current user, and the current user's API tokens (#13).
 
 // SecondFactorRequiredProblemType is the problem type of the 401 that
-// asks for the second step of a login (design doc §6.2). It is a short
-// name rather than a URL, as the design names it; clients compare it as a
-// string.
-const SecondFactorRequiredProblemType = "second-factor-required"
+// asks for the second step of a login (design doc §6.2, where it is called
+// second-factor-required).
+const SecondFactorRequiredProblemType = "https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#logging-in-with-a-second-factor"
 
 // auditSecondFactor is the details key that login audit events use for
 // the second step: "required" when the password was right and a factor is
