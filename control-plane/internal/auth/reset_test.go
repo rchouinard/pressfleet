@@ -71,7 +71,9 @@ func TestResetTwoFactor(t *testing.T) {
 		u := mustCreate(t, svc, "v@example.com", store.RoleViewer)
 		other := mustCreate(t, svc, "o@example.com", store.RoleViewer)
 		otherSession := login(t, svc, "o@example.com")
-		enroll(t, db, other.ID)
+		// A key for the service's relying party: one for another (enroll's
+		// localhost) wouldn't count as a factor (#157).
+		registerKey(t, svc, other.ID, authtest.NewAuthenticator(rpOrigin), "key")
 
 		if _, err := svc.ResetTwoFactor(ctx, id.New()); !errors.Is(err, auth.ErrUserNotFound) {
 			t.Errorf("unknown user: %v", err)
