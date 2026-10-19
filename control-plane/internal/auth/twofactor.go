@@ -209,7 +209,8 @@ func (s *Service) LoginSecondFactor(ctx context.Context, req SecondFactorRequest
 	} else if !enrolled {
 		return LoginResult{}, ErrFactorUnavailable
 	}
-	if err := v.Verify(ctx, user, req.Proof); errors.Is(err, ErrInvalidSecondFactor) {
+	notes := map[string]string{}
+	if err := v.Verify(withFactorNotes(ctx, notes), user, req.Proof); errors.Is(err, ErrInvalidSecondFactor) {
 		s.throttle.fail(keys...)
 		s.log.Info("second factor check failed", "user_id", user.ID, "method", string(req.Proof.Method))
 		return LoginResult{}, &SecondFactorError{UserID: user.ID, Method: req.Proof.Method}
@@ -218,7 +219,11 @@ func (s *Service) LoginSecondFactor(ctx context.Context, req SecondFactorRequest
 	}
 	done = true
 	s.throttle.reset(accountKey(pl.email))
-	return s.finishLogin(ctx, user, req.ClientIP, req.UserAgent, req.Proof.Method)
+	res, err := s.finishLogin(ctx, user, req.ClientIP, req.UserAgent, req.Proof.Method)
+	if err == nil && len(notes) > 0 {
+		res.FactorDetails = notes
+	}
+	return res, err
 }
 
 // TwoFactorEnabled reports whether the user has a second factor.

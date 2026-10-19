@@ -12,6 +12,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/go-webauthn/webauthn/webauthn"
+
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
@@ -86,6 +88,9 @@ type Options struct {
 	// TwoFactor is the platform's two-factor policy. The zero value
 	// requires nothing (see TwoFactorPolicy).
 	TwoFactor TwoFactorPolicy
+	// RelyingParty is the WebAuthn relying party, from the dashboard
+	// domain (RelyingPartyFor). The zero value is RelyingPartyFor("").
+	RelyingParty RelyingParty
 }
 
 // Service implements authentication on top of the state database. It is
@@ -102,6 +107,13 @@ type Service struct {
 	pending  *challengeStore[pendingLogin]
 
 	twoFactor TwoFactorPolicy
+
+	// rp and webauthn are the WebAuthn relying party; webauthn is nil if
+	// rp isn't usable, and WebAuthn is then unavailable. ceremonies holds
+	// WebAuthn challenges waiting for their answer.
+	rp         RelyingParty
+	webauthn   *webauthn.WebAuthn
+	ceremonies *challengeStore[webAuthnCeremony]
 
 	dummyOnce sync.Once
 	dummyHash redact.Secret
@@ -134,6 +146,18 @@ func NewService(db *store.DB, opts Options) *Service {
 		pending:  newChallengeStore[pendingLogin](now),
 
 		twoFactor: opts.TwoFactor,
+
+		ceremonies: newChallengeStore[webAuthnCeremony](now),
+	}
+	s.rp = opts.RelyingParty
+	if s.rp.ID == "" {
+		s.rp = RelyingPartyFor("")
+	}
+	if wa, err := newWebAuthn(s.rp); err != nil {
+		s.log.Error("WebAuthn is unavailable: invalid relying party", "rp_id", s.rp.ID, "error", err)
+	} else {
+		s.webauthn = wa
+		s.factors[FactorWebAuthn] = webAuthnVerifier{s: s}
 	}
 	for _, f := range opts.Factors {
 		s.factors[f.Method()] = f
@@ -187,6 +211,10 @@ type LoginResult struct {
 	// SecondFactor is the method that passed the second step, or empty for
 	// a user without a second factor.
 	SecondFactor FactorMethod
+	// FactorDetails are facts the verifier noted about the check, for the
+	// audit log, such as the WebAuthn credential used and a signature
+	// counter that went backwards. They never hold secrets.
+	FactorDetails map[string]string
 	// Token goes in the session cookie. It is never stored.
 	Token redact.Secret
 	// CSRFToken must accompany cookie-authenticated unsafe requests.
