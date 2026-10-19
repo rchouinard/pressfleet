@@ -18,7 +18,11 @@ export default defineConfig({
   workers: ci ? 2 : 3,
   fullyParallel: true,
   forbidOnly: ci,
-  retries: 0,
+  // One retry, for Chromium aborting connections when the host's network
+  // changes (ERR_NETWORK_CHANGED; see the launch options below): it happens
+  // whenever a site's containers come or go, while any spec may be loading
+  // a page. A test that passes on its retry is reported as flaky.
+  retries: 1,
   // Provisioning a site takes about a minute on a cold runner.
   timeout: 3 * 60_000,
   expect: { timeout: 15_000 },
@@ -45,14 +49,29 @@ export default defineConfig({
           executablePath: process.env.PRESSFLEET_E2E_CHROMIUM || undefined,
           // The dashboard domain resolves nowhere: send it to Traefik's
           // published port, so the page's origin stays https://fleet.e2e.test.
-          // Only Traefik's TCP ports are published, so no QUIC. The page
-          // needs no other origin (the CSP forbids them), so no proxy either,
-          // whatever the environment sets.
+          // The sites' test domains (preview domains under
+          // preview.e2e.test, go-live domains under e2e.test) go there too,
+          // for the tab the one-click WordPress login opens. Only Traefik's
+          // TCP ports are published, so no QUIC. The page needs no other
+          // origin (the CSP forbids them), so no proxy either, whatever the
+          // environment sets. No HTTP/2 either: Chromium closes its HTTP/2
+          // sessions, failing every request in flight (ERR_NETWORK_CHANGED),
+          // when the host's network changes, as it does each time a site's
+          // containers come or go while other specs run. Over HTTP/1.1 only
+          // connections still being opened fail, which is far rarer. The
+          // API suite checks that Traefik speaks HTTP/2.
           args: platform
-            ? [`--host-resolver-rules=MAP ${new URL(platform.baseURL).hostname}:443 ${platform.ingressAddr}`, '--disable-quic', '--no-proxy-server']
+            ? [`--host-resolver-rules=${hostResolverRules(platform)}`, '--disable-quic', '--disable-http2', '--no-proxy-server']
             : [],
         },
       },
     },
   ],
 })
+
+/** Chromium's rules that send the dashboard domain and its sibling test domains to Traefik. */
+function hostResolverRules(env: { baseURL: string, ingressAddr: string }): string {
+  const host = new URL(env.baseURL).hostname
+  const parent = host.slice(host.indexOf('.') + 1)
+  return [`MAP ${host}:443 ${env.ingressAddr}`, `MAP *.${parent}:443 ${env.ingressAddr}`].join(', ')
+}

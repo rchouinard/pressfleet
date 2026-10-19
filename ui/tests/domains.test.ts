@@ -67,6 +67,26 @@ describe('domain helpers', () => {
       { domain: 'b.example.com', detail: 'does not resolve' },
     ])
   })
+
+  it('names each domain once when the server leads the detail with it', () => {
+    // The server's shape: every alias under /aliases, the domain first in the detail.
+    const e = new ApiError({
+      type: DNS_CHECK_PROBLEM_TYPE,
+      title: 'DNS check failed',
+      status: 422,
+      errors: [
+        { field: '/primary_domain', detail: 'www.example.com: it does not resolve (no such domain, or no A or AAAA record).' },
+        { field: '/aliases', detail: 'b.example.com: it resolves to 203.0.113.9, not 198.51.100.1.' },
+      ],
+    })
+    expect(dnsFailures(e, { primary: 'www.example.com', aliases: ['a.example.com', 'b.example.com'] })).toEqual([
+      { domain: 'www.example.com', detail: 'it does not resolve (no such domain, or no A or AAAA record).' },
+      { domain: 'b.example.com', detail: 'it resolves to 203.0.113.9, not 198.51.100.1.' },
+    ])
+    // A detail that names a domain that wasn't sent keeps the pointer.
+    const other = new ApiError({ type: DNS_CHECK_PROBLEM_TYPE, title: 'DNS check failed', status: 422, errors: [{ field: '/aliases', detail: 'c.example.com: it does not resolve' }] })
+    expect(dnsFailures(other, { aliases: ['a.example.com'] })).toEqual([{ domain: '/aliases', detail: 'c.example.com: it does not resolve' }])
+  })
 })
 
 const UTextarea = {

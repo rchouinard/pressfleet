@@ -344,10 +344,14 @@ How the Phase 1–4 operations (design doc §8) are covered through the dashboar
 | Sites and jobs (#84) | Provision a site, follow its job, site status, jobs list and job page | `sites.spec.ts` › provisions a site... | The API's site `running`; its containers exist |
 | Sites and jobs (#84) | Delete a site | `sites.spec.ts` › provisions a site... | `404`; nothing left on Docker, on disk, in MariaDB, or in the object cache |
 | Jobs (#84) | A failed job shows its error | `sites.spec.ts` › a failed job shows its error | The API's job error; the rolled-back site left nothing |
-| Site settings (#85) | PHP version, resources, preview password, security set, core update policy and holds, cache purge | *pending: #175* | |
-| Domains (#86) | Aliases, go-live | *pending: #175* | |
-| Admin login (#130) | One-click wp-admin login | *pending: #175* | |
-| Updates (#125) | Pending plugin and theme updates | *pending: #175* | |
+| Site settings (#85) | PHP version, resource limits | `site-settings.spec.ts` › changes the PHP version and the resource limits | The API's site; PHP's version in the php container; the php and nginx containers' cgroup limits add up to the new limits |
+| Site settings (#85, #107) | Preview password: turn on (shown once), replace, turn off | `site-settings.spec.ts` › protects the preview domain... | Through Traefik: `401` without the password, `200` with it, the old password refused after the replacement, open again once off; the API's `preview_protection` |
+| Site settings (#85) | Core update policy: hold on the branch, follow the client group again | `site-settings.spec.ts` › holds the WordPress core... | The API's core status (`held`, `decided_by`, `policy`) |
+| Site settings (#85) | Cache purge | `site-settings.spec.ts` › purges the object cache and the page cache | A key set with WP-CLI is gone from the object cache; the home page is a page cache `HIT` before and a `MISS` after |
+| Site settings (§6.1) | WordPress security set | Not in the dashboard: one install-wide setting in the config file, applied with `pressfleet upgrade` | `TestSecuritySetReachesExistingSites` |
+| Domains (#86) | Go live (the DNS check refuses, then skipped), add and remove aliases | `domains.spec.ts` › goes live, then adds and removes aliases | The API's site; through Traefik, the primary domain served with HSTS, the preview domain and aliases redirecting, a removed alias `404` |
+| Admin login (#130) | One-click wp-admin login | `admin-login.spec.ts` › the login button lands in wp-admin... | The tab reaches the administrator's profile and an admin-only page; WordPress has a session for the administrator |
+| Updates (#125) | Pending plugin and theme updates in the site's health | `site-updates.spec.ts` › pending plugin and theme updates show... | The API's update report and the site's counts, after a check started from the page |
 | Backups (#87) | Back up, list snapshots, restore | *pending: #176* | |
 | Exports (#133, #134) | Site export, export from a snapshot, database export | *pending: #176* | |
 | Import, deploy (#116) | Import a site; deploy a package | *pending: #176* | |
