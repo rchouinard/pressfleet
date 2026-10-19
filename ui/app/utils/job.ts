@@ -1,3 +1,4 @@
+import { reactive } from 'vue'
 import type { components } from '../api/schema.gen'
 
 export type Job = components['schemas']['Job']
@@ -150,4 +151,21 @@ export function rollbackSummary(job: Pick<Job, 'state' | 'steps'>): RollbackSumm
       : 'The job failed. It had nothing to roll back.'
   }
   return { attempted, rolledBack, failed, inProgress, text }
+}
+
+/**
+ * The jobs a page has seen end. Reactive, so what the page computes from it
+ * (whether the job it follows is still in flight) changes when a job ends.
+ */
+export function createEndedJobs() {
+  const ended = reactive(new Set<string>())
+  return {
+    /** Records the job if it has ended; true only the first time. */
+    add(job: Pick<Job, 'id' | 'state'>): boolean {
+      if (!isTerminal(job.state) || ended.has(job.id)) return false
+      ended.add(job.id)
+      return true
+    },
+    has: (jobId: string): boolean => ended.has(jobId),
+  }
 }
