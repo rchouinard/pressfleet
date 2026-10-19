@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  alertStateView, dayAfter, dayStart, deliveryStateView, formatForSeconds, ruleCondition, ruleFormFrom, ruleUpdateBody, severityView,
-  validateRuleForm,
+  alertStateView, dayAfter, dayStart, deliveryStateView, emptyNewRuleForm, formatForSeconds, ruleCondition, ruleCreateBody, ruleFormFrom,
+  ruleUpdateBody, severityView, validateNewRuleForm, validateRuleForm,
 } from '../app/utils/alert'
 import { rule } from './alert-fixtures'
 
@@ -78,5 +78,31 @@ describe('rule edit form', () => {
     f.threshold = '1e3'
     f.forSeconds = '604801'
     expect(Object.keys(validateRuleForm(r, f))).toEqual(['/for_seconds'])
+  })
+})
+
+describe('rule create form', () => {
+  it('sends a threshold rule with its operator and threshold', () => {
+    const f = { ...emptyNewRuleForm(), name: ' Busy PHP ', expr: ' pressfleet_site_phpfpm_active ', operator: 'gte' as const, threshold: '4', forSeconds: '60', clientGroupId: 'G1' }
+    expect(validateNewRuleForm(f)).toEqual({})
+    expect(ruleCreateBody(f)).toEqual({
+      name: 'Busy PHP', description: '', scope: 'site', kind: 'threshold', expr: 'pressfleet_site_phpfpm_active',
+      operator: 'gte', threshold: 4, for_seconds: 60, severity: 'warning', enabled: true, client_group_id: 'G1',
+    })
+  })
+
+  it('leaves the threshold out of an expression rule, and the client group out of a platform rule', () => {
+    const f = { ...emptyNewRuleForm(), name: 'Up', expr: 'up == 0', kind: 'expression' as const, scope: 'platform' as const, threshold: 'ignored', clientGroupId: 'G1' }
+    expect(validateNewRuleForm(f)).toEqual({})
+    const body = ruleCreateBody(f)
+    expect(body).not.toHaveProperty('operator')
+    expect(body).not.toHaveProperty('threshold')
+    expect(body).not.toHaveProperty('client_group_id')
+    expect(body).toMatchObject({ scope: 'platform', kind: 'expression', for_seconds: 0 })
+  })
+
+  it('needs a name, an expression, and a threshold for a threshold rule', () => {
+    expect(Object.keys(validateNewRuleForm(emptyNewRuleForm())).sort()).toEqual(['/expr', '/name', '/threshold'])
+    expect(Object.keys(validateNewRuleForm({ ...emptyNewRuleForm(), kind: 'expression', name: 'x', expr: ' ' }))).toEqual(['/expr'])
   })
 })

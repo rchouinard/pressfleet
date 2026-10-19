@@ -62,6 +62,50 @@ export class Harness {
     if (!res.ok) throw new Error(`harness: ingress GET ${url}: status ${res.status}: ${await res.text()}`)
     return (await res.json()) as IngressResponse
   }
+
+  /**
+   * Writes series into the metrics store, one `name{labels} value` per
+   * line. They count at once (they are stamped a minute ago), and stay the
+   * series' latest value for minutes, until deleteSeries removes them.
+   */
+  async writeSeries(lines: string): Promise<void> {
+    const res = await fetch(new URL('/metrics/series', this.url), { method: 'POST', body: lines })
+    if (!res.ok) throw new Error(`harness: write series: status ${res.status}: ${await res.text()}`)
+  }
+
+  /** Deletes the series a selector (e.g. `{e2e="abc"}`) matches from the metrics store. */
+  async deleteSeries(match: string): Promise<void> {
+    const res = await fetch(new URL(`/metrics/delete?${new URLSearchParams({ match })}`, this.url), { method: 'POST' })
+    if (!res.ok) throw new Error(`harness: delete series: status ${res.status}: ${await res.text()}`)
+  }
+
+  /** The webhook receiver's base URL, as the control plane reaches it; add any path. */
+  async webhookURL(): Promise<string> {
+    const res = await fetch(new URL('/webhook', this.url))
+    if (!res.ok) throw new Error(`harness: webhook URL: status ${res.status}: ${await res.text()}`)
+    return ((await res.json()) as { url: string }).url
+  }
+
+  /** The requests the webhook receiver got on a path, oldest first. Header names are lower case. */
+  async webhookRequests(path: string): Promise<WebhookRequest[]> {
+    const res = await fetch(new URL(`/webhook/requests?${new URLSearchParams({ path })}`, this.url))
+    if (!res.ok) throw new Error(`harness: webhook requests: status ${res.status}: ${await res.text()}`)
+    return ((await res.json()) as { requests: WebhookRequest[] }).requests
+  }
+
+  /** Requests a path of a site through Traefik, as a visitor would, and returns the status. */
+  async visitSite(siteId: string, path: string): Promise<number> {
+    const res = await fetch(new URL(`/sites/${encodeURIComponent(siteId)}/visit?${new URLSearchParams({ path })}`, this.url), { method: 'POST' })
+    if (!res.ok) throw new Error(`harness: visit site: status ${res.status}: ${await res.text()}`)
+    return ((await res.json()) as { status: number }).status
+  }
+}
+
+/** A request the harness's webhook receiver got. */
+export interface WebhookRequest {
+  method: string
+  headers: Record<string, string>
+  body: string
 }
 
 /** A response from Traefik, as Harness.ingress returns it. */

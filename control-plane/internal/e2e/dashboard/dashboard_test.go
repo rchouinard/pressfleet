@@ -74,6 +74,15 @@ func TestDashboard(t *testing.T) {
 		}
 	})
 
+	// The monitoring specs wait for collected metrics and for alerts to
+	// fire and resolve: collect and evaluate every few seconds instead of
+	// every 30, as TestM4Acceptance does. Before the harness and the
+	// environment, because the control plane's published port changes.
+	p.Restart(t, map[string]string{
+		"PRESSFLEET_METRICS_INTERVAL_SECONDS":           "5",
+		"PRESSFLEET_ALERTS_EVALUATION_INTERVAL_SECONDS": "5",
+	})
+
 	php, otherPHP := siteImages(t)
 	harness := startHarness(t, p, projectDir)
 	env := map[string]string{

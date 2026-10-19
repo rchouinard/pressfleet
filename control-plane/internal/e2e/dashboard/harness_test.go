@@ -10,10 +10,14 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -53,6 +57,7 @@ func startHarness(t *testing.T, p *e2e.Platform, projectDir string) string {
 	mux.HandleFunc("GET /exists", h.exists)
 	mux.HandleFunc("POST /sites/{id}/exec", h.siteExec)
 	mux.HandleFunc("POST /ingress", h.ingressGet)
+	addMonitoringEndpoints(t, mux, p)
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -286,4 +291,197 @@ func (h *harness) ingressGet(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"status": resp.StatusCode, "headers": headers, "body": string(body)})
+}
+
+// Monitoring endpoints (#177): series written into the metrics store, so
+// alert rules fire and resolve on cue; a webhook receiver for alert
+// channels; and requests to a site through the ingress, so it writes log
+// lines.
+//
+//	POST /metrics/series                 writes exposition lines into VictoriaMetrics
+//	POST /metrics/delete?match=          deletes the series a selector matches
+//	GET  /webhook                        the receiver's URL, as the control plane reaches it
+//	GET  /webhook/requests?path=         what the receiver got on a path
+//	POST /sites/{id}/visit?path=         a GET to the site's preview domain through Traefik
+func addMonitoringEndpoints(t *testing.T, mux *http.ServeMux, p *e2e.Platform) {
+	t.Helper()
+	m := &monitoring{p: p, ingress: p.IngressClient(t), hooks: map[string][]webhookRequest{}}
+	m.webhookURL = m.startReceiver(t)
+	mux.HandleFunc("POST /metrics/series", m.writeSeries)
+	mux.HandleFunc("POST /metrics/delete", m.deleteSeries)
+	mux.HandleFunc("GET /webhook", m.webhook)
+	mux.HandleFunc("GET /webhook/requests", m.webhookRequests)
+	mux.HandleFunc("POST /sites/{id}/visit", m.visit)
+}
+
+type monitoring struct {
+	p          *e2e.Platform
+	ingress    *http.Client
+	webhookURL string
+
+	mu    sync.Mutex
+	hooks map[string][]webhookRequest
+}
+
+// webhookRequest is one request the receiver got.
+type webhookRequest struct {
+	Method  string            `json:"method"`
+	Headers map[string]string `json:"headers"`
+	Body    string            `json:"body"`
+}
+
+// VictoriaMetrics' address inside its container, which has no published
+// port; its image has BusyBox's wget (see m4_test.go).
+const victoriaMetrics = "http://127.0.0.1:8428"
+
+// seriesAge is how far in the past written samples are stamped.
+// VictoriaMetrics hides samples younger than its -search.latencyOffset (30
+// seconds) from queries, so a sample stamped now would take that long to
+// count; one stamped a minute ago counts at once, and stays the latest
+// value of its series for the query lookback (minutes).
+const seriesAge = time.Minute
+
+// writeSeries writes the body's exposition lines (`name{labels} value`,
+// no timestamp) into the metrics store, stamped seriesAge ago.
+func (m *monitoring) writeSeries(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	ts := time.Now().Add(-seriesAge).UnixMilli()
+	var b strings.Builder
+	for line := range strings.Lines(string(body)) {
+		if line = strings.TrimSpace(line); line != "" {
+			fmt.Fprintf(&b, "%s %d\n", line, ts)
+		}
+	}
+	if b.Len() == 0 {
+		http.Error(w, "no series", http.StatusBadRequest)
+		return
+	}
+	if err := m.postVM(r.Context(), "/api/v1/import/prometheus", b.String()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteSeries removes the series a selector matches, so a condition ends
+// at once instead of when its samples go stale.
+func (m *monitoring) deleteSeries(w http.ResponseWriter, r *http.Request) {
+	match := r.URL.Query().Get("match")
+	if match == "" {
+		http.Error(w, "match is required", http.StatusBadRequest)
+		return
+	}
+	if err := m.postVM(r.Context(), "/api/v1/admin/tsdb/delete_series", url.Values{"match[]": {match}}.Encode()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (m *monitoring) postVM(ctx context.Context, path, body string) error {
+	out, err := m.p.Project.Exec(ctx, "victoria-metrics", "wget", "-q", "-O", "-", "--post-data", body, victoriaMetrics+path)
+	if err != nil {
+		return fmt.Errorf("posting to VictoriaMetrics %s: %w: %s", path, err, out)
+	}
+	return nil
+}
+
+// startReceiver serves the webhook receiver on the address of the control
+// plane's default gateway, the host's side of the platform network, so
+// alert channels can deliver to it like to any service outside the
+// platform. It records every request by path and answers 204. This needs
+// Linux, where the host owns the bridge's address; on Docker Desktop the
+// specs that use it fail.
+func (m *monitoring) startReceiver(t *testing.T) string {
+	t.Helper()
+	gw, err := m.gateway(t.Context())
+	if err != nil {
+		t.Fatalf("finding the control plane's gateway for the webhook receiver: %v", err)
+	}
+	l, err := net.Listen("tcp", net.JoinHostPort(gw, "0"))
+	if err != nil {
+		t.Fatalf("webhook receiver: %v", err)
+	}
+	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		req := webhookRequest{Method: r.Method, Headers: map[string]string{}, Body: string(body)}
+		for k := range r.Header {
+			req.Headers[strings.ToLower(k)] = r.Header.Get(k)
+		}
+		m.mu.Lock()
+		m.hooks[r.URL.Path] = append(m.hooks[r.URL.Path], req)
+		m.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	})}
+	go func() { _ = srv.Serve(l) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return "http://" + l.Addr().String()
+}
+
+// gateway reads the control plane container's default route from
+// /proc/net/route, where addresses are little-endian hex.
+func (m *monitoring) gateway(ctx context.Context) (string, error) {
+	out, err := m.p.Project.Exec(ctx, e2e.Service, "cat", "/proc/net/route")
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", err, out)
+	}
+	for line := range strings.Lines(string(out)) {
+		f := strings.Fields(line)
+		if len(f) < 3 || f[1] != "00000000" {
+			continue
+		}
+		v, err := strconv.ParseUint(f[2], 16, 32)
+		if err != nil {
+			return "", fmt.Errorf("default route %q: %w", line, err)
+		}
+		return netip.AddrFrom4([4]byte{byte(v), byte(v >> 8), byte(v >> 16), byte(v >> 24)}).String(), nil
+	}
+	return "", errors.New("no default route")
+}
+
+func (m *monitoring) webhook(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"url": m.webhookURL})
+}
+
+func (m *monitoring) webhookRequests(w http.ResponseWriter, r *http.Request) {
+	m.mu.Lock()
+	got := append([]webhookRequest{}, m.hooks[r.URL.Query().Get("path")]...)
+	m.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string][]webhookRequest{"requests": got})
+}
+
+// visit sends a GET for the path to the site's preview domain, as a visitor
+// would, and reports the status, so the site writes an access log line.
+func (m *monitoring) visit(w http.ResponseWriter, r *http.Request) {
+	siteID := r.PathValue("id")
+	path := r.URL.Query().Get("path")
+	if !id.Valid(siteID) || !strings.HasPrefix(path, "/") {
+		http.Error(w, "a site ID and a path starting with / are required", http.StatusBadRequest)
+		return
+	}
+	site, err := m.p.Client.GetSiteWithResponse(r.Context(), siteID)
+	if err != nil || site.JSON200 == nil {
+		http.Error(w, fmt.Sprintf("getting site %s: %v", siteID, err), http.StatusBadGateway)
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, "https://"+site.JSON200.PreviewDomain+path, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	resp, err := m.ingress.Do(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]int{"status": resp.StatusCode})
 }

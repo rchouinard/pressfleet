@@ -6,6 +6,9 @@ export type AlertState = components['schemas']['AlertState']
 export type AlertSeverity = components['schemas']['AlertSeverity']
 export type AlertRule = components['schemas']['AlertRule']
 export type AlertRuleUpdate = components['schemas']['AlertRuleUpdate']
+export type AlertRuleCreate = components['schemas']['AlertRuleCreate']
+export type AlertScope = components['schemas']['AlertScope']
+export type AlertRuleKind = components['schemas']['AlertRuleKind']
 export type AlertOperator = components['schemas']['AlertOperator']
 export type AlertDelivery = components['schemas']['AlertDelivery']
 export type AlertDeliveryState = components['schemas']['AlertDeliveryState']
@@ -135,5 +138,59 @@ export function ruleUpdateBody(rule: AlertRule, f: RuleFormState): AlertRuleUpda
     if (Number(f.threshold) !== rule.threshold) body.threshold = Number(f.threshold)
   }
   if (Number(f.forSeconds) !== rule.for_seconds) body.for_seconds = Number(f.forSeconds)
+  return body
+}
+
+/**
+ * A new rule form's state: the edit form's fields plus what is fixed once
+ * a rule exists in the dashboard (scope, kind, expression). Labels and
+ * annotations stay API-only. `clientGroupId` is '' for every site.
+ */
+export interface NewRuleFormState extends RuleFormState {
+  scope: AlertScope
+  kind: AlertRuleKind
+  expr: string
+  clientGroupId: string
+}
+
+export function emptyNewRuleForm(): NewRuleFormState {
+  return {
+    name: '',
+    description: '',
+    severity: 'warning',
+    operator: 'gt',
+    threshold: '',
+    forSeconds: '0',
+    scope: 'site',
+    kind: 'threshold',
+    expr: '',
+    clientGroupId: '',
+  }
+}
+
+/** validateRuleForm for a new rule, which also needs an expression. */
+export function validateNewRuleForm(f: NewRuleFormState): Record<string, string> {
+  const errors = validateRuleForm({ kind: f.kind }, f)
+  if (!f.expr.trim()) errors['/expr'] = 'An expression is required.'
+  return errors
+}
+
+/** The POST body. A threshold only goes with a threshold rule, a client group only with a site rule. */
+export function ruleCreateBody(f: NewRuleFormState): AlertRuleCreate {
+  const body: AlertRuleCreate = {
+    name: f.name.trim(),
+    description: f.description,
+    scope: f.scope,
+    kind: f.kind,
+    expr: f.expr.trim(),
+    severity: f.severity,
+    for_seconds: Number(f.forSeconds),
+    enabled: true,
+  }
+  if (f.kind === 'threshold') {
+    body.operator = f.operator
+    body.threshold = Number(f.threshold)
+  }
+  if (f.scope === 'site' && f.clientGroupId) body.client_group_id = f.clientGroupId
   return body
 }

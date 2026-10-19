@@ -356,11 +356,13 @@ How the Phase 1–4 operations (design doc §8) are covered through the dashboar
 | Exports (#133, #134) | Site export, export from a snapshot, database export | *pending: #176* | |
 | Import, deploy (#116) | Import a site; deploy a package | *pending: #176* | |
 | Database access (#116) | Open and close a database session | *pending: #176* | |
-| Metrics (#88) | Site and platform charts | *pending: #177* | |
-| Logs (#89) | Site log stream, platform logs | *pending: #177* | |
-| Alerts (#90) | Channels, test notification, rules, firing and resolving alerts | *pending: #177* | |
-| Overview (#91) | Platform overview, capacity warning | *pending: #177* | |
-| Audit log (#105) | UI actions appear, filtering | *pending: #177* | |
+| Metrics (#88) | Platform charts (host memory and CPU, MariaDB connections) | `monitoring.spec.ts` › platform metrics charts render... | One table row per series the API has data for |
+| Metrics (#88) | Site charts, from the site's page (PHP-FPM workers, object cache memory; not CPU and memory, which need cgroup v2) | `monitoring.spec.ts` › a running site › site metrics charts render... | One table row per series the API has data for |
+| Logs (#89) | Logs page, site picker, the site's live stream showing a new line | `monitoring.spec.ts` › a running site › the logs page opens... | A visitor's request through Traefik (`harness.visitSite`); the same access line from the API |
+| Alerts (#90) | Create a webhook channel, send a test notification | `alerts.spec.ts` › creates a webhook channel... | The API's channel (URL not shown back); the harness's webhook receiver got one generic JSON POST |
+| Alerts (#90) | Create and edit a rule; an alert fires, then resolves, in the history and on its page | `alerts.spec.ts` › creates and edits a rule... | The API's rule; a series written into the metrics store (`harness.writeSeries`) fires the alert only at the edited threshold, and deleting it resolves the same alert |
+| Overview (#91) | Platform overview (capacity, host figures, health, doctor), capacity warning | `monitoring.spec.ts` › the platform overview loads... | A site reserving more than the host's memory makes the API's capacity `exceeded`; back to `ok` once it is deleted |
+| Audit log (#105) | UI actions appear; filter by target, action, user, and target type; clear | `audit.spec.ts` › actions in the dashboard appear... | The API's audit events: actor, target, action, result |
 | Two-factor (#160) | Enrollment, sign-in with a security key | *pending: #160* | |
 
 Left out of the dashboard on purpose, so not covered here (their own e2e or unit tests cover them):
