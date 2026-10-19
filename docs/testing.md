@@ -230,13 +230,15 @@ The dashboard's end-to-end tests are [Playwright](https://playwright.dev) specs 
 
 A Go test, `TestDashboard` in `control-plane/internal/e2e/dashboard`, owns the platform and runs the suite:
 
-1. It calls `e2e.Start` (skipped unless `PRESSFLEET_DOCKER_TESTS=1` and `PRESSFLEET_TEST_CONTROL_PLANE_IMAGE` are set), makes the site images for the default PHP version available with `e2e.EnsureImages`, and starts the **harness server**, a small HTTP server on a loopback port (see below).
-2. It runs `pnpm exec playwright test` in `ui/` with the platform's details in the environment (read by `ui/e2e/env.ts`): `PRESSFLEET_E2E_BASE_URL` (`https://fleet.e2e.test`), `PRESSFLEET_E2E_INGRESS_ADDR` (Traefik's published HTTPS port), `PRESSFLEET_E2E_API_URL` (the control plane's published port), `PRESSFLEET_E2E_HARNESS_URL`, the admin's email and password, and `PRESSFLEET_E2E_PHP_VERSION`.
+1. It calls `e2e.StartWithControlPlaneMemory` (skipped unless `PRESSFLEET_DOCKER_TESTS=1` and `PRESSFLEET_TEST_CONTROL_PLANE_IMAGE` are set), which is `e2e.Start` with a 512 MiB control plane: the specs run in parallel, and several sites' jobs, logins, and restic at once don't fit the default 192 MiB (see below). It restarts the control plane with 5-second metrics and alert evaluation intervals, as `TestM4Acceptance` does, makes the site images for the default PHP version and one other available with `e2e.EnsureImages`, and starts the **harness server**, a small HTTP server on a loopback port (see below).
+2. It runs `pnpm exec playwright test` in `ui/` with the platform's details in the environment (read by `ui/e2e/env.ts`): `PRESSFLEET_E2E_BASE_URL` (`https://fleet.e2e.test`), `PRESSFLEET_E2E_INGRESS_ADDR` (Traefik's published HTTPS port), `PRESSFLEET_E2E_API_URL` (the control plane's published port), `PRESSFLEET_E2E_HARNESS_URL`, the admin's email and password, `PRESSFLEET_E2E_PHP_VERSION`, and `PRESSFLEET_E2E_OTHER_PHP_VERSION` (for changing a site's PHP version).
 3. When the suite ends, pass or fail, the usual e2e teardown runs: `docker compose down --volumes` and a check that nothing with the project's label is left. Before it, the test lists the sites that still exist and removes their projects afterwards, so a spec that failed halfway leaves nothing behind either. If the suite failed, the platform's container logs are written to `ui/test-results/platform-logs.txt` too, next to Playwright's traces and screenshots.
 
 This way round (Go starts Playwright, rather than a Playwright global setup starting a Go command) keeps one owner for the platform's lifetime, so teardown runs through `t.Cleanup` like every other e2e test, and keeps all Docker access in Go, through `compose.Project`: nothing in the specs runs the `docker` CLI (design doc §4.2). It lives in its own package so `make test-e2e` (the API suite, `./control-plane/internal/e2e/`) doesn't need Node.js or a browser.
 
-The browser reaches the dashboard by its real name. `playwright.config.ts` launches Chromium with `--host-resolver-rules=MAP fleet.e2e.test:443 <Traefik's HTTPS address>`, so the page's origin is `https://fleet.e2e.test` exactly as in production, and `ignoreHTTPSErrors` accepts Traefik's self-signed default certificate (the harness never asks a CA for one). It also turns off QUIC (only Traefik's TCP ports are published) and any proxy the environment sets (the page needs no other origin).
+The browser reaches the dashboard by its real name. `playwright.config.ts` launches Chromium with `--host-resolver-rules=MAP fleet.e2e.test:443 <Traefik's HTTPS address>`, so the page's origin is `https://fleet.e2e.test` exactly as in production, and `ignoreHTTPSErrors` accepts Traefik's self-signed default certificate (the harness never asks a CA for one). It maps the sites' test domains to Traefik the same way, so a tab opened on a site (one-click wp-admin login) loads. It also turns off QUIC (only Traefik's TCP ports are published), HTTP/2, and any proxy the environment sets (the page needs no other origin).
+
+**Network changes and retries.** When a site's first container starts or its last one stops, Docker changes the host's networks, and Chromium aborts requests in flight with `net::ERR_NETWORK_CHANGED`: a page can lose a script and stay blank. Chromium has no switch to turn this off. Until the browser runs in a network namespace of its own, the suite works around it: HTTP/1.1 instead of HTTP/2 (an aborted HTTP/2 connection takes every request on it; the Go suite still checks that Traefik serves HTTP/2), specs that don't test deletion leave their sites for the teardown rather than deleting them mid-run, and `retries: 1` in `playwright.config.ts`. A test that passes on its retry is reported as *flaky*; one that fails twice fails the run.
 
 ### Running them
 
@@ -244,7 +246,7 @@ The browser reaches the dashboard by its real name. `playwright.config.ts` launc
 mise exec -- make test-ui-e2e
 ```
 
-This installs the UI's dependencies if needed, builds the control plane image as `pressfleet-control-plane:ui-e2e` (which builds and embeds the dashboard), runs `TestDashboard`, and removes the image. It needs the site images, like `TestSiteCreateDelete` (`make images SITE_PHP=<default PHP version>` builds them). The suite takes about a minute locally once the images are present, most of it the site spec's provisioning and deletion. `PLAYWRIGHT_ARGS` goes to `playwright test`, split on spaces:
+This installs the UI's dependencies if needed, builds the control plane image as `pressfleet-control-plane:ui-e2e` (which builds and embeds the dashboard), runs `TestDashboard`, and removes the image. It needs the site images for the default PHP version and the one the catalog lists next to it (`make images SITE_PHP="<both versions>"` builds them; CI builds the two newest). The suite takes about a minute locally once the images are present, most of it the site spec's provisioning and deletion. `PLAYWRIGHT_ARGS` goes to `playwright test`, split on spaces:
 
 ```sh
 make test-ui-e2e PLAYWRIGHT_ARGS="-g offboard"
@@ -304,10 +306,12 @@ The fixtures (`ui/e2e/fixtures/`):
 | `adminPage` | The default page, signed in as the platform's admin |
 | `asRole(role)` | Creates a user with the role and returns `{ user, page, api }`: a browser context of its own, signed in, and an API client with the user's session |
 | `harness` | Platform state the API doesn't show, from the Go harness server |
-| `api.ts` | `login`, `withToken`, `createUser`, `createClientGroup`, `waitForJob`, `uploadFile`, `startFailingImport`, `apiError` (the `ApiError` of a call that should fail), `unique` |
+| `api.ts` | `login`, `withToken`, `createUser`, `createClientGroup`, `createSite` (in a given group), `waitForJob`, `uploadFile`, `startFailingImport`, `downloadFile`, `exportSite` (an API export's archive and dump), `apiError` (the `ApiError` of a call that should fail), `unique` |
+| `sites.ts` | A `site` fixture (a running site in a client group of its own, provisioned through the API, left for the teardown), `provisionSite`, `getSite`, `jobStartedBy` (the job a UI action started) |
+| `archive.ts` | `tarGz` and `untarGz`: small in-memory archives, for deploy packages and to read exports back |
 | `session.ts` | `signIn` (a session from the API handed to the browser as its cookie, which is fast), `signInThroughForm`, `signOut` |
-| `jobs.ts` | `waitForJobInUI` (waits on a job's progress view until it shows the state), `jobProgress`, `JobState` |
-| `ui.ts` | `choose` (Nuxt UI selects), `toast`, `expectLoginPage` |
+| `jobs.ts` | `waitForJobInUI` (waits on a job's progress view until it shows the state), `jobProgress`, `jobIdIn` (the job a progress view shows), `jobIdFromURL`, `JobState` |
+| `ui.ts` | `choose` (Nuxt UI selects), `toast`, `expectLoginPage`, `download` (a download a link starts, as bytes) |
 
 Two-factor authentication (#160) will add a step after the password; it goes into `session.ts` (`signInThroughForm` and `signIn`), and the virtual WebAuthn authenticator becomes a fixture of its own in `fixtures/index.ts`, created over CDP on a page's context (`context.newCDPSession(page)`, then `WebAuthn.enable` and `WebAuthn.addVirtualAuthenticator`), so specs keep calling the same helpers.
 
@@ -318,6 +322,12 @@ The harness server (`control-plane/internal/e2e/dashboard/harness_test.go`, clie
 | `GET /sites/{id}/leftovers` | What is left of a site, one entry per object: containers, networks, and volumes with its project's label, its directory under `sites/`, platform services on its network, its MariaDB database, user, and grants, and its object cache user. Empty once it is gone |
 | `POST /client-groups/{id}/backup-repository` | Creates the group's backup repository with `pressfleet repository create` in the control plane container, as an operator would before the group's first backup |
 | `GET /exists?path=` | Whether a path under the data directory exists, as the control plane sees it |
+| `POST /sites/{id}/exec` | Runs a command in a site's `php` or `nginx` container (`{"service", "command"}`) and returns its output, and its error if it failed. `harness.wp` (WP-CLI) and `harness.php` throw on failure; `harness.sitePage` fetches a page from the site's nginx on its network |
+| `POST /ingress` | A GET through Traefik, without following redirects: status, headers, and body. Optional basic auth comes in the request body, so it stays out of URLs |
+| `POST /mariadb/query` | SQL on the platform MariaDB as root, batch output without column names |
+| `POST /metrics/series`, `POST /metrics/delete?match=` | Writes series into VictoriaMetrics (stamped a minute ago, so they count at once) and deletes them, so alert rules fire and resolve on cue |
+| `GET /webhook`, `GET /webhook/requests?path=` | A webhook receiver on the control plane's default gateway, for alert channels, and what it got on a path. It needs Linux: on Docker Desktop the host doesn't own the bridge's address |
+| `POST /sites/{id}/visit?path=` | A visitor's GET to the site's preview domain through Traefik, so the site writes a log line |
 
 Add an endpoint there, and a method to `harness.ts`, when a spec needs another such check.
 
@@ -327,7 +337,7 @@ The `Dashboard E2E` job of the E2E workflow (`.github/workflows/e2e.yml`) runs o
 
 ### Coverage
 
-How the Phase 1–4 operations (design doc §8) are covered through the dashboard. Rows marked *pending* belong to the follow-up issues.
+How the Phase 1–4 operations (design doc §8) are covered through the dashboard. Rows marked *pending* belong to a follow-up issue.
 
 | Area | Operation | Spec | Checked against |
 | --- | --- | --- | --- |
