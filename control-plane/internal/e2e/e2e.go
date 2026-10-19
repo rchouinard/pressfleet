@@ -397,11 +397,17 @@ func (p *Platform) Connect(ctx context.Context, t *testing.T) {
 // cookie jar keeps a session once the client logs in.
 func (p *Platform) NewClient(t *testing.T, opts ...client.ClientOption) *client.ClientWithResponses {
 	t.Helper()
+	return p.newClient(t, nil, opts...)
+}
+
+// newClient is NewClient with an HTTP transport; nil means the default.
+func (p *Platform) newClient(t *testing.T, transport http.RoundTripper, opts ...client.ClientOption) *client.ClientWithResponses {
+	t.Helper()
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	httpClient := &http.Client{Jar: jar, Timeout: 30 * time.Second}
+	httpClient := &http.Client{Jar: jar, Transport: transport, Timeout: 30 * time.Second}
 	c, err := client.NewClientWithResponses(p.BaseURL, append([]client.ClientOption{client.WithHTTPClient(httpClient)}, opts...)...)
 	if err != nil {
 		t.Fatal(err)
@@ -410,11 +416,15 @@ func (p *Platform) NewClient(t *testing.T, opts ...client.ClientOption) *client.
 }
 
 // Login logs in with a new session and returns a client that uses it,
-// including the session's CSRF token on unsafe requests.
+// including the session's CSRF token on unsafe requests. The client
+// reauthenticates with the password when a sensitive action finds the
+// session's last check too old (reauthTransport), so it lasts as long as a
+// test does; the user must have no second factor.
 func (p *Platform) Login(t *testing.T, email string, password redact.Secret) *client.ClientWithResponses {
 	t.Helper()
 	var csrf string
-	c := p.NewClient(t, client.WithRequestEditorFn(func(_ context.Context, req *http.Request) error {
+	rt := &reauthTransport{base: http.DefaultTransport}
+	c := p.newClient(t, rt, client.WithRequestEditorFn(func(_ context.Context, req *http.Request) error {
 		switch req.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 		default:
@@ -434,6 +444,7 @@ func (p *Platform) Login(t *testing.T, email string, password redact.Secret) *cl
 		t.Fatalf("login: status %d: %s", resp.StatusCode(), resp.Body)
 	}
 	csrf = *resp.JSON200.CsrfToken
+	rt.reauthenticate = reauthenticateWithPassword(c, password)
 	return c
 }
 
