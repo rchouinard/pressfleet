@@ -24,6 +24,7 @@ mise exec -- make build             # binary with the UI embedded
 | `lint` | ESLint (Nuxt flat config) |
 | `typecheck` | `nuxt typecheck` (vue-tsc, strict) |
 | `test` | Vitest |
+| `test:e2e` | Playwright, against a running platform (see below); `make test-ui-e2e` boots one |
 
 ## Stack and dependencies
 
@@ -41,6 +42,8 @@ Each dependency has a reason (CLAUDE.md). Versions are in `package.json` and `pn
 | `typescript`, `vue-tsc` (dev) | Strict type checking. TypeScript is held on 5.9 because the Vue tooling doesn't support 7 yet. |
 | `eslint`, `@nuxt/eslint` (dev) | Linting with the Nuxt flat config. |
 | `vitest`, `@vue/test-utils`, `happy-dom`, `@vitejs/plugin-vue` (dev) | Unit tests of utils and Nuxt-independent components, without a browser. |
+| `@playwright/test` (dev) | End-to-end tests of the embedded dashboard in a real browser (Chromium only), against a platform the Go e2e harness boots. Nothing else drives a browser through the CSP, `Secure` cookies and CSRF as they ship. |
+| `@types/node` (dev) | Types for the end-to-end specs and fixtures, which run in Node (`node:crypto`, `node:fs`); held to the version Vite already pulls in. |
 
 ## The generated API client
 
@@ -73,6 +76,7 @@ ui/
     utils/              pure TypeScript with no Nuxt runtime: API client, ApiError, role helpers
     app.vue, error.vue, app.config.ts
   tests/                Vitest specs, one per unit: tests/<name>.test.ts
+  e2e/                  Playwright specs and fixtures (docs/testing.md); playwright.config.ts
   public/               static files copied as they are
   placeholder/, ui.go, embed_*.go   the Go package that embeds the build (see below)
 ```
@@ -116,6 +120,7 @@ The server sends `script-src 'self'` plus the hashes of the few inline scripts N
 - Unit tests: Vitest, in `tests/`, no Docker and no network. The API client is tested with an injected fake `fetch` (see `tests/api-client.test.ts`); do the same for anything that calls the API.
 - Component tests use `@vue/test-utils` `mount` for components that don't need Nuxt.
 - `make ui-check` runs lint, typecheck and tests; CI runs the same, then `nuxt generate`.
+- End-to-end tests: Playwright, in `e2e/`, against the embedded dashboard on a real platform (`make test-ui-e2e`). `make ui-check` lints and typechecks them (`tsc -p e2e`) but doesn't run them. How to run, write and debug them, and what they cover: [docs/testing.md](../docs/testing.md#dashboard-end-to-end-tests).
 
 ## App shell
 
@@ -123,7 +128,7 @@ The server sends `script-src 'self'` plus the hashes of the few inline scripts N
 
 - `useSession()` returns `user`, `role`, `csrfToken`, `loading`, `isAuthenticated`, `refresh()`, `login()` and `logout()`. `middleware/auth.global.ts` loads the session once per page load (`GET /api/v1/auth/me`; this also restores the CSRF token), sends signed-out users to `/login?redirect=<path>`, and sends signed-in users on `/login` to their `redirect`. The target goes through `safeRedirect` (`utils/redirect.ts`): same-origin absolute paths only, never `//host`, backslashes, control characters or `/login`.
 - A 401 anywhere mid-use (the API client's `onUnauthorized`, wired in `useApi()`) clears the session and goes to `/login?redirect=<current page>&expired=1`. The startup probe and the login request handle their own 401. If the control plane can't be reached at load, `error.vue` shows a retry instead of a login form.
-- `pages/login.vue` is the sign-in form (email and password with a show/hide toggle, Problem Details in `ProblemAlert`, field errors, password cleared after a failure, disabled while submitting). `/account` (everyone: profile, own API tokens, sign out) and `/users` (Admin only, gated with `requires: 'user.view'`) are the #82 pages. A new token's secret exists only in the account page's memory while its dialog is open: never in storage, URLs or logs.
+- `pages/login.vue` is the sign-in form (email and password with a show/hide toggle, Problem Details in `ProblemAlert`, field errors, password cleared after a failure, disabled while submitting). `/account` (everyone: profile, own password, own API tokens and SSH keys, sign out) and `/users` (Admin only, gated with `requires: 'user.view'`) are the #82 pages. A new token's secret exists only in the account page's memory while its dialog is open: never in storage, URLs or logs.
 - Permissions: `utils/permissions.ts` is the one table of UI actions to minimum role, using the server's action names (`site.delete`, `user.view`, ...). `useCan().can('site.delete')`, `<IfCan action="site.delete">...</IfCan>` (with an optional `#denied` slot) and `can(role, action)` all read it. **Rule: hide what the role can't do; the server stays authoritative and 403s are still handled.** Add an action to the table (and to `authz.go`) before gating on it; `tests/permissions.test.ts` checks the table against design doc §4.6 and against the Go source.
 - Gate a whole page with `definePageMeta({ requires: 'user.view' })`: lower roles get the 403 page.
 
