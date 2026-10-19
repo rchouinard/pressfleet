@@ -825,6 +825,30 @@ func (e ReadinessCheckStatus) Valid() bool {
 	}
 }
 
+// Defines values for ReauthenticationMethod.
+const (
+	ReauthenticationMethodPassword     ReauthenticationMethod = "password"
+	ReauthenticationMethodRecoveryCode ReauthenticationMethod = "recovery_code"
+	ReauthenticationMethodTotp         ReauthenticationMethod = "totp"
+	ReauthenticationMethodWebauthn     ReauthenticationMethod = "webauthn"
+)
+
+// Valid indicates whether the value is a known member of the ReauthenticationMethod enum.
+func (e ReauthenticationMethod) Valid() bool {
+	switch e {
+	case ReauthenticationMethodPassword:
+		return true
+	case ReauthenticationMethodRecoveryCode:
+		return true
+	case ReauthenticationMethodTotp:
+		return true
+	case ReauthenticationMethodWebauthn:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Role.
 const (
 	Admin    Role = "admin"
@@ -2241,6 +2265,13 @@ type CurrentUser struct {
 	// LastLoginAt Null if the user has never logged in.
 	LastLoginAt *Timestamp `json:"last_login_at,omitempty"`
 
+	// ReauthenticationMaxAgeSeconds How long after `verified_at` the session may take sensitive
+	// actions without reauthenticating
+	// (`two_factor.reauthentication_max_age`). Null for bearer token
+	// authentication and when `two_factor.reauthentication` is off,
+	// since nothing asks.
+	ReauthenticationMaxAgeSeconds *int `json:"reauthentication_max_age_seconds"`
+
 	// RecoveryCodesRemaining How many unused recovery codes the user has.
 	RecoveryCodesRemaining int `json:"recovery_codes_remaining"`
 
@@ -3119,6 +3150,37 @@ type ReadinessCheck struct {
 
 // ReadinessCheckStatus defines model for ReadinessCheck.Status.
 type ReadinessCheckStatus string
+
+// Reauthentication defines model for Reauthentication.
+type Reauthentication struct {
+	// Code A TOTP code or recovery code, for those methods.
+	Code *string `json:"code,omitempty"`
+
+	// Credential For `webauthn`, the assertion (`PublicKeyCredential` as JSON).
+	Credential *map[string]interface{} `json:"credential,omitempty"`
+
+	// Method A second-factor method, or `password` for users without a second factor.
+	Method ReauthenticationMethod `json:"method"`
+
+	// Password For `password`, the user's password.
+	Password *string `json:"password,omitempty"`
+}
+
+// ReauthenticationMethod A second-factor method, or `password` for users without a second factor.
+type ReauthenticationMethod string
+
+// ReauthenticationOptions defines model for ReauthenticationOptions.
+type ReauthenticationOptions struct {
+	// Methods The methods the user can reauthenticate with, in the order to
+	// offer them: their second factors, or only `password` for a user
+	// without one.
+	Methods []ReauthenticationMethod `json:"methods"`
+
+	// Webauthn When `methods` includes `webauthn`: the request options
+	// (`PublicKeyCredentialRequestOptions` as JSON) to pass to
+	// `navigator.credentials.get`.
+	Webauthn interface{} `json:"webauthn,omitempty"`
+}
 
 // RecoveryCodes defines model for RecoveryCodes.
 type RecoveryCodes struct {
@@ -4508,6 +4570,9 @@ type UpdateCurrentUserJSONRequestBody = ProfileUpdate
 // ChangePasswordJSONRequestBody defines body for ChangePassword for application/json ContentType.
 type ChangePasswordJSONRequestBody = PasswordChange
 
+// ReauthenticateJSONRequestBody defines body for Reauthenticate for application/json ContentType.
+type ReauthenticateJSONRequestBody = Reauthentication
+
 // CreateAPITokenJSONRequestBody defines body for CreateAPIToken for application/json ContentType.
 type CreateAPITokenJSONRequestBody = APITokenCreate
 
@@ -5017,6 +5082,62 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/auth/password (the `ChangePassword` operationId).
 	ChangePassword(ctx context.Context, body ChangePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReauthenticateWithBody Prove who you are again for sensitive actions
+	//
+	// Checks the current user again and resets the session's
+	// `verified_at`, so sensitive actions refused with the problem type
+	// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#reauthenticating-for-sensitive-actions`
+	// go through when retried. A user with a second factor sends one of
+	// their methods (see `startReauthentication`): `{"method": "totp",
+	// "code": "123456"}`, a recovery code the same way, or `{"method":
+	// "webauthn", "credential": {...}}`. A user without one sends
+	// `{"method": "password", "password": "..."}`.
+	//
+	// A wrong code or password returns `422` with an error on `/code`,
+	// `/credential`, or `/password`, and counts toward login throttling
+	// (`429`). A method the user can't use returns `422` with an error on
+	// `/method`. Only dashboard sessions may call this; API tokens get
+	// `403`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/auth/reauthenticate (the `Reauthenticate` operationId).
+	ReauthenticateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// Reauthenticate Prove who you are again for sensitive actions
+	//
+	// Checks the current user again and resets the session's
+	// `verified_at`, so sensitive actions refused with the problem type
+	// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#reauthenticating-for-sensitive-actions`
+	// go through when retried. A user with a second factor sends one of
+	// their methods (see `startReauthentication`): `{"method": "totp",
+	// "code": "123456"}`, a recovery code the same way, or `{"method":
+	// "webauthn", "credential": {...}}`. A user without one sends
+	// `{"method": "password", "password": "..."}`.
+	//
+	// A wrong code or password returns `422` with an error on `/code`,
+	// `/credential`, or `/password`, and counts toward login throttling
+	// (`429`). A method the user can't use returns `422` with an error on
+	// `/method`. Only dashboard sessions may call this; API tokens get
+	// `403`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/auth/reauthenticate (the `Reauthenticate` operationId).
+	Reauthenticate(ctx context.Context, body ReauthenticateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartReauthentication Get the ways to reauthenticate
+	//
+	// Lists the methods the current user can reauthenticate with: their
+	// second factors (`totp`, `webauthn`, `recovery_code`), or only
+	// `password` for a user without one. For `webauthn` it starts a
+	// challenge and returns its request options as `webauthn`.
+	//
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Corresponds with POST /api/v1/auth/reauthenticate/options (the `StartReauthentication` operationId).
+	StartReauthentication(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListAPITokens List the current user's API tokens
 	//
@@ -7605,6 +7726,92 @@ func (c *Client) ChangePasswordWithBody(ctx context.Context, contentType string,
 // Corresponds with POST /api/v1/auth/password (the `ChangePassword` operationId).
 func (c *Client) ChangePassword(ctx context.Context, body ChangePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewChangePasswordRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReauthenticateWithBody Prove who you are again for sensitive actions
+//
+// Checks the current user again and resets the session's
+// `verified_at`, so sensitive actions refused with the problem type
+// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#reauthenticating-for-sensitive-actions`
+// go through when retried. A user with a second factor sends one of
+// their methods (see `startReauthentication`): `{"method": "totp",
+// "code": "123456"}`, a recovery code the same way, or `{"method":
+// "webauthn", "credential": {...}}`. A user without one sends
+// `{"method": "password", "password": "..."}`.
+//
+// A wrong code or password returns `422` with an error on `/code`,
+// `/credential`, or `/password`, and counts toward login throttling
+// (`429`). A method the user can't use returns `422` with an error on
+// `/method`. Only dashboard sessions may call this; API tokens get
+// `403`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/auth/reauthenticate (the `Reauthenticate` operationId).
+func (c *Client) ReauthenticateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReauthenticateRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// Reauthenticate Prove who you are again for sensitive actions
+//
+// Checks the current user again and resets the session's
+// `verified_at`, so sensitive actions refused with the problem type
+// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#reauthenticating-for-sensitive-actions`
+// go through when retried. A user with a second factor sends one of
+// their methods (see `startReauthentication`): `{"method": "totp",
+// "code": "123456"}`, a recovery code the same way, or `{"method":
+// "webauthn", "credential": {...}}`. A user without one sends
+// `{"method": "password", "password": "..."}`.
+//
+// A wrong code or password returns `422` with an error on `/code`,
+// `/credential`, or `/password`, and counts toward login throttling
+// (`429`). A method the user can't use returns `422` with an error on
+// `/method`. Only dashboard sessions may call this; API tokens get
+// `403`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/auth/reauthenticate (the `Reauthenticate` operationId).
+func (c *Client) Reauthenticate(ctx context.Context, body ReauthenticateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReauthenticateRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StartReauthentication Get the ways to reauthenticate
+//
+// Lists the methods the current user can reauthenticate with: their
+// second factors (`totp`, `webauthn`, `recovery_code`), or only
+// `password` for a user without one. For `webauthn` it starts a
+// challenge and returns its request options as `webauthn`.
+//
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Corresponds with POST /api/v1/auth/reauthenticate/options (the `StartReauthentication` operationId).
+func (c *Client) StartReauthentication(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartReauthenticationRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -11942,6 +12149,73 @@ func NewChangePasswordRequestWithBody(server string, contentType string, body io
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewReauthenticateRequest calls the generic Reauthenticate builder with application/json body
+func NewReauthenticateRequest(server string, body ReauthenticateJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReauthenticateRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewReauthenticateRequestWithBody constructs an http.Request for the Reauthenticate method, with any body, and a specified content type
+func NewReauthenticateRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/auth/reauthenticate")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewStartReauthenticationRequest constructs an http.Request for the StartReauthentication method
+func NewStartReauthenticationRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/auth/reauthenticate/options")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -16706,6 +16980,64 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /api/v1/auth/password (the `ChangePassword` operationId).
 	ChangePasswordWithResponse(ctx context.Context, body ChangePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*ChangePasswordResponse, error)
 
+	// ReauthenticateWithBodyWithResponse Prove who you are again for sensitive actions
+	//
+	// Checks the current user again and resets the session's
+	// `verified_at`, so sensitive actions refused with the problem type
+	// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#reauthenticating-for-sensitive-actions`
+	// go through when retried. A user with a second factor sends one of
+	// their methods (see `startReauthentication`): `{"method": "totp",
+	// "code": "123456"}`, a recovery code the same way, or `{"method":
+	// "webauthn", "credential": {...}}`. A user without one sends
+	// `{"method": "password", "password": "..."}`.
+	//
+	// A wrong code or password returns `422` with an error on `/code`,
+	// `/credential`, or `/password`, and counts toward login throttling
+	// (`429`). A method the user can't use returns `422` with an error on
+	// `/method`. Only dashboard sessions may call this; API tokens get
+	// `403`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/auth/reauthenticate (the `Reauthenticate` operationId).
+	ReauthenticateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReauthenticateResponse, error)
+
+	// ReauthenticateWithResponse Prove who you are again for sensitive actions
+	//
+	// Checks the current user again and resets the session's
+	// `verified_at`, so sensitive actions refused with the problem type
+	// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#reauthenticating-for-sensitive-actions`
+	// go through when retried. A user with a second factor sends one of
+	// their methods (see `startReauthentication`): `{"method": "totp",
+	// "code": "123456"}`, a recovery code the same way, or `{"method":
+	// "webauthn", "credential": {...}}`. A user without one sends
+	// `{"method": "password", "password": "..."}`.
+	//
+	// A wrong code or password returns `422` with an error on `/code`,
+	// `/credential`, or `/password`, and counts toward login throttling
+	// (`429`). A method the user can't use returns `422` with an error on
+	// `/method`. Only dashboard sessions may call this; API tokens get
+	// `403`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/auth/reauthenticate (the `Reauthenticate` operationId).
+	ReauthenticateWithResponse(ctx context.Context, body ReauthenticateJSONRequestBody, reqEditors ...RequestEditorFn) (*ReauthenticateResponse, error)
+
+	// StartReauthenticationWithResponse Get the ways to reauthenticate
+	//
+	// Lists the methods the current user can reauthenticate with: their
+	// second factors (`totp`, `webauthn`, `recovery_code`), or only
+	// `password` for a user without one. For `webauthn` it starts a
+	// challenge and returns its request options as `webauthn`.
+	//
+	// Only dashboard sessions may call this; API tokens get `403`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/auth/reauthenticate/options (the `StartReauthentication` operationId).
+	StartReauthenticationWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*StartReauthenticationResponse, error)
+
 	// ListAPITokensWithResponse List the current user's API tokens
 	//
 	// Token secrets are never returned after creation.
@@ -20603,6 +20935,158 @@ func (r ChangePasswordResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ChangePasswordResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ReauthenticateResponse429Headers the declared response headers of an HTTP 429 response for Reauthenticate
+type ReauthenticateResponse429Headers struct {
+	RetryAfter int
+}
+
+type ReauthenticateResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CurrentUser
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationProblemJSON429 *TooManyRequests
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *ReauthenticateResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReauthenticateResponse) GetJSON200() *CurrentUser {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ReauthenticateResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ReauthenticateResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ReauthenticateResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ReauthenticateResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r ReauthenticateResponse) GetApplicationProblemJSON429() *TooManyRequests {
+	return r.ApplicationProblemJSON429
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r ReauthenticateResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r ReauthenticateResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReauthenticateResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReauthenticateResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReauthenticateResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type StartReauthenticationResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ReauthenticationOptions
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StartReauthenticationResponse) GetJSON200() *ReauthenticationOptions {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r StartReauthenticationResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r StartReauthenticationResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r StartReauthenticationResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r StartReauthenticationResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StartReauthenticationResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StartReauthenticationResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StartReauthenticationResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -28154,6 +28638,82 @@ func (c *ClientWithResponses) ChangePasswordWithResponse(ctx context.Context, bo
 	return ParseChangePasswordResponse(rsp)
 }
 
+// ReauthenticateWithBodyWithResponse Prove who you are again for sensitive actions
+//
+// Checks the current user again and resets the session's
+// `verified_at`, so sensitive actions refused with the problem type
+// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#reauthenticating-for-sensitive-actions`
+// go through when retried. A user with a second factor sends one of
+// their methods (see `startReauthentication`): `{"method": "totp",
+// "code": "123456"}`, a recovery code the same way, or `{"method":
+// "webauthn", "credential": {...}}`. A user without one sends
+// `{"method": "password", "password": "..."}`.
+//
+// A wrong code or password returns `422` with an error on `/code`,
+// `/credential`, or `/password`, and counts toward login throttling
+// (`429`). A method the user can't use returns `422` with an error on
+// `/method`. Only dashboard sessions may call this; API tokens get
+// `403`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/auth/reauthenticate (the `Reauthenticate` operationId).
+func (c *ClientWithResponses) ReauthenticateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReauthenticateResponse, error) {
+	rsp, err := c.ReauthenticateWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReauthenticateResponse(rsp)
+}
+
+// ReauthenticateWithResponse Prove who you are again for sensitive actions
+//
+// Checks the current user again and resets the session's
+// `verified_at`, so sensitive actions refused with the problem type
+// `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#reauthenticating-for-sensitive-actions`
+// go through when retried. A user with a second factor sends one of
+// their methods (see `startReauthentication`): `{"method": "totp",
+// "code": "123456"}`, a recovery code the same way, or `{"method":
+// "webauthn", "credential": {...}}`. A user without one sends
+// `{"method": "password", "password": "..."}`.
+//
+// A wrong code or password returns `422` with an error on `/code`,
+// `/credential`, or `/password`, and counts toward login throttling
+// (`429`). A method the user can't use returns `422` with an error on
+// `/method`. Only dashboard sessions may call this; API tokens get
+// `403`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/auth/reauthenticate (the `Reauthenticate` operationId).
+func (c *ClientWithResponses) ReauthenticateWithResponse(ctx context.Context, body ReauthenticateJSONRequestBody, reqEditors ...RequestEditorFn) (*ReauthenticateResponse, error) {
+	rsp, err := c.Reauthenticate(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReauthenticateResponse(rsp)
+}
+
+// StartReauthenticationWithResponse Get the ways to reauthenticate
+//
+// Lists the methods the current user can reauthenticate with: their
+// second factors (`totp`, `webauthn`, `recovery_code`), or only
+// `password` for a user without one. For `webauthn` it starts a
+// challenge and returns its request options as `webauthn`.
+//
+// Only dashboard sessions may call this; API tokens get `403`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/auth/reauthenticate/options (the `StartReauthentication` operationId).
+func (c *ClientWithResponses) StartReauthenticationWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*StartReauthenticationResponse, error) {
+	rsp, err := c.StartReauthentication(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartReauthenticationResponse(rsp)
+}
+
 // ListAPITokensWithResponse List the current user's API tokens
 //
 // Token secrets are never returned after creation.
@@ -32405,6 +32965,134 @@ func ParseChangePasswordResponse(rsp *http.Response) (*ChangePasswordResponse, e
 			headers.RetryAfter = value
 		}
 		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseReauthenticateResponse parses an HTTP response from a ReauthenticateWithResponse call
+func ParseReauthenticateResponse(rsp *http.Response) (*ReauthenticateResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReauthenticateResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CurrentUser
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest TooManyRequests
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers ReauthenticateResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseStartReauthenticationResponse parses an HTTP response from a StartReauthenticationWithResponse call
+func ParseStartReauthenticationResponse(rsp *http.Response) (*StartReauthenticationResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StartReauthenticationResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReauthenticationOptions
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
 	}
 
 	return response, nil

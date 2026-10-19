@@ -92,6 +92,34 @@ var designTable = map[authz.Action]struct {
 	authz.DeleteOwnSSHKey:   {true, true, true, true},
 	// Replace their own recovery codes.
 	authz.RegenerateRecoveryCodes: {true, true, true, true},
+	// Reauthenticate for sensitive actions.
+	authz.Reauthenticate:        {true, true, true, true},
+	authz.StartReauthentication: {true, true, true, true},
+}
+
+// sensitiveDesign restates the plan's table of sensitive actions
+// (docs/dashboard-two-factor-plan.md, design doc §6.2): the actions a
+// session takes only soon after its user last proved who they are.
+var sensitiveDesign = map[authz.Action]bool{
+	// Regenerate recovery codes.
+	authz.RegenerateRecoveryCodes: true,
+	// Create API tokens; add SSH keys.
+	authz.CreateOwnToken: true,
+	authz.AddOwnSSHKey:   true,
+	// Create, update (including roles), and delete users; manage others'
+	// tokens and SSH keys.
+	authz.CreateUser:          true,
+	authz.UpdateUser:          true,
+	authz.DeleteUser:          true,
+	authz.ManageOthersTokens:  true,
+	authz.ManageOthersSSHKeys: true,
+	// Open read-write database sessions.
+	authz.OpenReadWriteDatabaseSession: true,
+	// Delete sites, delete client groups, offboard client groups.
+	authz.DeleteSite:          true,
+	authz.DeleteSiteBackups:   true,
+	authz.DeleteClientGroup:   true,
+	authz.OffboardClientGroup: true,
 }
 
 // sshKeyActions are the actions an SSH key authenticates for; it can't
@@ -105,6 +133,8 @@ var sshKeyActions = map[authz.Action]bool{
 var sessionOnlyActions = map[authz.Action]bool{
 	authz.CreateOwnToken:          true,
 	authz.RegenerateRecoveryCodes: true,
+	authz.Reauthenticate:          true,
+	authz.StartReauthentication:   true,
 }
 
 func TestDesignTableCoversEveryAction(t *testing.T) {
@@ -115,6 +145,62 @@ func TestDesignTableCoversEveryAction(t *testing.T) {
 	for _, a := range actions {
 		if _, ok := designTable[a]; !ok {
 			t.Errorf("action %s is missing from the test table", a)
+		}
+		if a.Sensitive() != sensitiveDesign[a] {
+			t.Errorf("%s: Sensitive() = %v, want %v", a, a.Sensitive(), sensitiveDesign[a])
+		}
+	}
+	for a := range sensitiveDesign {
+		if !a.Known() {
+			t.Errorf("sensitive action %s isn't defined", a)
+		}
+	}
+	// One-click wp-admin login is frequent and scoped to one site (§6.2).
+	if authz.AdminLogin.Sensitive() {
+		t.Error("AdminLogin must not be sensitive")
+	}
+}
+
+// TestCheckReauthentication covers every action from fresh and stale
+// sessions, token and SSH key callers, and the setting on and off.
+func TestCheckReauthentication(t *testing.T) {
+	const maxAge = 10 * time.Minute
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	on := auth.TwoFactorPolicy{Reauthentication: true, ReauthenticationMaxAge: maxAge}
+	off := auth.TwoFactorPolicy{Reauthentication: false, ReauthenticationMaxAge: maxAge}
+	callers := []struct {
+		name    string
+		p       auth.Principal
+		session bool
+	}{
+		{"fresh session", auth.Principal{Method: auth.MethodSession, VerifiedAt: now.Add(-time.Minute)}, true},
+		{"session at the max age", auth.Principal{Method: auth.MethodSession, VerifiedAt: now.Add(-maxAge)}, true},
+		{"stale session", auth.Principal{Method: auth.MethodSession, VerifiedAt: now.Add(-maxAge - time.Second)}, true},
+		{"session verified long ago", auth.Principal{Method: auth.MethodSession, VerifiedAt: now.Add(-11 * time.Minute)}, true},
+		{"full token", auth.Principal{Method: auth.MethodToken, Scope: store.ScopeFull}, false},
+		{"read-only token", auth.Principal{Method: auth.MethodToken, Scope: store.ScopeReadOnly}, false},
+		{"ssh key", auth.Principal{Method: auth.MethodSSHKey}, false},
+	}
+	for action := range designTable {
+		for _, c := range callers {
+			for _, policy := range []struct {
+				name string
+				p    auth.TwoFactorPolicy
+			}{{"on", on}, {"off", off}, {"zero", auth.TwoFactorPolicy{}}} {
+				t.Run(string(action)+"/"+c.name+"/"+policy.name, func(t *testing.T) {
+					p := c.p
+					p.UserID, p.Role = id.New(), store.RoleAdmin
+					stale := c.session && now.Sub(p.VerifiedAt) > maxAge
+					want := policy.p.Reauthentication && sensitiveDesign[action] && stale
+					err := authz.CheckReauthentication(p, action, policy.p, now)
+					if got := err != nil; got != want {
+						t.Fatalf("CheckReauthentication = %v, want refused = %v", err, want)
+					}
+					if err != nil && (!errors.Is(err, authz.ErrReauthenticationRequired) || !errors.Is(err, authz.ErrDenied)) {
+						t.Errorf("refusal %v doesn't wrap ErrReauthenticationRequired and ErrDenied", err)
+					}
+				})
+			}
 		}
 	}
 }

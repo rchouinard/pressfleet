@@ -370,12 +370,14 @@ func (h *Handlers) currentUser(ctx context.Context, u store.User, method gen.Cur
 	if err != nil {
 		return gen.CurrentUser{}, err
 	}
-	return gen.CurrentUser{
+	body := gen.CurrentUser{
 		ID: g.ID, Email: g.Email, DisplayName: g.DisplayName, Role: g.Role, Disabled: g.Disabled,
 		TwoFactorEnabled: g.TwoFactorEnabled,
 		CreatedAt:        g.CreatedAt, UpdatedAt: g.UpdatedAt, LastLoginAt: g.LastLoginAt,
 		AuthMethod: method, CsrfToken: csrf, VerifiedAt: verified, RecoveryCodesRemaining: remaining,
-	}, nil
+	}
+	body.ReauthenticationMaxAgeSeconds = h.reauthenticationMaxAge(method)
+	return body, nil
 }
 
 // userWithTwoFactor is user for one user, looking up their second factors.

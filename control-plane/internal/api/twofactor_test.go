@@ -65,6 +65,8 @@ type meBody struct {
 	VerifiedAt             *string `json:"verified_at"`
 	RecoveryCodesRemaining int     `json:"recovery_codes_remaining"`
 	CSRFToken              *string `json:"csrf_token"`
+
+	ReauthenticationMaxAgeSeconds *int `json:"reauthentication_max_age_seconds"`
 }
 
 func decodeMe(t *testing.T, w *httptest.ResponseRecorder) meBody {

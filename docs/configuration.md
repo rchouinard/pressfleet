@@ -427,6 +427,14 @@ For a user with a second factor, `POST /api/v1/auth/login` with the right passwo
 
 Each recovery code works once. `GET /api/v1/auth/me` reports how many are left, and `POST /api/v1/users/me/two-factor/recovery-codes`, from a dashboard session, replaces the set.
 
+### Reauthenticating for sensitive actions
+
+With `two_factor.reauthentication: on` (the default), sensitive actions from a dashboard session need a recent check of who the user is: creating API tokens and adding SSH keys; creating, changing (including roles), and deleting users and managing their API tokens and SSH keys; replacing recovery codes; opening read-write database sessions; and deleting sites and deleting or offboarding client groups. Logging in counts as a check. When the session's last check (`verified_at` in `GET /api/v1/auth/me`) is older than `two_factor.reauthentication_max_age`, the request is refused with `403 Forbidden` and the problem type `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#reauthenticating-for-sensitive-actions`, and nothing changes.
+
+The client then sends `POST /api/v1/auth/reauthenticate`, which resets `verified_at`, and repeats the request. Users with a second factor reauthenticate with it, such as `{"method": "recovery_code", "code": "ABCD-EFGH-IJKL-MNOP"}`; `POST /api/v1/auth/reauthenticate/options` lists their methods and, for security keys and passkeys, returns the WebAuthn request options. Users without one send their password, `{"method": "password", "password": "..."}`. Wrong codes and passwords answer `422` and count against the same throttle as failed logins. Each reauthentication, successful or not, is in the audit log as `self.reauthenticate`. `GET /api/v1/auth/me` also reports `reauthentication_max_age_seconds`, so the dashboard can ask before a request fails; it is null when the setting is off.
+
+API tokens are never asked to reauthenticate, since there is nobody to ask: sensitive actions their role and scope allow keep working. One-click WordPress login isn't a sensitive action: it is frequent and scoped to one site. With `reauthentication: off`, nothing asks.
+
 ## Users
 
 Users are managed in the dashboard or the API. To create the first user, or to recover access, run inside the control plane container:

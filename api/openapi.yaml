@@ -84,6 +84,22 @@ info:
 
     Role changes apply to the user's existing sessions and tokens at once. The
     last enabled Admin can't be demoted, disabled, or deleted (`409`).
+
+    ### Reauthentication
+
+    Sensitive actions (creating API tokens, adding SSH keys, managing users
+    and their tokens and keys, replacing recovery codes, opening read-write
+    database sessions, and deleting or offboarding sites and client groups)
+    need a recent check of who the user is when they come from a dashboard
+    session. With `two_factor.reauthentication` on (the default), a session
+    whose `verified_at` is older than `two_factor.reauthentication_max_age`
+    gets `403` with the problem type
+    `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#reauthenticating-for-sensitive-actions`.
+    The client then sends `POST /api/v1/auth/reauthenticate` with the user's
+    second factor, or the password for users without one, and retries.
+    `GET /api/v1/auth/me` reports `verified_at` and
+    `reauthentication_max_age_seconds`, so the client can ask first. API
+    tokens are never asked.
   license:
     name: MIT
     identifier: MIT
@@ -398,6 +414,78 @@ paths:
       responses:
         "204":
           description: Password changed.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/auth/reauthenticate/options:
+    post:
+      operationId: startReauthentication
+      tags: [auth]
+      summary: Get the ways to reauthenticate
+      description: |
+        Lists the methods the current user can reauthenticate with: their
+        second factors (`totp`, `webauthn`, `recovery_code`), or only
+        `password` for a user without one. For `webauthn` it starts a
+        challenge and returns its request options as `webauthn`.
+
+        Only dashboard sessions may call this; API tokens get `403`.
+      responses:
+        "200":
+          description: The ways to reauthenticate.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReauthenticationOptions"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/auth/reauthenticate:
+    post:
+      operationId: reauthenticate
+      tags: [auth]
+      summary: Prove who you are again for sensitive actions
+      description: |
+        Checks the current user again and resets the session's
+        `verified_at`, so sensitive actions refused with the problem type
+        `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#reauthenticating-for-sensitive-actions`
+        go through when retried. A user with a second factor sends one of
+        their methods (see `startReauthentication`): `{"method": "totp",
+        "code": "123456"}`, a recovery code the same way, or `{"method":
+        "webauthn", "credential": {...}}`. A user without one sends
+        `{"method": "password", "password": "..."}`.
+
+        A wrong code or password returns `422` with an error on `/code`,
+        `/credential`, or `/password`, and counts toward login throttling
+        (`429`). A method the user can't use returns `422` with an error on
+        `/method`. Only dashboard sessions may call this; API tokens get
+        `403`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Reauthentication"
+      responses:
+        "200":
+          description: Reauthenticated. The body is the current user, with the new `verified_at`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -4765,7 +4853,11 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     Forbidden:
-      description: The caller's role or token scope doesn't allow this action.
+      description: |
+        The caller's role or token scope doesn't allow this action, or (with
+        the problem type
+        `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#reauthenticating-for-sensitive-actions`)
+        the action is sensitive and the session must reauthenticate first.
       content:
         application/problem+json:
           schema:
@@ -5069,6 +5161,56 @@ components:
           minLength: 1
           maxLength: 64
 
+    ReauthenticationMethod:
+      type: string
+      description: A second-factor method, or `password` for users without a second factor.
+      enum: [totp, webauthn, recovery_code, password]
+      x-enum-varnames: [ReauthenticationMethodTotp, ReauthenticationMethodWebauthn, ReauthenticationMethodRecoveryCode, ReauthenticationMethodPassword]
+
+    ReauthenticationOptions:
+      type: object
+      required: [methods]
+      properties:
+        methods:
+          type: array
+          description: |
+            The methods the user can reauthenticate with, in the order to
+            offer them: their second factors, or only `password` for a user
+            without one.
+          items:
+            $ref: "#/components/schemas/ReauthenticationMethod"
+        webauthn:
+          description: |
+            When `methods` includes `webauthn`: the request options
+            (`PublicKeyCredentialRequestOptions` as JSON) to pass to
+            `navigator.credentials.get`.
+
+    Reauthentication:
+      type: object
+      required: [method]
+      additionalProperties: false
+      properties:
+        method:
+          $ref: "#/components/schemas/ReauthenticationMethod"
+        code:
+          description: A TOTP code or recovery code, for those methods.
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 1
+          maxLength: 64
+        credential:
+          description: For `webauthn`, the assertion (`PublicKeyCredential` as JSON).
+          type: object
+          writeOnly: true
+        password:
+          description: For `password`, the user's password.
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 1
+          maxLength: 256
+
     RecoveryCodes:
       type: object
       required: [codes]
@@ -5116,7 +5258,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/User"
         - type: object
-          required: [auth_method, csrf_token, verified_at, recovery_codes_remaining]
+          required: [auth_method, csrf_token, verified_at, recovery_codes_remaining, reauthentication_max_age_seconds]
           properties:
             auth_method:
               type: string
@@ -5134,6 +5276,17 @@ components:
               type: integer
               minimum: 0
               description: How many unused recovery codes the user has.
+            reauthentication_max_age_seconds:
+              description: |
+                How long after `verified_at` the session may take sensitive
+                actions without reauthenticating
+                (`two_factor.reauthentication_max_age`). Null for bearer token
+                authentication and when `two_factor.reauthentication` is off,
+                since nothing asks.
+              oneOf:
+                - type: integer
+                  minimum: 0
+                - type: "null"
             csrf_token:
               description: |
                 The session's CSRF token. Send it in the `X-CSRF-Token` header

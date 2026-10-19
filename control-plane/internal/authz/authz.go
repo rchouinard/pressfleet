@@ -30,6 +30,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
@@ -49,6 +50,12 @@ func (e *deniedError) Is(target error) bool { return target == ErrDenied }
 func denied(format string, args ...any) error {
 	return &deniedError{reason: fmt.Sprintf(format, args...)}
 }
+
+// ErrReauthenticationRequired means the action is sensitive and the
+// session last proved who its user is too long ago (design doc §6.2). It
+// wraps ErrDenied, so it is a denial like any other; callers that can ask
+// the user for a fresh check match it first.
+var ErrReauthenticationRequired = fmt.Errorf("%w: reauthentication required", ErrDenied)
 
 // Action is something a caller may be allowed to do. Actions are also the
 // action names recorded in the audit log, so they must stay stable.
@@ -163,6 +170,12 @@ const (
 
 	// Replace their own recovery codes (design doc §6.2).
 	RegenerateRecoveryCodes Action = "self.two_factor.recovery_codes.regenerate"
+
+	// Prove who they are again in a session, for sensitive actions
+	// (design doc §6.2), and get what a second factor needs to do so,
+	// such as WebAuthn request options.
+	Reauthenticate        Action = "self.reauthenticate"
+	StartReauthentication Action = "self.reauthenticate.start"
 )
 
 // sshActions are the only actions an SSH key (auth.MethodSSHKey) may take:
@@ -184,6 +197,35 @@ var sessionActions = map[Action]bool{
 	// Second factors are managed from sessions only (§6.2): a stolen token
 	// must not be able to swap the account's recovery codes for its own.
 	RegenerateRecoveryCodes: true,
+	// Only sessions are asked to reauthenticate.
+	Reauthenticate:        true,
+	StartReauthentication: true,
+}
+
+// sensitiveActions are the actions a session may take only soon after its
+// user last proved who they are, when reauthentication is on (design doc
+// §6.2, see CheckReauthentication): they hand out long-lived credentials,
+// change privileges, protect the account, or destroy data. Dashboard login
+// to WordPress isn't one: it is frequent and scoped to one site.
+var sensitiveActions = map[Action]bool{
+	// Long-lived credentials that bypass two-factor.
+	CreateOwnToken: true,
+	AddOwnSSHKey:   true,
+	// Privilege changes.
+	CreateUser:          true,
+	UpdateUser:          true,
+	DeleteUser:          true,
+	ManageOthersTokens:  true,
+	ManageOthersSSHKeys: true,
+	// The account's protection.
+	RegenerateRecoveryCodes: true,
+	// Direct write access to site data.
+	OpenReadWriteDatabaseSession: true,
+	// Destructive, and can delete backups.
+	DeleteSite:          true,
+	DeleteSiteBackups:   true,
+	DeleteClientGroup:   true,
+	OffboardClientGroup: true,
 }
 
 // rule says who may take an action.
@@ -285,6 +327,11 @@ var rules = map[Action]rule{
 	DeleteOwnSSHKey: {store.RoleViewer, true},
 
 	RegenerateRecoveryCodes: {store.RoleViewer, true},
+
+	// Neither may be sensitive, or a stale session could never become
+	// fresh again.
+	Reauthenticate:        {store.RoleViewer, true},
+	StartReauthentication: {store.RoleViewer, true}, // creates a challenge
 }
 
 // Actions returns every action, for tests and documentation.
@@ -307,6 +354,12 @@ func (a Action) Known() bool {
 func (a Action) Writes() bool {
 	r, ok := rules[a]
 	return !ok || r.write
+}
+
+// Sensitive reports whether a needs a recent check of who the caller is
+// when taken from a session (design doc §6.2).
+func (a Action) Sensitive() bool {
+	return sensitiveActions[a]
 }
 
 // rank orders roles; unknown roles rank below every real one.
@@ -444,6 +497,22 @@ func Check(p auth.Principal, action Action, t Target) error {
 	}
 	// Client-group scoping (post-MVP) goes here, using t.ClientGroupID.
 	_ = t
+	return nil
+}
+
+// CheckReauthentication is the reauthentication step of the authorization
+// check (design doc §6.2), taken after Check allows the action. It returns
+// ErrReauthenticationRequired if policy asks for reauthentication, action
+// is sensitive, and p is a session whose user last proved who they are
+// more than the policy's maximum age before now. API tokens and SSH keys
+// are never asked: there is nobody to ask.
+func CheckReauthentication(p auth.Principal, action Action, policy auth.TwoFactorPolicy, now time.Time) error {
+	if !policy.Reauthentication || !action.Sensitive() || p.Method != auth.MethodSession {
+		return nil
+	}
+	if now.Sub(p.VerifiedAt) > policy.ReauthenticationMaxAge {
+		return ErrReauthenticationRequired
+	}
 	return nil
 }
 
