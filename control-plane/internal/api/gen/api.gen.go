@@ -3789,6 +3789,38 @@ type Timestamp = time.Time
 // `read-only` allows only read actions.
 type TokenScope string
 
+// TotpConfirmation defines model for TotpConfirmation.
+type TotpConfirmation struct {
+	// Code A code the authenticator app shows.
+	Code *string `json:"code,omitempty"`
+}
+
+// TotpConfirmed defines model for TotpConfirmed.
+type TotpConfirmed struct {
+	// RecoveryCodes On the user's first second factor only: ten single-use recovery
+	// codes, each 16 characters in groups of four. Shown only once.
+	RecoveryCodes *[]string `json:"recovery_codes,omitempty"`
+}
+
+// TotpEnrollment defines model for TotpEnrollment.
+type TotpEnrollment struct {
+	// ExpiresAt When the secret expires unless confirmed.
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// Secret The secret in base32 (160 bits), for typing into an app by hand. Shown only once.
+	//
+	// Examples: JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
+	Secret string `json:"secret"`
+
+	// URI The `otpauth://totp/` URI for a QR code, with the secret, the
+	// issuer `PressFleet`, and an account name of the user's email and
+	// the dashboard domain.
+	//
+	//
+	// Examples: otpauth://totp/PressFleet:admin@example.com%20%28dashboard.example.com%29?algorithm=SHA1&digits=6&issuer=PressFleet&period=30&secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
+	URI string `json:"uri"`
+}
+
 // UpdateWindow The daily maintenance window, in UTC; absent if there is none.
 type UpdateWindow struct {
 	Hours int `json:"hours"`
@@ -4583,6 +4615,9 @@ type CreateUserJSONRequestBody = UserCreate
 // AddOwnSSHKeyJSONRequestBody defines body for AddOwnSSHKey for application/json ContentType.
 type AddOwnSSHKeyJSONRequestBody = SSHKeyCreate
 
+// ConfirmTotpEnrollmentJSONRequestBody defines body for ConfirmTotpEnrollment for application/json ContentType.
+type ConfirmTotpEnrollmentJSONRequestBody = TotpConfirmation
+
 // UpdateUserJSONRequestBody defines body for UpdateUser for application/json ContentType.
 type UpdateUserJSONRequestBody = UserUpdate
 
@@ -4912,6 +4947,15 @@ type ServerInterface interface {
 	// RegenerateRecoveryCodes Replace the current user's recovery codes
 	// (POST /api/v1/users/me/two-factor/recovery-codes)
 	RegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request)
+	// RemoveTotp Remove the current user's authenticator app
+	// (DELETE /api/v1/users/me/two-factor/totp)
+	RemoveTotp(w http.ResponseWriter, r *http.Request)
+	// StartTotpEnrollment Start enrolling an authenticator app
+	// (POST /api/v1/users/me/two-factor/totp)
+	StartTotpEnrollment(w http.ResponseWriter, r *http.Request)
+	// ConfirmTotpEnrollment Confirm an authenticator app with a code
+	// (POST /api/v1/users/me/two-factor/totp/confirm)
+	ConfirmTotpEnrollment(w http.ResponseWriter, r *http.Request)
 	// DeleteUser Delete a user
 	// (DELETE /api/v1/users/{user_id})
 	DeleteUser(w http.ResponseWriter, r *http.Request, userID UserID)
@@ -8714,6 +8758,48 @@ func (siw *ServerInterfaceWrapper) RegenerateRecoveryCodes(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
+// RemoveTotp operation middleware
+func (siw *ServerInterfaceWrapper) RemoveTotp(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RemoveTotp(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartTotpEnrollment operation middleware
+func (siw *ServerInterfaceWrapper) StartTotpEnrollment(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartTotpEnrollment(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ConfirmTotpEnrollment operation middleware
+func (siw *ServerInterfaceWrapper) ConfirmTotpEnrollment(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ConfirmTotpEnrollment(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteUser operation middleware
 func (siw *ServerInterfaceWrapper) DeleteUser(w http.ResponseWriter, r *http.Request) {
 
@@ -9073,6 +9159,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/users/{user_id}", wrapper.GetUser)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/v1/users/{user_id}", wrapper.UpdateUser)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/users/me/two-factor/recovery-codes", wrapper.RegenerateRecoveryCodes)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/users/me/two-factor/totp", wrapper.RemoveTotp)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/users/me/two-factor/totp", wrapper.StartTotpEnrollment)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/users/me/two-factor/totp/confirm", wrapper.ConfirmTotpEnrollment)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/users/me/ssh-keys", wrapper.ListOwnSSHKeys)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/users/me/ssh-keys", wrapper.AddOwnSSHKey)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/users/me/ssh-keys/{ssh_key_id}", wrapper.DeleteOwnSSHKey)
@@ -20441,6 +20530,343 @@ func (response RegenerateRecoveryCodesdefaultApplicationProblemPlusJSONResponse)
 	return err
 }
 
+type RemoveTotpRequestObject struct {
+}
+
+type RemoveTotpResponseObject interface {
+	VisitRemoveTotpResponse(w http.ResponseWriter) error
+}
+
+type RemoveTotp204Response struct {
+}
+
+func (response RemoveTotp204Response) VisitRemoveTotpResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type RemoveTotp401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response RemoveTotp401ApplicationProblemPlusJSONResponse) VisitRemoveTotpResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveTotp403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response RemoveTotp403ApplicationProblemPlusJSONResponse) VisitRemoveTotpResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveTotp404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response RemoveTotp404ApplicationProblemPlusJSONResponse) VisitRemoveTotpResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveTotp409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response RemoveTotp409ApplicationProblemPlusJSONResponse) VisitRemoveTotpResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveTotpdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response RemoveTotpdefaultApplicationProblemPlusJSONResponse) VisitRemoveTotpResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartTotpEnrollmentRequestObject struct {
+}
+
+type StartTotpEnrollmentResponseObject interface {
+	VisitStartTotpEnrollmentResponse(w http.ResponseWriter) error
+}
+
+type StartTotpEnrollment200ResponseHeaders struct {
+	CacheControl *string
+}
+
+type StartTotpEnrollment200JSONResponse struct {
+	Body    TotpEnrollment
+	Headers StartTotpEnrollment200ResponseHeaders
+}
+
+func (response StartTotpEnrollment200JSONResponse) VisitStartTotpEnrollmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartTotpEnrollment401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response StartTotpEnrollment401ApplicationProblemPlusJSONResponse) VisitStartTotpEnrollmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartTotpEnrollment403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response StartTotpEnrollment403ApplicationProblemPlusJSONResponse) VisitStartTotpEnrollmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartTotpEnrollment409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response StartTotpEnrollment409ApplicationProblemPlusJSONResponse) VisitStartTotpEnrollmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartTotpEnrollmentdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response StartTotpEnrollmentdefaultApplicationProblemPlusJSONResponse) VisitStartTotpEnrollmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ConfirmTotpEnrollmentRequestObject struct {
+	Body *ConfirmTotpEnrollmentJSONRequestBody
+}
+
+type ConfirmTotpEnrollmentResponseObject interface {
+	VisitConfirmTotpEnrollmentResponse(w http.ResponseWriter) error
+}
+
+type ConfirmTotpEnrollment200ResponseHeaders struct {
+	CacheControl *string
+}
+
+type ConfirmTotpEnrollment200JSONResponse struct {
+	Body    TotpConfirmed
+	Headers ConfirmTotpEnrollment200ResponseHeaders
+}
+
+func (response ConfirmTotpEnrollment200JSONResponse) VisitConfirmTotpEnrollmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.CacheControl != nil {
+		w.Header().Set("Cache-Control", fmt.Sprint(*response.Headers.CacheControl))
+	}
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ConfirmTotpEnrollment400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response ConfirmTotpEnrollment400ApplicationProblemPlusJSONResponse) VisitConfirmTotpEnrollmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ConfirmTotpEnrollment401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response ConfirmTotpEnrollment401ApplicationProblemPlusJSONResponse) VisitConfirmTotpEnrollmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ConfirmTotpEnrollment403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response ConfirmTotpEnrollment403ApplicationProblemPlusJSONResponse) VisitConfirmTotpEnrollmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ConfirmTotpEnrollment404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response ConfirmTotpEnrollment404ApplicationProblemPlusJSONResponse) VisitConfirmTotpEnrollmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ConfirmTotpEnrollment409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response ConfirmTotpEnrollment409ApplicationProblemPlusJSONResponse) VisitConfirmTotpEnrollmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ConfirmTotpEnrollment422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response ConfirmTotpEnrollment422ApplicationProblemPlusJSONResponse) VisitConfirmTotpEnrollmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ConfirmTotpEnrollmentdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response ConfirmTotpEnrollmentdefaultApplicationProblemPlusJSONResponse) VisitConfirmTotpEnrollmentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type DeleteUserRequestObject struct {
 	UserID UserID `json:"user_id"`
 }
@@ -21472,6 +21898,15 @@ type StrictServerInterface interface {
 	// RegenerateRecoveryCodes Replace the current user's recovery codes
 	// (POST /api/v1/users/me/two-factor/recovery-codes)
 	RegenerateRecoveryCodes(ctx context.Context, request RegenerateRecoveryCodesRequestObject) (RegenerateRecoveryCodesResponseObject, error)
+	// RemoveTotp Remove the current user's authenticator app
+	// (DELETE /api/v1/users/me/two-factor/totp)
+	RemoveTotp(ctx context.Context, request RemoveTotpRequestObject) (RemoveTotpResponseObject, error)
+	// StartTotpEnrollment Start enrolling an authenticator app
+	// (POST /api/v1/users/me/two-factor/totp)
+	StartTotpEnrollment(ctx context.Context, request StartTotpEnrollmentRequestObject) (StartTotpEnrollmentResponseObject, error)
+	// ConfirmTotpEnrollment Confirm an authenticator app with a code
+	// (POST /api/v1/users/me/two-factor/totp/confirm)
+	ConfirmTotpEnrollment(ctx context.Context, request ConfirmTotpEnrollmentRequestObject) (ConfirmTotpEnrollmentResponseObject, error)
 	// DeleteUser Delete a user
 	// (DELETE /api/v1/users/{user_id})
 	DeleteUser(ctx context.Context, request DeleteUserRequestObject) (DeleteUserResponseObject, error)
@@ -24481,6 +24916,85 @@ func (sh *strictHandler) RegenerateRecoveryCodes(w http.ResponseWriter, r *http.
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RegenerateRecoveryCodesResponseObject); ok {
 		if err := validResponse.VisitRegenerateRecoveryCodesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RemoveTotp operation middleware
+func (sh *strictHandler) RemoveTotp(w http.ResponseWriter, r *http.Request) {
+	var request RemoveTotpRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RemoveTotp(ctx, request.(RemoveTotpRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RemoveTotp")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RemoveTotpResponseObject); ok {
+		if err := validResponse.VisitRemoveTotpResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StartTotpEnrollment operation middleware
+func (sh *strictHandler) StartTotpEnrollment(w http.ResponseWriter, r *http.Request) {
+	var request StartTotpEnrollmentRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StartTotpEnrollment(ctx, request.(StartTotpEnrollmentRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StartTotpEnrollment")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StartTotpEnrollmentResponseObject); ok {
+		if err := validResponse.VisitStartTotpEnrollmentResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ConfirmTotpEnrollment operation middleware
+func (sh *strictHandler) ConfirmTotpEnrollment(w http.ResponseWriter, r *http.Request) {
+	var request ConfirmTotpEnrollmentRequestObject
+
+	var body ConfirmTotpEnrollmentJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ConfirmTotpEnrollment(ctx, request.(ConfirmTotpEnrollmentRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ConfirmTotpEnrollment")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ConfirmTotpEnrollmentResponseObject); ok {
+		if err := validResponse.VisitConfirmTotpEnrollmentResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

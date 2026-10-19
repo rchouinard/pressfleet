@@ -92,6 +92,9 @@ var designTable = map[authz.Action]struct {
 	authz.DeleteOwnSSHKey:   {true, true, true, true},
 	// Replace their own recovery codes.
 	authz.RegenerateRecoveryCodes: {true, true, true, true},
+	// Enroll and remove their own authenticator app.
+	authz.EnrollTOTP: {true, true, true, true},
+	authz.RemoveTOTP: {true, true, true, true},
 }
 
 // sshKeyActions are the actions an SSH key authenticates for; it can't
@@ -105,6 +108,8 @@ var sshKeyActions = map[authz.Action]bool{
 var sessionOnlyActions = map[authz.Action]bool{
 	authz.CreateOwnToken:          true,
 	authz.RegenerateRecoveryCodes: true,
+	authz.EnrollTOTP:              true,
+	authz.RemoveTOTP:              true,
 }
 
 func TestDesignTableCoversEveryAction(t *testing.T) {

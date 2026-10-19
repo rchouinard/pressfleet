@@ -136,6 +136,11 @@ func NewService(db *store.DB, opts Options) *Service {
 		twoFactor: opts.TwoFactor,
 	}
 	for _, f := range opts.Factors {
+		// Verifiers that need the service's database and clock, such as
+		// TOTPVerifier, get them here.
+		if b, ok := f.(interface{ bind(*Service) }); ok {
+			b.bind(s)
+		}
 		s.factors[f.Method()] = f
 	}
 	s.factors[FactorRecoveryCode] = recoveryCodeVerifier{s: s}

@@ -147,7 +147,7 @@ func (a *app) buildServer(ctx context.Context) (_ *server, err error) {
 	// Components register readiness checks here.
 	readiness := &httpserver.Readiness{}
 	readiness.Register("state_database", db.Ping)
-	authn := auth.NewService(db, a.authOptions())
+	authn := auth.NewService(db, a.authOptions(keys))
 	proxies, err := a.cfg.HTTP.TrustedProxyPrefixes()
 	if err != nil {
 		return nil, err

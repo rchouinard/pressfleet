@@ -96,7 +96,8 @@ func TestEveryStateChangingOperationIsAudited(t *testing.T) {
 				if w.Code >= 400 {
 					want.Result = store.AuditFailure
 				}
-				if op.ID == "createApiToken" || op.ID == "regenerateRecoveryCodes" {
+				switch op.ID {
+				case "createApiToken", "regenerateRecoveryCodes", "startTotpEnrollment", "confirmTotpEnrollment", "removeTotp":
 					// Only sessions may create tokens and manage second
 					// factors, so the token caller is denied.
 					want.Result = store.AuditDenied

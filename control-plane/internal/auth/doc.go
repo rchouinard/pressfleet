@@ -57,6 +57,15 @@
 // Each logs in once. They stand in for a second factor but aren't one: a
 // user with only recovery codes logs in with the password alone.
 //
+// TOTP (RFC 6238, TOTPVerifier) is written with the standard library:
+// HMAC-SHA1, 6 digits, 30-second steps, one step of skew either way, and
+// 160-bit secrets, compared in constant time. The secret is sealed with
+// the master key (package secrets), since checking a code needs it. Each
+// accepted code records its time step, and codes of that step or earlier
+// are refused, so a code can't be replayed. Enrollment is unconfirmed
+// until a code from the app confirms it, and expires after 15 minutes;
+// until then it isn't a factor.
+//
 // # API tokens
 //
 // API tokens are "pft_" followed by 256 random bits in lowercase base32.

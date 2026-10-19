@@ -272,7 +272,11 @@ paths:
 
         * `recovery_code`: send `code`, a recovery code with or without its
           dashes. Each code works once.
-        * `totp` and `webauthn` are listed once they are available.
+        * `totp`: send `code`, the 6 digits the authenticator app shows. A
+          code from the step before or after the current one is accepted,
+          and each works once: a code of a step already used, or of an
+          earlier one, is wrong.
+        * `webauthn` is listed once it is available.
 
         A wrong code returns `422` with an error on `/code` and counts
         toward login throttling (`429`); the login stays pending, so the user
@@ -668,6 +672,122 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/users/me/two-factor/totp:
+    post:
+      operationId: startTotpEnrollment
+      tags: [auth]
+      summary: Start enrolling an authenticator app
+      description: |
+        Creates a new TOTP secret (RFC 6238: SHA-1, 6 digits, 30-second
+        steps) for the current user and returns it, with an `otpauth://` URI
+        for a QR code. It is stored sealed with the master key, and isn't a
+        second factor until `POST /api/v1/users/me/two-factor/totp/confirm`
+        confirms it with a code, within 15 minutes; after that it expires.
+        Calling this again before confirming replaces the secret. A user
+        has at most one authenticator app: with one already confirmed, this
+        returns `409`; remove it first to replace it.
+
+        Only dashboard sessions may call this; API tokens get `403`.
+      responses:
+        "200":
+          description: The unconfirmed secret. It is shown only this once.
+          headers:
+            Cache-Control:
+              description: Always `no-store`.
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TotpEnrollment"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: removeTotp
+      tags: [auth]
+      summary: Remove the current user's authenticator app
+      description: |
+        Removes the current user's authenticator app and signs them out of
+        their other sessions; API tokens keep working. If it is the user's
+        last second factor and `two_factor.required` covers their role, the
+        call returns `409` and changes nothing. Without an authenticator app
+        it returns `404`. Removing one that hasn't been confirmed only
+        cancels the enrollment.
+
+        Only dashboard sessions may call this; API tokens get `403`.
+      responses:
+        "204":
+          description: Removed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/users/me/two-factor/totp/confirm:
+    post:
+      operationId: confirmTotpEnrollment
+      tags: [auth]
+      summary: Confirm an authenticator app with a code
+      description: |
+        Activates the authenticator app started with `POST
+        /api/v1/users/me/two-factor/totp`, given a code from it. From then
+        on, logins need a second factor. If it is the user's first second
+        factor, the response also holds their recovery codes, shown only
+        this once. The code can't be used again to log in.
+
+        A wrong code returns `422` with an error on `/code`. Without a
+        pending enrollment, or after it expired (15 minutes), the call
+        returns `404`: start again. With an authenticator app already
+        confirmed it returns `409`.
+
+        Only dashboard sessions may call this; API tokens get `403`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TotpConfirmation"
+      responses:
+        "200":
+          description: The authenticator app is active.
+          headers:
+            Cache-Control:
+              description: Always `no-store`.
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TotpConfirmed"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
         default:
           $ref: "#/components/responses/Error"
 
@@ -5086,6 +5206,51 @@ components:
         codes:
           type: array
           description: Ten single-use codes, each 16 characters in groups of four. Shown only once.
+          items:
+            type: string
+            examples: ["ABCD-EFGH-IJKL-MNOP"]
+
+    TotpEnrollment:
+      type: object
+      required: [secret, uri, expires_at]
+      properties:
+        secret:
+          type: string
+          description: The secret in base32 (160 bits), for typing into an app by hand. Shown only once.
+          examples: ["JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"]
+        uri:
+          type: string
+          description: |
+            The `otpauth://totp/` URI for a QR code, with the secret, the
+            issuer `PressFleet`, and an account name of the user's email and
+            the dashboard domain.
+          examples: ["otpauth://totp/PressFleet:admin@example.com%20%28dashboard.example.com%29?algorithm=SHA1&digits=6&issuer=PressFleet&period=30&secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"]
+        expires_at:
+          type: string
+          format: date-time
+          description: When the secret expires unless confirmed.
+
+    TotpConfirmation:
+      type: object
+      required: [code]
+      additionalProperties: false
+      properties:
+        code:
+          description: A code the authenticator app shows.
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 1
+          maxLength: 64
+
+    TotpConfirmed:
+      type: object
+      properties:
+        recovery_codes:
+          type: array
+          description: |
+            On the user's first second factor only: ten single-use recovery
+            codes, each 16 characters in groups of four. Shown only once.
           items:
             type: string
             examples: ["ABCD-EFGH-IJKL-MNOP"]
