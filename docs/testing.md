@@ -348,10 +348,12 @@ How the Phase 1–4 operations (design doc §8) are covered through the dashboar
 | Domains (#86) | Aliases, go-live | *pending: #175* | |
 | Admin login (#130) | One-click wp-admin login | *pending: #175* | |
 | Updates (#125) | Pending plugin and theme updates | *pending: #175* | |
-| Backups (#87) | Back up, list snapshots, restore | *pending: #176* | |
-| Exports (#133, #134) | Site export, export from a snapshot, database export | *pending: #176* | |
-| Import, deploy (#116) | Import a site; deploy a package | *pending: #176* | |
-| Database access (#116) | Open and close a database session | *pending: #176* | |
+| Backups (#87) | Back up, list snapshots, restore | `backups.spec.ts` › backs up a site, lists the backup, and restores... | The API's backup and its snapshot; after the restore, the site's option, files, and posts are the backup's (WP-CLI, harness), the site is out of maintenance, and a pre-restore backup is listed |
+| Exports (#133, #134) | Site export, export from a snapshot | `site-data.spec.ts` › exports a site and downloads its files; `backups.spec.ts` › exports a site as it was at a backup | The downloaded archive and dump hold the site's files and data (without the platform's drop-ins), or the backup's rather than the live site's; the API's export |
+| Exports (#133, #134) | Database export | `site-data.spec.ts` › downloads a database export | The downloaded dump holds the site's data, without `CREATE DATABASE` or `USE` |
+| Import, deploy (#116) | Import a site from a `wp-content` archive and a SQL dump | `site-data.spec.ts` › imports a site... | A new running site serves the imported post on its own preview domain, with the imported files (harness) |
+| Import, deploy (#116) | Deploy a package | `site-data.spec.ts` › deploys a theme package | The site serves the deployed theme, and it is active (harness) |
+| Database access (#116) | Open and close a database session | `site-data.spec.ts` › opens a database session... | The session's MariaDB user exists while it is open and is dropped when it ends (harness); the API's session list; the password is gone from the page |
 | Metrics (#88) | Site and platform charts | *pending: #177* | |
 | Logs (#89) | Site log stream, platform logs | *pending: #177* | |
 | Alerts (#90) | Channels, test notification, rules, firing and resolving alerts | *pending: #177* | |

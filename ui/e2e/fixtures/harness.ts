@@ -27,4 +27,41 @@ export class Harness {
     if (!res.ok) throw new Error(`harness: exists: status ${res.status}: ${await res.text()}`)
     return ((await res.json()) as { exists: boolean }).exists
   }
+
+  /**
+   * Runs a command in a site's php container, as the site's user, and
+   * returns its output, trimmed.
+   */
+  async siteExec(siteId: string, command: string[]): Promise<string> {
+    const res = await fetch(new URL(`/sites/${encodeURIComponent(siteId)}/exec`, this.url), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command }),
+    })
+    if (!res.ok) throw new Error(`harness: ${command.join(' ')}: status ${res.status}: ${await res.text()}`)
+    return ((await res.json()) as { output: string }).output.trim()
+  }
+
+  /** Runs WP-CLI on a site and returns its output, trimmed. */
+  wp(siteId: string, ...args: string[]): Promise<string> {
+    return this.siteExec(siteId, ['wp', ...args])
+  }
+
+  /**
+   * Fetches a page of a site from its nginx, on the site's network, as a
+   * visitor of its preview domain would over HTTPS, and returns the body.
+   */
+  async sitePage(siteId: string, previewDomain: string, path = '/'): Promise<string> {
+    // A query string of its own, so no page cache answers.
+    const url = `http://nginx:8080${path}${path.includes('?') ? '&' : '?'}pf-e2e=${Date.now()}`
+    return this.siteExec(siteId, ['curl', '--silent', '--show-error', '--fail', '--max-time', '10',
+      '--header', `Host: ${previewDomain}`, '--header', 'X-Forwarded-Proto: https', url])
+  }
+
+  /** Runs SQL on the platform MariaDB as root; the output has one line per row, tab-separated. */
+  async mariadb(query: string): Promise<string> {
+    const res = await fetch(new URL('/mariadb/query', this.url), { method: 'POST', body: query })
+    if (!res.ok) throw new Error(`harness: MariaDB query: status ${res.status}: ${await res.text()}`)
+    return ((await res.json()) as { output: string }).output.trim()
+  }
 }

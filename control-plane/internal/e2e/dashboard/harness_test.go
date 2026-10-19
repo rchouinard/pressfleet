@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -47,6 +48,8 @@ func startHarness(t *testing.T, p *e2e.Platform, projectDir string) string {
 	mux.HandleFunc("GET /sites/{id}/leftovers", h.siteLeftovers)
 	mux.HandleFunc("POST /client-groups/{id}/backup-repository", h.createRepository)
 	mux.HandleFunc("GET /exists", h.exists)
+	mux.HandleFunc("POST /sites/{id}/exec", h.siteExec)
+	mux.HandleFunc("POST /mariadb/query", h.mariadbQuery)
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -202,4 +205,50 @@ func (h *harness) cacheUsers(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("listing object cache users: %w", err)
 	}
 	return strings.Fields(string(out)), nil
+}
+
+// siteExec runs a command in a site's php container, as the site's user,
+// and returns its standard output: WP-CLI to read the site's content, sh
+// to read its files, or curl to fetch a page from its nginx on the site
+// network. The request body is {"command": [...]}.
+func (h *harness) siteExec(w http.ResponseWriter, r *http.Request) {
+	siteID := r.PathValue("id")
+	if !id.Valid(siteID) {
+		http.Error(w, "invalid site ID", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Command []string `json:"command"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.Command) == 0 {
+		http.Error(w, "the body must be {\"command\": [...]}", http.StatusBadRequest)
+		return
+	}
+	sp := compose.Project{Name: compose.SiteProjectName(siteID), Dir: h.projectDir}
+	out, err := sp.ExecService(r.Context(), "php", req.Command...)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("%v: %s", err, out), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"output": string(out)})
+}
+
+// mariadbQuery runs the SQL in the request body on the platform MariaDB as
+// root and returns its output in batch format, without column names: what
+// a database session created or left behind.
+func (h *harness) mariadbQuery(w http.ResponseWriter, r *http.Request) {
+	query, err := io.ReadAll(r.Body)
+	if err != nil || len(query) == 0 {
+		http.Error(w, "the body must be the SQL to run", http.StatusBadRequest)
+		return
+	}
+	out, err := h.p.Project.ExecInput(r.Context(), bytes.NewReader(query), "mariadb", "sh", "-c",
+		`exec mariadb --user=root --password="$(cat /run/secrets/mariadb_root_password)" --batch --skip-column-names`)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("%v: %s", err, out), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"output": string(out)})
 }
