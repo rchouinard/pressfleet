@@ -386,7 +386,7 @@ Left out of the dashboard on purpose, so not covered here (their own e2e or unit
 | Operation | Why it isn't in the dashboard |
 | --- | --- |
 | `pressfleet init`, `doctor`, `upgrade` | Host CLI commands: they install, check, or replace the platform the dashboard runs on (§4.7). `TestInit`, `TestUpgrade`, and `TestUpgradeRecovery` cover them; the overview page shows the control plane's own doctor checks (#177) |
-| `pressfleet user create` (the first admin), `user reset-password` | Recovery and bootstrap paths for when nobody can sign in (§4.7) |
+| `pressfleet user create` (the first admin), `user reset-password`, `user reset-two-factor` | Recovery and bootstrap paths for when nobody can sign in (§4.7) |
 | `pressfleet repository create`, `export`, `check`, `prune` | Operator tools for a client group's backup repository; exports hand the client a copy on the host. The group page shows the commands; prune and check also run on a schedule |
 | `pressfleet state restore`, `key generate`, `metrics-access rotate` | Restoring the state database from a backup, making a master key, and replacing the public metrics password: platform administration on the host or in the control plane container (§4.7) |
 | SFTP and database tunnels themselves | They are SSH, not the dashboard; the dashboard manages the keys and sessions (`TestSFTPGateway`, `TestDatabaseSessions`) |

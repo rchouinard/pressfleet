@@ -465,7 +465,7 @@ API tokens are never asked to reauthenticate, since there is nobody to ask: sens
 
 When a user loses their second factor, an Admin can reset it from a dashboard session: `DELETE /api/v1/users/{user_id}/two-factor` removes the user's authenticator app (and its encrypted secret), all of their security keys and passkeys, and all of their recovery codes, and signs them out everywhere. Their API tokens keep working. It answers `204 No Content`; `404` for an unknown user; and `409 Conflict`, changing nothing, for a user with nothing to remove. The user then logs in with their password alone, and if `two_factor.required` covers their role, their session is restricted to enrolling a new factor (see [Two-factor enrollment required](#two-factor-enrollment-required)). Keys and passkeys they register again on the same authenticator replace the old ones stored there.
 
-Only Admins may reset, only from a dashboard session (API tokens get `403`), and it is a sensitive action, so a session may need to [reauthenticate](#reauthenticating-for-sensitive-actions) first. An Admin can't reset their own second factors this way (`403`), since that would get around [keeping the last second factor](#keeping-the-last-second-factor): they remove their own factors one at a time, and an Admin locked out of their account is recovered from the command line inside the control plane container (`pressfleet user reset-two-factor`). Each reset is in the audit log as `user.two_factor.reset`, with the Admin as the actor, the user as the target, and how many of each factor were removed and sessions ended; never the factors themselves.
+Only Admins may reset, only from a dashboard session (API tokens get `403`), and it is a sensitive action, so a session may need to [reauthenticate](#reauthenticating-for-sensitive-actions) first. An Admin can't reset their own second factors this way (`403`), since that would get around [keeping the last second factor](#keeping-the-last-second-factor): they remove their own factors one at a time, and an Admin locked out of their account is recovered from the command line inside the control plane container (`pressfleet user reset-two-factor`, see [Users](#users)), which resets any user. Each reset is in the audit log as `user.two_factor.reset`, with the Admin as the actor, the user as the target, and how many of each factor were removed and sessions ended; never the factors themselves.
 
 ## Users
 
@@ -474,11 +474,22 @@ Users are managed in the dashboard or the API. To create the first user, or to r
 ```sh
 docker compose exec control-plane pressfleet user create --email admin@example.com [--role admin|operator|viewer]
 docker compose exec control-plane pressfleet user reset-password --email admin@example.com
+docker compose exec control-plane pressfleet user reset-two-factor --email admin@example.com [--yes]
 ```
 
 Each user has one role (design doc §4.6): `viewer` can see everything except users and the audit log, `operator` can also create and change sites and client groups, and `admin` can also delete sites and client groups, manage users, and change platform settings. Role changes apply at once to the user's existing sessions and API tokens, and a `read-only` API token can only read, whatever its owner's role. The last enabled admin can't be demoted, disabled, or deleted.
 
-The default role is `admin`. Both commands generate a random password and print it once. To choose the password instead, pipe it in with `--password-stdin` (and `docker compose exec -T`). Passwords must be 12 to 256 characters. `reset-password` signs the user out everywhere and revokes their API tokens.
+The default role is `admin`. `create` and `reset-password` generate a random password and print it once. To choose the password instead, pipe it in with `--password-stdin` (and `docker compose exec -T`). Passwords must be 12 to 256 characters. `reset-password` signs the user out everywhere and revokes their API tokens.
+
+`reset-two-factor` is for a user who lost their second factors, above all an Admin locked out of their own account, which the dashboard can't reset (see [Resetting a user's second factors](#resetting-a-users-second-factors)). It removes the user's authenticator app, all of their security keys and passkeys, and all of their recovery codes, and signs them out everywhere; their password and API tokens keep working. It names the user and asks for confirmation first; `--yes` skips the question, for scripts. Afterwards it prints what it removed, for example:
+
+```text
+Reset the second factors of admin user admin@example.com (id 01J…)
+Removed the authenticator app, 1 security key or passkey, and 10 recovery codes, and ended 2 sessions.
+They can now log in with their password alone.
+```
+
+The user then logs in with their password alone, and if `two_factor.required` covers their role, must enroll a new second factor before doing anything else. The command exits `0` when it reset the user, and also when the user had no second factors (it says `Nothing to reset` and changes nothing), so running it again is harmless. It exits `1` for an unknown email, a declined or unanswered question (nothing changes), and other errors. Each reset is in the audit log as `user.two_factor.reset`, like the dashboard's, but with no actor user or token and `"actor": "cli"` in `details`, beside the same counts.
 
 ## Audit log
 
@@ -488,7 +499,7 @@ Downloads of database exports are the one kind of read that is recorded, whateve
 
 Admins can list and filter the log with `GET /api/v1/audit-events`. A daily job deletes events older than `audit.retention_days`; a changed retention applies from the next run after the control plane restarts (see [Changing settings](#changing-settings)). Events outlive the users and tokens they name, so an event can refer to a user who has since been deleted.
 
-Some events carry `details`, such as the SFTP gateway's sessions (see below). Every one-click WordPress login token (`POST /api/v1/sites/{site_id}/admin-login`) is an event with the action `site.admin_login` and the WordPress user (`wp_user`) and the token's ID (`jti`) in `details`, never the token itself.
+Some events carry `details`, such as the SFTP gateway's sessions (see below). Second-factor resets made with `pressfleet user reset-two-factor` have no actor user or token, since nobody logged in made them, and `"actor": "cli"` in `details`. Every one-click WordPress login token (`POST /api/v1/sites/{site_id}/admin-login`) is an event with the action `site.admin_login` and the WordPress user (`wp_user`) and the token's ID (`jti`) in `details`, never the token itself.
 
 ## Metrics storage
 
