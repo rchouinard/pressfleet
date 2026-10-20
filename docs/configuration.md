@@ -189,6 +189,13 @@ Old names are accepted for at least one minor release after the change, and unti
 | `backup.retention.keep_yearly` | `PRESSFLEET_BACKUP_RETENTION_KEEP_YEARLY` | | `0` | Likewise for years. With every `keep_*` setting `0`, no snapshot is ever removed. |
 | `backup.check.interval_days` | `PRESSFLEET_BACKUP_CHECK_INTERVAL_DAYS` | | `7` | Days between integrity checks of each backup repository, from 1 to 365. |
 | `backup.check.read_data_percent` | `PRESSFLEET_BACKUP_CHECK_READ_DATA_PERCENT` | | `10` | Share of a repository's data, from 0 to 100, that each check downloads and verifies, chosen at random each time. `0` checks only the repository's structure. On S3, each check downloads this share of the repository. |
+| `backup.state.interval_hours` | `PRESSFLEET_BACKUP_STATE_INTERVAL_HOURS` | | `1` | Hours between the state database's disaster recovery backups, from 1 to 168. What the platform records after the last backup (new sites, changed settings) is lost if the host is. See [Disaster recovery](disaster-recovery.md). |
+| `backup.state.retention.keep_last` | `PRESSFLEET_BACKUP_STATE_RETENTION_KEEP_LAST` | | `0` | The state repository keeps the newest this many state backups. From 0 to 10000. |
+| `backup.state.retention.keep_hourly` | `PRESSFLEET_BACKUP_STATE_RETENTION_KEEP_HOURLY` | | `24` | It keeps the newest state backup of each of the last this many hours that have one. |
+| `backup.state.retention.keep_daily` | `PRESSFLEET_BACKUP_STATE_RETENTION_KEEP_DAILY` | | `14` | Likewise for days. |
+| `backup.state.retention.keep_weekly` | `PRESSFLEET_BACKUP_STATE_RETENTION_KEEP_WEEKLY` | | `8` | Likewise for weeks. |
+| `backup.state.retention.keep_monthly` | `PRESSFLEET_BACKUP_STATE_RETENTION_KEEP_MONTHLY` | | `0` | Likewise for months. |
+| `backup.state.retention.keep_yearly` | `PRESSFLEET_BACKUP_STATE_RETENTION_KEEP_YEARLY` | | `0` | Likewise for years. With every `keep_*` setting `0`, no state backup is ever removed. |
 | `uploads.max_size_mb` | `PRESSFLEET_UPLOADS_MAX_SIZE_MB` | | `10240` | Largest file, in MiB, that can be sent through the upload API for a site import or a code deployment, from 1 to 1048576. Uploads are stored under `<data_dir>/uploads/`, so leave room there. See [Uploads](#uploads). |
 | `uploads.expiry_hours` | `PRESSFLEET_UPLOADS_EXPIRY_HOURS` | | `24` | How long an upload that no import or deployment has taken may go without a new chunk before it is removed as abandoned, from 1 to 720. |
 | `alerts.enabled` | `PRESSFLEET_ALERTS_ENABLED` | | `true` | Whether the control plane evaluates alert rules. The rules and alerts API works either way; with `false`, nothing fires. See [Alerts](#alerts). |

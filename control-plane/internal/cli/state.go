@@ -47,7 +47,7 @@ func (a *app) stateCommand() *cobra.Command {
 		Use:   "state",
 		Short: "Manage the control plane state database (run inside the control plane container)",
 	}
-	cmd.AddCommand(a.stateRestoreCommand())
+	cmd.AddCommand(a.stateRestoreCommand(), a.stateBackupCommand(), a.stateBackupsCommand(), a.stateRecoverCommand())
 	return cmd
 }
 

@@ -443,3 +443,39 @@ func TestJobsLogsForTarget(t *testing.T) {
 		}
 	})
 }
+
+func TestJobsFailUnfinished(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		jobs := store.NewJobs(db)
+		queued := enqueue(t, db, "a", "")
+		running := enqueue(t, db, "b", "")
+		done := enqueue(t, db, "c", "")
+		now := time.Now()
+		for _, j := range []store.Job{running, done} {
+			if _, err := db.ExecContext(ctx, "UPDATE jobs SET state = ?, lease_owner = ? WHERE id = ?", store.JobRunning, "w", j.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := jobs.Finish(ctx, done.ID, "w", store.JobSucceeded, "", now); err != nil {
+			t.Fatal(err)
+		}
+		n, err := jobs.FailUnfinished(ctx, "interrupted", now)
+		if err != nil || n != 2 {
+			t.Fatalf("FailUnfinished = %d, %v; want 2", n, err)
+		}
+		for _, tc := range []struct {
+			job   store.Job
+			state store.JobState
+			msg   string
+		}{{queued, store.JobFailed, "interrupted"}, {running, store.JobFailed, "interrupted"}, {done, store.JobSucceeded, ""}} {
+			got, err := jobs.Get(ctx, tc.job.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.State != tc.state || got.Error != tc.msg || got.LeaseOwner != "" || got.FinishedAt.IsZero() {
+				t.Errorf("job %s = %+v", tc.job.Type, got)
+			}
+		}
+	})
+}

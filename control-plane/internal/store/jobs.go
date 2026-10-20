@@ -614,6 +614,26 @@ func (r Jobs) HasQueuedForSchedule(ctx context.Context, scheduleID string) (bool
 	return n > 0, nil
 }
 
+// FailUnfinished fails every job that hasn't finished (queued, running, or
+// rolling back), without running its rollback, and returns how many it
+// failed. It is for a state database restored on a new host (#96), where
+// those jobs' work was lost with the old host and resuming it would act on
+// resources that no longer exist.
+func (r Jobs) FailUnfinished(ctx context.Context, errMsg string, now time.Time) (int, error) {
+	res, err := r.q.ExecContext(ctx,
+		"UPDATE jobs SET state = ?, error = ?, lease_owner = NULL, lease_expires_at = NULL, finished_at = ?, updated_at = ? "+
+			"WHERE state IN (?, ?, ?)",
+		JobFailed, errMsg, now, now, JobQueued, JobRunning, JobRollingBack)
+	if err != nil {
+		return 0, fmt.Errorf("fail unfinished jobs: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("fail unfinished jobs: %w", err)
+	}
+	return int(n), nil
+}
+
 // The methods below change a leased job. Each takes the lease owner and
 // returns ErrLeaseLost, changing nothing, if the caller no longer holds the
 // lease.

@@ -69,6 +69,12 @@ func TestCommands(t *testing.T) {
 		}, []string{"start", "--wait", "--wait-timeout", "1"}},
 		{"stop", func(p compose.Project) error { return p.Stop(context.Background()) },
 			[]string{"stop"}},
+		{"stop services", func(p compose.Project) error { return p.StopServices(context.Background(), "control-plane") },
+			[]string{"stop", "--", "control-plane"}},
+		{"run service", func(p compose.Project) error {
+			_, err := p.RunService(context.Background(), "control-plane", "state", "recover")
+			return err
+		}, []string{"run", "--rm", "--no-deps", "--no-TTY", "control-plane", "state", "recover"}},
 		{"down", func(p compose.Project) error { return p.Down(context.Background(), compose.DownOptions{}) },
 			[]string{"down", "--remove-orphans"}},
 		{"down volumes", func(p compose.Project) error {

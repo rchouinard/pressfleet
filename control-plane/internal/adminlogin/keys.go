@@ -64,11 +64,61 @@ func Ensure(ctx context.Context, db *store.DB, sec secrets.Store) (*Signer, erro
 	return load(ctx, db, sec)
 }
 
+// RestoredKey is what CheckRestored found.
+type RestoredKey string
+
+// Outcomes of CheckRestored.
+const (
+	// KeyRestored means the restored key decrypts with the master key, so
+	// every site's PRESSFLEET_LOGIN_PUBLIC_KEY stays valid.
+	KeyRestored RestoredKey = "restored"
+	// KeyMissing means the restored state has no key; the control plane
+	// generates one when it starts (Ensure).
+	KeyMissing RestoredKey = "missing"
+	// KeyDiscarded means the restored key was unusable and was removed, so
+	// the control plane generates a new one when it starts.
+	KeyDiscarded RestoredKey = "discarded"
+)
+
+// CheckRestored checks the login key of a state database restored from a
+// backup (#96), in the transaction q that is loading it: the key must
+// decrypt with the master key and match its public half. An unusable key
+// is deleted with its secret, as if the state had lost it. Either way a
+// missing key is generated when the control plane starts, and the sites
+// get the new public key as they are rendered again (when they are
+// recovered, and by the startup reconciliation), so one-click login
+// recovers on its own. Callers check the master key itself first
+// (secrets.VerifyIn): with the wrong master key every secret is
+// unreadable, and nothing should be deleted.
+func CheckRestored(ctx context.Context, q store.Querier, sec secrets.Store) (RestoredKey, error) {
+	sec = sec.With(q)
+	_, err := load(ctx, q, sec)
+	switch {
+	case err == nil:
+		return KeyRestored, nil
+	case errors.Is(err, store.ErrNotFound):
+		return KeyMissing, nil
+	case !errors.Is(err, ErrKeyUnusable):
+		return "", err
+	}
+	var ref string
+	if err := q.QueryRowContext(ctx, "SELECT secret_ref FROM platform_keys WHERE name = ?", loginKeyName).Scan(&ref); err != nil {
+		return "", fmt.Errorf("reading login key: %w", err)
+	}
+	if _, err := q.ExecContext(ctx, "DELETE FROM platform_keys WHERE name = ?", loginKeyName); err != nil {
+		return "", fmt.Errorf("removing the unusable login key: %w", err)
+	}
+	if err := sec.Delete(ctx, secrets.Ref(ref)); err != nil {
+		return "", fmt.Errorf("removing the unusable login key: %w", err)
+	}
+	return KeyDiscarded, nil
+}
+
 // load reads and decrypts the key. It returns store.ErrNotFound if there is
 // none.
-func load(ctx context.Context, db *store.DB, sec secrets.Store) (*Signer, error) {
+func load(ctx context.Context, q store.Querier, sec secrets.Store) (*Signer, error) {
 	var pubText, ref string
-	err := db.QueryRowContext(ctx, "SELECT public_key, secret_ref FROM platform_keys WHERE name = ?", loginKeyName).
+	err := q.QueryRowContext(ctx, "SELECT public_key, secret_ref FROM platform_keys WHERE name = ?", loginKeyName).
 		Scan(&pubText, &ref)
 	if err != nil {
 		return nil, fmt.Errorf("reading login key: %w", err)

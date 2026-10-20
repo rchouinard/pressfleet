@@ -24,6 +24,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/restic"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/statebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/dbsession"
 	"github.com/rchouinard/pressfleet/control-plane/internal/deploy"
@@ -200,6 +201,13 @@ func (a *app) buildServer(ctx context.Context) (_ *server, err error) {
 	if err != nil {
 		return nil, err
 	}
+	stateBackups, err := statebackup.New(statebackup.Options{
+		DB: db, Repository: s.repos, Retention: a.stateBackupRetention(), TmpDir: layout.TmpDir(),
+		Version: a.opts.Version, Logger: a.log.With("component", "state-backup"),
+	})
+	if err != nil {
+		return nil, err
+	}
 	offboarding, err := offboard.New(offboard.Options{
 		DB: db, Repositories: s.repos, Logger: a.log.With("component", "backup"),
 	})
@@ -338,7 +346,7 @@ func (a *app) buildServer(ctx context.Context) (_ *server, err error) {
 	handlers := slices.Concat(
 		[]jobs.Handler{audit.CleanupHandler(db, a.cfg.Audit.Retention(), nil)},
 		s.siteSvc.Handlers(),
-		[]jobs.Handler{backups.Handler(), uploadSvc.CleanupHandler(), offboarding.Handler()},
+		[]jobs.Handler{backups.Handler(), uploadSvc.CleanupHandler(), offboarding.Handler(), stateBackups.Handler()},
 		repoMaint.Handlers(), exports.Handlers(), []jobs.Handler{deploys.Handler()}, s.dbSessions.Handlers(),
 		[]jobs.Handler{pluginupdates.Handler(db, prov)},
 	)
@@ -415,6 +423,8 @@ func (s *server) startup(ctx context.Context) error {
 		func() error { return uploads.EnsureCleanupSchedule(ctx, db) },
 		func() error { return export.EnsureCleanupSchedule(ctx, db) },
 		func() error { return dbsession.EnsureSweepSchedule(ctx, db) },
+		// The state database's disaster recovery backups (#96).
+		func() error { return statebackup.EnsureSchedule(ctx, db, a.cfg.Backup.State.Interval()) },
 		// The default alert rules exist whether or not evaluation is on,
 		// so the API lists them. Seeding never overwrites a user's edits.
 		func() error {

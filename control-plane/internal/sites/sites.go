@@ -757,7 +757,7 @@ func (s *Service) Handlers() []jobs.Handler {
 		s.reconcileHandler(), s.purgeCacheHandler(), s.maintenanceHandler(), s.goLiveHandler(), s.aliasesHandler(),
 	}
 	if s.restores() {
-		handlers = append(handlers, s.restoreHandler())
+		handlers = append(handlers, s.restoreHandler(), s.recoverHandler())
 	}
 	if s.imports() {
 		handlers = append(handlers, s.importHandler())

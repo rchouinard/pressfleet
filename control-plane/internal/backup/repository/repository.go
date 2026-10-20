@@ -78,7 +78,9 @@ func (s S3Config) configured() bool { return s.Endpoint != "" && s.Bucket != "" 
 
 // Options configure a Manager.
 type Options struct {
-	// DB is the state database. Required.
+	// DB is the state database. It is required for client group
+	// repositories, and may be nil for a Manager that only uses the state
+	// repository (state.go), as when the state database is being restored.
 	DB *store.DB
 	// Secrets stores repository passwords. Required.
 	Secrets secrets.Store
@@ -100,6 +102,10 @@ type Options struct {
 	// HTTPClient talks to S3 for export and delete; nil means a default
 	// client.
 	HTTPClient *http.Client
+	// StatePassword is the password of the state repository
+	// (secrets.Keyring.StateBackupPassword); state operations fail with
+	// ErrNoStatePassword without it.
+	StatePassword redact.Secret
 	// Created, if set, is called in the transaction that records a new
 	// repository, e.g. to schedule its maintenance (package
 	// backup/repomaint). An error rolls the record back.
@@ -124,14 +130,16 @@ type Manager struct {
 	created func(ctx context.Context, q store.Querier, clientGroupID string) error
 	deleted func(ctx context.Context, q store.Querier, clientGroupID string) error
 	log     *slog.Logger
+	// statePassword opens the state repository (state.go).
+	statePassword redact.Secret
 	// warnedChgrp says the skipped group ownership was logged.
 	warnedChgrp atomic.Bool
 }
 
 // New returns a Manager. It doesn't run restic or contact S3.
 func New(opts Options) (*Manager, error) {
-	if opts.DB == nil || opts.Logger == nil {
-		return nil, errors.New("repository: DB and Logger are required")
+	if opts.Logger == nil {
+		return nil, errors.New("repository: Logger is required")
 	}
 	if !filepath.IsAbs(opts.Layout.Root) {
 		return nil, fmt.Errorf("repository: data directory must be an absolute path, got %q", opts.Layout.Root)
@@ -139,6 +147,7 @@ func New(opts Options) (*Manager, error) {
 	m := &Manager{
 		db: opts.DB, secrets: opts.Secrets, layout: opts.Layout, backend: opts.Backend, s3: opts.S3,
 		restic: opts.Restic, gid: opts.RepositoryGID, http: opts.HTTPClient, created: opts.Created, deleted: opts.Deleted, log: opts.Logger,
+		statePassword: opts.StatePassword,
 	}
 	if m.gid == 0 {
 		m.gid = provisioner.RepositoryGID

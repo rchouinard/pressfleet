@@ -41,6 +41,8 @@ type keyEntry struct {
 	id         string
 	checkValue []byte
 	aead       cipher.AEAD
+	// stateBackup is the state backup repository's password.
+	stateBackup redact.Secret
 }
 
 // NewKeyring returns a keyring whose current key is current.
@@ -68,11 +70,22 @@ func newKeyEntry(k MasterKey) (*keyEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &keyEntry{id: k.ID(), checkValue: k.checkValue(), aead: aead}, nil
+	stateBackup, err := k.stateBackupPassword()
+	if err != nil {
+		return nil, fmt.Errorf("deriving the state backup password: %w", err)
+	}
+	return &keyEntry{id: k.ID(), checkValue: k.checkValue(), aead: aead, stateBackup: stateBackup}, nil
 }
 
 // KeyID returns the current key's ID.
 func (r *Keyring) KeyID() string { return r.current.id }
+
+// StateBackupPassword returns the password of the platform's state backup
+// repository (package backup/statebackup), derived from the current master
+// key. The repository holds the state database, so its password can't be
+// one of the secrets stored there: a new host has only the master key.
+// Master key rotation will have to re-key that repository too.
+func (r *Keyring) StateBackupPassword() redact.Secret { return r.current.stateBackup }
 
 // seal encrypts plaintext for the secret row (secretID, kind) with the
 // current key, returning the key ID to store with the ciphertext.
