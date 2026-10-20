@@ -481,6 +481,8 @@ Each user has one role (design doc §4.6): `viewer` can see everything except us
 
 The default role is `admin`. `create` and `reset-password` generate a random password and print it once. To choose the password instead, pipe it in with `--password-stdin` (and `docker compose exec -T`). Passwords must be 12 to 256 characters. `reset-password` signs the user out everywhere and revokes their API tokens.
 
+Both are in the audit log with no actor user or token and `"actor": "cli"` in `details`, under the action the API records for the same change, so a filter on it finds both: `create` as `user.create`, with the new user's `role` in `details`, and `reset-password` as `user.update`, like an Admin setting another user's password with `PATCH /api/v1/users/{id}`. Neither records the password, nor whether it was generated or read from standard input. `pressfleet init` creates the first Admin with `user create`, so that is in the log too. A command that fails, such as `create` with an email already in use or `reset-password` with an unknown one, records nothing. If the change is made but writing the event fails, the command still prints the user and any generated password, then exits `1` and says the change went through.
+
 `reset-two-factor` is for a user who lost their second factors, above all an Admin locked out of their own account, which the dashboard can't reset (see [Resetting a user's second factors](#resetting-a-users-second-factors)). It removes the user's authenticator app, all of their security keys and passkeys, and all of their recovery codes, and signs them out everywhere; their password and API tokens keep working. It names the user and asks for confirmation first; `--yes` skips the question, for scripts. Afterwards it prints what it removed, for example:
 
 ```text
@@ -499,7 +501,7 @@ Downloads of database exports are the one kind of read that is recorded, whateve
 
 Admins can list and filter the log with `GET /api/v1/audit-events`. A daily job deletes events older than `audit.retention_days`; a changed retention applies from the next run after the control plane restarts (see [Changing settings](#changing-settings)). Events outlive the users and tokens they name, so an event can refer to a user who has since been deleted.
 
-Some events carry `details`, such as the SFTP gateway's sessions (see below). Second-factor resets made with `pressfleet user reset-two-factor` have no actor user or token, since nobody logged in made them, and `"actor": "cli"` in `details`. Every one-click WordPress login token (`POST /api/v1/sites/{site_id}/admin-login`) is an event with the action `site.admin_login` and the WordPress user (`wp_user`) and the token's ID (`jti`) in `details`, never the token itself.
+Some events carry `details`, such as the SFTP gateway's sessions (see below). Changes made with the `pressfleet user` commands in the control plane container (`user.create`, `user.update` for `reset-password`, and `user.two_factor.reset`, see [Users](#users)) have no actor user or token, since nobody logged in made them, and `"actor": "cli"` in `details`. Every one-click WordPress login token (`POST /api/v1/sites/{site_id}/admin-login`) is an event with the action `site.admin_login` and the WordPress user (`wp_user`) and the token's ID (`jti`) in `details`, never the token itself.
 
 ## Metrics storage
 
