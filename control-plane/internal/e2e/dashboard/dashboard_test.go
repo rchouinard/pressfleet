@@ -220,7 +220,8 @@ func hold(t *testing.T, file string, env map[string]string) {
 		defer cancel()
 	}
 	fmt.Printf("\nThe platform is up; its details are in %s.\n"+
-		"Run the specs against it with `pnpm -C ui test:e2e` (add --headed, --ui, -g ...).\n"+
+		"Run the specs against it with `pnpm -C ui test:e2e` (add --ui, -g ...);\n"+
+		"for --headed or --debug, set PRESSFLEET_E2E_HOST_BROWSER=1 to use a browser on the host.\n"+
 		"Press Ctrl-C to tear it down.\n\n", file)
 	<-ctx.Done()
 }
