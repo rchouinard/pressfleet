@@ -8,15 +8,18 @@
 package dashboard_test
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -36,8 +39,36 @@ const (
 	envArgs = "PRESSFLEET_UI_E2E_ARGS"
 	// envHold boots the platform and keeps it running, without running
 	// the suite, until the test is interrupted, so specs can be run
-	// against it again and again while they are written.
+	// against it again and again while they are written: "1" with the
+	// default configuration, holdTwoFactorRequired with the second run's.
 	envHold = "PRESSFLEET_UI_E2E_HOLD"
+)
+
+// holdTwoFactorRequired is the envHold value that holds the platform in
+// the second run's configuration (twoFactorRequired).
+const holdTwoFactorRequired = "two-factor-required"
+
+// The suite runs twice on one platform. Most specs need the default
+// two-factor policy: the platform's admin, whom every spec shares, has no
+// second factor, and two_factor.required would restrict its sessions to
+// enrolling one. The specs of forced enrollment and of the reauthentication
+// dialog need the policy on, and a stale session, which the default
+// 10-minute reauthentication max age would make them wait for. So after the
+// first run the control plane restarts with twoFactorRequired, the way an
+// operator changes its configuration, and the second run runs only those
+// specs (playwright.config.ts picks them by PRESSFLEET_E2E_TWO_FACTOR_REQUIRED).
+// They create their users with the CLI (the harness's POST /users), since the
+// admin's sessions are restricted then.
+var twoFactorRequired = map[string]string{
+	"PRESSFLEET_TWO_FACTOR_REQUIRED":                 "admins",
+	"PRESSFLEET_TWO_FACTOR_REAUTHENTICATION_MAX_AGE": reauthMaxAgeRequired.String(),
+}
+
+// The reauthentication max age of each run: the default, and the shortest
+// two_factor.reauthentication_max_age allows, for the second run.
+const (
+	reauthMaxAgeDefault  = 10 * time.Minute
+	reauthMaxAgeRequired = time.Minute
 )
 
 // platformFile is where hold mode writes the platform's details, relative
@@ -54,9 +85,14 @@ const resultsDir = "test-results"
 // in MiB (see TestDashboard).
 const controlPlaneMemoryMB = 512
 
-// suiteTimeout bounds one run of the suite, below make test-ui-e2e's
-// go test -timeout so teardown still runs.
-const suiteTimeout = 25 * time.Minute
+// suiteTimeout and requiredSuiteTimeout bound the suite's first and second
+// runs (see twoFactorRequired). Together with booting the platform and
+// restarting it in between they stay below make test-ui-e2e's go test
+// -timeout, so teardown still runs.
+const (
+	suiteTimeout         = 25 * time.Minute
+	requiredSuiteTimeout = 8 * time.Minute
+)
 
 // TestDashboard boots a platform and runs the Playwright suite against it.
 func TestDashboard(t *testing.T) {
@@ -67,6 +103,7 @@ func TestDashboard(t *testing.T) {
 	// (which keeps the site networks in use) is gone; siteProjects is
 	// filled by the cleanup registered after Start, which runs first.
 	var siteProjects []compose.Project
+	sitesListed := false
 	projectDir := t.TempDir()
 	t.Cleanup(func() { removeSites(t, siteProjects) })
 
@@ -77,20 +114,29 @@ func TestDashboard(t *testing.T) {
 	// another port.
 	p := e2e.StartWithControlPlaneMemory(t, controlPlaneMemoryMB)
 	t.Cleanup(func() {
-		siteProjects = listSiteProjects(t, p, projectDir)
+		if !sitesListed {
+			siteProjects = listSiteProjects(t, p, projectDir)
+		}
 		if t.Failed() {
 			saveLogs(t, p.Project, filepath.Join(ui, resultsDir, "platform-logs.txt"))
 		}
 	})
+	// listSites lists the sites before the second run's restart: the
+	// admin's sessions are restricted to enrolling after it. That run
+	// creates no sites.
+	listSites := func() {
+		siteProjects, sitesListed = listSiteProjects(t, p, projectDir), true
+	}
 
 	// The monitoring specs wait for collected metrics and for alerts to
 	// fire and resolve: collect and evaluate every few seconds instead of
 	// every 30, as TestM4Acceptance does. Before the harness and the
 	// environment, because the control plane's published port changes.
-	p.Restart(t, map[string]string{
+	defaults := map[string]string{
 		"PRESSFLEET_METRICS_INTERVAL_SECONDS":           "5",
 		"PRESSFLEET_ALERTS_EVALUATION_INTERVAL_SECONDS": "5",
-	})
+	}
+	p.Restart(t, defaults)
 
 	php, otherPHP := siteImages(t)
 	harness := startHarness(t, p, projectDir)
@@ -100,25 +146,56 @@ func TestDashboard(t *testing.T) {
 			saveLogs(t, b.project, filepath.Join(ui, resultsDir, "browser-logs.txt"))
 		}
 	})
-	env := map[string]string{
-		"PRESSFLEET_E2E_BASE_URL":             "https://" + e2e.DashboardDomain,
-		"PRESSFLEET_E2E_INGRESS_ADDR":         p.HTTPSAddr,
-		"PRESSFLEET_E2E_BROWSER_ENDPOINT":     b.Endpoint,
-		"PRESSFLEET_E2E_BROWSER_INGRESS_ADDR": b.IngressAddr,
-		"PRESSFLEET_E2E_API_URL":              p.BaseURL,
-		"PRESSFLEET_E2E_HARNESS_URL":          harness,
-		"PRESSFLEET_E2E_ADMIN_EMAIL":          p.AdminEmail,
-		"PRESSFLEET_E2E_ADMIN_PASSWORD":       p.AdminPassword.Reveal(),
-		"PRESSFLEET_E2E_PHP_VERSION":          php,
-		"PRESSFLEET_E2E_OTHER_PHP_VERSION":    otherPHP,
+	// env is the platform's details for the specs. The control plane's
+	// published port changes when it restarts, so it is read again then.
+	env := func(policy string, reauthMaxAge time.Duration) map[string]string {
+		return map[string]string{
+			"PRESSFLEET_E2E_BASE_URL":                         "https://" + e2e.DashboardDomain,
+			"PRESSFLEET_E2E_INGRESS_ADDR":                     p.HTTPSAddr,
+			"PRESSFLEET_E2E_BROWSER_ENDPOINT":                 b.Endpoint,
+			"PRESSFLEET_E2E_BROWSER_INGRESS_ADDR":             b.IngressAddr,
+			"PRESSFLEET_E2E_API_URL":                          p.BaseURL,
+			"PRESSFLEET_E2E_HARNESS_URL":                      harness,
+			"PRESSFLEET_E2E_ADMIN_EMAIL":                      p.AdminEmail,
+			"PRESSFLEET_E2E_ADMIN_PASSWORD":                   p.AdminPassword.Reveal(),
+			"PRESSFLEET_E2E_PHP_VERSION":                      php,
+			"PRESSFLEET_E2E_OTHER_PHP_VERSION":                otherPHP,
+			"PRESSFLEET_E2E_TWO_FACTOR_REQUIRED":              policy,
+			"PRESSFLEET_E2E_REAUTHENTICATION_MAX_AGE_SECONDS": strconv.Itoa(int(reauthMaxAge.Seconds())),
+		}
+	}
+	required := func() map[string]string {
+		listSites()
+		// Restart doesn't keep the variables of an earlier restart.
+		cfg := maps.Clone(defaults)
+		maps.Copy(cfg, twoFactorRequired)
+		p.Restart(t, cfg)
+		return env(twoFactorRequired["PRESSFLEET_TWO_FACTOR_REQUIRED"], reauthMaxAgeRequired)
 	}
 
-	if os.Getenv(envHold) == "1" {
-		hold(t, filepath.Join(ui, platformFile), env)
+	switch os.Getenv(envHold) {
+	case "":
+	case holdTwoFactorRequired:
+		hold(t, filepath.Join(ui, platformFile), required())
+		return
+	default:
+		hold(t, filepath.Join(ui, platformFile), env("off", reauthMaxAgeDefault))
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(t.Context(), suiteTimeout)
+	// Both runs go ahead even if the first fails, so one test run reports
+	// every failing spec.
+	runSuite(t, ui, env("off", reauthMaxAgeDefault), "", suiteTimeout)
+	runSuite(t, ui, required(), holdTwoFactorRequired, requiredSuiteTimeout)
+}
+
+// runSuite runs the Playwright suite once against the platform described
+// by env. name tells the second run's output apart from the first's
+// (playwright.config.ts writes it under test-results/<name>); "" is the
+// first. A failure fails the test without stopping it.
+func runSuite(t *testing.T, ui string, env map[string]string, name string, timeout time.Duration) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), timeout)
 	defer cancel()
 	args := append([]string{"exec", "playwright", "test"}, strings.Fields(os.Getenv(envArgs))...)
 	cmd := exec.CommandContext(ctx, "pnpm", args...)
@@ -131,12 +208,13 @@ func TestDashboard(t *testing.T) {
 	// Let Playwright close its browsers and write its traces.
 	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
 	cmd.WaitDelay = 30 * time.Second
-	t.Logf("running pnpm %s in %s", strings.Join(args, " "), ui)
+	t.Logf("running pnpm %s in %s (%s)", strings.Join(args, " "), ui, cmp.Or(name, "default configuration"))
 	if err := cmd.Run(); err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
-			t.Fatalf("the Playwright suite failed (exit status %d); traces and screenshots are in %s",
-				exit.ExitCode(), filepath.Join(ui, resultsDir))
+			t.Errorf("the Playwright suite failed (%s, exit status %d); traces and screenshots are in %s",
+				cmp.Or(name, "default configuration"), exit.ExitCode(), filepath.Join(ui, resultsDir, name))
+			return
 		}
 		t.Fatalf("running the Playwright suite: %v (run `pnpm -C ui install` first)", err)
 	}

@@ -104,7 +104,7 @@ test-ui-e2e: ui/node_modules/.modules.yaml ## Run the dashboard's end-to-end tes
 	$(MAKE) image IMAGE=pressfleet-control-plane:ui-e2e
 	PRESSFLEET_DOCKER_TESTS=1 PRESSFLEET_TEST_CONTROL_PLANE_IMAGE=pressfleet-control-plane:ui-e2e \
 	PRESSFLEET_UI_E2E_ARGS="$(PLAYWRIGHT_ARGS)" \
-		go test -count=1 -v -timeout 30m ./control-plane/internal/e2e/dashboard/; \
+		go test -count=1 -v -timeout 40m ./control-plane/internal/e2e/dashboard/; \
 		status=$$?; docker image rm pressfleet-control-plane:ui-e2e >/dev/null; exit $$status
 
 .PHONY: lint

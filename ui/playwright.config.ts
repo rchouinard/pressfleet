@@ -9,10 +9,17 @@ import { readPlatformEnv } from './e2e/env'
 const platform = readPlatformEnv()
 const ci = !!process.env.CI
 const hostBrowser = process.env.PRESSFLEET_E2E_HOST_BROWSER === '1'
+// The suite runs twice (docs/testing.md): the second time with
+// two_factor.required covering admins, for the specs that need the policy
+// on. Each run takes only its own specs.
+const twoFactorRequired = !!platform && platform.twoFactorRequired !== 'off'
+const requiredSpecs = '**/two-factor-required.spec.ts'
 
 export default defineConfig({
   testDir: './e2e',
-  outputDir: './test-results',
+  ...(twoFactorRequired ? { testMatch: requiredSpecs } : { testIgnore: requiredSpecs }),
+  // The second run's results go next to the first's, not over them.
+  outputDir: twoFactorRequired ? './test-results/two-factor-required' : './test-results',
   // Specs share one platform (one admin, one MariaDB). Each test creates
   // its own records with unique names, but jobs on the same site queue
   // behind each other, so keep the worker count modest.
@@ -26,8 +33,8 @@ export default defineConfig({
   // Provisioning a site takes about a minute on a cold runner.
   timeout: 3 * 60_000,
   expect: { timeout: 15_000 },
-  globalTimeout: 20 * 60_000,
-  reporter: [['list'], ['html', { open: 'never', outputFolder: './playwright-report' }]],
+  globalTimeout: (twoFactorRequired ? 6 : 20) * 60_000,
+  reporter: [['list'], ['html', { open: 'never', outputFolder: twoFactorRequired ? './playwright-report/two-factor-required' : './playwright-report' }]],
   use: {
     baseURL: platform?.baseURL,
     // Traefik serves its self-signed default certificate (no ACME in tests).

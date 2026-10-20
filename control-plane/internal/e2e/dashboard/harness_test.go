@@ -54,6 +54,7 @@ func startHarness(t *testing.T, p *e2e.Platform, projectDir string) string {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /sites/{id}/leftovers", h.siteLeftovers)
 	mux.HandleFunc("POST /client-groups/{id}/backup-repository", h.createRepository)
+	mux.HandleFunc("POST /users", h.createUser)
 	mux.HandleFunc("GET /exists", h.exists)
 	mux.HandleFunc("POST /sites/{id}/exec", h.siteExec)
 	mux.HandleFunc("POST /ingress", h.ingressGet)
@@ -98,6 +99,32 @@ func (h *harness) createRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, err := h.p.Project.Exec(r.Context(), e2e.Service, "pressfleet", "repository", "create", groupID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("%v: %s", err, out), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// createUser creates a user with `pressfleet user create` inside the
+// control plane container, as an operator bootstraps one (§4.7), from
+// {"email", "password", "role"}. The suite's second run needs it: with
+// two_factor.required covering admins, the platform's admin, who has no
+// second factor, can't create users through the API. The password goes
+// over stdin, never on the command line.
+func (h *harness) createUser(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+		Role     string `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Email == "" || req.Password == "" || req.Role == "" ||
+		strings.ContainsAny(req.Password, "\r\n") {
+		http.Error(w, `want {"email", "password", "role"}`, http.StatusBadRequest)
+		return
+	}
+	out, err := h.p.Project.ExecInput(r.Context(), strings.NewReader(req.Password+"\n"), e2e.Service,
+		"pressfleet", "user", "create", "--email", req.Email, "--role", req.Role, "--password-stdin")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("%v: %s", err, out), http.StatusInternalServerError)
 		return

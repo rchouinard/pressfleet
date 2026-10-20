@@ -2,6 +2,8 @@
 // (control-plane/internal/e2e/dashboard/harness_test.go). Specs use it to
 // check outcomes on the platform itself, e.g. that a deleted site left
 // nothing behind; they never run the docker CLI.
+import { randomPassword, uniqueEmail, type Role, type TestUser } from './api'
+
 export class Harness {
   constructor(private readonly url: string) {}
 
@@ -19,6 +21,24 @@ export class Harness {
   async createBackupRepository(clientGroupId: string): Promise<void> {
     const res = await fetch(new URL(`/client-groups/${encodeURIComponent(clientGroupId)}/backup-repository`, this.url), { method: 'POST' })
     if (!res.ok) throw new Error(`harness: create backup repository: status ${res.status}: ${await res.text()}`)
+  }
+
+  /**
+   * Creates a user with `pressfleet user create` in the control plane
+   * container, for specs that can't create users through the admin's API
+   * client: in the suite's second run the admin's sessions are restricted
+   * to enrolling (docs/testing.md). The user's ID comes from their own
+   * session.
+   */
+  async createUser(role: Role, prefix: string = role): Promise<Omit<TestUser, 'id'>> {
+    const user = { email: uniqueEmail(prefix), password: randomPassword(), role }
+    const res = await fetch(new URL('/users', this.url), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(user),
+    })
+    if (!res.ok) throw new Error(`harness: create user: status ${res.status}: ${await res.text()}`)
+    return user
   }
 
   /** Whether a path under the platform's data directory exists. */
