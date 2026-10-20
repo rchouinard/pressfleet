@@ -274,7 +274,7 @@ With the cause gone, the suite has no workarounds left: `retries: 0`, so a test 
 mise exec -- make test-ui-e2e
 ```
 
-This installs the UI's dependencies if needed, builds the control plane image as `pressfleet-control-plane:ui-e2e` (which builds and embeds the dashboard), runs `TestDashboard`, and removes the image. It needs the site images for the default PHP version and the one the catalog lists next to it (`make images SITE_PHP="<both versions>"` builds them; CI builds the two newest). The suite takes about a minute locally once the images are present, most of it the site spec's provisioning and deletion. `PLAYWRIGHT_ARGS` goes to `playwright test`, split on spaces:
+This installs the UI's dependencies if needed, builds the control plane image as `pressfleet-control-plane:ui-e2e` (which builds and embeds the dashboard), runs `TestDashboard`, and removes the image. It needs the site images for the default PHP version and the one the catalog lists next to it (`make images SITE_PHP="<both versions>"` builds them; CI builds the two newest). The suite takes a few minutes once the images are present, most of it the specs' site provisioning; the second run adds about a minute and a half. `PLAYWRIGHT_ARGS` goes to `playwright test`, split on spaces:
 
 ```sh
 make test-ui-e2e PLAYWRIGHT_ARGS="-g offboard"
