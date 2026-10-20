@@ -195,20 +195,22 @@ func TestRestrictedSessionRefusedEveryOtherOperation(t *testing.T) {
 // must enroll and is older than the reauthentication max age first
 // reauthenticates with its password, then enrolls.
 func TestRestrictedStaleSessionReauthenticatesAndEnrolls(t *testing.T) {
-	e := newAuthEnvWith(t, api.Options{}, auth.TwoFactorPolicy{
-		Required: auth.RequireAdmins, Reauthentication: true, ReauthenticationMaxAge: 10 * time.Minute,
-	})
-	s := e.mustLogin()
-	e.clock.add(11 * time.Minute)
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		e := newAuthEnvWith(t, api.Options{DB: db}, auth.TwoFactorPolicy{
+			Required: auth.RequireAdmins, Reauthentication: true, ReauthenticationMaxAge: 10 * time.Minute,
+		})
+		s := e.mustLogin()
+		e.clock.add(11 * time.Minute)
 
-	w := e.do(http.MethodPost, "/api/v1/users/me/two-factor/totp", "", s.creds())
-	if w.Code != http.StatusForbidden || !isReauthProblem(t, w) {
-		t.Fatalf("stale restricted session enrolls: status %d, want 403 reauthentication-required; body: %s", w.Code, w.Body)
-	}
-	expectStatus(t, e.do(http.MethodPost, "/api/v1/auth/reauthenticate/options", "", s.creds()), http.StatusOK, "reauthentication options")
-	body := `{"method":"password","password":"` + testPassword + `"}`
-	expectStatus(t, e.do(http.MethodPost, "/api/v1/auth/reauthenticate", body, s.creds()), http.StatusOK, "reauthenticate with the password")
-	expectStatus(t, e.do(http.MethodPost, "/api/v1/users/me/two-factor/totp", "", s.creds()), http.StatusOK, "enroll after reauthenticating")
-	// Everything else stays refused until the user has a factor.
-	expectEnrollmentRequired(t, e.do(http.MethodGet, "/api/v1/sites", "", s.creds()), "list sites before confirming")
+		w := e.do(http.MethodPost, "/api/v1/users/me/two-factor/totp", "", s.creds())
+		if w.Code != http.StatusForbidden || !isReauthProblem(t, w) {
+			t.Fatalf("stale restricted session enrolls: status %d, want 403 reauthentication-required; body: %s", w.Code, w.Body)
+		}
+		expectStatus(t, e.do(http.MethodPost, "/api/v1/auth/reauthenticate/options", "", s.creds()), http.StatusOK, "reauthentication options")
+		body := `{"method":"password","password":"` + testPassword + `"}`
+		expectStatus(t, e.do(http.MethodPost, "/api/v1/auth/reauthenticate", body, s.creds()), http.StatusOK, "reauthenticate with the password")
+		expectStatus(t, e.do(http.MethodPost, "/api/v1/users/me/two-factor/totp", "", s.creds()), http.StatusOK, "enroll after reauthenticating")
+		// Everything else stays refused until the user has a factor.
+		expectEnrollmentRequired(t, e.do(http.MethodGet, "/api/v1/sites", "", s.creds()), "list sites before confirming")
+	})
 }

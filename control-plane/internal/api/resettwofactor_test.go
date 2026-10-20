@@ -210,63 +210,67 @@ func TestResetUserTwoFactorOverHTTP(t *testing.T) {
 // and Viewers, API tokens (second factors are managed from sessions), and
 // an Admin resetting themselves. Unknown users are 404.
 func TestResetUserTwoFactorRefusedOverHTTP(t *testing.T) {
-	e := newAuthEnv(t, api.Options{})
-	admin := e.mustLogin()
-	target := e.newResetTarget("v@example.com", store.RoleViewer)
-	e.createUser(admin, "op@example.com", store.RoleOperator)
-	e.createUser(admin, "viewer@example.com", store.RoleViewer)
-	_, full := e.createToken(admin, `{"name":"full","scope":"full","expires_at":null}`)
-	_, readOnly := e.createToken(admin, `{"name":"ro","scope":"read-only","expires_at":null}`)
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		e := newAuthEnv(t, api.Options{DB: db})
+		admin := e.mustLogin()
+		target := e.newResetTarget("v@example.com", store.RoleViewer)
+		e.createUser(admin, "op@example.com", store.RoleOperator)
+		e.createUser(admin, "viewer@example.com", store.RoleViewer)
+		_, full := e.createToken(admin, `{"name":"full","scope":"full","expires_at":null}`)
+		_, readOnly := e.createToken(admin, `{"name":"ro","scope":"read-only","expires_at":null}`)
 
-	for _, c := range []struct {
-		name  string
-		creds creds
-	}{
-		{"operator", e.mustLoginAs("op@example.com").creds()},
-		{"viewer", e.mustLoginAs("viewer@example.com").creds()},
-		{"admin full token", creds{bearer: full}},
-		{"admin read-only token", creds{bearer: readOnly}},
-	} {
-		w := e.do(http.MethodDelete, resetPath(target.id), "", c.creds)
-		expectStatus(t, w, http.StatusForbidden, c.name)
-		if ev := allEvents(t, e.db)[0]; ev.Action != "user.two_factor.reset" || ev.Result != store.AuditDenied || ev.TargetID != target.id {
-			t.Errorf("%s: audit event %+v", c.name, ev)
+		for _, c := range []struct {
+			name  string
+			creds creds
+		}{
+			{"operator", e.mustLoginAs("op@example.com").creds()},
+			{"viewer", e.mustLoginAs("viewer@example.com").creds()},
+			{"admin full token", creds{bearer: full}},
+			{"admin read-only token", creds{bearer: readOnly}},
+		} {
+			w := e.do(http.MethodDelete, resetPath(target.id), "", c.creds)
+			expectStatus(t, w, http.StatusForbidden, c.name)
+			if ev := allEvents(t, e.db)[0]; ev.Action != "user.two_factor.reset" || ev.Result != store.AuditDenied || ev.TargetID != target.id {
+				t.Errorf("%s: audit event %+v", c.name, ev)
+			}
 		}
-	}
 
-	// An Admin can't reset their own factors here, even with nothing
-	// required.
-	e.giveFactor(e.user.ID)
-	expectStatus(t, e.do(http.MethodDelete, resetPath(e.user.ID), "", admin.creds()), http.StatusForbidden, "own factors")
-	if e.webAuthnCredentials(e.user.ID) != 1 {
-		t.Error("refused self-reset removed the Admin's factors")
-	}
+		// An Admin can't reset their own factors here, even with nothing
+		// required.
+		e.giveFactor(e.user.ID)
+		expectStatus(t, e.do(http.MethodDelete, resetPath(e.user.ID), "", admin.creds()), http.StatusForbidden, "own factors")
+		if e.webAuthnCredentials(e.user.ID) != 1 {
+			t.Error("refused self-reset removed the Admin's factors")
+		}
 
-	expectStatus(t, e.do(http.MethodDelete, resetPath("01j9zq3v6t8k4m2n5p7r9s1x3z"), "", admin.creds()), http.StatusNotFound, "unknown user")
+		expectStatus(t, e.do(http.MethodDelete, resetPath("01j9zq3v6t8k4m2n5p7r9s1x3z"), "", admin.creds()), http.StatusNotFound, "unknown user")
 
-	// Nothing was reset along the way.
-	if e.webAuthnCredentials(target.id) != 1 {
-		t.Error("refused resets removed the target's factors")
-	}
-	expectStatus(t, e.do(http.MethodGet, "/api/v1/auth/me", "", target.session.creds()), http.StatusOK, "target's session")
+		// Nothing was reset along the way.
+		if e.webAuthnCredentials(target.id) != 1 {
+			t.Error("refused resets removed the target's factors")
+		}
+		expectStatus(t, e.do(http.MethodGet, "/api/v1/auth/me", "", target.session.creds()), http.StatusOK, "target's session")
+	})
 }
 
 // TestResetUserTwoFactorAsksForReauthentication checks that a stale Admin
 // session must reauthenticate before resetting, and then may.
 func TestResetUserTwoFactorAsksForReauthentication(t *testing.T) {
-	e := newAuthEnvWith(t, api.Options{}, reauthPolicy)
-	admin := e.mustLogin()
-	target := e.newResetTarget("v@example.com", store.RoleViewer)
-	e.clock.add(11 * time.Minute)
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		e := newAuthEnvWith(t, api.Options{DB: db}, reauthPolicy)
+		admin := e.mustLogin()
+		target := e.newResetTarget("v@example.com", store.RoleViewer)
+		e.clock.add(11 * time.Minute)
 
-	w := e.do(http.MethodDelete, resetPath(target.id), "", admin.creds())
-	if !isReauthProblem(t, w) {
-		t.Fatalf("stale session: %d %s, want reauthentication-required", w.Code, w.Body)
-	}
-	if e.webAuthnCredentials(target.id) != 1 {
-		t.Error("refused reset removed the target's factors")
-	}
-	w = e.do(http.MethodPost, "/api/v1/auth/reauthenticate", `{"method":"password","password":"`+testPassword+`"}`, admin.creds())
-	expectStatus(t, w, http.StatusOK, "reauthenticate")
-	expectStatus(t, e.do(http.MethodDelete, resetPath(target.id), "", admin.creds()), http.StatusNoContent, "reset after reauthenticating")
+		w := e.do(http.MethodDelete, resetPath(target.id), "", admin.creds())
+		if !isReauthProblem(t, w) {
+			t.Fatalf("stale session: %d %s, want reauthentication-required", w.Code, w.Body)
+		}
+		if e.webAuthnCredentials(target.id) != 1 {
+			t.Error("refused reset removed the target's factors")
+		}
+		w = e.do(http.MethodPost, "/api/v1/auth/reauthenticate", `{"method":"password","password":"`+testPassword+`"}`, admin.creds())
+		expectStatus(t, w, http.StatusOK, "reauthenticate")
+		expectStatus(t, e.do(http.MethodDelete, resetPath(target.id), "", admin.creds()), http.StatusNoContent, "reset after reauthenticating")
+	})
 }
