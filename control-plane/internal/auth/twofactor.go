@@ -245,6 +245,66 @@ func (s *Service) TwoFactorEnabled(ctx context.Context, userID string) (bool, er
 	return s.hasSecondFactor(ctx, s.db, userID)
 }
 
+// TwoFactorStatus is what a user has of each second factor, for their
+// settings page. It holds no secrets.
+type TwoFactorStatus struct {
+	// Enabled reports whether the user has a usable second factor
+	// (TwoFactorEnabled).
+	Enabled bool
+	// TOTPConfirmedAt is when the user's authenticator app was confirmed,
+	// or nil without one.
+	TOTPConfirmedAt *time.Time
+	// TOTPPendingExpiresAt is when an unconfirmed authenticator app
+	// expires, or nil without an unexpired one.
+	TOTPPendingExpiresAt *time.Time
+	// RPID is the relying party ID credentials must be bound to, or empty
+	// while WebAuthn is unavailable (then none is usable).
+	RPID string
+	// WebAuthnCredentials are all the user's credentials, oldest first,
+	// those from a previous relying party ID included.
+	WebAuthnCredentials []store.WebAuthnCredential
+	// UsableWebAuthnCredentials counts those bound to RPID.
+	UsableWebAuthnCredentials int
+	// RecoveryCodesRemaining counts the unused recovery codes.
+	RecoveryCodesRemaining int
+}
+
+// TwoFactorStatus returns the user's second factors. Unlike reauthentication
+// options, it starts no WebAuthn challenge.
+func (s *Service) TwoFactorStatus(ctx context.Context, userID string) (TwoFactorStatus, error) {
+	st := TwoFactorStatus{RPID: s.usableRPID()}
+	var err error
+	if st.Enabled, err = s.hasSecondFactor(ctx, s.db, userID); err != nil {
+		return TwoFactorStatus{}, fmt.Errorf("two-factor status: %w", err)
+	}
+	switch t, err := store.NewUserTOTPs(s.db).Get(ctx, userID); {
+	case errors.Is(err, store.ErrNotFound):
+	case err != nil:
+		return TwoFactorStatus{}, fmt.Errorf("two-factor status: %w", err)
+	case t.Confirmed():
+		st.TOTPConfirmedAt = t.ConfirmedAt
+	default:
+		// An expired enrollment lingers until the next one starts
+		// (StartTOTPEnrollment); it can't be confirmed, so it isn't pending.
+		if expires := t.CreatedAt.Add(TOTPEnrollmentTTL); s.now().Before(expires) {
+			st.TOTPPendingExpiresAt = &expires
+		}
+	}
+	creds := store.NewWebAuthnCredentials(s.db)
+	if st.WebAuthnCredentials, err = creds.ListForUser(ctx, userID); err != nil {
+		return TwoFactorStatus{}, fmt.Errorf("two-factor status: %w", err)
+	}
+	usable, err := s.usableWebAuthnCredentials(ctx, creds, userID)
+	if err != nil {
+		return TwoFactorStatus{}, fmt.Errorf("two-factor status: %w", err)
+	}
+	st.UsableWebAuthnCredentials = len(usable)
+	if st.RecoveryCodesRemaining, err = store.NewRecoveryCodes(s.db).CountUnused(ctx, userID); err != nil {
+		return TwoFactorStatus{}, fmt.Errorf("two-factor status: %w", err)
+	}
+	return st, nil
+}
+
 // UsersWithTwoFactor returns the IDs of every user with a second factor,
 // for user lists.
 func (s *Service) UsersWithTwoFactor(ctx context.Context) (map[string]bool, error) {

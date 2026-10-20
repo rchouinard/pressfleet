@@ -737,6 +737,35 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/users/me/two-factor:
+    get:
+      operationId: getTwoFactorStatus
+      tags: [auth]
+      summary: Get the current user's second factors
+      description: |
+        Returns what the user has of each second factor: the authenticator
+        app (confirmed, or an unconfirmed one waiting for its code), every
+        security key and passkey with how many are usable, the recovery
+        codes left, and the current relying party ID (`rp_id`). Credentials
+        bound to another relying party ID, from a previous dashboard
+        domain, are listed but can't be used.
+
+        It holds no secrets and starts no WebAuthn challenge. Sessions that
+        must enroll a second factor may call it, and so may API tokens.
+      responses:
+        "200":
+          description: The user's second factors.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TwoFactorStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/users/me/two-factor/recovery-codes:
     post:
       operationId: regenerateRecoveryCodes
@@ -5748,6 +5777,65 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/WebAuthnCredential"
+
+    TwoFactorStatus:
+      type: object
+      required: [enabled, rp_id, totp, webauthn, recovery_codes_remaining]
+      properties:
+        enabled:
+          type: boolean
+          description: Whether the user has a usable second factor, as `two_factor_enabled` on the user.
+        rp_id:
+          description: |
+            The relying party ID (dashboard domain) security keys and
+            passkeys must be bound to. Null while they are unavailable, when
+            the dashboard domain isn't a valid relying party ID; then no
+            credential is usable.
+          oneOf:
+            - type: string
+              examples: ["dashboard.example.com"]
+            - type: "null"
+        totp:
+          $ref: "#/components/schemas/TotpStatus"
+        webauthn:
+          type: object
+          required: [credentials, usable]
+          properties:
+            credentials:
+              type: array
+              description: Every credential, oldest first, those bound to another `rp_id` included.
+              items:
+                $ref: "#/components/schemas/WebAuthnCredential"
+            usable:
+              type: integer
+              minimum: 0
+              description: How many of the credentials are bound to `rp_id`, and so can be used.
+        recovery_codes_remaining:
+          type: integer
+          minimum: 0
+          description: How many unused recovery codes the user has.
+
+    TotpStatus:
+      type: object
+      description: The user's authenticator app. The secret is never returned.
+      required: [confirmed, confirmed_at, pending_expires_at]
+      properties:
+        confirmed:
+          type: boolean
+          description: Whether the user has a confirmed authenticator app, which is a second factor.
+        confirmed_at:
+          description: When it was confirmed; null without one.
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        pending_expires_at:
+          description: |
+            When an unconfirmed authenticator app, started with `POST
+            /api/v1/users/me/two-factor/totp`, expires unless confirmed;
+            null without one. It isn't a second factor.
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
 
     WebAuthnCredentialRegistered:
       type: object

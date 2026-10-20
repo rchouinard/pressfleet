@@ -4,8 +4,9 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import TwoFactorSettings from '../app/components/two-factor/TwoFactorSettings.vue'
 import ProblemAlert from '../app/components/ProblemAlert.vue'
 import { ApiError } from '../app/utils/api-error'
+import { createApiClient } from '../app/utils/api-client'
 import { LAST_SECOND_FACTOR_PROBLEM_TYPE } from '../app/utils/two-factor'
-import type { TotpEnrollment, TwoFactorClient, WebAuthnCredential } from '../app/utils/two-factor-settings'
+import { twoFactorClient, type TotpEnrollment, type TwoFactorClient, type TwoFactorStatus, type WebAuthnCredential } from '../app/utils/two-factor-settings'
 import { WebAuthnError, type AttestationJSON, type CreationOptionsJSON } from '../app/utils/webauthn'
 import { uiStubs } from './stubs'
 
@@ -66,10 +67,26 @@ const cred = (over: Partial<WebAuthnCredential> = {}): WebAuthnCredential => ({
 const apiError = (status: number, extra: Partial<ConstructorParameters<typeof ApiError>[0]> = {}) =>
   new ApiError({ type: 'about:blank', title: `HTTP ${status}`, status, ...extra })
 
-function fakeClient(over: Partial<TwoFactorClient> = {}) {
+// What the fake server says the user has; tests change it as calls succeed.
+function statusOf(over: { totp?: boolean, pending?: string, credentials?: WebAuthnCredential[], rpId?: string | null, codes?: number } = {}): TwoFactorStatus {
+  const credentials = over.credentials ?? []
+  const rpId = over.rpId === undefined ? RP : over.rpId
+  const usable = credentials.filter(c => c.rp_id === rpId).length
+  const enabled = !!over.totp || usable > 0
   return {
-    listCredentials: vi.fn(async () => [] as WebAuthnCredential[]),
-    factorMethods: vi.fn(async () => ['totp' as const]),
+    enabled,
+    rp_id: rpId,
+    totp: { confirmed: !!over.totp, confirmed_at: over.totp ? '2026-09-01T00:00:00Z' : null, pending_expires_at: over.pending ?? null },
+    webauthn: { credentials, usable },
+    recovery_codes_remaining: over.codes ?? (enabled ? 10 : 0),
+  }
+}
+
+function fakeClient(initial: TwoFactorStatus = statusOf(), over: Partial<TwoFactorClient> = {}) {
+  const server = { status: initial }
+  const client = {
+    server,
+    status: vi.fn(async () => JSON.parse(JSON.stringify(server.status)) as TwoFactorStatus),
     startTotp: vi.fn(async () => ({ ...enrollment })),
     confirmTotp: vi.fn(async (_code: string) => undefined as string[] | undefined),
     removeTotp: vi.fn(async () => {}),
@@ -78,17 +95,16 @@ function fakeClient(over: Partial<TwoFactorClient> = {}) {
     renameCredential: vi.fn(async (id: string, name: string) => cred({ id, name })),
     removeCredential: vi.fn(async (_id: string) => {}),
     regenerateRecoveryCodes: vi.fn(async () => CODES),
-    ...over,
   }
+  // Overrides are mocks too.
+  return { ...client, ...over } as typeof client
 }
 
-type User = { email: string, two_factor_enabled: boolean, two_factor_required: boolean, recovery_codes_remaining: number }
-const newUser: User = { email: 'ann@example.com', two_factor_enabled: false, two_factor_required: true, recovery_codes_remaining: 0 }
-const enrolledUser: User = { ...newUser, two_factor_enabled: true, recovery_codes_remaining: 10 }
+const user = { email: 'ann@example.com' }
 
-async function setup(client: TwoFactorClient, user: User = newUser, create = vi.fn(async (_o: CreationOptionsJSON, _s: AbortSignal) => attestation)) {
+async function setup(client: TwoFactorClient, create = vi.fn(async (_o: CreationOptionsJSON, _s: AbortSignal) => attestation)) {
   const wrapper = mount(TwoFactorSettings, {
-    props: { client, user, rpId: RP, create, webAuthnAvailable: true },
+    props: { client, user, create, webAuthnAvailable: true },
     global,
     attachTo: document.body,
   })
@@ -112,12 +128,60 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
+describe('TwoFactorSettings: loading', () => {
+  it('learns everything from the status read, without starting a challenge', async () => {
+    const client = fakeClient(statusOf({ totp: true, credentials: [cred()], codes: 7 }))
+    const { wrapper } = await setup(client)
+    expect(client.status).toHaveBeenCalledTimes(1)
+    expect(client.webAuthnOptions).not.toHaveBeenCalled()
+    expect(client.startTotp).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid=totp]').text()).toContain('On.')
+    expect(wrapper.find('[data-testid=credential]').text()).toContain('YubiKey 5C')
+    expect(wrapper.find('[data-testid=recovery-remaining]').text()).toContain('You have 7 unused recovery codes.')
+  })
+
+  it('tells a usable key from an authenticator app', async () => {
+    const { wrapper } = await setup(fakeClient(statusOf({ credentials: [cred()] })))
+    expect(wrapper.find('[data-testid=totp]').text()).toContain('Not set up')
+    expect(wrapper.find('[data-testid=credential]').text()).not.toContain('Can\'t be used')
+  })
+
+  it('shows a failed read with a retry', async () => {
+    const status = vi.fn<TwoFactorClient['status']>()
+      .mockRejectedValueOnce(apiError(500, { detail: 'boom' }))
+      .mockResolvedValueOnce(statusOf({ totp: true }))
+    const { wrapper } = await setup(fakeClient(statusOf(), { status }))
+    expect(wrapper.find('[role=alert]').text()).toContain('boom')
+    await click(wrapper, 'Try again')
+    expect(wrapper.find('[data-testid=totp]').text()).toContain('On.')
+  })
+})
+
+describe('twoFactorClient', () => {
+  it('loads the settings with GET /users/me/two-factor alone, never reauthentication options', async () => {
+    const requests: string[] = []
+    const api = createApiClient({
+      baseUrl: 'http://pressfleet.test',
+      fetch: async (r) => {
+        requests.push(`${r.method} ${new URL(r.url).pathname}`)
+        return new Response(JSON.stringify(statusOf({ totp: true })), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      },
+    })
+    const { wrapper } = await setup(twoFactorClient(api))
+    expect(requests).toEqual(['GET /api/v1/users/me/two-factor'])
+    expect(wrapper.find('[data-testid=totp]').text()).toContain('On.')
+  })
+})
+
 describe('TwoFactorSettings: authenticator app', () => {
   it('sets one up as the first factor and shows the recovery codes before saying it changed', async () => {
-    const client = fakeClient({ confirmTotp: vi.fn(async () => CODES) })
+    const client = fakeClient()
+    client.confirmTotp.mockImplementation(async () => {
+      client.server.status = statusOf({ totp: true })
+      return CODES
+    })
     const { wrapper } = await setup(client)
     expect(wrapper.find('[data-testid=totp]').text()).toContain('Not set up')
-    expect(client.factorMethods).not.toHaveBeenCalled()
 
     await click(wrapper, 'Set up authenticator app')
     const setup_ = dialog(wrapper, 'Set up an authenticator app')
@@ -131,6 +195,7 @@ describe('TwoFactorSettings: authenticator app', () => {
     expect(client.confirmTotp).toHaveBeenCalledWith('123456')
     expect(dialog(wrapper, 'Set up an authenticator app').exists()).toBe(false)
     expect(wrapper.find('[data-testid=totp]').text()).toContain('On.')
+    expect(wrapper.find('[data-testid=recovery-remaining]').text()).toContain('You have 10 unused')
 
     const codes = dialog(wrapper, 'Your recovery codes')
     expect(codes.findAll('[data-testid=recovery-codes] li').map(l => l.text())).toEqual(CODES)
@@ -162,10 +227,10 @@ describe('TwoFactorSettings: authenticator app', () => {
   })
 
   it('keeps the dialog open after a wrong code and starts again after it expired', async () => {
-    const confirmTotp = vi.fn<(code: string) => Promise<string[] | undefined>>()
+    const client = fakeClient()
+    client.confirmTotp
       .mockRejectedValueOnce(apiError(422, { errors: [{ field: '/code', detail: 'is incorrect' }] }))
       .mockRejectedValueOnce(apiError(404))
-    const client = fakeClient({ confirmTotp })
     const { wrapper } = await setup(client)
     await click(wrapper, 'Set up authenticator app')
     const form = () => dialog(wrapper, 'Set up an authenticator app').find('form')
@@ -186,23 +251,33 @@ describe('TwoFactorSettings: authenticator app', () => {
   })
 
   it('shows a refused start (a cancelled reauthentication) without opening the dialog', async () => {
-    const client = fakeClient({ startTotp: vi.fn(async () => {
-      throw apiError(403, { detail: 'Reauthenticate first.' })
-    }) })
+    const client = fakeClient()
+    client.startTotp.mockRejectedValue(apiError(403, { detail: 'Reauthenticate first.' }))
     const { wrapper } = await setup(client)
     await click(wrapper, 'Set up authenticator app')
     expect(dialog(wrapper, 'Set up an authenticator app').exists()).toBe(false)
     expect(wrapper.find('[role=alert]').text()).toContain('Reauthenticate first.')
   })
 
+  it('reloads the status when one was set up elsewhere since the page loaded', async () => {
+    const client = fakeClient()
+    client.startTotp.mockRejectedValue(apiError(409))
+    const { wrapper } = await setup(client)
+    client.server.status = statusOf({ totp: true })
+    await click(wrapper, 'Set up authenticator app')
+    expect(client.status).toHaveBeenCalledTimes(2)
+    expect(dialog(wrapper, 'Set up an authenticator app').exists()).toBe(false)
+    expect(wrapper.find('[data-testid=totp]').text()).toContain('On.')
+  })
+
   it('removes it, or explains why the last factor stays', async () => {
-    const removeTotp = vi.fn<() => Promise<void>>()
+    const client = fakeClient(statusOf({ totp: true }))
+    client.removeTotp
       .mockRejectedValueOnce(apiError(409, { type: LAST_SECOND_FACTOR_PROBLEM_TYPE }))
-      .mockResolvedValueOnce()
-    const client = fakeClient({ removeTotp })
-    const { wrapper } = await setup(client, enrolledUser)
-    // No usable key: the factor must be the app, without asking.
-    expect(client.factorMethods).not.toHaveBeenCalled()
+      .mockImplementationOnce(async () => {
+        client.server.status = statusOf()
+      })
+    const { wrapper } = await setup(client)
     expect(wrapper.find('[data-testid=totp]').text()).toContain('On.')
 
     await click(wrapper, 'Remove authenticator app')
@@ -213,27 +288,23 @@ describe('TwoFactorSettings: authenticator app', () => {
 
     await click(confirm(), 'Remove')
     expect(confirm().exists()).toBe(false)
-    expect(removeTotp).toHaveBeenCalledTimes(2)
-    expect(client.listCredentials).toHaveBeenCalledTimes(2)
+    expect(client.removeTotp).toHaveBeenCalledTimes(2)
+    expect(client.status).toHaveBeenCalledTimes(2)
     expect(wrapper.find('[data-testid=totp]').text()).toContain('Not set up')
     expect(wrapper.emitted('changed')).toEqual([[]])
-  })
-
-  it('asks which factors the user has when they also have a usable key', async () => {
-    const client = fakeClient({ listCredentials: vi.fn(async () => [cred()]), factorMethods: vi.fn(async () => ['webauthn' as const, 'recovery_code' as const]) })
-    const { wrapper } = await setup(client, enrolledUser)
-    expect(client.factorMethods).toHaveBeenCalledTimes(1)
-    expect(wrapper.find('[data-testid=totp]').text()).toContain('Not set up')
   })
 })
 
 describe('TwoFactorSettings: security keys and passkeys', () => {
   it('registers one as the first factor, with the options fetched when the dialog opens', async () => {
-    const client = fakeClient({
-      registerCredential: vi.fn(async (name: string) => ({ credential: cred({ id: 'new', name }), recoveryCodes: CODES })),
+    const client = fakeClient()
+    client.registerCredential.mockImplementation(async (name: string) => {
+      client.server.status = statusOf({ credentials: [cred({ id: 'new', name })] })
+      return { credential: cred({ id: 'new', name }), recoveryCodes: CODES }
     })
     const { wrapper, create } = await setup(client)
     expect(wrapper.text()).toContain('You have no security keys or passkeys.')
+    expect(client.webAuthnOptions).not.toHaveBeenCalled()
 
     await click(wrapper, 'Add security key or passkey')
     expect(client.webAuthnOptions).toHaveBeenCalledTimes(1)
@@ -245,7 +316,6 @@ describe('TwoFactorSettings: security keys and passkeys', () => {
     expect(add.text()).toContain('Enter a name')
     expect(create).not.toHaveBeenCalled()
 
-    client.listCredentials.mockResolvedValue([cred({ id: 'new', name: 'Laptop' })])
     await add.find('form input').setValue(' Laptop ')
     await add.find('form').trigger('submit')
     await flushPromises()
@@ -264,7 +334,7 @@ describe('TwoFactorSettings: security keys and passkeys', () => {
       .mockRejectedValueOnce(new WebAuthnError('The request was cancelled or timed out. Try again.'))
       .mockResolvedValueOnce(attestation)
     const client = fakeClient()
-    const { wrapper } = await setup(client, newUser, create)
+    const { wrapper } = await setup(client, create)
     await click(wrapper, 'Add security key or passkey')
     const add = dialog(wrapper, 'Add a security key or passkey')
     await add.find('form input').setValue('Key')
@@ -281,10 +351,11 @@ describe('TwoFactorSettings: security keys and passkeys', () => {
   })
 
   it('says when the server refuses the browser\'s answer or already has the key', async () => {
-    const registerCredential = vi.fn<TwoFactorClient['registerCredential']>()
+    const client = fakeClient()
+    client.registerCredential
       .mockRejectedValueOnce(apiError(422, { errors: [{ field: '/credential', detail: 'challenge expired' }] }))
       .mockRejectedValueOnce(apiError(409))
-    const { wrapper } = await setup(fakeClient({ registerCredential }))
+    const { wrapper } = await setup(client)
     await click(wrapper, 'Add security key or passkey')
     const add = dialog(wrapper, 'Add a security key or passkey')
     await add.find('form input').setValue('Key')
@@ -297,13 +368,13 @@ describe('TwoFactorSettings: security keys and passkeys', () => {
   })
 
   it('lists keys as synced or device-bound with when they were last used, and renames one', async () => {
-    const client = fakeClient({
-      listCredentials: vi.fn(async () => [
+    const client = fakeClient(statusOf({
+      credentials: [
         cred(),
         cred({ id: 'c2', name: 'Phone', backup_eligible: true, backup_state: true, last_used_at: '2026-10-01T00:00:00Z' }),
-      ]),
-    })
-    const { wrapper } = await setup(client, enrolledUser)
+      ],
+    }))
+    const { wrapper } = await setup(client)
     const [key, phone] = wrapper.findAll('[data-testid=credential]')
     expect(key!.text()).toContain('Device-bound')
     expect(key!.text()).toContain('Last used never')
@@ -323,13 +394,9 @@ describe('TwoFactorSettings: security keys and passkeys', () => {
   })
 
   it('shows a rename\'s field error next to the name', async () => {
-    const client = fakeClient({
-      listCredentials: vi.fn(async () => [cred()]),
-      renameCredential: vi.fn(async () => {
-        throw apiError(422, { errors: [{ field: '/name', detail: 'is too long' }] })
-      }),
-    })
-    const { wrapper } = await setup(client, enrolledUser)
+    const client = fakeClient(statusOf({ credentials: [cred()] }))
+    client.renameCredential.mockRejectedValue(apiError(422, { errors: [{ field: '/name', detail: 'is too long' }] }))
+    const { wrapper } = await setup(client)
     await wrapper.find('[data-testid=rename]').trigger('click')
     await flushPromises()
     const rename = dialog(wrapper, 'Rename security key or passkey')
@@ -339,11 +406,13 @@ describe('TwoFactorSettings: security keys and passkeys', () => {
   })
 
   it('removes one, and keeps the last factor with the reason', async () => {
-    const removeCredential = vi.fn<(id: string) => Promise<void>>()
+    const client = fakeClient(statusOf({ credentials: [cred()] }))
+    client.removeCredential
       .mockRejectedValueOnce(apiError(409, { type: LAST_SECOND_FACTOR_PROBLEM_TYPE, detail: 'last factor' }))
-      .mockResolvedValueOnce()
-    const client = fakeClient({ listCredentials: vi.fn(async () => [cred()]), factorMethods: vi.fn(async () => ['webauthn' as const]), removeCredential })
-    const { wrapper } = await setup(client, enrolledUser)
+      .mockImplementationOnce(async () => {
+        client.server.status = statusOf()
+      })
+    const { wrapper } = await setup(client)
     await wrapper.find('[data-testid=remove]').trigger('click')
     await flushPromises()
     const confirm = () => dialog(wrapper, 'Remove YubiKey 5C?')
@@ -351,37 +420,49 @@ describe('TwoFactorSettings: security keys and passkeys', () => {
     await click(confirm(), 'Remove')
     expect(confirm().find('[data-testid=last-factor]').text()).toContain('Add another first')
 
-    client.listCredentials.mockResolvedValue([])
     await click(confirm(), 'Remove')
-    expect(removeCredential).toHaveBeenLastCalledWith('c1')
+    expect(client.removeCredential).toHaveBeenLastCalledWith('c1')
     expect(confirm().exists()).toBe(false)
     expect(wrapper.text()).toContain('You have no security keys or passkeys.')
-    // The session in `user` is out of date until the page reloads it; that
-    // mustn't make the removed key look like an authenticator app.
     expect(wrapper.find('[data-testid=totp]').text()).toContain('Not set up')
+    expect(wrapper.find('[data-testid=recovery]').text()).toContain('when you add your first second factor')
     expect(wrapper.emitted('changed')).toEqual([[]])
   })
 
   it('shows keys from an old dashboard domain as unusable, with Remove only', async () => {
-    const client = fakeClient({ listCredentials: vi.fn(async () => [cred({ id: 'old', name: 'Old key', rp_id: 'old.example.com' })]) })
-    const { wrapper } = await setup(client, enrolledUser)
+    const client = fakeClient(statusOf({ totp: true, credentials: [cred({ id: 'old', name: 'Old key', rp_id: 'old.example.com' })] }))
+    const { wrapper } = await setup(client)
     const item = wrapper.find('[data-testid=credential]')
     expect(item.text()).toContain('Registered for old.example.com, can\'t be used')
     expect(item.text()).toContain('Can\'t be used')
     expect(item.find('[data-testid=rename]').exists()).toBe(false)
     expect(item.find('[data-testid=remove]').exists()).toBe(true)
-    // Only unusable keys: the enabled factor must be the authenticator app.
-    expect(client.factorMethods).not.toHaveBeenCalled()
-    expect(wrapper.find('[data-testid=totp]').text()).toContain('On.')
 
     await item.find('[data-testid=remove]').trigger('click')
     await flushPromises()
     expect(dialog(wrapper, 'Remove Old key?').find('.description').text()).toContain('can\'t be used on this dashboard')
   })
 
+  it('judges keys by the server\'s relying party ID, not the page\'s host', async () => {
+    const pageHost = globalThis.location.hostname
+    expect(pageHost).not.toBe(RP)
+    const client = fakeClient(statusOf({
+      credentials: [cred({ id: 'a', name: 'Current key' }), cred({ id: 'b', name: 'Host key', rp_id: pageHost })],
+    }))
+    const { wrapper } = await setup(client)
+    const [current, host] = wrapper.findAll('[data-testid=credential]')
+    expect(current!.text()).not.toContain('Can\'t be used')
+    expect(host!.text()).toContain(`Registered for ${pageHost}, can't be used`)
+  })
+
+  it('treats every key as unusable while security keys are unavailable', async () => {
+    const { wrapper } = await setup(fakeClient(statusOf({ totp: true, rpId: null, credentials: [cred()] })))
+    expect(wrapper.find('[data-testid=credential]').text()).toContain(`Registered for ${RP}, can't be used`)
+  })
+
   it('says when the browser can\'t register keys', async () => {
     const wrapper = mount(TwoFactorSettings, {
-      props: { client: fakeClient(), user: newUser, rpId: RP, webAuthnAvailable: false },
+      props: { client: fakeClient(), user, webAuthnAvailable: false },
       global,
     })
     await flushPromises()
@@ -392,8 +473,12 @@ describe('TwoFactorSettings: security keys and passkeys', () => {
 
 describe('TwoFactorSettings: recovery codes', () => {
   it('says how many are left and generates new ones after a confirmation', async () => {
-    const client = fakeClient()
-    const { wrapper } = await setup(client, { ...enrolledUser, recovery_codes_remaining: 1 })
+    const client = fakeClient(statusOf({ totp: true, codes: 1 }))
+    client.regenerateRecoveryCodes.mockImplementation(async () => {
+      client.server.status = statusOf({ totp: true })
+      return CODES
+    })
+    const { wrapper } = await setup(client)
     expect(wrapper.find('[data-testid=recovery-remaining]').text()).toContain('You have 1 unused recovery code.')
     expect(wrapper.find('[data-testid=recovery]').text()).toContain('Generate new codes so')
 
@@ -406,6 +491,7 @@ describe('TwoFactorSettings: recovery codes', () => {
 
     await click(codes, 'Done, I\'ve saved them')
     expect(wrapper.html()).not.toContain(CODES[0])
+    expect(wrapper.find('[data-testid=recovery-remaining]').text()).toContain('You have 10 unused')
     expect(wrapper.emitted('changed')).toEqual([[]])
   })
 
@@ -413,7 +499,7 @@ describe('TwoFactorSettings: recovery codes', () => {
     const writeText = vi.fn(async (_: string) => {})
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
     try {
-      const { wrapper } = await setup(fakeClient(), enrolledUser)
+      const { wrapper } = await setup(fakeClient(statusOf({ totp: true })))
       await click(wrapper.find('[data-testid=recovery]'), 'Generate new codes')
       await click(dialog(wrapper, 'Generate new recovery codes?'), 'Generate new codes')
       await wrapper.find('[data-testid=copy-codes]').trigger('click')

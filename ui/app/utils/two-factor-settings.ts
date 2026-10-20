@@ -5,21 +5,23 @@
 import type { components } from '../api/schema.gen'
 import type { ApiClient } from './api-client'
 import { formatTimestamp } from './tokens'
-import { factorChallenge, type FactorMethod } from './two-factor'
 import type { AttestationJSON, CreationOptionsJSON } from './webauthn'
 
 export type WebAuthnCredential = components['schemas']['WebAuthnCredential']
 export type TotpEnrollment = components['schemas']['TotpEnrollment']
+export type TwoFactorStatus = components['schemas']['TwoFactorStatus']
 
 /** The longest name the API takes for a security key or passkey. */
 export const CREDENTIAL_NAME_MAX = 100
 
 /** The requests behind the two-factor settings. Each throws ApiError. */
 export interface TwoFactorClient {
-  /** Every security key and passkey, unusable ones from an old dashboard domain included. */
-  listCredentials(): Promise<WebAuthnCredential[]>
-  /** The second factors the user can sign in with now. */
-  factorMethods(): Promise<FactorMethod[]>
+  /**
+   * What the user has of each factor, every security key and passkey
+   * (unusable ones from an old dashboard domain included), and the current
+   * relying party ID. One read, which starts no WebAuthn challenge.
+   */
+  status(): Promise<TwoFactorStatus>
   /** A new, unconfirmed authenticator app secret; it replaces an unconfirmed one. */
   startTotp(): Promise<TotpEnrollment>
   /** Turns the authenticator app on; returns recovery codes for the first factor. */
@@ -40,15 +42,10 @@ export interface TwoFactorClient {
 export function twoFactorClient(api: ApiClient): TwoFactorClient {
   const credentialPath = (id: string) => ({ params: { path: { webauthn_credential_id: id } } })
   return {
-    async listCredentials() {
-      const { data } = await api.GET('/api/v1/users/me/two-factor/webauthn')
-      return data?.items ?? []
-    },
-    async factorMethods() {
-      // The API has no "which factors do I have" call; the reauthentication
-      // options list exactly the factors a check would accept.
-      const { data } = await api.POST('/api/v1/auth/reauthenticate/options')
-      return factorChallenge({ methods: data?.methods, webauthn: data?.webauthn }).methods
+    async status() {
+      const { data } = await api.GET('/api/v1/users/me/two-factor')
+      if (!data) throw new Error('The two-factor status response was empty.')
+      return data
     },
     async startTotp() {
       const { data } = await api.POST('/api/v1/users/me/two-factor/totp')
@@ -89,10 +86,13 @@ export function twoFactorClient(api: ApiClient): TwoFactorClient {
 /**
  * Whether a credential can be used here. Credentials are bound to the
  * dashboard domain they were registered on (`rp_id`); after the domain
- * changes the old ones are listed but can't sign in.
+ * changes the old ones are listed but can't sign in. `rpId` is the server's
+ * current one (TwoFactorStatus), not the page's host, which a proxy or
+ * another name for the dashboard can make differ; null while security keys
+ * are unavailable, when none can be used.
  */
-export function isUsable(credential: Pick<WebAuthnCredential, 'rp_id'>, rpId: string): boolean {
-  return credential.rp_id === rpId
+export function isUsable(credential: Pick<WebAuthnCredential, 'rp_id'>, rpId: string | null): boolean {
+  return rpId !== null && credential.rp_id === rpId
 }
 
 export interface CredentialState {
@@ -105,7 +105,7 @@ export interface CredentialState {
 }
 
 /** What the list says about a credential. Never by colour alone: each has a label and icon. */
-export function credentialState(credential: WebAuthnCredential, rpId: string): CredentialState {
+export function credentialState(credential: WebAuthnCredential, rpId: string | null): CredentialState {
   const synced = credential.backup_eligible
   const usable = isUsable(credential, rpId)
   return {
@@ -116,22 +116,6 @@ export function credentialState(credential: WebAuthnCredential, rpId: string): C
       ? `Last used ${formatTimestamp(credential.last_used_at, 'never')}`
       : `Registered for ${credential.rp_id}, can't be used`,
   }
-}
-
-/**
- * Whether the user has an authenticator app, from what is cheap to know:
- * without any second factor they don't; with one but no usable key it must
- * be the app. Otherwise only `factorMethods` can tell, so it is asked.
- */
-export async function hasAuthenticatorApp(
-  twoFactorEnabled: boolean,
-  credentials: readonly WebAuthnCredential[],
-  rpId: string,
-  factorMethods: () => Promise<FactorMethod[]>,
-): Promise<boolean> {
-  if (!twoFactorEnabled) return false
-  if (!credentials.some(c => isUsable(c, rpId))) return true
-  return (await factorMethods()).includes('totp')
 }
 
 /** A name for a new credential, checked like the API does; the server's 422 is shown as well. */

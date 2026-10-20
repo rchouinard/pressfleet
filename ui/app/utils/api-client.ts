@@ -1,7 +1,7 @@
 import createClient, { type Middleware } from 'openapi-fetch'
 import type { paths } from '../api/schema.gen'
 import { ApiError, problemFromResponse } from './api-error'
-import { isReauthenticationRequired } from './two-factor'
+import { isEnrollmentRequired, isReauthenticationRequired } from './two-factor'
 
 export type ApiClient = ReturnType<typeof createClient<paths>>
 
@@ -23,6 +23,14 @@ export interface ApiClientOptions {
    * wait for it instead of asking again.
    */
   onReauthenticationRequired?: (error: ApiError) => Promise<boolean>
+  /**
+   * Called when a request is refused because the session must enroll a
+   * second factor first (`403` with the enrollment problem type), e.g. to go
+   * to the setup page at once rather than on the next navigation. The
+   * ApiError is still thrown. Refusals while one call is pending share it,
+   * so requests failing together send the user there once.
+   */
+  onEnrollmentRequired?: (error: ApiError) => Promise<void> | void
   /**
    * Called with false when a request never got an answer (network failure)
    * and with true when any response arrives, so the shell can show an
@@ -77,6 +85,17 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
     return reauthenticating
   }
 
+  // Likewise one enrollment redirect at a time.
+  let enrolling: Promise<void> | undefined
+  function enrollmentRequired(error: ApiError) {
+    enrolling ??= Promise.resolve()
+      .then(() => options.onEnrollmentRequired!(error))
+      .catch(() => undefined)
+      .finally(() => {
+        enrolling = undefined
+      })
+  }
+
   const client = createClient<paths>({
     baseUrl: options.baseUrl ?? globalThis.location?.origin ?? '',
     // The session cookie is HttpOnly and same-origin; never send it elsewhere.
@@ -110,6 +129,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       if (response.ok) return undefined
       const error = await problemFromResponse(response)
       if (response.status === 401) options.onUnauthorized?.(error)
+      if (options.onEnrollmentRequired && isEnrollmentRequired(error)) enrollmentRequired(error)
       throw error
     },
   }

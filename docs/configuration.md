@@ -427,11 +427,13 @@ For a user with a second factor, `POST /api/v1/auth/login` with the right passwo
 
 Each recovery code works once. `GET /api/v1/auth/me` reports how many are left, and `POST /api/v1/users/me/two-factor/recovery-codes`, from a dashboard session, replaces the set.
 
+`GET /api/v1/users/me/two-factor` sums up a user's second factors in one read: whether they have one, their authenticator app (confirmed, or an unconfirmed one with when it expires), every security key and passkey with how many are usable, the recovery codes left, and the current relying party ID (`rp_id`, null while security keys are unavailable). It returns no secrets and starts no WebAuthn challenge, so restricted sessions (below) and API tokens may read it.
+
 ### Two-factor enrollment required
 
 When `two_factor.required` covers a user's role (`admins` for Admins, `all` for everyone) and the user has no second factor, they still log in with their password alone, but their dashboard session is restricted until they enroll one: it may only view the user (`GET /api/v1/auth/me`), log out, and enroll. Every other request answers `403 Forbidden` with the problem type `https://github.com/rchouinard/pressfleet/blob/main/docs/configuration.md#two-factor-enrollment-required`. `GET /api/v1/auth/me` reports `two_factor_required` (the policy covers the user's role) and `enrollment_required` (it does, and the user has no second factor). Recovery codes don't count as a second factor, and neither do security keys and passkeys registered under a previous `dashboard_domain`.
 
-This is decided on every request, not when the session starts, so it follows the user's current role and factors: an Operator promoted to Admin under `admins` is restricted from their next request until they enroll, and a session gets full access as soon as its user has a factor. API tokens and SSH keys are never restricted, so turning the setting on doesn't break automation that uses tokens of users who haven't enrolled.
+This is decided on every request, not when the session starts, so it follows the user's current role and factors: an Operator promoted to Admin under `admins` is restricted from their next request until they enroll (the dashboard then goes straight to its setup page), and a session gets full access as soon as its user has a factor. API tokens and SSH keys are never restricted, so turning the setting on doesn't break automation that uses tokens of users who haven't enrolled.
 
 ### Keeping the last second factor
 

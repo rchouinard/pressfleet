@@ -13,7 +13,12 @@
 // while its dialog is open, and new recovery codes only in `codes` while
 // theirs is; closing drops them. Neither is stored, put in a URL or logged.
 //
-// `changed` asks the page to reload the session (factors, codes left,
+// What the user has comes from one read (`client.status()`, GET
+// /users/me/two-factor), loaded on mount and again after each change. It
+// starts no WebAuthn challenge, and its `rp_id` (not the page's host) decides
+// which keys are from an old dashboard domain.
+//
+// `changed` asks the page to reload the session (two_factor_enabled,
 // enrollment). After a first factor it waits until the recovery codes are
 // closed, so the enrollment page doesn't move on while they are on screen.
 // Nuxt-free: the requests come in as `client`, so it is tested with mount.
@@ -22,10 +27,11 @@ import { toApiError, type ApiError } from '../../utils/api-error'
 import { isLastSecondFactor, normalizeCode } from '../../utils/two-factor'
 import {
   CREDENTIAL_NAME_MAX,
-  hasAuthenticatorApp,
+  isUsable,
   validateCredentialName,
   type TotpEnrollment,
   type TwoFactorClient,
+  type TwoFactorStatus,
   type WebAuthnCredential,
 } from '../../utils/two-factor-settings'
 import { createCredential, webAuthnSupported, WebAuthnError, type AttestationJSON, type CreationOptionsJSON } from '../../utils/webauthn'
@@ -38,9 +44,7 @@ import TwoFactorRecoveryCodes from './TwoFactorRecoveryCodes.vue'
 
 const props = withDefaults(defineProps<{
   client: TwoFactorClient
-  user: { email: string, two_factor_enabled: boolean, two_factor_required: boolean, recovery_codes_remaining: number }
-  /** The dashboard domain credentials must be registered for (WebAuthn's relying party ID). */
-  rpId: string
+  user: { email: string }
   /** The heading level of the three parts, to fit the page's outline. */
   level?: 2 | 3
   /** Makes the WebAuthn credential; tests replace it. */
@@ -55,27 +59,20 @@ const heading = computed(() => `h${props.level}`)
 const LAST_FACTOR_MESSAGE = 'Your role requires a second factor, so you can\'t remove your last one. Add another first, then remove this one.'
 
 // What the user has.
-const credentials = ref<WebAuthnCredential[]>([])
-const totp = ref(false)
+const factors = ref<TwoFactorStatus>()
+const credentials = computed(() => factors.value?.webauthn.credentials ?? [])
+const totp = computed(() => factors.value?.totp.confirmed ?? false)
+const rpId = computed(() => factors.value?.rp_id ?? null)
 const loading = ref(true)
 const loadError = ref<ApiError>()
 // A short confirmation of the last change, for screen readers too.
 const status = ref('')
 
-// Whether there is an authenticator app is worked out once (see
-// hasAuthenticatorApp) and then kept up to date here: the session in
-// `user` is only reloaded after `changed`, so it can be out of date.
 async function load() {
   loading.value = true
   loadError.value = undefined
   try {
-    credentials.value = await props.client.listCredentials()
-    try {
-      totp.value = await hasAuthenticatorApp(props.user.two_factor_enabled, credentials.value, props.rpId, props.client.factorMethods)
-    } catch {
-      // Unknown: offer the setup, whose 409 then tells.
-      totp.value = false
-    }
+    factors.value = await props.client.status()
   } catch (e) {
     loadError.value = toApiError(e)
   } finally {
@@ -84,10 +81,10 @@ async function load() {
 }
 onMounted(load)
 
-// After a change: the list only, and a failure doesn't hide the settings.
-async function reloadCredentials() {
+// After a change, and a failure doesn't hide the settings.
+async function reload() {
   try {
-    credentials.value = await props.client.listCredentials()
+    factors.value = await props.client.status()
   } catch (e) {
     loadError.value = toApiError(e)
   }
@@ -153,8 +150,8 @@ async function startTotp() {
     if (err.status === 409) {
       // It was set up elsewhere since the page loaded.
       totpSetup.value = undefined
-      totp.value = true
       status.value = 'You already have an authenticator app.'
+      await reload()
     } else if (totpSetup.value) {
       totpError.value = err
     } else {
@@ -173,8 +170,8 @@ async function confirmTotp() {
   try {
     const recovery = await props.client.confirmTotp(code)
     closeTotp()
-    totp.value = true
     status.value = 'Authenticator app turned on.'
+    await reload()
     if (recovery?.length) codes.value = recovery
     changed()
   } catch (e) {
@@ -183,7 +180,7 @@ async function confirmTotp() {
     if (err.status === 404) totpExpired.value = true
     else if (err.status === 409) {
       closeTotp()
-      totp.value = true
+      await reload()
       changed()
     } else totpError.value = err
   } finally {
@@ -248,7 +245,7 @@ async function addCredential() {
     const result = await props.client.registerCredential(addName.value.trim(), credential)
     addOpen.value = false
     status.value = `${result.credential.name} added.`
-    await reloadCredentials()
+    await reload()
     if (result.recoveryCodes?.length) codes.value = result.recoveryCodes
     changed()
   } catch (e) {
@@ -296,14 +293,15 @@ async function rename() {
   renameProblem.value = undefined
   try {
     const updated = await props.client.renameCredential(target.id, renameName.value.trim())
-    credentials.value = credentials.value.map(c => (c.id === updated.id ? updated : c))
+    const webauthn = factors.value?.webauthn
+    if (webauthn) webauthn.credentials = webauthn.credentials.map(c => (c.id === updated.id ? updated : c))
     renaming.value = undefined
     status.value = `Renamed to ${updated.name}.`
   } catch (e) {
     const err = toApiError(e)
     if (err.status === 404) {
       renaming.value = undefined
-      await reloadCredentials()
+      await reload()
       return
     }
     renameError.value = err.fieldError('/name')
@@ -332,7 +330,7 @@ const removeTitle = computed(() => {
 })
 const removeDescription = computed(() => {
   const r = removing.value
-  if (r?.kind === 'webauthn' && r.credential.rp_id !== props.rpId) return 'It can\'t be used on this dashboard any more.'
+  if (r?.kind === 'webauthn' && !isUsable(r.credential, rpId.value)) return 'It can\'t be used on this dashboard any more.'
   return 'It no longer signs you in, and your other sessions are signed out. Your API tokens keep working.'
 })
 
@@ -352,17 +350,15 @@ async function remove() {
     if (target.kind === 'totp') await props.client.removeTotp()
     else await props.client.removeCredential(target.credential.id)
     removing.value = undefined
-    if (target.kind === 'totp') totp.value = false
     status.value = target.kind === 'totp' ? 'Authenticator app removed.' : `${target.credential.name} removed.`
-    await reloadCredentials()
+    await reload()
     changed()
   } catch (e) {
     const err = toApiError(e)
     if (err.status === 404) {
       // Already gone: the list was stale, not the request wrong.
       removing.value = undefined
-      if (target.kind === 'totp') totp.value = false
-      await reloadCredentials()
+      await reload()
       changed()
     } else if (isLastSecondFactor(err)) removeLastFactor.value = true
     else removeError.value = err
@@ -390,6 +386,7 @@ async function regenerate() {
     regenerateOpen.value = false
     codes.value = fresh
     status.value = 'New recovery codes generated. The old ones no longer work.'
+    await reload()
     changed()
   } catch (e) {
     regenerateError.value = toApiError(e)
@@ -398,7 +395,8 @@ async function regenerate() {
   }
 }
 
-const host = computed(() => props.rpId)
+// Names the dashboard in the recovery codes file.
+const host = computed(() => rpId.value ?? globalThis.location?.hostname ?? '')
 </script>
 
 <template>
@@ -434,12 +432,12 @@ const host = computed(() => props.rpId)
 
       <div id="recovery-codes" class="scroll-mt-20 space-y-2" data-testid="recovery">
         <component :is="heading" class="font-medium">Recovery codes</component>
-        <template v-if="user.two_factor_enabled">
+        <template v-if="factors?.enabled">
           <p class="text-sm" data-testid="recovery-remaining">
-            You have {{ user.recovery_codes_remaining }} unused recovery {{ user.recovery_codes_remaining === 1 ? 'code' : 'codes' }}.
+            You have {{ factors.recovery_codes_remaining }} unused recovery {{ factors.recovery_codes_remaining === 1 ? 'code' : 'codes' }}.
             Each one signs you in once if you lose your second factors.
           </p>
-          <p v-if="user.recovery_codes_remaining <= 2" class="flex items-center gap-1.5 text-sm text-warning">
+          <p v-if="factors.recovery_codes_remaining <= 2" class="flex items-center gap-1.5 text-sm text-warning">
             <UIcon name="i-lucide-triangle-alert" class="size-4 shrink-0" aria-hidden="true" />
             Generate new codes so you can still sign in without your second factor.
           </p>

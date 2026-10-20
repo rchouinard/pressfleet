@@ -340,6 +340,34 @@ export interface paths {
         patch: operations["updateUser"];
         trace?: never;
     };
+    "/api/v1/users/me/two-factor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the current user's second factors
+         * @description Returns what the user has of each second factor: the authenticator
+         *     app (confirmed, or an unconfirmed one waiting for its code), every
+         *     security key and passkey with how many are usable, the recovery
+         *     codes left, and the current relying party ID (`rp_id`). Credentials
+         *     bound to another relying party ID, from a previous dashboard
+         *     domain, are listed but can't be used.
+         *
+         *     It holds no secrets and starts no WebAuthn challenge. Sessions that
+         *     must enroll a second factor may call it, and so may API tokens.
+         */
+        get: operations["getTwoFactorStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/users/me/two-factor/recovery-codes": {
         parameters: {
             query?: never;
@@ -3365,6 +3393,39 @@ export interface components {
         WebAuthnCredentialList: {
             items: components["schemas"]["WebAuthnCredential"][];
         };
+        TwoFactorStatus: {
+            /** @description Whether the user has a usable second factor, as `two_factor_enabled` on the user. */
+            enabled: boolean;
+            /**
+             * @description The relying party ID (dashboard domain) security keys and
+             *     passkeys must be bound to. Null while they are unavailable, when
+             *     the dashboard domain isn't a valid relying party ID; then no
+             *     credential is usable.
+             */
+            rp_id: string | null;
+            totp: components["schemas"]["TotpStatus"];
+            webauthn: {
+                /** @description Every credential, oldest first, those bound to another `rp_id` included. */
+                credentials: components["schemas"]["WebAuthnCredential"][];
+                /** @description How many of the credentials are bound to `rp_id`, and so can be used. */
+                usable: number;
+            };
+            /** @description How many unused recovery codes the user has. */
+            recovery_codes_remaining: number;
+        };
+        /** @description The user's authenticator app. The secret is never returned. */
+        TotpStatus: {
+            /** @description Whether the user has a confirmed authenticator app, which is a second factor. */
+            confirmed: boolean;
+            /** @description When it was confirmed; null without one. */
+            confirmed_at: components["schemas"]["Timestamp"] | null;
+            /**
+             * @description When an unconfirmed authenticator app, started with `POST
+             *     /api/v1/users/me/two-factor/totp`, expires unless confirmed;
+             *     null without one. It isn't a second factor.
+             */
+            pending_expires_at: components["schemas"]["Timestamp"] | null;
+        };
         WebAuthnCredentialRegistered: {
             credential: components["schemas"]["WebAuthnCredential"];
             /**
@@ -5923,6 +5984,29 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             422: components["responses"]["UnprocessableContent"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getTwoFactorStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The user's second factors. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TwoFactorStatus"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             default: components["responses"]["Error"];
         };
     };

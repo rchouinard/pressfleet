@@ -92,6 +92,38 @@ export function enrollmentRedirect(
   return undefined
 }
 
+/** Whether the error refuses a request because the session must enroll a second factor first. */
+export function isEnrollmentRequired(error: ApiError): boolean {
+  return error.status === 403 && error.type === ENROLLMENT_REQUIRED_PROBLEM_TYPE
+}
+
+type Route = Parameters<typeof enrollmentRedirect>[1]
+
+/**
+ * The API client's `onEnrollmentRequired` hook (wired in useApi): a session
+ * that became restricted mid-use (a promotion under `two_factor.required:
+ * admins`, a policy change) goes to ENROLLMENT_PAGE at once, with the page
+ * it was on as `redirect`, instead of meeting 403s until the next
+ * navigation. The session is reloaded first, so the route guard sees
+ * `enrollment_required` and lets the setup page open. Already there, or
+ * signed out (the 401 handling takes over), it does nothing; the client
+ * shares one call between refusals that arrive together.
+ */
+export function enrollmentRequiredHandler(deps: {
+  route: () => Route
+  refresh: () => Promise<{ enrollment_required: boolean } | null>
+  replace: (to: NonNullable<ReturnType<typeof enrollmentRedirect>>) => Promise<unknown>
+}): () => Promise<void> {
+  return async () => {
+    const from = deps.route()
+    if (from.path === ENROLLMENT_PAGE) return
+    const user = await deps.refresh()
+    if (!user) return
+    const to = enrollmentRedirect(user, from)
+    if (to) await deps.replace(to)
+  }
+}
+
 /** Whether the error asks the session to reauthenticate before a sensitive action. */
 export function isReauthenticationRequired(error: ApiError): boolean {
   return error.status === 403 && error.type === REAUTHENTICATION_REQUIRED_PROBLEM_TYPE
