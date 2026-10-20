@@ -79,6 +79,7 @@ test('signs in with a recovery code, which works only once', async ({ asRole, ad
   const { page, user, api } = await asRole('viewer')
   const { recoveryCodes } = await enrollTotp(api)
   const [code, next] = recoveryCodes
+  await page.goto('/account')
   await signOut(page)
 
   await page.goto('/sites')
