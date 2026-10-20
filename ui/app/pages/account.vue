@@ -1,9 +1,11 @@
 <script setup lang="ts">
-// The signed-in user's account: who they are, their password, their API
-// tokens (create, revoke), and sign out. A new token's secret is held in
-// `secret` only while the dialog is open; closing the dialog drops it. It is
-// never stored, put in a URL or logged.
+// The signed-in user's account: who they are, their password, two-factor
+// settings, their API tokens (create, revoke), and sign out. A new token's
+// secret is held in `secret` only while the dialog is open; closing the
+// dialog drops it. It is never stored, put in a URL or logged. The
+// two-factor section (TwoFactorSettings) treats its secrets the same way.
 import { toApiError, type ApiError } from '../utils/api-error'
+import { twoFactorClient } from '../utils/two-factor-settings'
 import { DISPLAY_NAME_MAX, roleColors, validateDisplayName, type PasswordChange } from '../utils/users'
 import { formatTimestamp, type ApiToken, type ApiTokenCreate } from '../utils/tokens'
 
@@ -157,6 +159,11 @@ async function changePassword(body: PasswordChange) {
   }
 }
 
+// Two-factor settings. Credentials are bound to the dashboard domain, which
+// is the host this page is served from.
+const twoFactor = twoFactorClient(api)
+const rpId = useRequestURL().hostname
+
 const signingOut = ref(false)
 async function signOut() {
   signingOut.value = true
@@ -213,6 +220,15 @@ async function signOut() {
         <UserPasswordChangeForm :submitting="changingPassword" :error="passwordError" :done="passwordAttempts" @submit="changePassword" />
       </section>
     </IfCan>
+
+    <section id="two-factor" aria-labelledby="two-factor-heading" class="scroll-mt-20 space-y-3">
+      <h2 id="two-factor-heading" class="font-medium">Two-factor authentication</h2>
+      <p class="text-sm text-muted">
+        <template v-if="user?.two_factor_required">Your role requires a second factor when you sign in.</template>
+        A second factor keeps your account safe if your password leaks. You can use an authenticator app, security keys and passkeys, or both.
+      </p>
+      <TwoFactorSettings v-if="user" :client="twoFactor" :user="user" :rp-id="rpId" @changed="refreshSession()" />
+    </section>
 
     <section aria-labelledby="tokens-heading" class="space-y-3">
       <div class="flex flex-wrap items-center justify-between gap-3">
