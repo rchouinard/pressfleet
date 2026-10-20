@@ -172,6 +172,7 @@ Design doc §6.2 and docs/configuration.md "Dashboard two-factor authentication"
 
 - `useNotify()`: `error(e)` (ApiError with request ID, plain wording for 401/403/429/network), `success()`, `info()`, `jobStarted(job)` (toast with a "View progress" action). `utils/notify.ts` holds the formatting. Field errors still belong next to their fields.
 - `plugins/errors.client.ts` turns unhandled rejections and render errors into a toast. `error.vue` renders 403, 404, 5xx and unreachable states inside the shell for signed-in users. `AppNetworkBanner` shows when the browser is offline or a request failed at the network level, and clears on the next answer.
+- `plugins/chunk-reload.client.ts` reloads the page once when a script chunk fails to load before the first page has rendered (Nuxt's `app:chunkError`), which would otherwise leave it blank; a `sessionStorage` flag (`utils/chunk-reload.ts`) stops a chunk that keeps failing from looping, and is cleared once a page renders.
 
 ### Job progress
 

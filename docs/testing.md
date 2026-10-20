@@ -232,15 +232,34 @@ The dashboard's end-to-end tests are [Playwright](https://playwright.dev) specs 
 
 A Go test, `TestDashboard` in `control-plane/internal/e2e/dashboard`, owns the platform and runs the suite:
 
-1. It calls `e2e.StartWithControlPlaneMemory` (skipped unless `PRESSFLEET_DOCKER_TESTS=1` and `PRESSFLEET_TEST_CONTROL_PLANE_IMAGE` are set), which is `e2e.Start` with a 512 MiB control plane: the specs run in parallel, and several sites' jobs, logins, and restic at once don't fit the default 192 MiB (see below). It restarts the control plane with 5-second metrics and alert evaluation intervals, as `TestM4Acceptance` does, makes the site images for the default PHP version and one other available with `e2e.EnsureImages`, and starts the **harness server**, a small HTTP server on a loopback port (see below).
-2. It runs `pnpm exec playwright test` in `ui/` with the platform's details in the environment (read by `ui/e2e/env.ts`): `PRESSFLEET_E2E_BASE_URL` (`https://fleet.e2e.test`), `PRESSFLEET_E2E_INGRESS_ADDR` (Traefik's published HTTPS port), `PRESSFLEET_E2E_API_URL` (the control plane's published port), `PRESSFLEET_E2E_HARNESS_URL`, the admin's email and password, `PRESSFLEET_E2E_PHP_VERSION`, and `PRESSFLEET_E2E_OTHER_PHP_VERSION` (for changing a site's PHP version).
-3. When the suite ends, pass or fail, the usual e2e teardown runs: `docker compose down --volumes` and a check that nothing with the project's label is left. Before it, the test lists the sites that still exist and removes their projects afterwards, so a spec that failed halfway leaves nothing behind either. If the suite failed, the platform's container logs are written to `ui/test-results/platform-logs.txt` too, next to Playwright's traces and screenshots.
+1. It calls `e2e.StartWithControlPlaneMemory` (skipped unless `PRESSFLEET_DOCKER_TESTS=1` and `PRESSFLEET_TEST_CONTROL_PLANE_IMAGE` are set), which is `e2e.Start` with a 512 MiB control plane: the specs run in parallel, and several sites' jobs, logins, and restic at once don't fit the default 192 MiB (see below). It restarts the control plane with 5-second metrics and alert evaluation intervals, as `TestM4Acceptance` does, makes the site images for the default PHP version and one other available with `e2e.EnsureImages`, starts the **harness server**, a small HTTP server on a loopback port (see below), and starts the **browser server**, Chromium in a container of its own (see [Where the browser runs](#where-the-browser-runs)).
+2. It runs `pnpm exec playwright test` in `ui/` with the platform's details in the environment (read by `ui/e2e/env.ts`): `PRESSFLEET_E2E_BASE_URL` (`https://fleet.e2e.test`), `PRESSFLEET_E2E_INGRESS_ADDR` (Traefik's published HTTPS port), `PRESSFLEET_E2E_BROWSER_ENDPOINT` (the browser server's WebSocket URL), `PRESSFLEET_E2E_BROWSER_INGRESS_ADDR` (Traefik's HTTPS address on the platform network, where the browser reaches it), `PRESSFLEET_E2E_API_URL` (the control plane's published port), `PRESSFLEET_E2E_HARNESS_URL`, the admin's email and password, `PRESSFLEET_E2E_PHP_VERSION`, and `PRESSFLEET_E2E_OTHER_PHP_VERSION` (for changing a site's PHP version).
+3. When the suite ends, pass or fail, the usual e2e teardown runs: `docker compose down --volumes` and a check that nothing with the project's label is left. Before it, the test lists the sites that still exist and removes their projects afterwards, so a spec that failed halfway leaves nothing behind either. If the suite failed, the platform's container logs are written to `ui/test-results/platform-logs.txt` too, and the browser server's to `ui/test-results/browser-logs.txt`, next to Playwright's traces and screenshots. The browser server is removed before the platform, whose network it is on.
 
 This way round (Go starts Playwright, rather than a Playwright global setup starting a Go command) keeps one owner for the platform's lifetime, so teardown runs through `t.Cleanup` like every other e2e test, and keeps all Docker access in Go, through `compose.Project`: nothing in the specs runs the `docker` CLI (design doc §4.2). It lives in its own package so `make test-e2e` (the API suite, `./control-plane/internal/e2e/`) doesn't need Node.js or a browser.
 
-The browser reaches the dashboard by its real name. `playwright.config.ts` launches Chromium with `--host-resolver-rules=MAP fleet.e2e.test:443 <Traefik's HTTPS address>`, so the page's origin is `https://fleet.e2e.test` exactly as in production, and `ignoreHTTPSErrors` accepts Traefik's self-signed default certificate (the harness never asks a CA for one). It maps the sites' test domains to Traefik the same way, so a tab opened on a site (one-click wp-admin login) loads. It also turns off QUIC (only Traefik's TCP ports are published), HTTP/2, and any proxy the environment sets (the page needs no other origin).
+The browser reaches the dashboard by its real name. `playwright.config.ts` launches Chromium with `--host-resolver-rules=MAP fleet.e2e.test:443 <Traefik's HTTPS address>`, so the page's origin is `https://fleet.e2e.test` exactly as in production, and `ignoreHTTPSErrors` accepts Traefik's self-signed default certificate (the harness never asks a CA for one). It maps the sites' test domains to Traefik the same way, so a tab opened on a site (one-click wp-admin login) loads. It also turns off QUIC (only Traefik's TCP ports are reachable) and any proxy the environment sets (the page needs no other origin). The browser speaks HTTP/2 to Traefik, as it does in production.
 
-**Network changes and retries.** When a site's first container starts or its last one stops, Docker changes the host's networks, and Chromium aborts requests in flight with `net::ERR_NETWORK_CHANGED`: a page can lose a script and stay blank. Chromium has no switch to turn this off. Until the browser runs in a network namespace of its own, the suite works around it: HTTP/1.1 instead of HTTP/2 (an aborted HTTP/2 connection takes every request on it; the Go suite still checks that Traefik serves HTTP/2), specs that don't test deletion leave their sites for the teardown rather than deleting them mid-run, and `retries: 1` in `playwright.config.ts`. A test that passes on its retry is reported as *flaky*; one that fails twice fails the run.
+### Where the browser runs
+
+**Network changes.** When a site's first container starts or its last one stops, Docker adds or removes a bridge network on the host. A Chromium on the host sees every such change and aborts the requests it has in flight with `net::ERR_NETWORK_CHANGED`: a page loses a script chunk and stays blank, or a download is cancelled. Chromium has no switch to turn this off, and with specs provisioning sites in parallel it hit about one test per run (#179).
+
+So Chromium runs where those changes can't reach it: in a container, with a network namespace of its own. `TestDashboard` starts it (`browser_test.go`) as a Compose project of its own, `<platform>-browser`, through `compose.Project` like every other container the harness runs:
+
+- The image is Playwright's own, `mcr.microsoft.com/playwright:v<version>-noble`, with `<version>` read from `ui/node_modules/@playwright/test`, so it always has the browsers the installed Playwright expects. It is pulled on first use (about 3.6 GB unpacked).
+- It runs Playwright's browser server, `playwright run-server`, from `ui/node_modules` mounted read-only at the same path: exactly the Playwright the test runner uses. The server's port is published on loopback only. It runs with `--unsafe`, which lets clients pass Chromium's arguments; the suite needs `--host-resolver-rules`.
+- It is on the platform network, so the browser sends the dashboard domain and the sites' test domains to Traefik's address there (`PRESSFLEET_E2E_BROWSER_INGRESS_ADDR`). Joining Traefik's network, rather than a network of its own, means nothing changes in the browser's namespace while the suite runs: Traefik joining and leaving site networks happens in Traefik's.
+
+Only the browser moves. The test runner (`playwright test`) stays on the host and its workers connect to the server (`connectOptions` in `playwright.config.ts`). The specs' own requests (the API through `adminApi`, the harness server, `login`) still go out from the host, so the harness server stays on its loopback port, and traces, screenshots, and the HTML report are written to `ui/` by the runner as before. Uploads (`setInputFiles`) and downloads travel over the connection.
+
+Why this and not the alternatives:
+
+- **Chromium in a network namespace on the host** (`unshare --net` with a veth pair) needs root, or unprivileged user namespaces, which Ubuntu 24.04, GitHub's `ubuntu-latest`, restricts by default (`kernel.apparmor_restrict_unprivileged_userns`). It also needs a forwarder into the namespace, since Traefik's ports are published on the host's loopback, and has no equivalent on Docker Desktop. A container needs nothing the suite doesn't already need: Docker.
+- **The whole runner in a container** would isolate the browser too, but the harness server and the control plane's port would have to move to addresses the container reaches, `ui/node_modules` would have to match the image's platform, and the results would be written into `ui/` by the container's root.
+
+With the cause gone, the suite has no workarounds left: `retries: 0`, so a test that fails once fails the run, and HTTP/2 on. (Specs that don't test deletion still leave their sites for the teardown; that keeps runs shorter.)
+
+**A browser on the host** is still there for watching a test: `PRESSFLEET_E2E_HOST_BROWSER=1` makes `playwright.config.ts` launch Chromium on the host, mapped to Traefik's published port, instead of connecting to the server. `--headed` and `--debug` need it, since the container has no display. It brings back the network-change aborts, so use it for one spec at a time, not for full runs. It needs Playwright's Chromium on the host: `pnpm -C ui exec playwright install chromium`, or set `PRESSFLEET_E2E_CHROMIUM` to a Chromium you already have (close to the revision the pinned Playwright expects).
 
 ### Running them
 
@@ -255,7 +274,7 @@ make test-ui-e2e PLAYWRIGHT_ARGS="-g offboard"
 make test-ui-e2e PLAYWRIGHT_ARGS="--headed --workers=1"
 ```
 
-Playwright needs its Chromium: run `pnpm -C ui exec playwright install chromium` once (CI installs it with `--with-deps`). To use a Chromium you already have instead, set `PRESSFLEET_E2E_CHROMIUM` to its executable; it should be close to the revision the pinned Playwright expects.
+No browser is needed on the host: the suite's Chromium runs in Playwright's image, which the test pulls on first use (see [Where the browser runs](#where-the-browser-runs)).
 
 **While writing specs**, boot a platform once and run the specs against it as often as you like:
 
@@ -265,15 +284,15 @@ PRESSFLEET_UI_E2E_HOLD=1 PRESSFLEET_DOCKER_TESTS=1 PRESSFLEET_TEST_CONTROL_PLANE
   go test -count=1 -v -timeout 4h -run TestDashboard ./control-plane/internal/e2e/dashboard/
 ```
 
-In hold mode the test doesn't run the suite. It writes the platform's details to `ui/e2e/.platform.json` (git-ignored), which `playwright.config.ts` reads when the environment names no platform, and waits. In another terminal, run `pnpm -C ui test:e2e` with any Playwright options (`--headed`, `--ui`, `--debug`, `-g ...`). Press Ctrl-C in the first terminal to tear the platform down; the file is removed with it. Rebuild the image and restart hold mode after changing the dashboard itself: the specs test the embedded build, not your working tree.
+In hold mode the test doesn't run the suite. It writes the platform's details to `ui/e2e/.platform.json` (git-ignored), which `playwright.config.ts` reads when the environment names no platform, and waits. The browser server keeps running with it. In another terminal, run `pnpm -C ui test:e2e` with any Playwright options (`--ui`, `-g ...`); for `--headed` or `--debug`, add `PRESSFLEET_E2E_HOST_BROWSER=1` to use a browser on the host. Press Ctrl-C in the first terminal to tear the platform down; the file is removed with it. Rebuild the image and restart hold mode after changing the dashboard itself: the specs test the embedded build, not your working tree.
 
 ### Debugging a failure
 
 - **Traces.** A failed test keeps its trace (`trace: 'retain-on-failure'`) and a screenshot in `ui/test-results/<test>/`. Open a trace with `pnpm -C ui exec playwright show-trace ui/test-results/<test>/trace.zip`: every action, the DOM before and after it, network requests, and console messages (a CSP violation shows there). `ui/test-results/<test>/error-context.md` has the page's accessibility tree at the failure, which is usually enough to fix a locator.
 - **The HTML report** is in `ui/playwright-report/` (`pnpm -C ui exec playwright show-report`).
-- **Control plane logs.** `ui/test-results/platform-logs.txt` has every container's logs from a failed run; the Go test's log has them too.
+- **Control plane logs.** `ui/test-results/platform-logs.txt` has every platform container's logs from a failed run; the Go test's log has them too. `ui/test-results/browser-logs.txt` has the browser server's.
 - **In CI** the `Dashboard E2E` job uploads `ui/test-results/` and `ui/playwright-report/` as the `dashboard-e2e` artifact when it fails.
-- **Headed and step by step.** In hold mode, `pnpm -C ui test:e2e --headed -g <name>` or `--debug` (the Playwright inspector) or `--ui`.
+- **Headed and step by step.** In hold mode, `pnpm -C ui test:e2e --ui`, or with a browser on the host, `PRESSFLEET_E2E_HOST_BROWSER=1 pnpm -C ui test:e2e --headed -g <name>` or `--debug` (the Playwright inspector).
 
 ### Writing a spec
 
@@ -337,7 +356,7 @@ Add an endpoint there, and a method to `harness.ts`, when a spec needs another s
 
 ### In CI
 
-The `Dashboard E2E` job of the E2E workflow (`.github/workflows/e2e.yml`) runs on the same events as the API suite (push to `main`, manual runs, and PRs labeled `e2e`), on its own runner, side by side with it. It installs the UI's dependencies and Playwright's Chromium with its system libraries, builds the site images from the tree when `images/` changed (as the `E2E` job does), and runs `make test-ui-e2e`. `make test-ui-e2e` gives `go test` 30 minutes and Playwright 20 (`globalTimeout`), and the job has 45; raise them together when the suite outgrows them. On failure it uploads the traces, screenshots, HTML report, and control plane logs as the `dashboard-e2e` artifact.
+The `Dashboard E2E` job of the E2E workflow (`.github/workflows/e2e.yml`) runs on the same events as the API suite (push to `main`, manual runs, and PRs labeled `e2e`), on its own runner, side by side with it. It installs the UI's dependencies (no browser: `TestDashboard` pulls Playwright's image), builds the site images from the tree when `images/` changed (as the `E2E` job does), and runs `make test-ui-e2e`. `make test-ui-e2e` gives `go test` 30 minutes and Playwright 20 (`globalTimeout`), and the job has 45; raise them together when the suite outgrows them. On failure it uploads the traces, screenshots, HTML report, and the platform's and browser server's logs as the `dashboard-e2e` artifact.
 
 ### Coverage
 

@@ -120,10 +120,10 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # No Chromium on the runner: the suite's browser runs in Playwright's
+      # image for the installed version, which TestDashboard pulls and
+      # starts (docs/testing.md, "Where the browser runs").
       - run: pnpm -C ui install --frozen-lockfile
-      # Chromium only, the build matching the pinned Playwright, with its
-      # system libraries.
-      - run: pnpm -C ui exec playwright install --with-deps chromium
       # Same decision as the e2e job: test the tree's site images when
       # images/ changed.
       - id: sites
@@ -152,7 +152,8 @@ jobs:
         run: make images SITE_PHP="$(images/matrix.sh php | head -n 2 | xargs)"
       - run: make test-ui-e2e
       # Traces and screenshots of the failed tests, the HTML report, and the
-      # platform's container logs (ui/test-results/platform-logs.txt).
+      # platform's and the browser server's container logs
+      # (ui/test-results/platform-logs.txt and browser-logs.txt).
       - if: failure()
         uses: actions/upload-artifact@v7
         with:

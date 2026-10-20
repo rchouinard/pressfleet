@@ -1,5 +1,5 @@
 // Helpers for Nuxt UI controls whose roles take more than one step.
-import { readFile } from 'node:fs/promises'
+import { buffer } from 'node:stream/consumers'
 import { expect, type Locator, type Page } from '@playwright/test'
 
 /** Picks an option of a select (a combobox that opens a listbox). */
@@ -21,11 +21,13 @@ export async function expectLoginPage(page: Page, redirect: string, expired = fa
 
 /**
  * Clicks a download link and returns the file the browser saved, so a
- * spec can check what the user got.
+ * spec can check what the user got. The file is read over the browser's
+ * connection: the browser runs in a container, where the runner can't
+ * open its path.
  */
 export async function download(page: Page, link: Locator): Promise<Buffer> {
   const [saved] = await Promise.all([page.waitForEvent('download'), link.click()])
   const failure = await saved.failure()
   if (failure) throw new Error(`download of ${saved.suggestedFilename()} failed: ${failure}`)
-  return readFile(await saved.path())
+  return buffer(await saved.createReadStream())
 }

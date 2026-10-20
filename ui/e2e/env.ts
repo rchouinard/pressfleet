@@ -9,8 +9,12 @@ import { fileURLToPath } from 'node:url'
 export interface PlatformEnv {
   /** The dashboard's origin, https://fleet.e2e.test. */
   baseURL: string
-  /** Traefik's published HTTPS address (127.0.0.1:port) the browser maps the dashboard domain to. */
+  /** Traefik's published HTTPS address (127.0.0.1:port), for a browser on the host. */
   ingressAddr: string
+  /** The WebSocket URL of the browser server the Go test runs in a container of its own. */
+  browserEndpoint: string
+  /** Traefik's HTTPS address as that browser reaches it, on the platform network. */
+  browserIngressAddr: string
   /** The control plane's published port, for seeding and checks through the API. */
   apiURL: string
   /** The harness server's URL (e2e/fixtures/harness.ts). */
@@ -26,6 +30,8 @@ export interface PlatformEnv {
 const keys = {
   baseURL: 'PRESSFLEET_E2E_BASE_URL',
   ingressAddr: 'PRESSFLEET_E2E_INGRESS_ADDR',
+  browserEndpoint: 'PRESSFLEET_E2E_BROWSER_ENDPOINT',
+  browserIngressAddr: 'PRESSFLEET_E2E_BROWSER_INGRESS_ADDR',
   apiURL: 'PRESSFLEET_E2E_API_URL',
   harnessURL: 'PRESSFLEET_E2E_HARNESS_URL',
   adminEmail: 'PRESSFLEET_E2E_ADMIN_EMAIL',
