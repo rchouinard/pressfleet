@@ -37,6 +37,8 @@ const matrix: Record<Role, Action[]> = {
     'client_group.delete', 'client_group.offboard',
     // "Manage users, roles, and other users' API tokens; view the audit log"
     'user.view', 'user.create', 'user.update', 'user.delete', 'user.tokens.manage', 'audit.view',
+    // §6.2: reset a user's second factors
+    'user.two_factor.reset',
     // "Change platform settings"
     'platform.settings.manage',
   ],

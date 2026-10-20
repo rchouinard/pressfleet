@@ -65,6 +65,8 @@ export const permissions = {
   'user.update': 'admin',
   'user.delete': 'admin',
   'user.tokens.manage': 'admin',
+  // Reset another user's second factors (never one's own).
+  'user.two_factor.reset': 'admin',
   'audit.view': 'admin',
 
   // Platform settings (DNS and S3 credentials, SMTP, alert channels, backup

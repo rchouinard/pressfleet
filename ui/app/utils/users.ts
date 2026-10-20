@@ -29,6 +29,19 @@ export function userStatus(user: Pick<User, 'disabled'>): UserStatus {
     : { label: 'Active', color: 'success', icon: 'i-lucide-circle-check' }
 }
 
+export interface TwoFactorStatus {
+  label: 'On' | 'Off'
+  color: 'success' | 'neutral'
+  icon: string
+}
+
+/** The users table's two-factor column: whether the user has a usable second factor. */
+export function twoFactorStatus(user: Pick<User, 'two_factor_enabled'>): TwoFactorStatus {
+  return user.two_factor_enabled
+    ? { label: 'On', color: 'success', icon: 'i-lucide-shield-check' }
+    : { label: 'Off', color: 'neutral', icon: 'i-lucide-shield-off' }
+}
+
 /** What to call a user: their display name, or the email address if they haven't set one. */
 export function userLabel(user: Pick<User, 'email' | 'display_name'>): string {
   return user.display_name.trim() || user.email

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import PasswordChangeForm from '../app/components/user/PasswordChangeForm.vue'
@@ -18,6 +20,7 @@ const user = (over: Partial<User> = {}): User => ({
   updated_at: '2026-09-01T00:00:00Z',
   last_login_at: null,
   display_name: '',
+  two_factor_enabled: false,
   ...over,
 })
 
@@ -54,6 +57,51 @@ describe('UserTable', () => {
     expect(del.attributes('aria-label')).toBe('Delete ann@example.com')
     await del.trigger('click')
     expect(wrapper.emitted('delete')).toEqual([[ann]])
+  })
+})
+
+describe('UserTable two-factor', () => {
+  it('shows whether each user has a second factor, with text as well as colour', () => {
+    const wrapper = mount(UserTable, {
+      props: { users: [user(), user({ id: 'u2', email: 'bob@example.com', two_factor_enabled: true })], caption: 'Users' },
+      global,
+    })
+    expect(wrapper.findAll('thead th').map(th => th.text())).toContain('Two-factor')
+    const rows = wrapper.findAll('tbody tr')
+    // The role stays the first cell (the end-to-end specs read it).
+    expect(rows[0]!.findAll('td')[0]!.text()).toBe('viewer')
+    expect(rows[0]!.findAll('td')[2]!.text()).toBe('Off')
+    expect(rows[1]!.findAll('td')[2]!.text()).toBe('On')
+  })
+
+  it('offers Reset two-factor to admins for other users with a second factor', async () => {
+    const bob = user({ id: 'u2', email: 'bob@example.com', two_factor_enabled: true })
+    const users = [user(), bob, user({ id: 'me', email: 'me@example.com', two_factor_enabled: true })]
+    const wrapper = mount(UserTable, { props: { users, caption: 'Users', currentUserId: 'me', canResetTwoFactor: true }, global })
+    const rows = wrapper.findAll('tbody tr')
+    // Nothing to reset for Ann; the API refuses one's own.
+    expect(rows[0]!.find('[data-testid=reset-two-factor]').exists()).toBe(false)
+    expect(rows[2]!.find('[data-testid=reset-two-factor]').exists()).toBe(false)
+    const reset = rows[1]!.find('[data-testid=reset-two-factor]')
+    expect(reset.attributes('aria-label')).toBe('Reset two-factor for bob@example.com')
+    await reset.trigger('click')
+    expect(wrapper.emitted('resetTwoFactor')).toEqual([[bob]])
+  })
+
+  it('hides Reset two-factor without the permission', () => {
+    const wrapper = mount(UserTable, {
+      props: { users: [user({ two_factor_enabled: true })], caption: 'Users', currentUserId: 'me' },
+      global,
+    })
+    expect(wrapper.find('[data-testid=reset-two-factor]').exists()).toBe(false)
+  })
+
+  it('is wired on the users page to the reset endpoint, with a confirmation', () => {
+    const page = readFileSync(resolve(process.cwd(), 'app/pages/users.vue'), 'utf8')
+    expect(page).toContain(':can-reset-two-factor="can(\'user.two_factor.reset\')"')
+    expect(page).toContain('@reset-two-factor="openReset"')
+    expect(page).toContain('api.DELETE(\'/api/v1/users/{user_id}/two-factor\'')
+    expect(page).toMatch(/<ConfirmDialog\s+v-model:open="resetOpen"[\s\S]*?@confirm="resetTwoFactor"/)
   })
 })
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // User management (design doc §4.6): list, create, change role, disable or
-// re-enable, delete. Admin only: the route is gated on `user.view`, and the server
-// answers 403 to anyone else regardless.
+// re-enable, reset second factors (§6.2), delete. Admin only: the route is
+// gated on `user.view`, and the server answers 403 to anyone else regardless.
 import { toApiError, type ApiError } from '../utils/api-error'
 import type { User, UserCreate, UserUpdate } from '../utils/users'
 
@@ -141,6 +141,52 @@ async function remove() {
   }
 }
 
+// Reset a user's second factors, after a confirmation. Not offered for the
+// signed-in user, whom the server refuses (they remove their own one by
+// one); a 409 means there was nothing to reset.
+const resetting = ref<User>()
+const resetOpen = computed({
+  get: () => resetting.value !== undefined,
+  set: (open: boolean) => {
+    if (!open && !resetBusy.value) {
+      resetting.value = undefined
+      resetError.value = undefined
+    }
+  },
+})
+const resetBusy = ref(false)
+const resetError = ref<ApiError>()
+
+function openReset(user: User) {
+  resetError.value = undefined
+  resetting.value = user
+}
+
+async function resetTwoFactor() {
+  const target = resetting.value
+  if (!target) return
+  resetBusy.value = true
+  resetError.value = undefined
+  try {
+    await api.DELETE('/api/v1/users/{user_id}/two-factor', { params: { path: { user_id: target.id } } })
+    resetting.value = undefined
+    notify.success('Two-factor reset', `${target.email} was signed out and signs in next with their password alone.`)
+    await refresh()
+  } catch (e) {
+    const error = toApiError(e)
+    if (error.status === 404 || error.status === 409) {
+      // Gone, or nothing left to reset: the list was stale.
+      resetting.value = undefined
+      notify.info(error.status === 404 ? 'User not found' : 'Nothing to reset', error.status === 404 ? `${target.email} no longer exists.` : `${target.email} has no second factors.`)
+      await refresh()
+    } else {
+      resetError.value = error
+    }
+  } finally {
+    resetBusy.value = false
+  }
+}
+
 const generalFormError = computed(() => (formError.value && formError.value.errors.length === 0 ? formError.value : undefined))
 </script>
 
@@ -162,7 +208,17 @@ const generalFormError = computed(() => (formError.value && formError.value.erro
     <ProblemAlert v-if="loadError" :error="loadError" />
     <template v-else>
       <p v-if="pending && items.length === 0" class="text-sm text-muted" role="status">Loading users...</p>
-      <UserTable v-else :users="items" caption="Users" :current-user-id="me?.id" :can-delete="can('user.delete')" @edit="openEdit" @delete="openDelete" />
+      <UserTable
+        v-else
+        :users="items"
+        caption="Users"
+        :current-user-id="me?.id"
+        :can-delete="can('user.delete')"
+        :can-reset-two-factor="can('user.two_factor.reset')"
+        @edit="openEdit"
+        @delete="openDelete"
+        @reset-two-factor="openReset"
+      />
       <div v-if="cursor" class="flex justify-center">
         <UButton color="neutral" variant="outline" :loading="loadingMore" @click="loadMore()">Load more</UButton>
       </div>
@@ -190,6 +246,16 @@ const generalFormError = computed(() => (formError.value && formError.value.erro
         />
       </template>
     </UModal>
+
+    <ConfirmDialog
+      v-model:open="resetOpen"
+      title="Reset two-factor?"
+      :description="resetting ? `This removes the authenticator app, security keys, passkeys and recovery codes of ${resetting.email}, and signs them out everywhere. Their API tokens keep working. They sign in next with their password alone, and must set up a new second factor if their role requires one.` : undefined"
+      confirm-label="Reset two-factor"
+      :busy="resetBusy"
+      :error="resetError"
+      @confirm="resetTwoFactor"
+    />
 
     <ConfirmDialog
       v-model:open="deleteOpen"
