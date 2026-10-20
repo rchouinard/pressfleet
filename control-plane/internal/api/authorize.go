@@ -25,6 +25,8 @@ var operationActions = map[string]authz.Action{
 	"createApiToken":    authz.CreateOwnToken,
 	"revokeApiToken":    authz.RevokeOwnToken,
 
+	// Restricted sessions show the setup page from it.
+	"getTwoFactorStatus":      authz.ViewSelf,
 	"regenerateRecoveryCodes": authz.RegenerateRecoveryCodes,
 
 	"beginWebAuthnRegistration":  authz.RegisterWebAuthnCredential,

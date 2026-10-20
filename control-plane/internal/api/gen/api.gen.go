@@ -3897,6 +3897,45 @@ type TotpEnrollment struct {
 	URI string `json:"uri"`
 }
 
+// TotpStatus The user's authenticator app. The secret is never returned.
+type TotpStatus struct {
+	// Confirmed Whether the user has a confirmed authenticator app, which is a second factor.
+	Confirmed bool `json:"confirmed"`
+
+	// ConfirmedAt When it was confirmed; null without one.
+	ConfirmedAt *Timestamp `json:"confirmed_at"`
+
+	// PendingExpiresAt When an unconfirmed authenticator app, started with `POST
+	// /api/v1/users/me/two-factor/totp`, expires unless confirmed;
+	// null without one. It isn't a second factor.
+	PendingExpiresAt *Timestamp `json:"pending_expires_at"`
+}
+
+// TwoFactorStatus defines model for TwoFactorStatus.
+type TwoFactorStatus struct {
+	// Enabled Whether the user has a usable second factor, as `two_factor_enabled` on the user.
+	Enabled bool `json:"enabled"`
+
+	// RecoveryCodesRemaining How many unused recovery codes the user has.
+	RecoveryCodesRemaining int `json:"recovery_codes_remaining"`
+
+	// RpID The relying party ID (dashboard domain) security keys and
+	// passkeys must be bound to. Null while they are unavailable, when
+	// the dashboard domain isn't a valid relying party ID; then no
+	// credential is usable.
+	RpID *string `json:"rp_id"`
+
+	// Totp The user's authenticator app. The secret is never returned.
+	Totp     TotpStatus `json:"totp"`
+	Webauthn struct {
+		// Credentials Every credential, oldest first, those bound to another `rp_id` included.
+		Credentials []WebAuthnCredential `json:"credentials"`
+
+		// Usable How many of the credentials are bound to `rp_id`, and so can be used.
+		Usable int `json:"usable"`
+	} `json:"webauthn"`
+}
+
 // UpdateWindow The daily maintenance window, in UTC; absent if there is none.
 type UpdateWindow struct {
 	Hours int `json:"hours"`
@@ -5153,6 +5192,9 @@ type ServerInterface interface {
 	// DeleteOwnSSHKey Remove one of the current user's SSH keys
 	// (DELETE /api/v1/users/me/ssh-keys/{ssh_key_id})
 	DeleteOwnSSHKey(w http.ResponseWriter, r *http.Request, sshKeyID SSHKeyID)
+	// GetTwoFactorStatus Get the current user's second factors
+	// (GET /api/v1/users/me/two-factor)
+	GetTwoFactorStatus(w http.ResponseWriter, r *http.Request)
 	// RegenerateRecoveryCodes Replace the current user's recovery codes
 	// (POST /api/v1/users/me/two-factor/recovery-codes)
 	RegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request)
@@ -9002,6 +9044,20 @@ func (siw *ServerInterfaceWrapper) DeleteOwnSSHKey(w http.ResponseWriter, r *htt
 	handler.ServeHTTP(w, r)
 }
 
+// GetTwoFactorStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetTwoFactorStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetTwoFactorStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // RegenerateRecoveryCodes operation middleware
 func (siw *ServerInterfaceWrapper) RegenerateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
 
@@ -9564,6 +9620,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/users/{user_id}", wrapper.DeleteUser)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/users/{user_id}", wrapper.GetUser)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/v1/users/{user_id}", wrapper.UpdateUser)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/users/me/two-factor", wrapper.GetTwoFactorStatus)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/users/me/two-factor/recovery-codes", wrapper.RegenerateRecoveryCodes)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/users/me/two-factor/totp", wrapper.RemoveTotp)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/users/me/two-factor/totp", wrapper.StartTotpEnrollment)
@@ -21047,6 +21104,76 @@ func (response DeleteOwnSSHKeydefaultApplicationProblemPlusJSONResponse) VisitDe
 	return err
 }
 
+type GetTwoFactorStatusRequestObject struct {
+}
+
+type GetTwoFactorStatusResponseObject interface {
+	VisitGetTwoFactorStatusResponse(w http.ResponseWriter) error
+}
+
+type GetTwoFactorStatus200JSONResponse TwoFactorStatus
+
+func (response GetTwoFactorStatus200JSONResponse) VisitGetTwoFactorStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTwoFactorStatus401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response GetTwoFactorStatus401ApplicationProblemPlusJSONResponse) VisitGetTwoFactorStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTwoFactorStatus403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response GetTwoFactorStatus403ApplicationProblemPlusJSONResponse) VisitGetTwoFactorStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTwoFactorStatusdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetTwoFactorStatusdefaultApplicationProblemPlusJSONResponse) VisitGetTwoFactorStatusResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type RegenerateRecoveryCodesRequestObject struct {
 }
 
@@ -23174,6 +23301,9 @@ type StrictServerInterface interface {
 	// DeleteOwnSSHKey Remove one of the current user's SSH keys
 	// (DELETE /api/v1/users/me/ssh-keys/{ssh_key_id})
 	DeleteOwnSSHKey(ctx context.Context, request DeleteOwnSSHKeyRequestObject) (DeleteOwnSSHKeyResponseObject, error)
+	// GetTwoFactorStatus Get the current user's second factors
+	// (GET /api/v1/users/me/two-factor)
+	GetTwoFactorStatus(ctx context.Context, request GetTwoFactorStatusRequestObject) (GetTwoFactorStatusResponseObject, error)
 	// RegenerateRecoveryCodes Replace the current user's recovery codes
 	// (POST /api/v1/users/me/two-factor/recovery-codes)
 	RegenerateRecoveryCodes(ctx context.Context, request RegenerateRecoveryCodesRequestObject) (RegenerateRecoveryCodesResponseObject, error)
@@ -26247,6 +26377,30 @@ func (sh *strictHandler) DeleteOwnSSHKey(w http.ResponseWriter, r *http.Request,
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(DeleteOwnSSHKeyResponseObject); ok {
 		if err := validResponse.VisitDeleteOwnSSHKeyResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetTwoFactorStatus operation middleware
+func (sh *strictHandler) GetTwoFactorStatus(w http.ResponseWriter, r *http.Request) {
+	var request GetTwoFactorStatusRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetTwoFactorStatus(ctx, request.(GetTwoFactorStatusRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetTwoFactorStatus")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetTwoFactorStatusResponseObject); ok {
+		if err := validResponse.VisitGetTwoFactorStatusResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

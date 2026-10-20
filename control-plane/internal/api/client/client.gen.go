@@ -3896,6 +3896,45 @@ type TotpEnrollment struct {
 	URI string `json:"uri"`
 }
 
+// TotpStatus The user's authenticator app. The secret is never returned.
+type TotpStatus struct {
+	// Confirmed Whether the user has a confirmed authenticator app, which is a second factor.
+	Confirmed bool `json:"confirmed"`
+
+	// ConfirmedAt When it was confirmed; null without one.
+	ConfirmedAt *Timestamp `json:"confirmed_at"`
+
+	// PendingExpiresAt When an unconfirmed authenticator app, started with `POST
+	// /api/v1/users/me/two-factor/totp`, expires unless confirmed;
+	// null without one. It isn't a second factor.
+	PendingExpiresAt *Timestamp `json:"pending_expires_at"`
+}
+
+// TwoFactorStatus defines model for TwoFactorStatus.
+type TwoFactorStatus struct {
+	// Enabled Whether the user has a usable second factor, as `two_factor_enabled` on the user.
+	Enabled bool `json:"enabled"`
+
+	// RecoveryCodesRemaining How many unused recovery codes the user has.
+	RecoveryCodesRemaining int `json:"recovery_codes_remaining"`
+
+	// RpID The relying party ID (dashboard domain) security keys and
+	// passkeys must be bound to. Null while they are unavailable, when
+	// the dashboard domain isn't a valid relying party ID; then no
+	// credential is usable.
+	RpID *string `json:"rp_id"`
+
+	// Totp The user's authenticator app. The secret is never returned.
+	Totp     TotpStatus `json:"totp"`
+	Webauthn struct {
+		// Credentials Every credential, oldest first, those bound to another `rp_id` included.
+		Credentials []WebAuthnCredential `json:"credentials"`
+
+		// Usable How many of the credentials are bound to `rp_id`, and so can be used.
+		Usable int `json:"usable"`
+	} `json:"webauthn"`
+}
+
 // UpdateWindow The daily maintenance window, in UTC; absent if there is none.
 type UpdateWindow struct {
 	Hours int `json:"hours"`
@@ -7142,6 +7181,21 @@ type ClientInterface interface {
 	//
 	// Corresponds with DELETE /api/v1/users/me/ssh-keys/{ssh_key_id} (the `DeleteOwnSSHKey` operationId).
 	DeleteOwnSSHKey(ctx context.Context, sshKeyID SSHKeyID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetTwoFactorStatus Get the current user's second factors
+	//
+	// Returns what the user has of each second factor: the authenticator
+	// app (confirmed, or an unconfirmed one waiting for its code), every
+	// security key and passkey with how many are usable, the recovery
+	// codes left, and the current relying party ID (`rp_id`). Credentials
+	// bound to another relying party ID, from a previous dashboard
+	// domain, are listed but can't be used.
+	//
+	// It holds no secrets and starts no WebAuthn challenge. Sessions that
+	// must enroll a second factor may call it, and so may API tokens.
+	//
+	// Corresponds with GET /api/v1/users/me/two-factor (the `GetTwoFactorStatus` operationId).
+	GetTwoFactorStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RegenerateRecoveryCodes Replace the current user's recovery codes
 	//
@@ -11030,6 +11084,31 @@ func (c *Client) AddOwnSSHKey(ctx context.Context, body AddOwnSSHKeyJSONRequestB
 // Corresponds with DELETE /api/v1/users/me/ssh-keys/{ssh_key_id} (the `DeleteOwnSSHKey` operationId).
 func (c *Client) DeleteOwnSSHKey(ctx context.Context, sshKeyID SSHKeyID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteOwnSSHKeyRequest(c.Server, sshKeyID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetTwoFactorStatus Get the current user's second factors
+//
+// Returns what the user has of each second factor: the authenticator
+// app (confirmed, or an unconfirmed one waiting for its code), every
+// security key and passkey with how many are usable, the recovery
+// codes left, and the current relying party ID (`rp_id`). Credentials
+// bound to another relying party ID, from a previous dashboard
+// domain, are listed but can't be used.
+//
+// It holds no secrets and starts no WebAuthn challenge. Sessions that
+// must enroll a second factor may call it, and so may API tokens.
+//
+// Corresponds with GET /api/v1/users/me/two-factor (the `GetTwoFactorStatus` operationId).
+func (c *Client) GetTwoFactorStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTwoFactorStatusRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -16900,6 +16979,33 @@ func NewDeleteOwnSSHKeyRequest(server string, sshKeyID SSHKeyID) (*http.Request,
 	return req, nil
 }
 
+// NewGetTwoFactorStatusRequest constructs an http.Request for the GetTwoFactorStatus method
+func NewGetTwoFactorStatusRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/users/me/two-factor")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewRegenerateRecoveryCodesRequest constructs an http.Request for the RegenerateRecoveryCodes method
 func NewRegenerateRecoveryCodesRequest(server string) (*http.Request, error) {
 	var err error
@@ -20036,6 +20142,23 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with DELETE /api/v1/users/me/ssh-keys/{ssh_key_id} (the `DeleteOwnSSHKey` operationId).
 	DeleteOwnSSHKeyWithResponse(ctx context.Context, sshKeyID SSHKeyID, reqEditors ...RequestEditorFn) (*DeleteOwnSSHKeyResponse, error)
+
+	// GetTwoFactorStatusWithResponse Get the current user's second factors
+	//
+	// Returns what the user has of each second factor: the authenticator
+	// app (confirmed, or an unconfirmed one waiting for its code), every
+	// security key and passkey with how many are usable, the recovery
+	// codes left, and the current relying party ID (`rp_id`). Credentials
+	// bound to another relying party ID, from a previous dashboard
+	// domain, are listed but can't be used.
+	//
+	// It holds no secrets and starts no WebAuthn challenge. Sessions that
+	// must enroll a second factor may call it, and so may API tokens.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/users/me/two-factor (the `GetTwoFactorStatus` operationId).
+	GetTwoFactorStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetTwoFactorStatusResponse, error)
 
 	// RegenerateRecoveryCodesWithResponse Replace the current user's recovery codes
 	//
@@ -28695,6 +28818,68 @@ func (r DeleteOwnSSHKeyResponse) ContentType() string {
 	return ""
 }
 
+type GetTwoFactorStatusResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TwoFactorStatus
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetTwoFactorStatusResponse) GetJSON200() *TwoFactorStatus {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetTwoFactorStatusResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetTwoFactorStatusResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r GetTwoFactorStatusResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r GetTwoFactorStatusResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetTwoFactorStatusResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetTwoFactorStatusResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetTwoFactorStatusResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type RegenerateRecoveryCodesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -33281,6 +33466,29 @@ func (c *ClientWithResponses) DeleteOwnSSHKeyWithResponse(ctx context.Context, s
 		return nil, err
 	}
 	return ParseDeleteOwnSSHKeyResponse(rsp)
+}
+
+// GetTwoFactorStatusWithResponse Get the current user's second factors
+//
+// Returns what the user has of each second factor: the authenticator
+// app (confirmed, or an unconfirmed one waiting for its code), every
+// security key and passkey with how many are usable, the recovery
+// codes left, and the current relying party ID (`rp_id`). Credentials
+// bound to another relying party ID, from a previous dashboard
+// domain, are listed but can't be used.
+//
+// It holds no secrets and starts no WebAuthn challenge. Sessions that
+// must enroll a second factor may call it, and so may API tokens.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/users/me/two-factor (the `GetTwoFactorStatus` operationId).
+func (c *ClientWithResponses) GetTwoFactorStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetTwoFactorStatusResponse, error) {
+	rsp, err := c.GetTwoFactorStatus(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetTwoFactorStatusResponse(rsp)
 }
 
 // RegenerateRecoveryCodesWithResponse Replace the current user's recovery codes
@@ -40796,6 +41004,53 @@ func ParseDeleteOwnSSHKeyResponse(rsp *http.Response) (*DeleteOwnSSHKeyResponse,
 			return nil, err
 		}
 		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetTwoFactorStatusResponse parses an HTTP response from a GetTwoFactorStatusWithResponse call
+func ParseGetTwoFactorStatusResponse(rsp *http.Response) (*GetTwoFactorStatusResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetTwoFactorStatusResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TwoFactorStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Error
