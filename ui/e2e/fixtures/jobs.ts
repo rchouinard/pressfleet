@@ -1,6 +1,7 @@
 // Following a job in the UI: the progress view (components/job/
 // JobProgressView.vue) on the job's page, a site page, or anywhere else.
 import { expect, type Locator, type Page } from '@playwright/test'
+import type { Job } from './api'
 
 /** Job state labels as the UI shows them (utils/job.ts). */
 export const JobState = {
@@ -33,16 +34,15 @@ export function jobIdFromURL(url: string): string {
 }
 
 /**
- * The ID of the job whose progress view `scope` shows, once it shows one
- * other than `previous` (the job it showed before this one started).
+ * Runs `action`, which makes the page start a job (an API call that answers
+ * 202), and returns that job. The UI follows the job on its own; specs wait
+ * for it with waitForJob, or on what the page shows, before checking the
+ * outcome. Taking the job from the response, rather than from the progress
+ * view, can't mistake the job the view showed before for the new one.
  */
-export async function jobIdIn(scope: Locator, previous?: string): Promise<string> {
-  const view = scope.getByRole('region', { name: /^Progress of job / })
-  let id = ''
-  await expect.poll(async () => {
-    const label = await view.getAttribute('aria-label', { timeout: 1000 }).catch(() => null)
-    id = label?.replace('Progress of job ', '') ?? ''
-    return id !== '' && id !== previous
-  }).toBe(true)
-  return id
+export async function jobStartedBy(page: Page, action: () => Promise<unknown>): Promise<Job> {
+  const accepted = page.waitForResponse(r => r.status() === 202 && new URL(r.url()).pathname.startsWith('/api/v1/'))
+  await action()
+  const body = (await (await accepted).json()) as { job: Job }
+  return body.job
 }

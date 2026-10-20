@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { computed } from 'vue'
-import { createEndedJobs, formatDuration, isTerminal, jobStateView, jobTypeLabel, rollbackSummary, stepLabel, stepStateView, type JobState } from '../app/utils/job'
+import { createEndedJobs, followedJob, formatDuration, isTerminal, jobStateView, jobTypeLabel, rollbackSummary, startedByUser, stepLabel, stepStateView, type JobState } from '../app/utils/job'
 import { job, step } from './job-fixtures'
 
 describe('job states', () => {
@@ -99,5 +99,53 @@ describe('createEndedJobs', () => {
     expect(busy.value).toBe(true)
     ended.add({ id: 'j1', state: 'failed' })
     expect(busy.value).toBe(false)
+  })
+})
+
+describe('followedJob', () => {
+  const user = '01J0000000000000000000USER'
+  // Recent jobs come newest first.
+  const mine = (id: string, state: JobState) => job({ id, state, created_by: user })
+  const platform = (id: string, state: JobState) => job({ id, state, created_by: null })
+
+  it('tells jobs a person started from the platform\'s own', () => {
+    expect(startedByUser(mine('a', 'running'))).toBe(true)
+    expect(startedByUser(platform('a', 'running'))).toBe(false)
+    expect(startedByUser(job())).toBe(false)
+  })
+
+  it('picks up the newest unfinished job a person started', () => {
+    expect(followedJob([mine('c', 'succeeded'), mine('b', 'running'), mine('a', 'queued')])).toBe('b')
+    expect(followedJob([mine('b', 'failed'), mine('a', 'rollback_failed')])).toBeUndefined()
+    expect(followedJob([])).toBeUndefined()
+  })
+
+  it('never picks up a job the platform started', () => {
+    expect(followedJob([platform('b', 'running'), mine('a', 'succeeded')])).toBeUndefined()
+    expect(followedJob([platform('c', 'running'), mine('b', 'queued')])).toBe('b')
+  })
+
+  it('keeps its job until it has shown it end', () => {
+    // A newer job a person started waits for the followed one to end.
+    expect(followedJob([mine('b', 'queued'), mine('a', 'running')], { id: 'a', done: false })).toBe('a')
+    // The list can say the job ended before the panel has shown it.
+    expect(followedJob([mine('b', 'running'), mine('a', 'succeeded')], { id: 'a', done: false })).toBe('a')
+  })
+
+  it('keeps an ended job on screen while only the platform starts jobs', () => {
+    // site.wp_cron starting as site.create ends.
+    expect(followedJob([platform('b', 'running'), mine('a', 'succeeded')], { id: 'a', done: true })).toBe('a')
+  })
+
+  it('moves to a newer job a person started once the followed one is done', () => {
+    expect(followedJob([mine('b', 'queued'), mine('a', 'succeeded')], { id: 'a', done: true })).toBe('b')
+    // Dismissed while running counts as done.
+    expect(followedJob([mine('b', 'queued'), mine('a', 'running')], { id: 'a', done: true })).toBe('b')
+  })
+
+  it('does not go back to an older job', () => {
+    expect(followedJob([mine('b', 'succeeded'), mine('a', 'running')], { id: 'b', done: true })).toBe('b')
+    // A job no longer in the list is older than all of it.
+    expect(followedJob([mine('c', 'running')], { id: 'a', done: true })).toBe('c')
   })
 })

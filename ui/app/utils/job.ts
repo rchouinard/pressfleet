@@ -169,3 +169,35 @@ export function createEndedJobs() {
     has: (jobId: string): boolean => ended.has(jobId),
   }
 }
+
+/**
+ * Whether a person started the job. Jobs the platform starts on its own,
+ * such as scheduled wp-cron runs and backups, have no `created_by`.
+ */
+export function startedByUser(job: Pick<Job, 'created_by'>): boolean {
+  return job.created_by != null
+}
+
+/** The job a live job panel follows. */
+export interface FollowedJob {
+  id: string
+  /** The panel has shown the job end, or was dismissed. */
+  done: boolean
+}
+
+/**
+ * The ID of the job a live job panel follows, from the target's recent jobs
+ * (newest first) and the job it follows now. The panel keeps its job until
+ * it has shown how the job ended, so the result can be read; after that, a
+ * newer job a person started takes its place. Jobs the platform starts on
+ * its own never take over the panel (they still show in the job lists),
+ * or a scheduled run would hide the result of the job being followed.
+ */
+export function followedJob(jobs: readonly Job[], current?: FollowedJob): string | undefined {
+  if (current && !current.done) return current.id
+  // A job older than the current one is not new; one outside the list is
+  // older than all of it.
+  const at = current ? jobs.findIndex(j => j.id === current.id) : -1
+  const newer = at < 0 ? jobs : jobs.slice(0, at)
+  return newer.find(j => startedByUser(j) && !isTerminal(j.state))?.id ?? current?.id
+}

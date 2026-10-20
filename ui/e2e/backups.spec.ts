@@ -7,7 +7,7 @@ import { gunzipSync } from 'node:zlib'
 import { createClientGroup, createSite, waitForJob, type Api, type Site } from './fixtures/api'
 import { untarGz } from './fixtures/archive'
 import type { Harness } from './fixtures/harness'
-import { jobIdIn, waitForJobInUI } from './fixtures/jobs'
+import { jobStartedBy, waitForJobInUI } from './fixtures/jobs'
 import { download, toast } from './fixtures/ui'
 import { expect, test } from './fixtures'
 
@@ -49,10 +49,8 @@ test('backs up a site, lists the backup, and restores the earlier content', asyn
   // The action bar's link (the export card links there too).
   await page.getByRole('link', { name: 'Backups', exact: true }).first().click()
   await expect(page.getByRole('heading', { level: 1, name: `Backups: ${site.name}` })).toBeVisible()
-  await page.getByRole('button', { name: 'Back up now' }).click()
-  const progress = page.getByRole('region', { name: 'Job progress' })
-  const backupJob = await jobIdIn(progress)
-  await waitForJobInUI(page, backupJob)
+  const backupJob = await jobStartedBy(page, () => page.getByRole('button', { name: 'Back up now' }).click())
+  await waitForJobInUI(page, backupJob.id)
 
   // The history lists the backup, and the API has its snapshot.
   const [backup] = await backups(adminApi)
@@ -71,10 +69,9 @@ test('backs up a site, lists the backup, and restores the earlier content', asyn
   const overwrite = confirm.getByRole('button', { name: 'Overwrite site and restore' })
   await expect(overwrite).toBeDisabled()
   await confirm.getByLabel(`Type ${site.name} to confirm`).fill(site.name)
-  await overwrite.click()
+  const restoreJob = await jobStartedBy(page, () => overwrite.click())
   await expect(confirm).toBeHidden()
-  const restoreJob = await jobIdIn(progress, backupJob)
-  await waitForJobInUI(page, restoreJob)
+  await waitForJobInUI(page, restoreJob.id)
   await expect(toast(page, 'Restore finished')).toBeVisible()
 
   // The site is back to the backup's content: the option, the files, and
@@ -100,12 +97,12 @@ test('exports a site as it was at a backup', async ({ adminPage: page, adminApi,
   await moveOn(harness)
 
   await page.goto(`/sites/${site.id}/backups`)
-  await page.getByRole('region', { name: 'Backups', exact: true }).getByRole('row')
+  const exportButton = page.getByRole('region', { name: 'Backups', exact: true }).getByRole('row')
     .filter({ has: page.locator(`time[datetime="${backup!.started_at}"]`) })
-    .getByRole('button', { name: /^Export the backup from / }).click()
+    .getByRole('button', { name: /^Export the backup from / })
+  const job = await jobStartedBy(page, () => exportButton.click())
   const exports = page.getByRole('region', { name: 'Exports from backups' })
-  const job = await jobIdIn(exports)
-  await waitForJobInUI(page, job)
+  await waitForJobInUI(page, job.id)
 
   // The export lists both files; they hold the site as it was at the backup.
   const archive = untarGz(await download(page, exports.getByRole('link', { name: /^wp-content archive/ })))

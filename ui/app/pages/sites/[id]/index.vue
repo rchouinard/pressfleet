@@ -3,9 +3,9 @@
 // the one-time admin credentials, the job that is working on it (live), and
 // its recent jobs. The logs are on /sites/<id>/logs.
 import { toApiError, type ApiError } from '../../../utils/api-error'
-import { isTerminal, type Job } from '../../../utils/job'
+import { createEndedJobs, followedJob, type Job } from '../../../utils/job'
 import {
-  activeJob, canDeleteSite, canStartSite, canStopSite, groupLabel, showCredentialsAction,
+  canDeleteSite, canStartSite, canStopSite, groupLabel, showCredentialsAction,
   type Site, type SiteAdminCredentials,
 } from '../../../utils/site'
 import { countSnapshots, deleteSiteQuery, type SnapshotCount } from '../../../utils/site-delete'
@@ -59,19 +59,30 @@ const { data: jobs, refresh: refreshJobs } = await useAsyncData(
 const recentJobs = computed(() => jobs.value ?? [])
 
 // The job shown live stays on screen after it finishes (so its result can be
-// read) until dismissed or a newer job replaces it.
-const shownJobId = ref<string>()
-watch(() => activeJob(recentJobs.value)?.id, (jobId) => {
-  if (jobId) shownJobId.value = jobId
-}, { immediate: true })
+// read) until dismissed or a newer job someone started replaces it; see
+// followedJob. Jobs the platform runs on a schedule only show in the list.
+const ended = createEndedJobs()
+const followedId = ref<string>()
+const dismissed = ref(false)
+watch(
+  () => followedJob(recentJobs.value, followedId.value === undefined
+    ? undefined
+    : { id: followedId.value, done: dismissed.value || ended.has(followedId.value) }),
+  (jobId) => {
+    if (jobId === followedId.value) return
+    followedId.value = jobId
+    dismissed.value = false
+  },
+  { immediate: true },
+)
 watch(id, () => {
-  shownJobId.value = undefined
+  followedId.value = undefined
+  dismissed.value = false
 })
+const shownJobId = computed(() => (dismissed.value ? undefined : followedId.value))
 
-const handled = new Set<string>()
 async function onJobUpdate(job: Job) {
-  if (!isTerminal(job.state) || handled.has(job.id)) return
-  handled.add(job.id)
+  if (!ended.add(job)) return
   if (job.type === 'site.delete' && job.state === 'succeeded') {
     notify.success('Site deleted', name.value)
     await navigateTo('/sites')
@@ -257,7 +268,7 @@ function when(iso: string): string {
       <section v-if="shownJobId" class="space-y-2" aria-labelledby="site-job-heading">
         <div class="flex items-center justify-between gap-2">
           <h2 id="site-job-heading" class="text-lg font-semibold">Job progress</h2>
-          <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-x" aria-label="Hide job progress" @click="shownJobId = undefined" />
+          <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-x" aria-label="Hide job progress" @click="dismissed = true" />
         </div>
         <JobProgress :job-id="shownJobId" @update="onJobUpdate" />
       </section>

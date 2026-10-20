@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import {
-  activeJob, canDeleteSite, canStartSite, canStopSite, createSitePayload, groupLabel,
+  canDeleteSite, canStartSite, canStopSite, createSitePayload, groupLabel,
   showCredentialsAction, siteStatusOptions, siteStatusView, validateSite,
   type Site, type SiteFormValues, type SiteStatus,
 } from '../app/utils/site'
@@ -10,7 +10,6 @@ import { can } from '../app/utils/permissions'
 import SiteTable from '../app/components/site/SiteTable.vue'
 import SiteCredentials from '../app/components/site/SiteCredentials.vue'
 import { uiStubs } from './stubs'
-import type { Job } from '../app/utils/job'
 
 const statuses: SiteStatus[] = ['provisioning', 'running', 'stopped', 'updating', 'deleting', 'failed']
 const valid: SiteFormValues = { name: 'Acme', client_group_id: 'g1', admin_email: 'a@acme.example', admin_username: '', php_version: '' }
@@ -54,15 +53,6 @@ describe('showCredentialsAction', () => {
     // 409 while provisioning, 410 after failed provisioning.
     expect(showCredentialsAction({ status: 'provisioning', admin_credentials_available: true })).toBe(false)
     expect(showCredentialsAction({ status: 'failed', admin_credentials_available: true })).toBe(false)
-  })
-})
-
-describe('activeJob', () => {
-  const job = (id: string, state: Job['state']) => ({ id, state }) as Job
-  it('picks the newest job that has not finished', () => {
-    expect(activeJob([job('a', 'succeeded'), job('b', 'running'), job('c', 'queued')])?.id).toBe('b')
-    expect(activeJob([job('a', 'failed'), job('b', 'rollback_failed')])).toBeUndefined()
-    expect(activeJob([])).toBeUndefined()
   })
 })
 

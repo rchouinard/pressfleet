@@ -9,8 +9,7 @@ import {
   DEPLOY_NAME_MAX, canActivate, canDeployToSite, deployBlockedReason, deployKindOptions, deployPayload, deployResult,
   validateDeploy, type DeployFormValues,
 } from '../../../utils/deploy'
-import { isTerminal, type Job } from '../../../utils/job'
-import { activeJob } from '../../../utils/site'
+import { followedJob, isTerminal, type Job } from '../../../utils/job'
 import { packageExtensions, validateUploadFile } from '../../../utils/upload'
 
 definePageMeta({ requires: 'site.code.deploy' })
@@ -53,7 +52,8 @@ function err(field: 'name' | 'package') {
   return local.value[field] ?? (field === 'name' ? failure.value?.fieldError('/name') : undefined)
 }
 
-// The job in flight: picked up from the site's jobs on load, or set here.
+// The job in flight: one someone started, picked up from the site's jobs on
+// load, or set here.
 const jobId = ref<string>()
 const finished = ref<Job>()
 const { data: pending } = await useAsyncData(() => `site-deploy-jobs-${id.value}`, async () => {
@@ -61,7 +61,7 @@ const { data: pending } = await useAsyncData(() => `site-deploy-jobs-${id.value}
     const { data } = await api.GET('/api/v1/jobs', {
       params: { query: { target_type: 'site', target_id: id.value, limit: 10 } },
     })
-    return activeJob(data?.items ?? [])?.id ?? null
+    return followedJob(data?.items ?? []) ?? null
   } catch {
     return null
   }

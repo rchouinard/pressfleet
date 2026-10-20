@@ -8,8 +8,7 @@ import {
   canBackUpSite, canRestoreSite, restoreBlockedReason, restorePayload, scheduleFormPayload,
   type Backup, type BackupSchedule, type ScheduleFormValues,
 } from '../../../utils/backup'
-import { createEndedJobs, type Job } from '../../../utils/job'
-import { activeJob } from '../../../utils/site'
+import { createEndedJobs, followedJob, type Job } from '../../../utils/job'
 import { createPagedList } from '../../../utils/paged-list'
 
 definePageMeta({ requires: 'backup.view' })
@@ -87,15 +86,16 @@ async function saveSchedule(values: ScheduleFormValues) {
   notify.success('Backup schedule saved')
 }
 
-// The job in flight (backup or restore): picked up from the site's jobs on
-// load, or set when this page starts one. It stays on screen until dismissed.
+// The job in flight (backup or restore): one someone started, picked up from
+// the site's jobs on load, or set when this page starts one. It stays on
+// screen until dismissed.
 const jobId = ref<string>()
 const { data: pending } = await useAsyncData(() => `site-backup-jobs-${id.value}`, async () => {
   try {
     const { data } = await api.GET('/api/v1/jobs', {
       params: { query: { target_type: 'site', target_id: id.value, limit: 10 } },
     })
-    return activeJob(data?.items ?? [])?.id ?? null
+    return followedJob(data?.items ?? []) ?? null
   } catch {
     return null
   }

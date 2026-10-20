@@ -1,5 +1,5 @@
 import type { components } from '../api/schema.gen'
-import { isTerminal, type BadgeColor, type Job } from './job'
+import type { BadgeColor } from './job'
 
 export type Site = components['schemas']['Site']
 export type SiteStatus = components['schemas']['SiteStatus']
@@ -59,11 +59,6 @@ export function canStopSite(site: Pick<Site, 'status'>): boolean {
 /** Delete is offered unless the site is already being deleted. */
 export function canDeleteSite(site: Pick<Site, 'status'>): boolean {
   return site.status !== 'deleting'
-}
-
-/** The site's job to show live: the newest one that has not finished. */
-export function activeJob(jobs: readonly Job[]): Job | undefined {
-  return jobs.find(j => !isTerminal(j.state))
 }
 
 /**

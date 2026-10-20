@@ -16,8 +16,7 @@
 // network on the host goes down or comes up (ERR_NETWORK_CHANGED; see
 // playwright.config.ts). In hold mode the sites pile up until the platform
 // is torn down.
-import type { Page } from '@playwright/test'
-import { createClientGroup, unique, waitForJob, type Api, type Job } from './api'
+import { createClientGroup, unique, waitForJob, type Api } from './api'
 import { expect, test as base } from './index'
 import type { components } from '../../app/api/schema.gen'
 
@@ -40,19 +39,6 @@ export async function provisionSite(api: Api, phpVersion: string, name = unique(
   return getSite(api, data!.site.id)
 }
 
-/**
- * Runs `action`, which makes the page start a job (an API call that answers
- * 202), and returns that job. The UI follows the job on its own; specs wait
- * for it with waitForJob, or on what the page shows, before checking the
- * outcome.
- */
-export async function jobStartedBy(page: Page, action: () => Promise<unknown>): Promise<Job> {
-  const accepted = page.waitForResponse(r => r.status() === 202 && new URL(r.url()).pathname.startsWith('/api/v1/'))
-  await action()
-  const body = (await (await accepted).json()) as { job: Job }
-  return body.job
-}
-
 export const test = base.extend<{ site: Site }>({
   site: async ({ adminApi, env }, use) => {
     await use(await provisionSite(adminApi, env.phpVersion))
@@ -60,3 +46,4 @@ export const test = base.extend<{ site: Site }>({
 })
 
 export { expect }
+export { jobStartedBy } from './jobs'

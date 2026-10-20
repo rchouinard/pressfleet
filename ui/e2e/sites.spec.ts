@@ -2,7 +2,7 @@
 // the site's status, the jobs list and a job's page, a failed job's error,
 // and deleting the site without leaving anything behind.
 import { apiError, createClientGroup, startFailingImport, unique, waitForJob } from './fixtures/api'
-import { JobState, jobIdFromURL, jobProgress, waitForJobInUI } from './fixtures/jobs'
+import { JobState, jobIdFromURL, jobProgress, jobStartedBy, waitForJobInUI } from './fixtures/jobs'
 import { choose, toast } from './fixtures/ui'
 import { expect, test } from './fixtures'
 
@@ -19,15 +19,13 @@ test('provisions a site, follows its job, and deletes it', async ({ adminPage: p
   await dialog.getByLabel('Admin email').fill('owner@e2e.test')
   // The harness made the images of this PHP version available.
   await choose(page, 'PHP version', new RegExp(`^PHP ${env.phpVersion.replace('.', '\\.')}\\b`))
-  await dialog.getByRole('button', { name: 'Create site' }).click()
+  const { id: jobId } = await jobStartedBy(page, () => dialog.getByRole('button', { name: 'Create site' }).click())
 
   // The site's page follows the provisioning job live.
   await expect(page).toHaveURL(/\/sites\/[a-z0-9]{26}$/)
   const siteId = new URL(page.url()).pathname.split('/').pop()!
   await expect(page.getByRole('heading', { level: 1, name })).toBeVisible()
-  const progress = page.getByRole('region', { name: /^Progress of job / })
-  await expect(progress.getByRole('heading', { name: 'Create site' })).toBeVisible()
-  const jobId = (await progress.getAttribute('aria-label'))!.replace('Progress of job ', '')
+  await expect(jobProgress(page, jobId).getByRole('heading', { name: 'Create site' })).toBeVisible()
   const done = await waitForJobInUI(page, jobId)
   await expect(done.getByRole('listitem').filter({ hasText: /Failed|Pending|Running/ })).toHaveCount(0)
   await expect(page.getByText('Running', { exact: true }).first()).toBeVisible()

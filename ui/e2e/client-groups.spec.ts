@@ -1,7 +1,7 @@
 // Client groups (#83): create, rename, delete, and offboard (delete with
 // the backup repository and every backup in it).
 import { apiError, createClientGroup, unique, type Api } from './fixtures/api'
-import { waitForJobInUI } from './fixtures/jobs'
+import { jobStartedBy, waitForJobInUI } from './fixtures/jobs'
 import { expect, test } from './fixtures'
 
 async function groupGone(api: Api, id: string) {
@@ -61,13 +61,11 @@ test('offboards a client group with its backup repository', async ({ adminPage: 
   const confirm = dialog.getByRole('button', { name: 'Delete group and backups' })
   await expect(confirm).toBeDisabled()
   await dialog.getByLabel(`Type ${group.name} to confirm`).fill(group.name)
-  await confirm.click()
+  const job = await jobStartedBy(page, () => confirm.click())
   await expect(dialog).toBeHidden()
 
   // The page follows the deletion job to the end.
-  const progress = page.getByRole('region', { name: /^Progress of job / })
-  const jobId = (await progress.getAttribute('aria-label'))!.replace('Progress of job ', '')
-  await waitForJobInUI(page, jobId)
+  await waitForJobInUI(page, job.id)
   await expect(page.getByRole('link', { name: group.name })).toBeHidden()
 
   await groupGone(adminApi, group.id)

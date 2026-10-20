@@ -7,7 +7,7 @@
 import { gunzipSync } from 'node:zlib'
 import { createClientGroup, createSite, exportSite, unique, type Site } from './fixtures/api'
 import { tarGz, untarGz } from './fixtures/archive'
-import { jobIdIn, waitForJobInUI } from './fixtures/jobs'
+import { jobStartedBy, waitForJobInUI } from './fixtures/jobs'
 import { choose, download, toast } from './fixtures/ui'
 import { expect, test } from './fixtures'
 
@@ -40,8 +40,8 @@ test('exports a site and downloads its files', async ({ adminPage: page, adminAp
 
   await page.goto(`/sites/${site.id}`)
   const card = page.getByRole('region', { name: 'Export', exact: true })
-  await card.getByRole('button', { name: 'Export site' }).click()
-  await waitForJobInUI(page, await jobIdIn(card))
+  const job = await jobStartedBy(page, () => card.getByRole('button', { name: 'Export site' }).click())
+  await waitForJobInUI(page, job.id)
 
   // The two files a site import takes, with the site's files and data and
   // without the platform's drop-ins.
@@ -64,8 +64,8 @@ test('downloads a database export', async ({ adminPage: page, harness }) => {
   await page.getByRole('link', { name: 'Database', exact: true }).click()
   await expect(page.getByRole('heading', { level: 1, name: `Database: ${site.name}` })).toBeVisible()
   const section = page.getByRole('region', { name: 'Export', exact: true })
-  await section.getByRole('button', { name: 'Export database' }).click()
-  await waitForJobInUI(page, await jobIdIn(section))
+  const job = await jobStartedBy(page, () => section.getByRole('button', { name: 'Export database' }).click())
+  await waitForJobInUI(page, job.id)
 
   // The dump holds the site's data, and imports into any database.
   const dump = gunzipSync(await download(page, section.getByRole('link', { name: 'Download dump' }))).toString()
@@ -89,10 +89,10 @@ test('imports a site from a wp-content archive and a SQL dump', async ({ adminPa
   await page.getByLabel('wp-content archive').setInputFiles({ name: 'wp-content.tar.gz', mimeType: 'application/gzip', buffer: archive })
   await page.getByLabel('Database dump').setInputFiles({ name: 'database.sql.gz', mimeType: 'application/gzip', buffer: dump })
   await page.getByLabel('Name').fill(name)
-  await page.getByRole('button', { name: 'Upload and import' }).click()
+  const job = await jobStartedBy(page, () => page.getByRole('button', { name: 'Upload and import' }).click())
 
   const progress = page.getByRole('region', { name: 'Import progress' })
-  await waitForJobInUI(page, await jobIdIn(progress), undefined, 240_000)
+  await waitForJobInUI(page, job.id, undefined, 240_000)
   await progress.getByRole('link', { name: 'Open the site' }).click()
   await expect(page.getByRole('heading', { level: 1, name })).toBeVisible()
   const importedId = new URL(page.url()).pathname.split('/').pop()!
@@ -121,10 +121,10 @@ test('deploys a theme package', async ({ adminPage: page, harness }) => {
   await page.getByLabel('Directory name').fill('pf-e2e-theme')
   await page.getByLabel('Package').setInputFiles({ name: 'pf-e2e-theme.tar.gz', mimeType: 'application/gzip', buffer: pkg })
   await page.getByRole('checkbox', { name: 'Activate the theme after deploying' }).check()
-  await page.getByRole('button', { name: 'Upload and deploy' }).click()
+  const job = await jobStartedBy(page, () => page.getByRole('button', { name: 'Upload and deploy' }).click())
 
   const deployment = page.getByRole('region', { name: 'Deployment' })
-  await waitForJobInUI(page, await jobIdIn(deployment))
+  await waitForJobInUI(page, job.id)
   await expect(deployment.getByText('themes/pf-e2e-theme', { exact: true })).toBeVisible()
 
   // The site serves the deployed theme, active.

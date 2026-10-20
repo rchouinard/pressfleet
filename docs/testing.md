@@ -309,10 +309,10 @@ The fixtures (`ui/e2e/fixtures/`):
 | `asRole(role)` | Creates a user with the role and returns `{ user, page, api }`: a browser context of its own, signed in, and an API client with the user's session |
 | `harness` | Platform state the API doesn't show, from the Go harness server |
 | `api.ts` | `login`, `withToken`, `createUser`, `createClientGroup`, `createSite` (in a given group), `waitForJob`, `uploadFile`, `startFailingImport`, `downloadFile`, `exportSite` (an API export's archive and dump), `apiError` (the `ApiError` of a call that should fail), `unique` |
-| `sites.ts` | A `site` fixture (a running site in a client group of its own, provisioned through the API, left for the teardown), `provisionSite`, `getSite`, `jobStartedBy` (the job a UI action started) |
+| `sites.ts` | A `site` fixture (a running site in a client group of its own, provisioned through the API, left for the teardown), `provisionSite`, `getSite`, and `jobStartedBy` re-exported from `jobs.ts` |
 | `archive.ts` | `tarGz` and `untarGz`: small in-memory archives, for deploy packages and to read exports back |
 | `session.ts` | `signIn` (a session from the API handed to the browser as its cookie, which is fast), `signInThroughForm`, `signOut` |
-| `jobs.ts` | `waitForJobInUI` (waits on a job's progress view until it shows the state), `jobProgress`, `jobIdIn` (the job a progress view shows), `jobIdFromURL`, `JobState` |
+| `jobs.ts` | `waitForJobInUI` (waits on a job's progress view until it shows the state), `jobProgress`, `jobStartedBy` (the job a UI action started, from the API's `202` response, so a job the page showed before can't be mistaken for it), `jobIdFromURL`, `JobState` |
 | `ui.ts` | `choose` (Nuxt UI selects), `toast`, `expectLoginPage`, `download` (a download a link starts, as bytes) |
 
 The API clients `login` returns (`adminApi` and each `asRole(...).api`) reauthenticate on demand like the Go harness's session clients (`fixtures/reauth.ts`): `adminApi` lasts as long as its worker, longer than the 10-minute `two_factor.reauthentication_max_age`, so a sensitive action through it, such as `createUser`, would otherwise be refused late in a run. Browser pages don't need it, since each test signs in fresh. The dashboard's own reauthentication dialog is #158.
