@@ -5,7 +5,9 @@ import { createApiClient } from '../app/utils/api-client'
 import { ApiError } from '../app/utils/api-error'
 import {
   ENROLLMENT_PAGE,
+  ENROLLMENT_REQUIRED_PROBLEM_TYPE,
   enrollmentRedirect,
+  enrollmentRequiredHandler,
   isLastSecondFactor,
   LAST_SECOND_FACTOR_PROBLEM_TYPE,
   RECOVERY_CODES_PAGE,
@@ -13,7 +15,6 @@ import {
 } from '../app/utils/two-factor'
 import {
   credentialState,
-  hasAuthenticatorApp,
   recoveryCodesHref,
   recoveryCodesText,
   twoFactorClient,
@@ -75,6 +76,72 @@ describe('forced enrollment middleware', () => {
   })
 })
 
+describe('immediate redirect to enrollment', () => {
+  const refusal = () => problem(403, { type: ENROLLMENT_REQUIRED_PROBLEM_TYPE, detail: 'Set up a second factor first.' })
+
+  // A router whose replace moves it, as vue-router's does.
+  function fakeRouter(fullPath: string) {
+    const router = { current: to(fullPath), replace: vi.fn(async (loc: { path: string, query: Record<string, string> } | string) => {
+      router.current = typeof loc === 'string' ? to(loc) : to(loc.path + (loc.query.redirect ? `?redirect=${encodeURIComponent(loc.query.redirect)}` : ''))
+    }) }
+    return router
+  }
+
+  function restrictedMidUse(fullPath: string, refresh = vi.fn(async () => ({ enrollment_required: true }))) {
+    const router = fakeRouter(fullPath)
+    const onEnrollmentRequired = vi.fn(enrollmentRequiredHandler({ route: () => router.current, refresh, replace: loc => router.replace(loc) }))
+    const api = createApiClient({ baseUrl: base, fetch: async () => refusal(), onEnrollmentRequired })
+    return { api, router, refresh, onEnrollmentRequired }
+  }
+
+  it('refreshes the session and goes to the setup page once, keeping the page, when requests fail together', async () => {
+    const { api, router, refresh, onEnrollmentRequired } = restrictedMidUse('/sites/abc?tab=logs')
+    const results = await Promise.allSettled([
+      api.GET('/api/v1/sites'),
+      api.GET('/api/v1/jobs'),
+      api.POST('/api/v1/sites/{site_id}/start', { params: { path: { site_id: 'abc' } } }),
+    ])
+    // Each request still fails with its 403.
+    for (const r of results) expect(r).toMatchObject({ status: 'rejected', reason: { status: 403, type: ENROLLMENT_REQUIRED_PROBLEM_TYPE } })
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledTimes(1))
+    expect(onEnrollmentRequired).toHaveBeenCalledTimes(1)
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(router.replace).toHaveBeenCalledWith({ path: ENROLLMENT_PAGE, query: { redirect: '/sites/abc?tab=logs' } })
+
+    // Late refusals find the user already there.
+    await new Promise(resolve => setTimeout(resolve))
+    await expect(api.GET('/api/v1/sites')).rejects.toMatchObject({ status: 403 })
+    await vi.waitFor(() => expect(onEnrollmentRequired).toHaveBeenCalledTimes(2))
+    expect(router.replace).toHaveBeenCalledTimes(1)
+    expect(refresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('stays put when the reloaded session needn\'t enroll, or is signed out', async () => {
+    for (const session of [{ enrollment_required: false }, null]) {
+      const { api, router, refresh } = restrictedMidUse('/sites', vi.fn(async () => session))
+      await expect(api.GET('/api/v1/sites')).rejects.toMatchObject({ status: 403 })
+      await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1))
+      expect(router.replace).not.toHaveBeenCalled()
+    }
+  })
+
+  it('ignores other 403s, including reauthentication', async () => {
+    for (const body of [{ type: 'about:blank' }, { type: REAUTHENTICATION_REQUIRED_PROBLEM_TYPE }]) {
+      const onEnrollmentRequired = vi.fn()
+      const api = createApiClient({ baseUrl: base, fetch: async () => problem(403, body), onEnrollmentRequired })
+      await expect(api.GET('/api/v1/sites')).rejects.toMatchObject({ status: 403 })
+      expect(onEnrollmentRequired).not.toHaveBeenCalled()
+    }
+  })
+
+  it('is wired in useApi, beside the route guard that stays', () => {
+    const useApi = src('app/composables/useApi.ts')
+    expect(useApi).toContain('onEnrollmentRequired: enrollmentRequiredHandler(')
+    expect(useApi).toContain('/api/v1/auth/me')
+    expect(src('app/middleware/auth.global.ts')).toContain('enrollmentRedirect(user, to)')
+  })
+})
+
 describe('two-factor secrets stay out of storage, URLs and logs', () => {
   const holders = [
     'app/components/two-factor/TwoFactorSettings.vue',
@@ -132,23 +199,12 @@ describe('credentialState', () => {
       note: 'Registered for old.example.com, can\'t be used',
     })
   })
-})
 
-describe('hasAuthenticatorApp', () => {
-  const methods = vi.fn(async () => ['webauthn' as const])
-
-  it('answers from what is known when it can', async () => {
-    expect(await hasAuthenticatorApp(false, [cred()], 'dash.example.com', methods)).toBe(false)
-    expect(await hasAuthenticatorApp(true, [], 'dash.example.com', methods)).toBe(true)
-    expect(await hasAuthenticatorApp(true, [cred({ rp_id: 'old.example.com' })], 'dash.example.com', methods)).toBe(true)
-    expect(methods).not.toHaveBeenCalled()
-  })
-
-  it('asks for the factors otherwise', async () => {
-    expect(await hasAuthenticatorApp(true, [cred()], 'dash.example.com', methods)).toBe(false)
-    expect(await hasAuthenticatorApp(true, [cred()], 'dash.example.com', async () => ['totp', 'webauthn'])).toBe(true)
+  it('marks every credential unusable without a relying party ID', () => {
+    expect(credentialState(cred(), null).usable).toBe(false)
   })
 })
+
 
 describe('validateCredentialName', () => {
   it('needs a name of at most 100 characters', () => {
@@ -188,8 +244,7 @@ describe('twoFactorClient', () => {
 
   it('calls the documented endpoints', async () => {
     const { fetch, seen } = server(
-      () => Response.json({ items: [cred()] }),
-      () => Response.json({ methods: ['totp', 'webauthn', 'recovery_code'], webauthn: { challenge: 'AQID' } }),
+      () => Response.json({ enabled: true, rp_id: 'dash.example.com', totp: { confirmed: true, confirmed_at: '2026-09-01T00:00:00Z', pending_expires_at: null }, webauthn: { credentials: [cred()], usable: 1 }, recovery_codes_remaining: 9 }),
       () => Response.json({ secret: 'S', uri: 'otpauth://totp/x', expires_at: '2026-10-20T00:15:00Z' }),
       () => Response.json({ recovery_codes: ['A'] }),
       () => new Response(null, { status: 204 }),
@@ -200,8 +255,9 @@ describe('twoFactorClient', () => {
       () => Response.json({ codes: ['B'] }),
     )
     const c = twoFactorClient(createApiClient({ baseUrl: base, fetch, getCsrfToken: () => 'csrf' }))
-    expect(await c.listCredentials()).toHaveLength(1)
-    expect(await c.factorMethods()).toEqual(['totp', 'webauthn', 'recovery_code'])
+    const status = await c.status()
+    expect(status.webauthn.credentials).toHaveLength(1)
+    expect(status.rp_id).toBe('dash.example.com')
     expect((await c.startTotp()).secret).toBe('S')
     expect(await c.confirmTotp('123456')).toEqual(['A'])
     await c.removeTotp()
@@ -215,8 +271,7 @@ describe('twoFactorClient', () => {
 
     const me = '/api/v1/users/me/two-factor'
     expect(seen.map(s => `${s.method} ${s.path}`)).toEqual([
-      `GET ${me}/webauthn`,
-      'POST /api/v1/auth/reauthenticate/options',
+      `GET ${me}`,
       `POST ${me}/totp`,
       `POST ${me}/totp/confirm`,
       `DELETE ${me}/totp`,
@@ -226,9 +281,9 @@ describe('twoFactorClient', () => {
       `DELETE ${me}/webauthn/c1`,
       `POST ${me}/recovery-codes`,
     ])
-    expect(JSON.parse(seen[3]!.body)).toEqual({ code: '123456' })
-    expect(JSON.parse(seen[6]!.body)).toMatchObject({ name: 'New', credential: { id: 'x' } })
-    expect(JSON.parse(seen[7]!.body)).toEqual({ name: 'Renamed' })
+    expect(JSON.parse(seen[2]!.body)).toEqual({ code: '123456' })
+    expect(JSON.parse(seen[5]!.body)).toMatchObject({ name: 'New', credential: { id: 'x' } })
+    expect(JSON.parse(seen[6]!.body)).toEqual({ name: 'Renamed' })
   })
 
   it('reauthenticates a stale session in the middle of enrolling and sends the same registration again', async () => {

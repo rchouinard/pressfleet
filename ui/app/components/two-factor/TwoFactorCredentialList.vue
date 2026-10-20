@@ -7,7 +7,7 @@
 import { formatTimestamp } from '../../utils/tokens'
 import { credentialState, type WebAuthnCredential } from '../../utils/two-factor-settings'
 
-defineProps<{ credentials: readonly WebAuthnCredential[], rpId: string, disabled?: boolean }>()
+defineProps<{ credentials: readonly WebAuthnCredential[], rpId: string | null, disabled?: boolean }>()
 defineEmits<{ rename: [credential: WebAuthnCredential], remove: [credential: WebAuthnCredential] }>()
 </script>
 

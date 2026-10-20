@@ -18,6 +18,11 @@ let client: ApiClient | undefined
  * A sensitive action refused until the session reauthenticates opens the
  * reauthentication dialog (useReauthentication, mounted in app.vue) and is
  * sent again once the user has; see utils/api-client.ts.
+ *
+ * A request refused because the session must enroll a second factor (it
+ * became restricted mid-use) reloads the session and sends the user to the
+ * setup page at once, with the page they were on as `redirect`; see
+ * enrollmentRequiredHandler in utils/two-factor.ts.
  */
 export function useApi(): ApiClient {
   if (client) return client
@@ -41,6 +46,17 @@ export function useApi(): ApiClient {
       void router.replace(loginLocation(route.fullPath, { expired: wasSignedIn }))
     },
     onReauthenticationRequired: error => reauthentication.ask(error),
+    onEnrollmentRequired: enrollmentRequiredHandler({
+      route: () => router.currentRoute.value,
+      // As useSession's refresh, which can't be used here: it needs this client.
+      refresh: async () => {
+        const { data } = await client!.GET('/api/v1/auth/me')
+        user.value = data ?? null
+        csrf.value = data?.csrf_token ?? undefined
+        return user.value
+      },
+      replace: to => router.replace(to),
+    }),
   })
   return client
 }

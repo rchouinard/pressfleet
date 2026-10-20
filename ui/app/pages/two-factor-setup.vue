@@ -17,7 +17,6 @@ const route = useRoute()
 const notify = useNotify()
 const { user, logout, refresh } = useSession()
 const twoFactor = twoFactorClient(useApi())
-const rpId = useRequestURL().hostname
 
 // The session is restricted until the server sees a factor; reload it and
 // go on once it isn't. TwoFactorSettings only says so after the recovery
@@ -54,7 +53,7 @@ async function signOut() {
       <p v-if="user" class="text-sm text-muted">Signed in as <span class="font-medium text-default [overflow-wrap:anywhere]">{{ user.email }}</span>.</p>
     </div>
 
-    <TwoFactorSettings v-if="user" :client="twoFactor" :user="user" :rp-id="rpId" :level="2" @changed="changed" />
+    <TwoFactorSettings v-if="user" :client="twoFactor" :user="user" :level="2" @changed="changed" />
 
     <UButton color="neutral" variant="outline" icon="i-lucide-log-out" :loading="signingOut" @click="signOut">Sign out</UButton>
   </div>

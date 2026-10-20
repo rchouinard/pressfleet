@@ -159,10 +159,9 @@ async function changePassword(body: PasswordChange) {
   }
 }
 
-// Two-factor settings. Credentials are bound to the dashboard domain, which
-// is the host this page is served from.
+// Two-factor settings. They load their own state, the relying party ID
+// included (GET /users/me/two-factor).
 const twoFactor = twoFactorClient(api)
-const rpId = useRequestURL().hostname
 
 const signingOut = ref(false)
 async function signOut() {
@@ -227,7 +226,7 @@ async function signOut() {
         <template v-if="user?.two_factor_required">Your role requires a second factor when you sign in.</template>
         A second factor keeps your account safe if your password leaks. You can use an authenticator app, security keys and passkeys, or both.
       </p>
-      <TwoFactorSettings v-if="user" :client="twoFactor" :user="user" :rp-id="rpId" @changed="refreshSession()" />
+      <TwoFactorSettings v-if="user" :client="twoFactor" :user="user" @changed="refreshSession()" />
     </section>
 
     <section aria-labelledby="tokens-heading" class="space-y-3">
