@@ -26,6 +26,9 @@ importers:
       uplot:
         specifier: ^1.6.32
         version: 1.6.32
+      uqr:
+        specifier: 0.1.3
+        version: 0.1.3
       vue:
         specifier: ^3.5.43
         version: 3.5.43(typescript@5.9.3)

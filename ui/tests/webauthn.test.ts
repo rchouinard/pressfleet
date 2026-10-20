@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   assertionToJSON,
+  attestationToJSON,
+  createCredential,
   fromBase64url,
   getAssertion,
+  parseCreationOptions,
   parseRequestOptions,
   toBase64url,
   WebAuthnError,
+  type CreationOptionsJSON,
   type RequestOptionsJSON,
 } from '../app/utils/webauthn'
 
@@ -170,5 +174,118 @@ describe('getAssertion', () => {
   it('fails when no credential comes back', async () => {
     supportWith(async () => null)
     await expect(getAssertion(options)).rejects.toBeInstanceOf(WebAuthnError)
+  })
+})
+
+const creation: CreationOptionsJSON = {
+  challenge: 'AQID',
+  rp: { id: 'dash.example.com', name: 'PressFleet' },
+  user: { id: 'BAUG', name: 'ann@example.com', displayName: 'Ann' },
+  pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+  timeout: 300000,
+  excludeCredentials: [{ id: 'BwgJ', type: 'public-key', transports: ['usb'] }],
+  authenticatorSelection: { residentKey: 'preferred', userVerification: 'preferred' },
+  attestation: 'none',
+}
+
+describe('parseCreationOptions', () => {
+  it('decodes the binary members without browser support', () => {
+    vi.stubGlobal('PublicKeyCredential', undefined)
+    const o = parseCreationOptions(creation)
+    expect(Array.from(o.challenge as Uint8Array)).toEqual([1, 2, 3])
+    expect(Array.from(o.user.id as Uint8Array)).toEqual([4, 5, 6])
+    expect(o.user.name).toBe('ann@example.com')
+    expect(o.rp).toEqual({ id: 'dash.example.com', name: 'PressFleet' })
+    expect(o.pubKeyCredParams.map(p => p.alg)).toEqual([-7, -257])
+    expect(o.timeout).toBe(300000)
+    expect(o.attestation).toBe('none')
+    expect(o.authenticatorSelection).toEqual({ residentKey: 'preferred', userVerification: 'preferred' })
+    expect(Array.from(o.excludeCredentials![0]!.id as Uint8Array)).toEqual([7, 8, 9])
+    expect(o.excludeCredentials![0]!.transports).toEqual(['usb'])
+  })
+
+  it('uses the browser\'s parser when there is one', () => {
+    const parsed = { challenge: new Uint8Array([9]) }
+    const parseCreationOptionsFromJSON = vi.fn(() => parsed)
+    vi.stubGlobal('PublicKeyCredential', Object.assign(function PublicKeyCredential() {}, { parseCreationOptionsFromJSON }))
+    expect(parseCreationOptions(creation)).toBe(parsed)
+    expect(parseCreationOptionsFromJSON).toHaveBeenCalledWith(creation)
+  })
+})
+
+function newCredential(withToJSON = false) {
+  const response = {
+    clientDataJSON: bytes(0x7b, 0x7d).buffer,
+    attestationObject: bytes(0xa0).buffer,
+    getTransports: () => ['usb', 'nfc'],
+  }
+  return {
+    id: 'CQoL',
+    rawId: bytes(9, 10, 11).buffer,
+    type: 'public-key',
+    authenticatorAttachment: 'cross-platform',
+    response,
+    getClientExtensionResults: () => ({ credProps: { rk: true } }),
+    ...(withToJSON ? { toJSON: () => ({ id: 'from-browser' }) } : {}),
+  } as unknown as PublicKeyCredential
+}
+
+describe('attestationToJSON', () => {
+  it('encodes the new credential for the API', () => {
+    expect(attestationToJSON(newCredential())).toEqual({
+      id: 'CQoL',
+      rawId: 'CQoL',
+      type: 'public-key',
+      authenticatorAttachment: 'cross-platform',
+      clientExtensionResults: { credProps: { rk: true } },
+      response: { clientDataJSON: 'e30', attestationObject: 'oA', transports: ['usb', 'nfc'] },
+    })
+  })
+
+  it('prefers the browser\'s toJSON', () => {
+    expect(attestationToJSON(newCredential(true))).toEqual({ id: 'from-browser' })
+  })
+})
+
+describe('createCredential', () => {
+  function supportWith(create: (o: CredentialCreationOptions) => Promise<Credential | null>) {
+    vi.stubGlobal('PublicKeyCredential', function PublicKeyCredential() {})
+    vi.stubGlobal('navigator', { credentials: { create: vi.fn(create) } })
+  }
+
+  it('creates a credential for the options and returns its JSON form', async () => {
+    let arg: CredentialCreationOptions | undefined
+    supportWith(async (o) => {
+      arg = o
+      return newCredential() as unknown as Credential
+    })
+    const signal = new AbortController().signal
+    const json = await createCredential(creation, signal)
+    expect(json.rawId).toBe('CQoL')
+    expect(arg!.signal).toBe(signal)
+    expect(Array.from(arg!.publicKey!.challenge as Uint8Array)).toEqual([1, 2, 3])
+  })
+
+  it('says so when the browser can\'t register keys', async () => {
+    vi.stubGlobal('PublicKeyCredential', undefined)
+    await expect(createCredential(creation)).rejects.toThrow(/doesn't support security keys/)
+  })
+
+  it('words a key that is already registered, and a cancelled prompt', async () => {
+    supportWith(async () => {
+      throw new DOMException('nope', 'InvalidStateError')
+    })
+    await expect(createCredential(creation)).rejects.toThrow(/already registered/)
+    supportWith(async () => {
+      throw new DOMException('nope', 'NotAllowedError')
+    })
+    const err = await createCredential(creation).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(WebAuthnError)
+    expect((err as Error).message).toBe('The request was cancelled or timed out. Try again.')
+  })
+
+  it('fails when no credential comes back', async () => {
+    supportWith(async () => null)
+    await expect(createCredential(creation)).rejects.toBeInstanceOf(WebAuthnError)
   })
 })
