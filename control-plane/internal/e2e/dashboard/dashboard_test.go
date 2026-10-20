@@ -79,7 +79,7 @@ func TestDashboard(t *testing.T) {
 	t.Cleanup(func() {
 		siteProjects = listSiteProjects(t, p, projectDir)
 		if t.Failed() {
-			savePlatformLogs(t, p, filepath.Join(ui, resultsDir, "platform-logs.txt"))
+			saveLogs(t, p.Project, filepath.Join(ui, resultsDir, "platform-logs.txt"))
 		}
 	})
 
@@ -94,16 +94,24 @@ func TestDashboard(t *testing.T) {
 
 	php, otherPHP := siteImages(t)
 	harness := startHarness(t, p, projectDir)
+	b := startBrowser(t, p, ui)
+	t.Cleanup(func() {
+		if t.Failed() {
+			saveLogs(t, b.project, filepath.Join(ui, resultsDir, "browser-logs.txt"))
+		}
+	})
 	env := map[string]string{
-		"PRESSFLEET_E2E_BASE_URL":       "https://" + e2e.DashboardDomain,
-		"PRESSFLEET_E2E_INGRESS_ADDR":   p.HTTPSAddr,
-		"PRESSFLEET_E2E_API_URL":        p.BaseURL,
-		"PRESSFLEET_E2E_HARNESS_URL":    harness,
-		"PRESSFLEET_E2E_ADMIN_EMAIL":    p.AdminEmail,
-		"PRESSFLEET_E2E_ADMIN_PASSWORD": p.AdminPassword.Reveal(),
-		"PRESSFLEET_E2E_PHP_VERSION":    php,
+		"PRESSFLEET_E2E_BASE_URL":             "https://" + e2e.DashboardDomain,
+		"PRESSFLEET_E2E_INGRESS_ADDR":         p.HTTPSAddr,
+		"PRESSFLEET_E2E_BROWSER_ENDPOINT":     b.Endpoint,
+		"PRESSFLEET_E2E_BROWSER_INGRESS_ADDR": b.IngressAddr,
+		"PRESSFLEET_E2E_API_URL":              p.BaseURL,
+		"PRESSFLEET_E2E_HARNESS_URL":          harness,
+		"PRESSFLEET_E2E_ADMIN_EMAIL":          p.AdminEmail,
+		"PRESSFLEET_E2E_ADMIN_PASSWORD":       p.AdminPassword.Reveal(),
+		"PRESSFLEET_E2E_PHP_VERSION":          php,
+		"PRESSFLEET_E2E_OTHER_PHP_VERSION":    otherPHP,
 	}
-	env["PRESSFLEET_E2E_OTHER_PHP_VERSION"] = otherPHP
 
 	if os.Getenv(envHold) == "1" {
 		hold(t, filepath.Join(ui, platformFile), env)
@@ -259,13 +267,12 @@ func removeSites(t *testing.T, projects []compose.Project) {
 	}
 }
 
-// savePlatformLogs writes the platform's container logs where CI uploads
-// them from.
-func savePlatformLogs(t *testing.T, p *e2e.Platform, file string) {
+// saveLogs writes a project's container logs where CI uploads them from.
+func saveLogs(t *testing.T, project compose.Project, file string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	logs, err := p.Project.Logs(ctx)
+	logs, err := project.Logs(ctx)
 	if err != nil {
 		t.Logf("collecting container logs: %v", err)
 		return

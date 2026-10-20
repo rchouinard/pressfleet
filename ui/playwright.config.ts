@@ -8,6 +8,7 @@ import { readPlatformEnv } from './e2e/env'
 
 const platform = readPlatformEnv()
 const ci = !!process.env.CI
+const hostBrowser = process.env.PRESSFLEET_E2E_HOST_BROWSER === '1'
 
 export default defineConfig({
   testDir: './e2e',
@@ -18,11 +19,10 @@ export default defineConfig({
   workers: ci ? 2 : 3,
   fullyParallel: true,
   forbidOnly: ci,
-  // One retry, for Chromium aborting connections when the host's network
-  // changes (ERR_NETWORK_CHANGED; see the launch options below): it happens
-  // whenever a site's containers come or go, while any spec may be loading
-  // a page. A test that passes on its retry is reported as flaky.
-  retries: 1,
+  // No retries: a test that fails once fails the run. The browser runs in
+  // a container of its own, where Docker's network changes don't abort
+  // its requests (see below).
+  retries: 0,
   // Provisioning a site takes about a minute on a cold runner.
   timeout: 3 * 60_000,
   expect: { timeout: 15_000 },
@@ -43,25 +43,28 @@ export default defineConfig({
       name: 'chromium',
       use: {
         ...devices['Desktop Chrome'],
+        // Chromium runs in a container the Go test starts (Playwright's
+        // browser server, on the platform network), not on the host: when a
+        // site's first container starts or its last one stops, Docker adds
+        // or removes a network on the host, and Chromium there aborts every
+        // request in flight (ERR_NETWORK_CHANGED). The runner stays on the
+        // host, so the specs' own requests to the API and the harness go
+        // out from here. PRESSFLEET_E2E_HOST_BROWSER=1 launches Chromium on
+        // the host instead, for --headed and --debug.
+        connectOptions: platform && !hostBrowser ? { wsEndpoint: platform.browserEndpoint } : undefined,
         launchOptions: {
           // A browser to use instead of Playwright's own download, for
           // machines that have a Chromium of another revision installed.
-          executablePath: process.env.PRESSFLEET_E2E_CHROMIUM || undefined,
-          // The dashboard domain resolves nowhere: send it to Traefik's
-          // published port, so the page's origin stays https://fleet.e2e.test.
-          // The sites' test domains (preview domains under
-          // preview.e2e.test, go-live domains under e2e.test) go there too,
-          // for the tab the one-click WordPress login opens. Only Traefik's
-          // TCP ports are published, so no QUIC. The page needs no other
-          // origin (the CSP forbids them), so no proxy either, whatever the
-          // environment sets. No HTTP/2 either: Chromium closes its HTTP/2
-          // sessions, failing every request in flight (ERR_NETWORK_CHANGED),
-          // when the host's network changes, as it does each time a site's
-          // containers come or go while other specs run. Over HTTP/1.1 only
-          // connections still being opened fail, which is far rarer. The
-          // API suite checks that Traefik speaks HTTP/2.
+          executablePath: hostBrowser ? process.env.PRESSFLEET_E2E_CHROMIUM || undefined : undefined,
+          // The dashboard domain resolves nowhere: send it to Traefik, so the
+          // page's origin stays https://fleet.e2e.test. The sites' test
+          // domains (preview domains under preview.e2e.test, go-live domains
+          // under e2e.test) go there too, for the tab the one-click WordPress
+          // login opens. Only Traefik's TCP ports are reachable, so no QUIC.
+          // The page needs no other origin (the CSP forbids them), so no
+          // proxy either, whatever the environment sets.
           args: platform
-            ? [`--host-resolver-rules=${hostResolverRules(platform)}`, '--disable-quic', '--disable-http2', '--no-proxy-server']
+            ? [`--host-resolver-rules=${hostResolverRules(platform.baseURL, hostBrowser ? platform.ingressAddr : platform.browserIngressAddr)}`, '--disable-quic', '--no-proxy-server']
             : [],
         },
       },
@@ -70,8 +73,8 @@ export default defineConfig({
 })
 
 /** Chromium's rules that send the dashboard domain and its sibling test domains to Traefik. */
-function hostResolverRules(env: { baseURL: string, ingressAddr: string }): string {
-  const host = new URL(env.baseURL).hostname
+function hostResolverRules(baseURL: string, ingressAddr: string): string {
+  const host = new URL(baseURL).hostname
   const parent = host.slice(host.indexOf('.') + 1)
-  return [`MAP ${host}:443 ${env.ingressAddr}`, `MAP *.${parent}:443 ${env.ingressAddr}`].join(', ')
+  return [`MAP ${host}:443 ${ingressAddr}`, `MAP *.${parent}:443 ${ingressAddr}`].join(', ')
 }

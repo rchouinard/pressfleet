@@ -11,11 +11,10 @@
 //
 // The site is left running when the test ends, and removed with the
 // platform once the suite is done (control-plane/internal/e2e/dashboard).
-// Deleting it here would stop its containers while other specs run, and
-// Chromium aborts the connections it is opening whenever a container
-// network on the host goes down or comes up (ERR_NETWORK_CHANGED; see
-// playwright.config.ts). In hold mode the sites pile up until the platform
-// is torn down.
+// Deleting it here would only make each test longer. (It also kept the
+// host's networks still for a Chromium on the host, which aborts requests
+// whenever one comes or goes; see docs/testing.md, "Where the browser
+// runs".) In hold mode the sites pile up until the platform is torn down.
 import { createClientGroup, unique, waitForJob, type Api } from './api'
 import { expect, test as base } from './index'
 import type { components } from '../../app/api/schema.gen'
