@@ -2,6 +2,7 @@ import { isNetworkError } from '../utils/notify'
 import { loginLocation, safeRedirect } from '../utils/redirect'
 import { minimumRole, type Action } from '../utils/permissions'
 import { roleAtLeast } from '../utils/roles'
+import { enrollmentRedirect } from '../utils/two-factor'
 
 /**
  * Guards every route. The session is loaded once per page load (GET
@@ -10,6 +11,9 @@ import { roleAtLeast } from '../utils/roles'
  * - signed-out users go to /login with the page they wanted as `redirect`
  *   (validated by `safeRedirect`; see utils/redirect.ts),
  * - signed-in users on /login go on to their `redirect` (or the dashboard),
+ * - a session that must enroll a second factor (`enrollment_required`)
+ *   sees only the setup page until it has one; the server refuses
+ *   everything else anyway (see enrollmentRedirect),
  * - a page that sets `definePageMeta({ requires: 'user.view' })` is a 403
  *   for roles below that action's minimum (hiding the nav entry is not
  *   enough; people follow links),
@@ -43,6 +47,9 @@ export default defineNuxtRouteMiddleware(async (to) => {
     return
   }
   if (!user) return navigateTo(loginLocation(to.fullPath), { replace: true })
+
+  const enroll = enrollmentRedirect(user, to)
+  if (enroll) return navigateTo(enroll, { replace: true })
 
   const requires = to.meta.requires as Action | undefined
   if (requires && !roleAtLeast(user.role, minimumRole(requires))) {
