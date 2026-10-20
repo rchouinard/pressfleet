@@ -9,6 +9,12 @@
 // throttling waits out Retry-After; a 401 (the session is gone) finishes
 // with false, and the API client's 401 handling goes to the login page.
 // Closing it finishes with false, and the refused action fails as it was.
+//
+// It must stack above the dialog the action came from, such as "Create API
+// token". Its UModal is teleported to <body> where app.vue mounts it, at
+// startup, so its content comes before any modal a page opens later; with
+// equal z-indexes the page's modal would cover it and take its clicks. The
+// ui classes lift it above them (#160).
 // Nuxt-free: the caller passes the requests, so it is unit-tested with mount.
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { toApiError, type ApiError } from '../../utils/api-error'
@@ -93,6 +99,7 @@ async function onSubmit(proof: FactorProof) {
     title="Confirm it's you"
     :description="description"
     :dismissible="!busy"
+    :ui="{ overlay: 'z-60', content: 'z-60' }"
     @update:open="setOpen"
   >
     <template #body>

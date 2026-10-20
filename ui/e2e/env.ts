@@ -25,6 +25,13 @@ export interface PlatformEnv {
   phpVersion: string
   /** Another PHP version whose php image the harness made available, to change a site to. */
   otherPhpVersion: string
+  /**
+   * two_factor.required: "off" for the suite's first run, "admins" for its
+   * second, which runs only e2e/two-factor-required.spec.ts (docs/testing.md).
+   */
+  twoFactorRequired: string
+  /** two_factor.reauthentication_max_age, in seconds. */
+  reauthenticationMaxAgeSeconds: string
 }
 
 const keys = {
@@ -38,6 +45,8 @@ const keys = {
   adminPassword: 'PRESSFLEET_E2E_ADMIN_PASSWORD',
   phpVersion: 'PRESSFLEET_E2E_PHP_VERSION',
   otherPhpVersion: 'PRESSFLEET_E2E_OTHER_PHP_VERSION',
+  twoFactorRequired: 'PRESSFLEET_E2E_TWO_FACTOR_REQUIRED',
+  reauthenticationMaxAgeSeconds: 'PRESSFLEET_E2E_REAUTHENTICATION_MAX_AGE_SECONDS',
 } as const satisfies Record<keyof PlatformEnv, string>
 
 const platformFile = fileURLToPath(new URL('./.platform.json', import.meta.url))

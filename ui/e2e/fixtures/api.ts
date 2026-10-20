@@ -51,30 +51,54 @@ function client(
   })
 }
 
+/** Name of the pending-login cookie between a login's two steps. */
+const LOGIN_COOKIE = 'pressfleet_login'
+
 /**
- * Logs in through the API and returns a client that uses the session. The
- * client reauthenticates with the password when a sensitive action finds
- * the session's last check too old, so the user must have no second factor.
+ * A second factor for logging in and reauthenticating through the API: a
+ * fresh proof each time it is called (TotpApp.code, say), since each code
+ * works once.
  */
-export async function login(apiURL: string, email: string, password: string): Promise<Api> {
+export type ApiSecondFactor = () => Promise<{ method: 'totp' | 'recovery_code', code: string }>
+
+/** The value of a cookie a response sets. */
+function setCookie(res: Response, name: string): string | undefined {
+  return res.headers.getSetCookie().find(c => c.startsWith(`${name}=`))?.slice(name.length + 1).split(';')[0]
+}
+
+/**
+ * Logs in through the API and returns a client that uses the session.
+ * Users with a second factor pass `secondFactor` for the login's second
+ * step. The client reauthenticates when a sensitive action finds the
+ * session's last check too old: with the second factor if there is one,
+ * otherwise with the password.
+ */
+export async function login(apiURL: string, email: string, password: string, secondFactor?: ApiSecondFactor): Promise<Api> {
   const sessionCookie = (): Record<string, string> => (api.sessionToken ? { Cookie: `${SESSION_COOKIE}=${api.sessionToken}` } : {})
   const reauthenticate = async () => {
     const res = await fetch(new URL('/api/v1/auth/reauthenticate', apiURL), {
       method: 'POST',
       headers: { ...sessionCookie(), 'Content-Type': 'application/json', 'X-CSRF-Token': api.csrfToken ?? '' },
-      body: JSON.stringify({ method: 'password', password }),
+      body: JSON.stringify(secondFactor ? await secondFactor() : { method: 'password', password }),
     })
     if (!res.ok) throw new Error(`reauthenticate as ${email}: status ${res.status}: ${await res.text()}`)
   }
   const api: Api = { client: client(apiURL, sessionCookie, () => api.csrfToken, reauthenticate) }
-  const res = await fetch(new URL('/api/v1/auth/login', apiURL), {
+  let res = await fetch(new URL('/api/v1/auth/login', apiURL), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
   })
+  const pending = res.status === 401 ? setCookie(res, LOGIN_COOKIE) : undefined
+  if (pending && secondFactor) {
+    res = await fetch(new URL('/api/v1/auth/login/second-factor', apiURL), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Cookie': `${LOGIN_COOKIE}=${pending}` },
+      body: JSON.stringify(await secondFactor()),
+    })
+  }
   if (!res.ok) throw new Error(`login as ${email}: status ${res.status}: ${await res.text()}`)
-  const cookie = res.headers.getSetCookie().find(c => c.startsWith(`${SESSION_COOKIE}=`))
-  api.sessionToken = cookie?.slice(SESSION_COOKIE.length + 1).split(';')[0]
+  api.sessionToken = setCookie(res, SESSION_COOKIE)
   api.csrfToken = ((await res.json()) as components['schemas']['CurrentUser']).csrf_token ?? undefined
   if (!api.sessionToken || !api.csrfToken) throw new Error(`login as ${email}: no session cookie or CSRF token`)
   return api
