@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"strconv"
 	"strings"
 
@@ -46,19 +47,32 @@ func (a *app) userCreateCommand() *cobra.Command {
 
 Without --password-stdin, a random password is generated and printed once.
 The default role is admin, for bootstrapping the first user ("pressfleet
-init") and for recovery.`,
+init") and for recovery. The user is in the audit log as user.create, with
+no user as the actor.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			pw, generated, err := a.newPassword(passwordStdin)
 			if err != nil {
 				return err
 			}
-			return a.withAuth(cmd.Context(), func(svc *auth.Service) error {
+			return a.withAuthDB(cmd.Context(), func(db *store.DB, svc *auth.Service) error {
 				u, err := svc.CreateUser(cmd.Context(), auth.NewUser{Email: email, Password: pw, Role: store.Role(role)})
 				if err != nil {
 					return fmt.Errorf("creating user: %w", err)
 				}
-				return printUser(cmd.OutOrStdout(), "Created", u, pw, generated)
+				// Printed before the event is written: the user exists
+				// either way, and a generated password is only shown here.
+				if err := printUser(cmd.OutOrStdout(), "Created", u, pw, generated); err != nil {
+					return err
+				}
+				// The API's user.create records no details; the role is
+				// here because a CLI-created user is usually the first
+				// Admin or a recovery one. Never the password, nor whether
+				// it was generated.
+				if err := auditCLI(cmd.Context(), db, authz.CreateUser, u.ID, map[string]string{"role": string(u.Role)}); err != nil {
+					return fmt.Errorf("the user %s was created, but recording it in the audit log failed: %w", u.Email, err)
+				}
+				return nil
 			})
 		},
 	}
@@ -78,7 +92,8 @@ func (a *app) userResetPasswordCommand() *cobra.Command {
 		Use:   "reset-password",
 		Short: "Set a new password for a user",
 		Long: `Set a new password for a user, signing them out everywhere and revoking
-their API tokens.
+their API tokens. The reset is in the audit log as user.update, like the
+API's change of another user's password, with no user as the actor.
 
 Without --password-stdin, a random password is generated and printed once.`,
 		Args: cobra.NoArgs,
@@ -87,12 +102,24 @@ Without --password-stdin, a random password is generated and printed once.`,
 			if err != nil {
 				return err
 			}
-			return a.withAuth(cmd.Context(), func(svc *auth.Service) error {
+			return a.withAuthDB(cmd.Context(), func(db *store.DB, svc *auth.Service) error {
 				u, err := svc.ResetPassword(cmd.Context(), email, pw)
 				if err != nil {
 					return fmt.Errorf("resetting password: %w", err)
 				}
-				return printUser(cmd.OutOrStdout(), "Reset the password of", u, pw, generated)
+				// Printed first, as for create: the new password works
+				// whether or not the event is written.
+				if err := printUser(cmd.OutOrStdout(), "Reset the password of", u, pw, generated); err != nil {
+					return err
+				}
+				// The API sets another user's password with PATCH
+				// /users/{id}, audited as user.update, so a filter on that
+				// finds both. Nothing about the password, not even how it
+				// was chosen.
+				if err := auditCLI(cmd.Context(), db, authz.UpdateUser, u.ID, nil); err != nil {
+					return fmt.Errorf("the password of %s was reset, but recording it in the audit log failed: %w", u.Email, err)
+				}
+				return nil
 			})
 		},
 	}
@@ -162,20 +189,12 @@ func (a *app) resetTwoFactor(ctx context.Context, w io.Writer, db *store.DB, svc
 	if err != nil {
 		return fmt.Errorf("resetting second factors: %w", err)
 	}
-	// The same event and details as the API's reset (package api), with no
-	// actor user or token: nobody logged in made it.
-	if err := store.NewAuditEvents(db).Insert(ctx, &store.AuditEvent{
-		Action:     string(authz.ResetUserTwoFactor),
-		TargetType: string(authz.TargetUser),
-		TargetID:   u.ID,
-		Result:     store.AuditSuccess,
-		Details: map[string]string{
-			"actor":                        "cli",
-			"totp_removed":                 strconv.FormatBool(reset.TOTP),
-			"webauthn_credentials_removed": strconv.Itoa(reset.WebAuthnCredentials),
-			"recovery_codes_removed":       strconv.Itoa(reset.RecoveryCodes),
-			"sessions_ended":               strconv.Itoa(reset.Sessions),
-		},
+	// The same event and details as the API's reset (package api).
+	if err := auditCLI(ctx, db, authz.ResetUserTwoFactor, u.ID, map[string]string{
+		"totp_removed":                 strconv.FormatBool(reset.TOTP),
+		"webauthn_credentials_removed": strconv.Itoa(reset.WebAuthnCredentials),
+		"recovery_codes_removed":       strconv.Itoa(reset.RecoveryCodes),
+		"sessions_ended":               strconv.Itoa(reset.Sessions),
 	}); err != nil {
 		return fmt.Errorf("the second factors of %s were reset, but recording it in the audit log failed: %w", u.Email, err)
 	}
@@ -193,6 +212,22 @@ func (a *app) resetTwoFactor(ctx context.Context, w io.Writer, db *store.DB, svc
 		reset.RecoveryCodes, plural(reset.RecoveryCodes, "recovery code", "recovery codes"),
 		reset.Sessions, plural(reset.Sessions, "session", "sessions"), next)
 	return err
+}
+
+// auditCLI records a successful change a user command made to the user with
+// id userID, with no actor user or token, since nobody logged in made it,
+// and "actor": "cli" beside details. It runs after the change, so a failure
+// here means the change went through unrecorded.
+func auditCLI(ctx context.Context, db *store.DB, action authz.Action, userID string, details map[string]string) error {
+	d := map[string]string{"actor": "cli"}
+	maps.Copy(d, details)
+	return store.NewAuditEvents(db).Insert(ctx, &store.AuditEvent{
+		Action:     string(action),
+		TargetType: string(authz.TargetUser),
+		TargetID:   userID,
+		Result:     store.AuditSuccess,
+		Details:    d,
+	})
 }
 
 // confirm asks a yes/no question on w and reads the answer from standard
@@ -218,14 +253,9 @@ func (a *app) confirm(w io.Writer, question, what string) error {
 	}
 }
 
-// withAuth opens (and migrates) the state database and runs fn with an
-// auth service on it: the same code the API uses.
-func (a *app) withAuth(ctx context.Context, fn func(*auth.Service) error) error {
-	return a.withAuthDB(ctx, func(_ *store.DB, svc *auth.Service) error { return fn(svc) })
-}
-
-// withAuthDB is withAuth for commands that also write to the database
-// themselves, such as an audit event.
+// withAuthDB opens (and migrates) the state database and runs fn with it
+// and an auth service on it: the same code the API uses. Commands write
+// their audit events to the database themselves.
 func (a *app) withAuthDB(ctx context.Context, fn func(*store.DB, *auth.Service) error) error {
 	db, err := a.openStateDB(ctx)
 	if err != nil {

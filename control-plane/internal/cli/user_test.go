@@ -3,6 +3,7 @@ package cli_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -157,6 +158,100 @@ func TestUserResetPassword(t *testing.T) {
 	}
 }
 
+var userID = regexp.MustCompile(`\(id ([0-9a-z]+)\)`)
+
+// TestUserAudit is the acceptance criterion of #180: creating a user and
+// resetting a password from the CLI each leave one audit event, with no
+// actor user, "actor": "cli", and no secrets; failed commands leave none.
+func TestUserAudit(t *testing.T) {
+	ctx := context.Background()
+	for _, d := range storetest.Dialects {
+		t.Run(string(d), func(t *testing.T) {
+			cfg := storetest.Config(t, d)
+			db := storetest.OpenUnmigrated(t, cfg)
+			if _, err := db.Migrate(ctx, filepath.Join(t.TempDir(), "backups")); err != nil {
+				t.Fatal(err)
+			}
+			var secrets []string
+			// run runs a command that must succeed, and returns the ID of
+			// the user it names and any password it generated.
+			run := func(stdin string, args ...string) string {
+				t.Helper()
+				r := runUserOn(t, cfg, stdin, args...)
+				m := userID.FindStringSubmatch(r.stdout)
+				if r.code != 0 || m == nil {
+					t.Fatalf("%v: exit %d, stdout: %s, stderr: %s", args, r.code, r.stdout, r.stderr)
+				}
+				if pw := generatedPassword.FindStringSubmatch(r.stdout); pw != nil {
+					secrets = append(secrets, pw[1])
+				}
+				return m[1]
+			}
+			// check wants exactly one event with action per user in want,
+			// with the CLI as the actor and the user's details.
+			check := func(action string, want map[string]map[string]string) {
+				t.Helper()
+				evs := auditEvents(t, db, action)
+				got := map[string]map[string]string{}
+				for _, ev := range evs {
+					if ev.ActorUserID != "" || ev.ActorTokenID != "" || ev.TargetType != "user" || ev.Result != store.AuditSuccess {
+						t.Errorf("%s event = %+v, want a successful one on a user with no actor", action, ev)
+					}
+					got[ev.TargetID] = ev.Details
+				}
+				if len(evs) != len(want) || !maps.EqualFunc(got, want, maps.Equal) {
+					t.Errorf("%s events = %+v, want one per user with details %v", action, evs, want)
+				}
+			}
+
+			secrets = append(secrets, "chosen password 1", "chosen password 2")
+			admin := run("chosen password 1\n", "create", "--email", "a@example.com", "--password-stdin")
+			viewer := run("", "create", "--email", "v@example.com", "--role", "viewer")
+			created := map[string]map[string]string{admin: {"actor": "cli", "role": "admin"}, viewer: {"actor": "cli", "role": "viewer"}}
+			check("user.create", created)
+
+			run("", "reset-password", "--email", "a@example.com")
+			run("chosen password 2\n", "reset-password", "--email", "v@example.com", "--password-stdin")
+			// Generated and stdin passwords get the same details.
+			reset := map[string]map[string]string{admin: {"actor": "cli"}, viewer: {"actor": "cli"}}
+			check("user.update", reset)
+
+			// Failed commands record nothing.
+			for name, tt := range map[string]struct {
+				stdin string
+				args  []string
+			}{
+				"existing email":       {"", []string{"create", "--email", "A@example.com"}},
+				"bad role":             {"", []string{"create", "--email", "x@example.com", "--role", "root"}},
+				"unknown email":        {"", []string{"reset-password", "--email", "nobody@example.com"}},
+				"unknown email, stdin": {"chosen password 3\n", []string{"reset-password", "--email", "nobody@example.com", "--password-stdin"}},
+			} {
+				if r := runUserOn(t, cfg, tt.stdin, tt.args...); r.code != 1 {
+					t.Errorf("%s: exit %d, stdout: %s, stderr: %s", name, r.code, r.stdout, r.stderr)
+				}
+			}
+			check("user.create", created)
+			check("user.update", reset)
+
+			all := auditEvents(t, db, "")
+			if len(all) != 4 {
+				t.Errorf("audit events = %+v, want 4", all)
+			}
+			if len(secrets) != 4 {
+				t.Fatalf("passwords = %d, want 2 generated and 2 chosen", len(secrets))
+			}
+			for _, ev := range all {
+				s := fmt.Sprintf("%+v", ev)
+				for _, pw := range secrets {
+					if strings.Contains(s, pw) {
+						t.Errorf("audit event %s holds a password", s)
+					}
+				}
+			}
+		})
+	}
+}
+
 const testRPID = "pf.example.com"
 
 // twoFactorService returns an auth service on db with TOTP and WebAuthn,
@@ -202,9 +297,10 @@ func enrollEverything(t *testing.T, svc *auth.Service, email string) (store.User
 	return res.User, res.Token
 }
 
-func auditEvents(t *testing.T, db *store.DB) []store.AuditEvent {
+// auditEvents returns the audit events with action, newest first.
+func auditEvents(t *testing.T, db *store.DB, action string) []store.AuditEvent {
 	t.Helper()
-	page, err := store.NewAuditEvents(db).List(context.Background(), store.AuditFilter{})
+	page, err := store.NewAuditEvents(db).List(context.Background(), store.AuditFilter{Action: action})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +350,7 @@ func TestUserResetTwoFactor(t *testing.T) {
 			if _, err := svc.AuthenticateSession(ctx, session); err != nil {
 				t.Errorf("after declining, session: %v", err)
 			}
-			if evs := auditEvents(t, db); len(evs) != 0 {
+			if evs := auditEvents(t, db, "user.two_factor.reset"); len(evs) != 0 {
 				t.Errorf("after declining, audit events: %+v", evs)
 			}
 
@@ -268,7 +364,7 @@ func TestUserResetTwoFactor(t *testing.T) {
 			if _, err := svc.AuthenticateSession(ctx, session); !errors.Is(err, auth.ErrUnauthenticated) {
 				t.Errorf("session after reset: %v", err)
 			}
-			evs := auditEvents(t, db)
+			evs := auditEvents(t, db, "user.two_factor.reset")
 			want := map[string]string{
 				"actor": "cli", "totp_removed": "true", "webauthn_credentials_removed": "1",
 				"recovery_codes_removed": "10", "sessions_ended": "1",
@@ -298,7 +394,7 @@ func TestUserResetTwoFactor(t *testing.T) {
 				!strings.Contains(r.stdout, "Nothing to reset: admin user a@example.com (id "+admin.ID+") has no second factors.") {
 				t.Errorf("nothing to reset: exit %d, stdout: %s, stderr: %s", r.code, r.stdout, r.stderr)
 			}
-			if n := len(auditEvents(t, db)); n != 1 {
+			if n := len(auditEvents(t, db, "user.two_factor.reset")); n != 1 {
 				t.Errorf("audit events after a reset with nothing to reset: %d, want 1", n)
 			}
 
