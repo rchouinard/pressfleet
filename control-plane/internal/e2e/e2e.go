@@ -142,11 +142,13 @@ services:
 			b.WriteString("      - " + strconv.Quote(ip) + "\n")
 		}
 	}
-	if len(o.env) > 0 {
-		b.WriteString("    environment:\n")
-		for _, k := range slices.Sorted(maps.Keys(o.env)) {
-			b.WriteString("      " + k + ": " + strconv.Quote(o.env[k]) + "\n")
-		}
+	// Test platforms don't ask GitHub for releases (#140) unless a test
+	// says otherwise.
+	env := map[string]string{"PRESSFLEET_UPDATES_RELEASE_CHECK": "false"}
+	maps.Copy(env, o.env)
+	b.WriteString("    environment:\n")
+	for _, k := range slices.Sorted(maps.Keys(env)) {
+		b.WriteString("      " + k + ": " + strconv.Quote(env[k]) + "\n")
 	}
 	b.WriteString(o.services)
 	return b.String()

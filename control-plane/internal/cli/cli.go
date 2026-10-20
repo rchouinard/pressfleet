@@ -14,6 +14,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/doctor"
 	"github.com/rchouinard/pressfleet/control-plane/internal/logging"
+	"github.com/rchouinard/pressfleet/control-plane/internal/releasecheck"
 )
 
 // Options configures a CLI invocation.
@@ -49,6 +50,9 @@ type Options struct {
 	// PlatformProjectName overrides the platform's Compose project name, so
 	// tests against real Docker don't touch an actual installation.
 	PlatformProjectName string
+	// ReleaseSource lists PressFleet releases for the control plane's
+	// release check; nil means GitHub. Tests inject fakes.
+	ReleaseSource releasecheck.Source
 	// DNSCredentialsDir overrides where the control plane writes DNS
 	// provider credentials for Traefik (ingress.DNSCredentialsDir), for
 	// tests.

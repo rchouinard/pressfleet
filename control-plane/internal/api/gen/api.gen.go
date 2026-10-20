@@ -3009,6 +3009,11 @@ type Platform struct {
 	// Build The build of the running control plane.
 	Build PlatformBuild `json:"build"`
 
+	// Release The newest stable PressFleet release the control plane's release
+	// check found (`updates.release_check`). Absent when the check is off
+	// or hasn't succeeded yet, as on a host that can't reach GitHub.
+	Release *PlatformRelease `json:"release,omitempty"`
+
 	// Sftp Where developers reach the SFTP gateway (design doc §5.8).
 	Sftp PlatformSftp `json:"sftp"`
 }
@@ -3053,6 +3058,25 @@ type PlatformCapacity struct {
 // PlatformCapacityLevel `caution` from 90% of host memory, `exceeded` above 100%,
 // `unknown` when the host's memory is not known.
 type PlatformCapacityLevel string
+
+// PlatformRelease The newest stable PressFleet release the control plane's release
+// check found (`updates.release_check`). Absent when the check is off
+// or hasn't succeeded yet, as on a host that can't reach GitHub.
+type PlatformRelease struct {
+	// CheckedAt Examples: 2026-09-26T17:25:00Z
+	CheckedAt Timestamp `json:"checked_at"`
+
+	// LatestVersion The newest stable release. Pre-releases are ignored.
+	LatestVersion string `json:"latest_version"`
+
+	// ReleaseURL The release's page, with its notes and the CLI to download.
+	ReleaseURL string `json:"release_url"`
+
+	// UpdateAvailable Whether `latest_version` is newer than the running control plane.
+	// To upgrade, install that release's CLI on the host and run
+	// `pressfleet upgrade`. Always false for a development build.
+	UpdateAvailable bool `json:"update_available"`
+}
 
 // PlatformSftp Where developers reach the SFTP gateway (design doc §5.8).
 type PlatformSftp struct {

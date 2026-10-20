@@ -19,6 +19,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/cli"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/doctor/doctortest"
+	"github.com/rchouinard/pressfleet/control-plane/internal/releasecheck"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets/secretstest"
 )
 
@@ -85,6 +86,20 @@ func runProbed(t *testing.T, ctx context.Context, args []string, env map[string]
 	host *doctortest.Host, docker *doctortest.Docker, stderr *syncBuffer, cp *fakeControlPlane,
 ) result {
 	t.Helper()
+	return runOptions(t, ctx, args, env, cli.Options{Stderr: stderr, HostProbe: host, DockerProbe: docker, ControlPlane: cp.probe})
+}
+
+// offlineReleases is the release source of every test that sets none: unit
+// tests never reach GitHub.
+var offlineReleases = releasecheck.SourceFunc(func(context.Context) ([]releasecheck.Release, error) {
+	return nil, errors.New("no network in unit tests")
+})
+
+// runOptions runs the CLI (version v1.2.3-test) with opts, filling in its
+// output, environment, and an offline release source, and fakes for
+// anything else that would reach the host.
+func runOptions(t *testing.T, ctx context.Context, args []string, env map[string]string, opts cli.Options) result {
+	t.Helper()
 	emptyConfig := filepath.Join(t.TempDir(), "pressfleet.yaml")
 	if err := os.WriteFile(emptyConfig, nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -94,18 +109,29 @@ func runProbed(t *testing.T, ctx context.Context, args []string, env map[string]
 		vars[k] = v
 	}
 	var stdout syncBuffer
-	code := cli.Run(ctx, args, cli.Options{
-		Version: "v1.2.3-test",
-		Stdout:  &stdout,
-		Stderr:  stderr,
-		Env: func(k string) (string, bool) {
-			v, ok := vars[k]
-			return v, ok
-		},
-		HostProbe:    host,
-		DockerProbe:  docker,
-		ControlPlane: cp.probe,
-	})
+	stderr, ok := opts.Stderr.(*syncBuffer)
+	if !ok {
+		stderr = &syncBuffer{}
+	}
+	opts.Version = "v1.2.3-test"
+	opts.Stdout, opts.Stderr = &stdout, stderr
+	opts.Env = func(k string) (string, bool) {
+		v, ok := vars[k]
+		return v, ok
+	}
+	if opts.HostProbe == nil {
+		opts.HostProbe = doctortest.Healthy()
+	}
+	if opts.DockerProbe == nil {
+		opts.DockerProbe = doctortest.HealthyDocker()
+	}
+	if opts.ControlPlane == nil {
+		opts.ControlPlane = (&fakeControlPlane{}).probe
+	}
+	if opts.ReleaseSource == nil {
+		opts.ReleaseSource = offlineReleases
+	}
+	code := cli.Run(ctx, args, opts)
 	return result{code, stdout.String(), stderr.String()}
 }
 

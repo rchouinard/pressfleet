@@ -2521,8 +2521,9 @@ export interface paths {
         /**
          * Get the platform's connection details and build
          * @description Facts about this install that clients need to build connection
-         *     strings, taken from its configuration, and the build of the running
-         *     control plane. Every role can read.
+         *     strings, taken from its configuration, the build of the running
+         *     control plane, and the newest PressFleet release the release check
+         *     found. Every role can read.
          */
         get: operations["getPlatform"];
         put?: never;
@@ -4316,6 +4317,32 @@ export interface components {
         Platform: {
             sftp: components["schemas"]["PlatformSftp"];
             build: components["schemas"]["PlatformBuild"];
+            release?: components["schemas"]["PlatformRelease"];
+        };
+        /**
+         * @description The newest stable PressFleet release the control plane's release
+         *     check found (`updates.release_check`). Absent when the check is off
+         *     or hasn't succeeded yet, as on a host that can't reach GitHub.
+         */
+        PlatformRelease: {
+            /**
+             * @description The newest stable release. Pre-releases are ignored.
+             * @example v0.5.0
+             */
+            latest_version: string;
+            /**
+             * Format: uri
+             * @description The release's page, with its notes and the CLI to download.
+             * @example https://github.com/rchouinard/pressfleet/releases/tag/v0.5.0
+             */
+            release_url: string;
+            checked_at: components["schemas"]["Timestamp"];
+            /**
+             * @description Whether `latest_version` is newer than the running control plane.
+             *     To upgrade, install that release's CLI on the host and run
+             *     `pressfleet upgrade`. Always false for a development build.
+             */
+            update_available: boolean;
         };
         /** @description The build of the running control plane. */
         PlatformBuild: {

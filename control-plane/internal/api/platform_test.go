@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
@@ -11,6 +12,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/buildinfo"
 	"github.com/rchouinard/pressfleet/control-plane/internal/doctor"
 	"github.com/rchouinard/pressfleet/control-plane/internal/doctor/doctortest"
+	"github.com/rchouinard/pressfleet/control-plane/internal/releasecheck"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
 
@@ -36,6 +38,47 @@ func TestGetPlatform(t *testing.T) {
 	}
 	if w := do(t, h, request{method: http.MethodGet, target: "/api/v1/platform"}); w.Code != http.StatusUnauthorized {
 		t.Errorf("unauthenticated: %d", w.Code)
+	}
+}
+
+// The release check's result is reported when there is one, compared with
+// the running version.
+func TestGetPlatformRelease(t *testing.T) {
+	checked := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	found := func(v string) api.LatestReleaseFunc {
+		return func() (releasecheck.Result, bool) {
+			return releasecheck.Result{LatestVersion: v, ReleaseURL: "https://example.com/" + v, CheckedAt: checked}, true
+		}
+	}
+	tests := []struct {
+		name    string
+		version string
+		latest  api.LatestReleaseFunc
+		// want is the reported release; nil means none.
+		want *gen.PlatformRelease
+	}{
+		{"check off", "v0.4.0", nil, nil},
+		{"no result yet", "v0.4.0", func() (releasecheck.Result, bool) { return releasecheck.Result{}, false }, nil},
+		{"update available", "v0.4.0", found("v0.5.0"),
+			&gen.PlatformRelease{LatestVersion: "v0.5.0", ReleaseURL: "https://example.com/v0.5.0", CheckedAt: checked, UpdateAvailable: true}},
+		{"up to date", "v0.5.0", found("v0.5.0"),
+			&gen.PlatformRelease{LatestVersion: "v0.5.0", ReleaseURL: "https://example.com/v0.5.0", CheckedAt: checked}},
+		{"development build", "dev", found("v0.5.0"),
+			&gen.PlatformRelease{LatestVersion: "v0.5.0", ReleaseURL: "https://example.com/v0.5.0", CheckedAt: checked}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHandler(t, api.Options{Authenticator: &fakeAuth{}, Build: buildinfo.Info{Version: tt.version}, LatestRelease: tt.latest})
+			w := do(t, h, request{authed: true, method: http.MethodGet, target: "/api/v1/platform"})
+			if w.Code != http.StatusOK {
+				t.Fatalf("platform: %d %s", w.Code, w.Body)
+			}
+			got := decodeJSON[gen.Platform](t, w.Body.Bytes()).Release
+			if (got == nil) != (tt.want == nil) || (got != nil && (got.LatestVersion != tt.want.LatestVersion ||
+				got.ReleaseURL != tt.want.ReleaseURL || !got.CheckedAt.Equal(tt.want.CheckedAt) || got.UpdateAvailable != tt.want.UpdateAvailable)) {
+				t.Errorf("release = %+v, want %+v", got, tt.want)
+			}
+		})
 	}
 }
 

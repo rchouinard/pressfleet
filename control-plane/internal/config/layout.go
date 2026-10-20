@@ -11,6 +11,7 @@ import (
 //	<root>/
 //	  state/              control plane database (SQLite)
 //	    backups/          pre-migration and pre-restore database backups
+//	    release-check.json the newest PressFleet release the last check found
 //	  platform/           rendered platform services Compose project
 //	  upgrade/            the last platform upgrade (pressfleet upgrade):
 //	    upgrade.json      its versions, status, and the previous images
@@ -31,6 +32,11 @@ func (l Layout) StateDir() string { return filepath.Join(l.Root, "state") }
 // StateBackupsDir holds state database backups taken before migrations and
 // restores.
 func (l Layout) StateBackupsDir() string { return filepath.Join(l.StateDir(), "backups") }
+
+// ReleaseCheckFile is where the control plane records the newest
+// PressFleet release its release check found, for `pressfleet admin info`,
+// which runs in another process (package releasecheck).
+func (l Layout) ReleaseCheckFile() string { return filepath.Join(l.StateDir(), "release-check.json") }
 
 // PlatformDir holds the rendered platform services Compose project.
 func (l Layout) PlatformDir() string { return filepath.Join(l.Root, "platform") }

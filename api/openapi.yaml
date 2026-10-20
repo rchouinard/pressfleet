@@ -4065,8 +4065,9 @@ paths:
       summary: Get the platform's connection details and build
       description: |
         Facts about this install that clients need to build connection
-        strings, taken from its configuration, and the build of the running
-        control plane. Every role can read.
+        strings, taken from its configuration, the build of the running
+        control plane, and the newest PressFleet release the release check
+        found. Every role can read.
       responses:
         "200":
           description: The platform's connection details and build.
@@ -7327,6 +7328,33 @@ components:
           $ref: "#/components/schemas/PlatformSftp"
         build:
           $ref: "#/components/schemas/PlatformBuild"
+        release:
+          $ref: "#/components/schemas/PlatformRelease"
+    PlatformRelease:
+      type: object
+      description: |
+        The newest stable PressFleet release the control plane's release
+        check found (`updates.release_check`). Absent when the check is off
+        or hasn't succeeded yet, as on a host that can't reach GitHub.
+      required: [latest_version, release_url, checked_at, update_available]
+      properties:
+        latest_version:
+          type: string
+          description: The newest stable release. Pre-releases are ignored.
+          example: v0.5.0
+        release_url:
+          type: string
+          format: uri
+          description: The release's page, with its notes and the CLI to download.
+          example: https://github.com/rchouinard/pressfleet/releases/tag/v0.5.0
+        checked_at:
+          $ref: "#/components/schemas/Timestamp"
+        update_available:
+          type: boolean
+          description: |
+            Whether `latest_version` is newer than the running control plane.
+            To upgrade, install that release's CLI on the host and run
+            `pressfleet upgrade`. Always false for a development build.
     PlatformBuild:
       type: object
       description: The build of the running control plane.

@@ -13,6 +13,7 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
+	"github.com/rchouinard/pressfleet/control-plane/internal/releasecheck"
 	"github.com/rchouinard/pressfleet/control-plane/internal/skew"
 )
 
@@ -55,6 +56,20 @@ type adminInfo struct {
 	// and ReadyError why not.
 	Ready      bool   `json:"ready"`
 	ReadyError string `json:"ready_error,omitempty"`
+	// Release is the newest release the control plane's release check
+	// found (#140), absent when the check is off or found none yet. Added
+	// to interface 1: older CLIs ignore it.
+	Release *adminRelease `json:"release,omitempty"`
+}
+
+// adminRelease is the release check's result in `pressfleet admin info`.
+type adminRelease struct {
+	LatestVersion string    `json:"latest_version"`
+	ReleaseURL    string    `json:"release_url"`
+	CheckedAt     time.Time `json:"checked_at"`
+	// UpdateAvailable says whether LatestVersion is newer than the control
+	// plane.
+	UpdateAvailable bool `json:"update_available"`
 }
 
 // ControlPlaneProbe finds the control plane container and runs commands in
@@ -89,6 +104,7 @@ func (a *app) adminInfoCommand() *cobra.Command {
 			if err != nil {
 				info.ReadyError = err.Error()
 			}
+			info.Release = a.recordedRelease()
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(info)
 		},
 	}
@@ -273,5 +289,40 @@ func (a *app) writeControlPlaneVersion(ctx context.Context, w io.Writer) error {
 		_, werr := fmt.Fprintf(w, "\n%v\n", err)
 		return werr
 	}
+	if cp.Info != nil && cp.Info.Release != nil && cp.Info.Release.UpdateAvailable {
+		_, err := fmt.Fprintf(w, "\n%s\n", a.updateNotice(*cp.Info.Release))
+		return err
+	}
 	return nil
+}
+
+// recordedRelease returns what the control plane's release check last
+// recorded, or nil when the check is off or has found nothing. A file that
+// can't be read is no answer, so admin info still reports the rest.
+func (a *app) recordedRelease() *adminRelease {
+	if !a.cfg.Updates.ReleaseCheck {
+		return nil
+	}
+	r, ok, err := releasecheck.ReadFile(a.cfg.Layout().ReleaseCheckFile())
+	if err != nil {
+		a.log.Debug("reading the release check failed", "error", err)
+	}
+	if !ok {
+		return nil
+	}
+	return &adminRelease{
+		LatestVersion: r.LatestVersion, ReleaseURL: r.ReleaseURL, CheckedAt: r.CheckedAt,
+		UpdateAvailable: r.UpdateAvailable(a.opts.Version),
+	}
+}
+
+// updateNotice tells the operator a newer release is available and how to
+// upgrade to it: `pressfleet upgrade` moves the platform to the CLI's own
+// version, so an older CLI has to be replaced first.
+func (a *app) updateNotice(r adminRelease) string {
+	how := fmt.Sprintf("install the %s CLI from the release page and run `pressfleet upgrade`", r.LatestVersion)
+	if _, err := skew.Parse(a.opts.Version); err == nil && !releasecheck.UpdateAvailable(a.opts.Version, r.LatestVersion) {
+		how = "run `pressfleet upgrade` with this CLI"
+	}
+	return fmt.Sprintf("A newer PressFleet release is available: %s (%s).\nTo upgrade, %s.", r.LatestVersion, r.ReleaseURL, how)
 }

@@ -24,6 +24,10 @@ type UpdatesConfig struct {
 	Core CoreUpdatesConfig `yaml:"core"`
 	// Images configures the rollout of new builds of the site images.
 	Images ImageUpdatesConfig `yaml:"images"`
+	// ReleaseCheck has the control plane ask GitHub, at startup and once a
+	// day, whether a newer PressFleet release is available (#140). Off, it
+	// makes no request, as an air-gapped install needs.
+	ReleaseCheck bool `yaml:"release_check"`
 }
 
 // ImageUpdatesConfig configures the platform image rollout (#58): new
@@ -53,9 +57,11 @@ type CoreUpdatesConfig struct {
 // DefaultUpdates has no maintenance window (a 4-hour one once
 // window_start is set), halts a rollout after 3 failures in a row, never
 // approves major releases automatically, warns about holds after 90 days,
-// and looks for new image builds every 6 hours.
+// looks for new image builds every 6 hours, and checks for new PressFleet
+// releases.
 func DefaultUpdates() UpdatesConfig {
-	return UpdatesConfig{WindowHours: 4, MaxFailures: 3, Core: CoreUpdatesConfig{HoldWarningDays: 90}, Images: ImageUpdatesConfig{CheckHours: 6}}
+	return UpdatesConfig{WindowHours: 4, MaxFailures: 3, Core: CoreUpdatesConfig{HoldWarningDays: 90}, Images: ImageUpdatesConfig{CheckHours: 6},
+		ReleaseCheck: true}
 }
 
 // HasWindow reports whether a maintenance window is set.
