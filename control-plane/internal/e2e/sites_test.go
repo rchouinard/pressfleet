@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -405,6 +406,36 @@ func TestSiteCreateDelete(t *testing.T) {
 	// answer on their IPs, while its own nginx and the platform MariaDB and
 	// object cache (connected to every site network under their aliases)
 	// do. Both directions are checked.
+	// Traefik is on every site network so that it can reach the site's
+	// nginx, but its internal entry point (/metrics, /ping) names every
+	// site and its traffic, so it listens on loopback only (security review
+	// F5). A site's php container can't connect to it, by name or by
+	// Traefik's address on the site's network, while the same probe still
+	// reaches the shared services next to it. The control plane's collector
+	// keeps working: see TestIngress.
+	t.Run("sites can't reach Traefik's internal port", func(t *testing.T) {
+		traefik, err := p.Project.ServiceContainer(t.Context(), ingress.TraefikService)
+		if err != nil {
+			t.Fatal(err)
+		}
+		traefikIP := traefik.Networks[siteProject.Name]
+		if traefikIP == "" {
+			t.Fatalf("Traefik isn't on %s: %v", siteProject.Name, traefik.Networks)
+		}
+		internal := ":" + strconv.Itoa(ingress.InternalPort)
+		results := probe(t, siteProject, []string{
+			compose.MariaDBAlias + ":3306", // a positive control
+			compose.TraefikAlias + internal,
+			traefikIP + internal,
+		})
+		for i, r := range results {
+			t.Logf("%s open=%v ip=%q %s", r.target, r.open, r.ip, r.detail)
+			if want := i == 0; r.open != want {
+				t.Errorf("%s open = %v, want %v (%s)", r.target, r.open, want, r.detail)
+			}
+		}
+	})
+
 	t.Run("sites can't reach each other", func(t *testing.T) {
 		a := siteNetwork(t, siteProject)
 		b := siteNetwork(t, otherProject)

@@ -1,6 +1,8 @@
 package e2e_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -8,9 +10,30 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/client"
+	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
+	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/e2e"
 	"github.com/rchouinard/pressfleet/control-plane/internal/ingress"
+	"github.com/rchouinard/pressfleet/control-plane/internal/metrics"
+	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
+	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
+	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
 )
+
+// unusedSecrets and unusedImages satisfy compose.NewProvisioner for a test
+// that only reads Traefik's metrics.
+type unusedSecrets struct{}
+
+func (unusedSecrets) Get(context.Context, secrets.Ref) (redact.Secret, error) {
+	return "", errors.New("unused")
+}
+
+type unusedImages struct{}
+
+func (unusedImages) Images(string, string) (catalog.Images, error) {
+	return catalog.Images{}, errors.New("unused")
+}
 
 // TestIngress checks Traefik (#33): HTTP redirects to HTTPS, the dashboard
 // domain reaches the control plane over HTTP/2 with HTTP/3 advertised, and
@@ -161,6 +184,33 @@ func TestIngress(t *testing.T) {
 		}
 		if !strings.Contains(out, `traefik_router_requests_total`) {
 			t.Errorf("no router metrics in:\n%.2000s", out)
+		}
+	})
+
+	// The endpoint listens on loopback only (security review F5), so the
+	// control plane's collector reads it through the provisioner, by running
+	// a command in Traefik's container. Site containers can't reach it:
+	// see TestSiteCreateDelete, "sites can't reach Traefik's internal port".
+	t.Run("the collector reads the metrics", func(t *testing.T) {
+		prov, err := compose.NewProvisioner(compose.ProvisionerConfig{
+			Layout:           config.Layout{Root: t.TempDir()},
+			Secrets:          unusedSecrets{},
+			Images:           unusedImages{},
+			MariaDBContainer: platform.MariaDBContainer(p.Project.Name),
+			TraefikContainer: platform.TraefikContainer(p.Project.Name),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := prov.TraefikMetrics(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), `traefik_router_requests_total`) {
+			t.Errorf("no router metrics in:\n%.2000s", body)
+		}
+		if _, err := (metrics.TraefikCollector{Reader: prov}).Collect(t.Context(), nil); err != nil {
+			t.Errorf("collecting: %v", err)
 		}
 	})
 }

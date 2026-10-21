@@ -640,7 +640,7 @@ func TestRenderedTraefikConfig(t *testing.T) {
 				t.Errorf("websecure entry point = %+v", websecure)
 			}
 			internal := tr.EntryPoints[ingress.EntryPointInternal]
-			if internal.Address != fmt.Sprintf(":%d", ingress.InternalPort) ||
+			if internal.Address != fmt.Sprintf("127.0.0.1:%d", ingress.InternalPort) ||
 				tr.Ping.EntryPoint != ingress.EntryPointInternal ||
 				tr.Metrics.Prometheus.EntryPoint != ingress.EntryPointInternal ||
 				!tr.Metrics.Prometheus.AddRoutersLabels {

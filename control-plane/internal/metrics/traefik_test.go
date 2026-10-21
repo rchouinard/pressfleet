@@ -165,8 +165,34 @@ func TestTraefikCollectorStatusClasses(t *testing.T) {
 	}
 }
 
-func TestDefaultTraefikURL(t *testing.T) {
-	if metrics.DefaultTraefikURL != "http://traefik:8082/metrics" {
-		t.Fatal(metrics.DefaultTraefikURL)
+// fakeTraefikReader is a [provisioner.TraefikMetricsReader].
+type fakeTraefikReader struct {
+	body string
+	err  error
+}
+
+func (f fakeTraefikReader) TraefikMetrics(context.Context) ([]byte, error) {
+	return []byte(f.body), f.err
+}
+
+func TestTraefikCollectorReader(t *testing.T) {
+	body := `traefik_service_requests_total{code="200",method="GET",protocol="http",service="pf-site1@docker"} 5` + "\n"
+	got, err := metrics.TraefikCollector{Reader: fakeTraefikReader{body: body}}.Collect(context.Background(), traefikTargets()[:1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := find(got, "pressfleet_site_http_requests_total", "site1", "status_class", "2xx"); !ok || v != 5 {
+		t.Errorf("2xx = %v (found %v), want 5", v, ok)
+	}
+
+	boom := errors.New("exec failed")
+	_, err = metrics.TraefikCollector{Reader: fakeTraefikReader{err: boom}}.Collect(context.Background(), nil)
+	if !errors.Is(err, metrics.ErrTraefikScrape) || !errors.Is(err, boom) {
+		t.Errorf("reader error: got %v", err)
+	}
+	// No source at all must fail rather than fall back to a network address
+	// that no longer serves anything.
+	if _, err := (metrics.TraefikCollector{}).Collect(context.Background(), nil); !errors.Is(err, metrics.ErrTraefikScrape) {
+		t.Errorf("no source: got %v", err)
 	}
 }

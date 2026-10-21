@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/ingress"
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 )
 
 // Metric names TraefikCollector emits. The catalog in package metricsapi
@@ -30,11 +32,6 @@ const (
 	// traefikMaxResponseBytes bounds what one scrape reads.
 	traefikMaxResponseBytes = 64 << 20
 )
-
-// DefaultTraefikURL is where the platform's Traefik serves Prometheus
-// metrics on the platform network (templates/platform/traefik.yaml.tmpl).
-// The port isn't published on the host.
-var DefaultTraefikURL = fmt.Sprintf("http://%s:%d/metrics", ingress.TraefikService, ingress.InternalPort)
 
 // ErrTraefikScrape is wrapped by the error [TraefikCollector.Collect]
 // returns when Traefik's metrics can't be fetched or read.
@@ -63,10 +60,14 @@ var ErrTraefikScrape = errors.New("scraping Traefik metrics")
 type TraefikCollector struct {
 	// Every is the collection interval; zero means the service default.
 	Every time.Duration
-	// URL is Traefik's metrics endpoint; empty means [DefaultTraefikURL].
+	// Reader fetches the metrics from inside Traefik's container, the only
+	// place they are served ([provisioner.TraefikMetricsReader]).
+	Reader provisioner.TraefikMetricsReader
+	// URL, if set, is fetched over HTTP instead of using Reader. It is for
+	// tests; the platform's Traefik serves nothing on the network.
 	URL string
-	// HTTPClient fetches the endpoint; nil means [http.DefaultClient],
-	// since the service's per-run deadline already bounds the request.
+	// HTTPClient fetches URL; nil means [http.DefaultClient], since the
+	// service's per-run deadline already bounds the request.
 	HTTPClient *http.Client
 }
 
@@ -93,11 +94,17 @@ func (c TraefikCollector) Collect(ctx context.Context, targets []Target) ([]Samp
 }
 
 func (c TraefikCollector) fetch(ctx context.Context) (io.ReadCloser, error) {
-	url := c.URL
-	if url == "" {
-		url = DefaultTraefikURL
+	if c.URL == "" {
+		if c.Reader == nil {
+			return nil, fmt.Errorf("%w: no source configured", ErrTraefikScrape)
+		}
+		body, err := c.Reader.TraefikMetrics(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrTraefikScrape, err)
+		}
+		return io.NopCloser(bytes.NewReader(body)), nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.URL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrTraefikScrape, err)
 	}
@@ -111,7 +118,7 @@ func (c TraefikCollector) fetch(ctx context.Context) (io.ReadCloser, error) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("%w: %s answered %s", ErrTraefikScrape, url, resp.Status)
+		return nil, fmt.Errorf("%w: %s answered %s", ErrTraefikScrape, c.URL, resp.Status)
 	}
 	return resp.Body, nil
 }

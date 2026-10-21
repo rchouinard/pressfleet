@@ -90,7 +90,9 @@ const (
 	// for HTTP/3). Routers that name no entry point use it.
 	EntryPointHTTPS = "websecure"
 	// EntryPointInternal serves Traefik's ping endpoint and Prometheus
-	// metrics (/metrics) on InternalPort. It isn't published on the host.
+	// metrics (/metrics) on InternalPort, on the loopback address of the
+	// Traefik container only. Traefik is on every site's network, so a
+	// listener on any other address would be open to every site.
 	EntryPointInternal = "traefik"
 	// InternalPort is EntryPointInternal's port inside the Traefik container.
 	InternalPort = 8082

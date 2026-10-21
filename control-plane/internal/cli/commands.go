@@ -128,7 +128,7 @@ func (a *app) metricsService(db *store.DB, prov *compose.Provisioner, secretStor
 	if err := svc.Register(metrics.InventoryCollector{}); err != nil {
 		return nil, err
 	}
-	if err := svc.Register(metrics.TraefikCollector{}); err != nil {
+	if err := svc.Register(metrics.TraefikCollector{Reader: prov}); err != nil {
 		return nil, err
 	}
 	if err := svc.Register(metrics.ContainerCollector{Stats: prov}); err != nil {

@@ -156,6 +156,7 @@ type Provisioner struct {
 	smtp        *wpconfig.SMTP
 	loginKey    string // ProvisionerConfig.LoginPublicKey
 	platform    string // ProvisionerConfig.PlatformProject
+	traefik     string // ProvisionerConfig.TraefikContainer
 	routesDir   string // ProvisionerConfig.TraefikDynamicDir
 
 	wpcliDocker    ExecFunc // docker, but with bounded output
@@ -226,6 +227,7 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 		smtp:           cfg.SMTP,
 		loginKey:       cfg.LoginPublicKey,
 		platform:       cfg.PlatformProject,
+		traefik:        cfg.TraefikContainer,
 		routesDir:      cfg.TraefikDynamicDir,
 		wpcliDocker:    cfg.Docker,
 		wpcliTimeout:   cfg.WPCLITimeout,
