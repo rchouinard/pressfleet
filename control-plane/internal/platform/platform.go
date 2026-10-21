@@ -37,8 +37,12 @@ import (
 // ProjectName is the Compose project name of the platform services.
 const ProjectName = "pressfleet"
 
-// Memory limits from the §4.1 capacity budget. The control plane shares its
-// 256 MiB budget line with Traefik. Traefik uses about 25 MiB idle, but
+// Memory limits from the §4.1 capacity budget. The control plane's limit is
+// mostly for its children (docker, docker compose, and restic, which count
+// against it): 384 MiB until group-level restic leaves the control plane
+// (#178), then 256. Its Go process gets ControlPlaneGoMemLimitMB of that,
+// not a share of the limit: a Go memory limit of 85% of the container's was
+// measured to do nothing. Traefik shares the §4.1 budget line. Traefik uses about 25 MiB idle, but
 // about 50 MiB while it starts and while it gets certificates; with 64 MiB
 // (a Go memory limit of 48 MiB) it spent its time collecting garbage and
 // failed its healthcheck, so it gets 96 MiB, the extra 32 MiB out of the
@@ -47,10 +51,16 @@ const ProjectName = "pressfleet"
 // maintenance page service, which serves one static page.
 const (
 	DefaultMariaDBMemoryMB      = 768
-	DefaultControlPlaneMemoryMB = 192
+	DefaultControlPlaneMemoryMB = 384
 	DefaultTraefikMemoryMB      = 96
 	DefaultSocketProxyMemoryMB  = 24
 	MaintenanceMemoryMB         = 24
+
+	// ControlPlaneGoMemLimitMB is GOMEMLIMIT for the control plane's Go
+	// process, which uses 25–55 MiB and, in a login burst, would reach
+	// 104–131 MiB; at 96 MiB a burst stays there with no measurable
+	// slowdown, and at 64 MiB it is three times slower.
+	ControlPlaneGoMemLimitMB = 96
 )
 
 // VictoriaMetrics sizing and address. The §4.1 budget line is its container
@@ -417,41 +427,42 @@ func (c Config) withDefaults() (Config, error) {
 // hash is not a secret: it can't be used to authenticate, and the password
 // is 130 random bits, so the hash can't be reversed.
 type templateData struct {
-	ProjectName             string
-	DataDir                 string
-	Listen                  string
-	Images                  Images
-	ControlPlaneMemoryMB    int
-	MariaDBMemoryMB         int
-	MariaDBBufferPoolMB     int
-	RedisMaxMemoryMB        int
-	RedisMemoryMB           int
-	RedisDatabases          int
-	RedisAdminUser          string
-	RedisAdminPasswordHash  string
-	SFTPPort                int
-	SFTPContainerPort       int
-	MasterKeyFile           string
-	MasterKeySecretPath     string
-	ConfigFile              string
-	ConfigSecretPath        string
-	ConfigSHA256            string
-	ConfigHashLabel         string
-	SkipPreflight           bool
-	PreviewBaseDomain       string
-	PublicIP                string
-	SMTP                    *config.SMTPConfig     // nil when outbound email is off
-	BackupS3                *config.BackupS3Config // nil for local backups
-	ListenPort              int
-	TraefikMemoryMB         int
-	TraefikGoMemLimitMB     int
-	SocketProxyMemoryMB     int
-	VictoriaMetricsMemoryMB int
-	VictoriaMetricsPort     int
-	VictoriaMetricsService  string
-	MetricsRetentionDays    int
-	DashboardDomain         string
-	ACME                    ACMEConfig
+	ProjectName              string
+	DataDir                  string
+	Listen                   string
+	Images                   Images
+	ControlPlaneMemoryMB     int
+	ControlPlaneGoMemLimitMB int
+	MariaDBMemoryMB          int
+	MariaDBBufferPoolMB      int
+	RedisMaxMemoryMB         int
+	RedisMemoryMB            int
+	RedisDatabases           int
+	RedisAdminUser           string
+	RedisAdminPasswordHash   string
+	SFTPPort                 int
+	SFTPContainerPort        int
+	MasterKeyFile            string
+	MasterKeySecretPath      string
+	ConfigFile               string
+	ConfigSecretPath         string
+	ConfigSHA256             string
+	ConfigHashLabel          string
+	SkipPreflight            bool
+	PreviewBaseDomain        string
+	PublicIP                 string
+	SMTP                     *config.SMTPConfig     // nil when outbound email is off
+	BackupS3                 *config.BackupS3Config // nil for local backups
+	ListenPort               int
+	TraefikMemoryMB          int
+	TraefikGoMemLimitMB      int
+	SocketProxyMemoryMB      int
+	VictoriaMetricsMemoryMB  int
+	VictoriaMetricsPort      int
+	VictoriaMetricsService   string
+	MetricsRetentionDays     int
+	DashboardDomain          string
+	ACME                     ACMEConfig
 
 	// Traefik names shared with site routes (package ingress).
 	PlatformLabel      string
@@ -548,18 +559,19 @@ func Render(dir string, cfg Config) error {
 		configHash = hex.EncodeToString(sum[:])
 	}
 	data := templateData{
-		ProjectName:          cfg.ProjectName,
-		DataDir:              cfg.DataDir,
-		Listen:               cfg.Listen,
-		ListenPort:           port,
-		Images:               cfg.Images,
-		ControlPlaneMemoryMB: cfg.ControlPlaneMemoryMB,
-		MariaDBMemoryMB:      cfg.MariaDBMemoryMB,
-		MariaDBBufferPoolMB:  bufferPoolMB(cfg.MariaDBMemoryMB),
-		RedisMaxMemoryMB:     cfg.RedisMaxMemoryMB,
-		RedisMemoryMB:        cfg.RedisMaxMemoryMB + RedisOverheadMB,
-		RedisDatabases:       RedisDatabases,
-		RedisAdminUser:       RedisAdminUser,
+		ProjectName:              cfg.ProjectName,
+		DataDir:                  cfg.DataDir,
+		Listen:                   cfg.Listen,
+		ListenPort:               port,
+		Images:                   cfg.Images,
+		ControlPlaneMemoryMB:     cfg.ControlPlaneMemoryMB,
+		ControlPlaneGoMemLimitMB: ControlPlaneGoMemLimitMB,
+		MariaDBMemoryMB:          cfg.MariaDBMemoryMB,
+		MariaDBBufferPoolMB:      bufferPoolMB(cfg.MariaDBMemoryMB),
+		RedisMaxMemoryMB:         cfg.RedisMaxMemoryMB,
+		RedisMemoryMB:            cfg.RedisMaxMemoryMB + RedisOverheadMB,
+		RedisDatabases:           RedisDatabases,
+		RedisAdminUser:           RedisAdminUser,
 		// ACL passwords are hashed over the exact bytes a client sends.
 		RedisAdminPasswordHash:  sha256Hex(cfg.RedisAdminPassword),
 		SFTPPort:                cfg.SFTPPort,

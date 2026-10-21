@@ -81,10 +81,6 @@ const platformFile = "e2e/.platform.json"
 // so CI uploads one directory.
 const resultsDir = "test-results"
 
-// controlPlaneMemoryMB is the control plane's memory limit for the suite,
-// in MiB (see TestDashboard).
-const controlPlaneMemoryMB = 512
-
 // suiteTimeout and requiredSuiteTimeout bound the suite's first and second
 // runs (see twoFactorRequired). Together with booting the platform and
 // restarting it in between they stay below make test-ui-e2e's go test
@@ -107,12 +103,7 @@ func TestDashboard(t *testing.T) {
 	projectDir := t.TempDir()
 	t.Cleanup(func() { removeSites(t, siteProjects) })
 
-	// The specs run in parallel: several sites' jobs, logins, and restic
-	// at once. Their docker, docker compose, and restic processes count
-	// against the control plane's memory limit, and the default 192 MiB
-	// doesn't fit them: the control plane is killed, and comes back on
-	// another port.
-	p := e2e.StartWithControlPlaneMemory(t, controlPlaneMemoryMB)
+	p := e2e.Start(t)
 	t.Cleanup(func() {
 		if !sitesListed {
 			siteProjects = listSiteProjects(t, p, projectDir)
