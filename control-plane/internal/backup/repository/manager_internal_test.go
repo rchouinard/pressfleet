@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 )
@@ -140,5 +141,81 @@ func TestChgrp(t *testing.T) {
 		}
 	} else if err != nil || !m.warnedChgrp.Load() {
 		t.Errorf("refused lchown as a user: %v, warned %v; want it skipped once", err, m.warnedChgrp.Load())
+	}
+}
+
+func TestKeyedLock(t *testing.T) {
+	k := &keyedLock{held: map[string]*heldLock{}}
+	ctx := context.Background()
+	unlockA, err := k.lock(ctx, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another key doesn't wait.
+	unlockB, err := k.lock(ctx, "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlockB()
+
+	// A waiter on a held key gives up with its context.
+	waitCtx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
+	if _, err := k.lock(waitCtx, "a"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("lock of a held key: %v, want DeadlineExceeded", err)
+	}
+	// ... and a waiter that outlasts the holder gets the lock.
+	got := make(chan error, 1)
+	go func() {
+		unlock, err := k.lock(ctx, "a")
+		if err == nil {
+			unlock()
+		}
+		got <- err
+	}()
+	unlockA()
+	if err := <-got; err != nil {
+		t.Errorf("waiter: %v", err)
+	}
+	if len(k.held) != 0 {
+		t.Errorf("%d locks left in the map", len(k.held))
+	}
+}
+
+func TestS3InterruptedAndDamagedInit(t *testing.T) {
+	ctx := context.Background()
+	m, f, rec := s3Manager(t, map[string]string{"repo/keys/k1": "k", "repo/data/00/": ""})
+
+	// A key without a config, snapshots, or index is an interrupted init.
+	if err := m.clearInterruptedInit(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.objects["repo/keys/k1"]; ok {
+		t.Error("the key of an interrupted init is still there")
+	}
+	f.objects["repo/keys/k1"], f.objects["repo/snapshots/s1"] = "k", "s"
+	if err := m.clearInterruptedInit(ctx, rec); !errors.Is(err, ErrRepositoryUnfinished) {
+		t.Errorf("clearInterruptedInit with snapshots: %v, want ErrRepositoryUnfinished", err)
+	}
+	if _, ok := f.objects["repo/keys/k1"]; !ok {
+		t.Error("a key was removed from a repository with snapshots")
+	}
+
+	// Several keys and restic's complaint about them is the damage of
+	// racing inits; one key is some other problem.
+	cause := errors.New("restic cat: exit status 1: Fatal: config or key k1 is damaged: ciphertext verification failed")
+	if err := m.diagnose(ctx, rec, cause); !errors.Is(err, cause) || errors.Is(err, ErrRepositoryDamaged) {
+		t.Errorf("diagnose with one key: %v", err)
+	}
+	f.objects["repo/keys/k2"] = "k"
+	err := m.diagnose(ctx, rec, cause)
+	if !errors.Is(err, ErrRepositoryDamaged) || !strings.Contains(err.Error(), "k1, k2") {
+		t.Errorf("diagnose with two keys: %v", err)
+	}
+	if err := m.diagnose(ctx, rec, errors.New("something else")); errors.Is(err, ErrRepositoryDamaged) {
+		t.Errorf("diagnose of another error: %v", err)
+	}
+	if len(f.objects) != 4 {
+		t.Errorf("diagnose changed the objects: %v", f.objects)
 	}
 }

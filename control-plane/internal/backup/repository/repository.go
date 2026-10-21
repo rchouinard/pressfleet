@@ -209,7 +209,8 @@ func (m *Manager) Get(ctx context.Context, clientGroupID string) (Repository, er
 // Ensure returns the group's repository, creating it if needed: it stores
 // a new random password with the group's record, then runs restic init
 // unless the repository already exists. It is idempotent and safe to run
-// concurrently for the same group.
+// concurrently for the same group within a process: initialization is
+// serialized per repository (see initialize).
 func (m *Manager) Ensure(ctx context.Context, clientGroupID string) (Repository, error) {
 	if !id.Valid(clientGroupID) {
 		return Repository{}, fmt.Errorf("%w %q", ErrInvalidClientGroupID, clientGroupID)
@@ -339,34 +340,45 @@ func (m *Manager) password(ctx context.Context, rec Repository) (redact.Secret, 
 }
 
 // initialize runs restic init unless the repository already exists and
-// opens with the password.
+// opens with the password. Initializing is single-flight per repository: two
+// restic inits on one location each write a master key, only one of which
+// the config is encrypted with, and the repository is unreadable from then
+// on (#188). The fast path, a repository that already opens, takes no lock.
 func (m *Manager) initialize(ctx context.Context, rec Repository, password redact.Secret) error {
+	if ok, _ := m.ready(ctx, rec, password); ok {
+		return nil
+	}
+	// Whatever kept it from being ready is judged again under the lock,
+	// where no init of this process is running.
+	unlock, err := initLocks.lock(ctx, rec.Location)
+	if err != nil {
+		return fmt.Errorf("waiting for the repository to be initialized: %w", err)
+	}
+	defer unlock()
+
+	// Another caller may have initialized it while this one waited.
+	ok, err := m.ready(ctx, rec, password)
+	switch {
+	case ok:
+		return nil
+	case !errors.Is(err, errRepositoryMissing):
+		return m.diagnose(ctx, rec, err)
+	}
 	local := rec.Backend == BackendLocal
 	var dir string
 	if local {
-		var err error
 		if dir, err = m.localDir(rec); err != nil {
 			return err
 		}
-	}
-	err := m.probe(ctx, rec, password)
-	switch {
-	case err == nil:
-		if local && !isShared(dir) {
-			// An earlier Ensure stopped between restic init and sharing.
-			return m.shareLocal(dir)
-		}
-		return nil
-	case !errors.Is(err, errRepositoryMissing):
-		return err
-	}
-	if local {
 		if err := m.prepareLocalDir(dir); err != nil {
 			return err
 		}
 	}
+	if err := m.clearInterruptedInit(ctx, rec); err != nil {
+		return err
+	}
 	if _, err := m.run(ctx, rec, password, "init"); err != nil {
-		// A concurrent Ensure may have initialized it first.
+		// Another process (a CLI command) may have initialized it first.
 		if m.probe(ctx, rec, password) != nil {
 			return err
 		}
@@ -377,6 +389,30 @@ func (m *Manager) initialize(ctx context.Context, rec Repository, password redac
 		return m.shareLocal(dir)
 	}
 	return nil
+}
+
+// ready reports whether the repository exists and opens with the password,
+// and is shared with the repository group if it is local. An earlier
+// Ensure may have stopped between restic init and sharing, which finishes
+// it. A false result comes with the probe's error, errRepositoryMissing if
+// there is no repository.
+func (m *Manager) ready(ctx context.Context, rec Repository, password redact.Secret) (bool, error) {
+	if err := m.probe(ctx, rec, password); err != nil {
+		return false, err
+	}
+	if rec.Backend != BackendLocal {
+		return true, nil
+	}
+	dir, err := m.localDir(rec)
+	if err != nil {
+		return false, err
+	}
+	if !isShared(dir) {
+		if err := m.shareLocal(dir); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // probe checks that the repository exists and opens with the password. It
