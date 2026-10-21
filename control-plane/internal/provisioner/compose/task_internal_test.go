@@ -59,7 +59,7 @@ func TestTaskCreateArgs(t *testing.T) {
 		{
 			name: "wp-content read-write, repository, env, and secrets",
 			spec: func(s *taskSpec) {
-				s.wpContent, s.repositoryDir, s.envFile = provisioner.MountReadWrite, "/data/backups/repositories/g1", "/data/tmp/task-env-1"
+				s.wpContent, s.repositoryDir, s.secretsDir = provisioner.MountReadWrite, "/data/backups/repositories/g1", "/data/tmp/task-secrets-1"
 			},
 			task: provisioner.Task{
 				Command: []string{"restic", "restore", "latest"},
@@ -68,8 +68,8 @@ func TestTaskCreateArgs(t *testing.T) {
 			want: []string{
 				"--entrypoint=restic", "--env", "HOME=/tmp",
 				"--env", "A=1", "--env", "B=two words", "--env", "RESTIC_REPOSITORY=/repository",
-				"--env-file", "/data/tmp/task-env-1",
 				"--mount", "type=volume,source=pf-site1_wp-content,target=/site/wp-content",
+				"--mount", "type=bind,source=/data/tmp/task-secrets-1,target=/run/pressfleet/secrets,readonly",
 				"--group-add", "60000",
 				"--mount", "type=bind,source=/data/backups/repositories/g1,target=/repository",
 				"--", "pressfleet-control-plane:dev", "restore", "latest",

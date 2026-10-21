@@ -205,7 +205,7 @@ func (e *Engine) Backup(ctx context.Context, siteID string, opts backup.Options)
 	res, runErr := e.tasks.RunTask(ctx, siteID, provisioner.Task{
 		Command:       backupCommand(siteID, site.WPCoreVersion, opts),
 		Env:           access.Env,
-		SecretEnv:     access.SecretEnv,
+		SecretFiles:   access.SecretFiles,
 		WPContent:     provisioner.MountReadOnly,
 		TransferDir:   transfer,
 		RepositoryDir: access.RepositoryDir,

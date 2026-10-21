@@ -18,7 +18,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
+	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 )
 
 // ErrInvalidTask is returned by RunTask for a task it can't run as given.
@@ -59,6 +61,8 @@ var (
 	// volumeName matches the names Docker gives volumes, which may appear in
 	// a --mount value unquoted.
 	volumeName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+	// secretFileName is what Task.SecretFiles may be named: a plain file name.
+	secretFileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 )
 
 // StreamExecFunc runs the docker CLI with args, writing its standard output
@@ -115,11 +119,14 @@ func streamAdapter(docker ExecFunc) StreamExecFunc {
 // as it is: it belongs to provisioner.RepositoryGID, which a task with a
 // repository gets as a supplementary group.
 //
-// Secret environment variables reach the docker CLI through an env-file
-// (mode 0600 in the data directory's tmp/, removed as soon as the container
-// is created), so they never appear in argv, errors, or logs. Docker still
-// keeps them in the container's configuration until the container is
-// removed, as it does for any environment variable.
+// Task.SecretFiles are written to a directory below config.Layout.TmpDir
+// (mode 0700, files 0400, all owned by the site's UID when the control plane
+// runs as root) and bind-mounted read-only at provisioner.TaskSecretsPath.
+// Nothing secret reaches the docker CLI's arguments, the container's
+// environment, or its configuration, which the socket proxy lets Traefik
+// read (docker inspect shows the mount's source directory, not its
+// contents). The directory is removed when the task ends, also when it fails
+// or ctx ends; RemoveStaleTaskSecrets removes what a crash left.
 //
 // The task's container is removed afterwards whatever happened, including
 // when ctx ends or Timeout passes, which kill the task. A non-zero exit
@@ -159,6 +166,14 @@ func (p *Provisioner) RunTask(ctx context.Context, siteID string, task provision
 		return nil, fmt.Errorf("run task on site %s: %w", siteID, err)
 	}
 	spec.name = name
+	if len(task.SecretFiles) > 0 {
+		// Registered before the container's removal, so it runs after it:
+		// the secrets outlive the task's last read.
+		defer func() { p.removeTaskSecrets(ctx, siteID, spec.secretsDir) }()
+		if spec.secretsDir, err = p.writeTaskSecrets(task.SecretFiles, user); err != nil {
+			return nil, fmt.Errorf("run task on site %s: %w", siteID, err)
+		}
+	}
 
 	start := time.Now()
 	defer p.removeTask(ctx, siteID, name)
@@ -290,7 +305,7 @@ type taskSpec struct {
 	wpContent       provisioner.MountMode
 	transferDir     string // host path, symlinks below the data directory resolved
 	repositoryDir   string // likewise
-	envFile         string // holds SecretEnv; "" if there is none
+	secretsDir      string // host path of the directory holding SecretFiles; "" if there are none
 }
 
 // taskSpec validates task and resolves its image and directories.
@@ -322,16 +337,12 @@ func (p *Provisioner) taskSpec(task provisioner.Task) (taskSpec, error) {
 			errs = append(errs, fmt.Errorf("environment variable %s can't contain NUL bytes", name))
 		}
 	}
-	for name, v := range task.SecretEnv {
-		if !envName.MatchString(name) {
-			errs = append(errs, fmt.Errorf("environment variable name %q is invalid", name))
+	for name, v := range task.SecretFiles {
+		if !secretFileName.MatchString(name) {
+			errs = append(errs, fmt.Errorf("secret file name %q is invalid", name))
 		}
-		if _, dup := task.Env[name]; dup {
-			errs = append(errs, fmt.Errorf("environment variable %s is both secret and not", name))
-		}
-		// An env-file holds one variable per line. The value is not quoted.
-		if strings.ContainsAny(v.Reveal(), "\x00\r\n") {
-			errs = append(errs, fmt.Errorf("secret environment variable %s can't contain line breaks or NUL bytes", name))
+		if strings.IndexByte(v.Reveal(), 0) >= 0 {
+			errs = append(errs, fmt.Errorf("secret file %s can't contain NUL bytes", name))
 		}
 	}
 	switch task.WPContent {
@@ -417,29 +428,98 @@ func taskContainerName(siteID string) (string, error) {
 	return fmt.Sprintf(taskNamePattern, siteID, hex.EncodeToString(b)), nil
 }
 
-// createTask creates the task's container, passing SecretEnv through an
-// env-file that exists only while `docker create` runs.
+// createTask creates the task's container.
 func (p *Provisioner) createTask(ctx context.Context, spec taskSpec, task provisioner.Task) error {
-	if len(task.SecretEnv) > 0 {
-		f, err := os.CreateTemp(p.layout.TmpDir(), "task-env-*") // mode 0600
-		if err != nil {
-			return fmt.Errorf("writing task environment: %w", err)
-		}
-		defer func() { _ = os.Remove(f.Name()) }()
-		var b strings.Builder
-		for _, name := range slices.Sorted(maps.Keys(task.SecretEnv)) {
-			b.WriteString(name + "=" + task.SecretEnv[name].Reveal() + "\n")
-		}
-		_, werr := f.WriteString(b.String())
-		if err := errors.Join(werr, f.Close()); err != nil {
-			return fmt.Errorf("writing task environment: %w", err)
-		}
-		spec.envFile = f.Name()
-	}
 	if _, err := p.docker(ctx, nil, taskCreateArgs(spec, task)...); err != nil {
 		return fmt.Errorf("creating task container: %w", err)
 	}
 	return nil
+}
+
+// secretsDirPrefix starts the names of the directories below
+// config.Layout.TmpDir that hold a running task's secret files.
+const secretsDirPrefix = "task-secrets-"
+
+// writeTaskSecrets writes files into a new directory below the temporary
+// directory and returns it, removing it again if it can't finish. The
+// directory and files belong to the task's user, user ("uid:gid"), so the
+// task reads them and nobody else can; changing the owner needs the control
+// plane to run as root, as it does in the platform. Otherwise (development
+// and tests) the secrets are readable by every local user for as long as the
+// task runs, unless the task's user is the control plane's own.
+func (p *Provisioner) writeTaskSecrets(files map[string]redact.Secret, user string) (string, error) {
+	tmp := p.layout.TmpDir()
+	if err := os.MkdirAll(tmp, 0o700); err != nil {
+		return "", fmt.Errorf("writing task secrets: %w", err)
+	}
+	dir, err := os.MkdirTemp(tmp, secretsDirPrefix+"*")
+	if err != nil {
+		return "", fmt.Errorf("writing task secrets: %w", err)
+	}
+	if strings.ContainsAny(dir, ",\"\r\n") { // --mount takes comma-separated key=value pairs
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("writing task secrets: %q can't contain commas, quotes, or line breaks", dir)
+	}
+	fail := func(err error) (string, error) {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("writing task secrets: %w", err)
+	}
+	uid, err := siteUID(user) // checked by taskSiteAccess
+	if err != nil {
+		return fail(err)
+	}
+	dirMode, fileMode := os.FileMode(0o700), os.FileMode(0o400)
+	switch {
+	case os.Geteuid() == 0:
+		if err := os.Chown(dir, uid, uid); err != nil {
+			return fail(err)
+		}
+	case uid != os.Geteuid():
+		dirMode, fileMode = 0o755, 0o444
+	}
+	if err := os.Chmod(dir, dirMode); err != nil {
+		return fail(err)
+	}
+	for _, name := range slices.Sorted(maps.Keys(files)) {
+		file := filepath.Join(dir, name)
+		if err := os.WriteFile(file, []byte(files[name].Reveal()), fileMode); err != nil {
+			return fail(err)
+		}
+		if os.Geteuid() == 0 {
+			if err := os.Chown(file, uid, uid); err != nil {
+				return fail(err)
+			}
+		}
+	}
+	return dir, nil
+}
+
+// removeTaskSecrets removes the task's secret files, after ctx may have
+// ended. A failure is logged without the path's contents: the directory
+// stays for RemoveStaleTaskSecrets.
+func (p *Provisioner) removeTaskSecrets(ctx context.Context, siteID, dir string) {
+	if dir == "" {
+		return
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		p.log.ErrorContext(ctx, "removing task secrets failed", "site_id", siteID, "dir", dir, "error", err)
+	}
+}
+
+// RemoveStaleTaskSecrets removes the secret directories of tasks that a
+// crash left behind, from the temporary directory below layout. Call it when
+// the control plane starts, before it runs tasks, and from one process only:
+// it can't tell a stale directory from a running task's.
+func RemoveStaleTaskSecrets(layout config.Layout) error {
+	matches, err := filepath.Glob(filepath.Join(layout.TmpDir(), secretsDirPrefix+"*"))
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, m := range matches {
+		errs = append(errs, os.RemoveAll(m))
+	}
+	return errors.Join(errs...)
 }
 
 // taskCreateArgs is the `docker container create` argv for the task.
@@ -463,15 +543,10 @@ func taskCreateArgs(spec taskSpec, task provisioner.Task) []string {
 		"--entrypoint=" + task.Command[0],
 	}
 	if _, ok := task.Env["HOME"]; !ok {
-		if _, ok := task.SecretEnv["HOME"]; !ok {
-			args = append(args, "--env", "HOME="+taskHome)
-		}
+		args = append(args, "--env", "HOME="+taskHome)
 	}
 	for _, name := range slices.Sorted(maps.Keys(task.Env)) {
 		args = append(args, "--env", name+"="+task.Env[name])
-	}
-	if spec.envFile != "" {
-		args = append(args, "--env-file", spec.envFile)
 	}
 	switch spec.wpContent {
 	case provisioner.MountReadOnly:
@@ -481,6 +556,9 @@ func taskCreateArgs(spec taskSpec, task provisioner.Task) []string {
 	}
 	if spec.transferDir != "" {
 		args = append(args, "--mount", "type=bind,source="+spec.transferDir+",target="+provisioner.TaskTransferPath)
+	}
+	if spec.secretsDir != "" {
+		args = append(args, "--mount", "type=bind,source="+spec.secretsDir+",target="+provisioner.TaskSecretsPath+",readonly")
 	}
 	if spec.repositoryDir != "" {
 		// Still the site's UID, but in the group that owns the repositories,

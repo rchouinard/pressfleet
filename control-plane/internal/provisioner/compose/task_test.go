@@ -39,15 +39,19 @@ type taskDocker struct {
 	stdout, stderr string
 	startErr       error
 	block          bool
-	// connectErr is what `docker network connect` returns.
-	connectErr error
+	// connectErr is what `docker network connect` returns, createErr what
+	// `docker container create` returns.
+	connectErr, createErr error
 
 	calls      []string
 	createArgs []string
-	envFile    string // path passed with --env-file
-	envContent string // its content during create
-	envMode    os.FileMode
-	removed    []string
+	// secretsDir is the host directory mounted at provisioner.TaskSecretsPath
+	// and secrets what it held when the task started, by file name, with
+	// the files' modes.
+	secretsDir  string
+	secrets     map[string]string
+	secretModes map[string]os.FileMode
+	removed     []string
 }
 
 func (f *taskDocker) exec(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
@@ -66,16 +70,17 @@ func (f *taskDocker) exec(_ context.Context, _ io.Reader, args ...string) ([]byt
 	case args[0] == "container" && args[1] == "inspect":
 		return f.inspect(args[len(args)-1])
 	case args[0] == "container" && args[1] == "create":
+		if f.createErr != nil {
+			return nil, f.createErr
+		}
 		f.createArgs = args
-		if i := slices.Index(args, "--env-file"); i >= 0 {
-			f.envFile = args[i+1]
-			fi, err := os.Stat(f.envFile)
-			if err != nil {
-				f.t.Fatalf("env-file: %v", err)
+		if slices.Contains(args, "--env-file") {
+			f.t.Errorf("secrets passed with --env-file: %q", args)
+		}
+		for _, a := range args {
+			if rest, ok := strings.CutPrefix(a, "type=bind,source="); ok && strings.HasSuffix(rest, ",target="+provisioner.TaskSecretsPath+",readonly") {
+				f.secretsDir = strings.TrimSuffix(rest, ",target="+provisioner.TaskSecretsPath+",readonly")
 			}
-			f.envMode = fi.Mode().Perm()
-			b, _ := os.ReadFile(f.envFile)
-			f.envContent = string(b)
 		}
 		return []byte("0123abcd\n"), nil
 	case args[0] == "network" && args[1] == "connect":
@@ -97,9 +102,31 @@ func (f *taskDocker) stream(ctx context.Context, stdout, stderr io.Writer, args 
 		<-ctx.Done()
 		return &compose.CommandError{Args: args, Err: ctx.Err()}
 	}
+	f.readSecrets()
 	_, _ = io.WriteString(stdout, f.stdout)
 	_, _ = io.WriteString(stderr, f.stderr)
 	return f.startErr
+}
+
+// readSecrets records the secret files as the started task would find them.
+func (f *taskDocker) readSecrets() {
+	if f.secretsDir == "" {
+		return
+	}
+	entries, err := os.ReadDir(f.secretsDir)
+	if err != nil {
+		f.t.Errorf("secrets directory at start: %v", err)
+		return
+	}
+	f.secrets, f.secretModes = map[string]string{}, map[string]os.FileMode{}
+	for _, e := range entries {
+		b, err := os.ReadFile(filepath.Join(f.secretsDir, e.Name()))
+		if err != nil {
+			f.t.Errorf("secret file at start: %v", err)
+		}
+		fi, _ := e.Info()
+		f.secrets[e.Name()], f.secretModes[e.Name()] = string(b), fi.Mode().Perm()
+	}
 }
 
 func (f *taskDocker) inspect(name string) ([]byte, error) {
@@ -175,7 +202,7 @@ func TestRunTask(t *testing.T) {
 	res, err := prov.RunTask(context.Background(), testSiteID, provisioner.Task{
 		Command:       []string{"restic", "backup", provisioner.TaskWPContentPath},
 		Env:           map[string]string{"RESTIC_REPOSITORY": provisioner.TaskRepositoryPath},
-		SecretEnv:     map[string]redact.Secret{"RESTIC_PASSWORD": testTaskSecret},
+		SecretFiles:   map[string]redact.Secret{"restic-password": testTaskSecret},
 		WPContent:     provisioner.MountReadOnly,
 		TransferDir:   transfer,
 		RepositoryDir: repo,
@@ -202,21 +229,26 @@ func TestRunTask(t *testing.T) {
 			t.Errorf("create args lack %q:\n%s", want, args)
 		}
 	}
-	// The secret reaches docker only through the env-file, which is private
-	// and gone once the container exists.
+	// The secret reaches the task only as a file in a mounted directory
+	// that is private to the task's user while it runs and gone afterwards.
 	for _, c := range f.calls {
 		if strings.Contains(c, testTaskSecret) {
 			t.Errorf("secret in docker argv: %s", c)
 		}
 	}
-	if f.envContent != "RESTIC_PASSWORD="+testTaskSecret+"\n" || f.envMode != 0o600 {
-		t.Errorf("env-file = %q (mode %v)", f.envContent, f.envMode)
+	if len(f.secrets) != 1 || f.secrets["restic-password"] != testTaskSecret {
+		t.Errorf("secret files at start = %q", f.secrets)
 	}
-	if !strings.HasPrefix(f.envFile, layout.TmpDir()+string(filepath.Separator)) {
-		t.Errorf("env-file %s is not in the data directory's tmp/", f.envFile)
+	// The user is the site's, which the tests aren't unless the file is
+	// readable by everyone; see Provisioner.writeTaskSecrets.
+	if m := f.secretModes["restic-password"]; m != 0o400 && m != 0o444 {
+		t.Errorf("secret file mode = %v", m)
 	}
-	if _, err := os.Stat(f.envFile); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("env-file still exists: %v", err)
+	if !strings.HasPrefix(f.secretsDir, layout.TmpDir()+string(filepath.Separator)) {
+		t.Errorf("secrets directory %s is not in the data directory's tmp/", f.secretsDir)
+	}
+	if _, err := os.Stat(f.secretsDir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("secrets directory still exists: %v", err)
 	}
 	name := f.createArgs[slices.Index(f.createArgs, "--name")+1]
 	if !strings.HasPrefix(name, "pf-"+testSiteID+"-task-") || !slices.Equal(f.removed, []string{name}) {
@@ -344,6 +376,77 @@ func TestRunTaskStartFailure(t *testing.T) {
 	}
 }
 
+// The secret files are gone after a task that fails in any way.
+func TestRunTaskSecretsRemovedOnFailure(t *testing.T) {
+	task := provisioner.Task{
+		Command:     []string{"restic", "backup"},
+		SecretFiles: map[string]redact.Secret{"restic-password": testTaskSecret, "aws-credentials": "[default]\n"},
+	}
+	for _, tc := range []struct {
+		name  string
+		setup func(*taskDocker)
+		task  provisioner.Task
+	}{
+		{"non-zero exit", func(f *taskDocker) { f.exitCode = 3 }, task},
+		{"start failure", func(f *taskDocker) {
+			f.status, f.startErr = "created", &compose.CommandError{Err: exitError(1)}
+		}, task},
+		{"create failure", func(f *taskDocker) { f.createErr = &compose.CommandError{Stderr: "no space", Err: exitError(1)} }, task},
+		{"timeout", func(f *taskDocker) { f.block = true }, func() provisioner.Task { t := task; t.Timeout = 50 * time.Millisecond; return t }()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prov, f, layout := newTaskProvisioner(t, testTaskImage)
+			tc.setup(f)
+			if _, err := prov.RunTask(context.Background(), testSiteID, tc.task); err == nil {
+				t.Fatal("RunTask succeeded")
+			}
+			entries, err := os.ReadDir(layout.TmpDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, e := range entries {
+				t.Errorf("%s left behind in tmp/", e.Name())
+			}
+		})
+	}
+}
+
+// A task without secrets gets no secrets directory or mount.
+func TestRunTaskNoSecrets(t *testing.T) {
+	prov, f, layout := newTaskProvisioner(t, testTaskImage)
+	if _, err := prov.RunTask(context.Background(), testSiteID, provisioner.Task{Command: []string{"true"}}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(f.createArgs, " "), provisioner.TaskSecretsPath) || f.secretsDir != "" {
+		t.Errorf("create args mount secrets: %q", f.createArgs)
+	}
+	if entries, _ := os.ReadDir(layout.TmpDir()); len(entries) != 0 {
+		t.Errorf("tmp/ holds %v", entries)
+	}
+}
+
+func TestRemoveStaleTaskSecrets(t *testing.T) {
+	_, _, layout := newTaskProvisioner(t, testTaskImage)
+	stale := mkdir(t, filepath.Join(layout.TmpDir(), "task-secrets-1234"))
+	if err := os.WriteFile(filepath.Join(stale, "restic-password"), []byte(testTaskSecret), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	keep := mkdir(t, filepath.Join(layout.TmpDir(), "backup-1"))
+	if err := compose.RemoveStaleTaskSecrets(layout); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("stale secrets directory still exists: %v", err)
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Errorf("an unrelated directory was removed: %v", err)
+	}
+	// Nothing to remove is fine.
+	if err := compose.RemoveStaleTaskSecrets(layout); err != nil {
+		t.Error(err)
+	}
+}
+
 func TestRunTaskTimeout(t *testing.T) {
 	prov, f, _ := newTaskProvisioner(t, testTaskImage)
 	f.block = true
@@ -385,14 +488,14 @@ func TestRunTaskInvalid(t *testing.T) {
 		{"bad env name", testTaskImage, func(config.Layout) provisioner.Task {
 			return provisioner.Task{Command: []string{"restic"}, Env: map[string]string{"A=B": "c"}}
 		}},
-		{"bad secret env name", testTaskImage, func(config.Layout) provisioner.Task {
-			return provisioner.Task{Command: []string{"restic"}, SecretEnv: map[string]redact.Secret{"1X": "c"}}
+		{"secret file name with a path", testTaskImage, func(config.Layout) provisioner.Task {
+			return provisioner.Task{Command: []string{"restic"}, SecretFiles: map[string]redact.Secret{"../x": "c"}}
 		}},
-		{"secret with line break", testTaskImage, func(config.Layout) provisioner.Task {
-			return provisioner.Task{Command: []string{"restic"}, SecretEnv: map[string]redact.Secret{"P": "a\nB=c"}}
+		{"hidden secret file name", testTaskImage, func(config.Layout) provisioner.Task {
+			return provisioner.Task{Command: []string{"restic"}, SecretFiles: map[string]redact.Secret{".x": "c"}}
 		}},
-		{"env both secret and not", testTaskImage, func(config.Layout) provisioner.Task {
-			return provisioner.Task{Command: []string{"restic"}, Env: map[string]string{"P": "a"}, SecretEnv: map[string]redact.Secret{"P": "b"}}
+		{"secret with NUL", testTaskImage, func(config.Layout) provisioner.Task {
+			return provisioner.Task{Command: []string{"restic"}, SecretFiles: map[string]redact.Secret{"p": "a\x00b"}}
 		}},
 		{"unknown mount mode", testTaskImage, func(config.Layout) provisioner.Task {
 			return provisioner.Task{Command: []string{"restic"}, WPContent: 7}

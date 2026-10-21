@@ -438,7 +438,7 @@ func (f *Fake) RunTask(_ context.Context, siteID string, task provisioner.Task) 
 	t := task
 	t.Command = slices.Clone(task.Command)
 	t.Env = maps.Clone(task.Env)
-	t.SecretEnv = maps.Clone(task.SecretEnv)
+	t.SecretFiles = maps.Clone(task.SecretFiles)
 	f.calls[len(f.calls)-1].Task = &t
 	if _, err := f.lookup(siteID); err != nil {
 		f.mu.Unlock()

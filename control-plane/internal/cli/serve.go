@@ -174,6 +174,11 @@ func (a *app) buildServer(ctx context.Context) (_ *server, err error) {
 	if s.prov, s.siteDBs, err = a.siteRuntime(ctx, cat, s.secretStore, keys, db); err != nil {
 		return nil, err
 	}
+	// Before any task runs: a crash can leave the secret files of a task
+	// that was running.
+	if err := compose.RemoveStaleTaskSecrets(layout); err != nil {
+		a.log.Warn("removing stale task secrets failed", "error", err)
+	}
 	if s.caches, err = a.objectCaches(s.secretStore, db); err != nil {
 		return nil, err
 	}

@@ -463,17 +463,32 @@ func TestGroupsUseDifferentKeys(t *testing.T) {
 	})
 }
 
+// taskEnv is the environment a task has with access: its Env, with the
+// repository and the secret files (written to a temporary directory) at the
+// host paths for what a task sees at the provisioner.Task*Path paths.
+func taskEnv(t *testing.T, access repository.TaskAccess) []string {
+	t.Helper()
+	secrets := t.TempDir()
+	for name, v := range access.SecretFiles {
+		if err := os.WriteFile(filepath.Join(secrets, name), []byte(v.Reveal()), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	paths := strings.NewReplacer(provisioner.TaskRepositoryPath, access.RepositoryDir, provisioner.TaskSecretsPath, secrets)
+	var env []string
+	for k, v := range access.Env {
+		env = append(env, k+"="+paths.Replace(v))
+	}
+	return env
+}
+
 // backupFile backs up a file into the group's repository with plain restic,
 // the way a site task will: with TaskAccess's environment and the
 // repository directory (mounted at provisioner.TaskRepositoryPath in a
 // task).
 func backupFile(t *testing.T, access repository.TaskAccess, dir string) {
 	t.Helper()
-	env := []string{"RESTIC_REPOSITORY=" + access.RepositoryDir}
-	for k, v := range access.SecretEnv {
-		env = append(env, k+"="+v.Reveal())
-	}
-	if _, err := restic(t, env, "backup", "--tag", "site-1", dir); err != nil {
+	if _, err := restic(t, taskEnv(t, access), "backup", "--tag", "site-1", dir); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -492,7 +507,8 @@ func TestExportRestoresWithPlainRestic(t *testing.T) {
 		}
 		wantDir, _ := f.layout.BackupRepositoryDir(groupID)
 		if access.RepositoryDir != wantDir || access.Env["RESTIC_REPOSITORY"] != provisioner.TaskRepositoryPath ||
-			len(access.Env) != 1 || len(access.SecretEnv) != 1 || access.SecretEnv["RESTIC_PASSWORD"] == "" {
+			len(access.Env) != 2 || access.Env["RESTIC_PASSWORD_FILE"] != provisioner.TaskSecretPath(repository.PasswordFile) ||
+			len(access.SecretFiles) != 1 || access.SecretFiles[repository.PasswordFile] == "" {
 			t.Fatalf("TaskAccess = %+v", access)
 		}
 

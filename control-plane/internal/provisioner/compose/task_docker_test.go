@@ -51,7 +51,7 @@ func TestRunTaskDocker(t *testing.T) {
 			Image:       image,
 			Command:     []string{"sh", "-c", script},
 			Env:         map[string]string{"PF_PLAIN": "plain value"},
-			SecretEnv:   map[string]redact.Secret{"PF_SECRET": secret},
+			SecretFiles: map[string]redact.Secret{"pf-secret": secret},
 			WPContent:   mode,
 			TransferDir: transfer,
 			Timeout:     2 * time.Minute,
@@ -64,7 +64,7 @@ func TestRunTaskDocker(t *testing.T) {
 		cat /site/wp-content/pf-task.txt
 		if touch /site/wp-content/pf-task-write 2>/dev/null; then echo wp-content is writable; exit 1; fi
 		cp /site/wp-content/pf-task.txt /transfer/copy.txt
-		printf '%s' "$PF_SECRET" > /transfer/secret.txt
+		cat /run/pressfleet/secrets/pf-secret > /transfer/secret.txt
 		echo "uid=$(id -u) plain=$PF_PLAIN"
 		echo to-stderr >&2`)
 	if err != nil {
@@ -227,8 +227,8 @@ func TestRunTaskRepositoryDocker(t *testing.T) {
 		res, err := s.prov.RunTask(ctx, cfg.ID, provisioner.Task{
 			Image:         cpImage,
 			Command:       append([]string{"restic"}, args...),
-			Env:           map[string]string{"RESTIC_REPOSITORY": provisioner.TaskRepositoryPath},
-			SecretEnv:     map[string]redact.Secret{"RESTIC_PASSWORD": password},
+			Env:           map[string]string{"RESTIC_REPOSITORY": provisioner.TaskRepositoryPath, "RESTIC_PASSWORD_FILE": provisioner.TaskSecretPath("restic-password")},
+			SecretFiles:   map[string]redact.Secret{"restic-password": password},
 			WPContent:     provisioner.MountReadOnly,
 			RepositoryDir: repo,
 			Timeout:       2 * time.Minute,
@@ -308,8 +308,120 @@ func (s *dockerSite) noTaskContainers(t *testing.T, ctx context.Context) {
 		t.Fatal(err)
 	}
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "task-env-") {
-			t.Errorf("env-file %s left behind", e.Name())
+		if strings.HasPrefix(e.Name(), "task-secrets-") {
+			t.Errorf("secrets directory %s left behind", e.Name())
 		}
 	}
+}
+
+// TestRunTaskSecretsOutOfInspectDocker is the test for finding F6: the socket
+// proxy lets Traefik call `GET /containers/<id>/json`, which returns the
+// container's whole configuration, environment included. While a task runs,
+// nothing in that output may hold a secret, yet the task must read its
+// secrets, and they must be gone, with their directory, once it ends.
+func TestRunTaskSecretsOutOfInspectDocker(t *testing.T) {
+	s := newDockerSite(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if _, err := s.prov.CreateSite(ctx, s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	image := s.docker(t, ctx, "inspect", "--format", "{{.Config.Image}}", s.project.Name+"-php-1")
+
+	// Signals from the task. Tests that don't run as root can't hand the
+	// directory to the site's UID, so open it up.
+	transfer := filepath.Join(s.layout.TmpDir(), "secrets-"+s.cfg.ID)
+	if err := os.Mkdir(transfer, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(transfer, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	// Distinctive values, and one with characters JSON escapes, which
+	// inspect would show escaped.
+	const (
+		password = "pf-F6-restic-Password-7c1d"
+		keyID    = "AKIAPFF6TESTKEYID"
+		secret   = "pf-F6/secret+key\"with=quotes"
+	)
+	credentials := "[default]\naws_access_key_id = " + keyID + "\naws_secret_access_key = " + secret + "\n"
+	pwPath, credPath := provisioner.TaskSecretPath("restic-password"), provisioner.TaskSecretPath("aws-credentials")
+
+	for file, content := range map[string]string{"want-password": password, "want-credentials": credentials} {
+		if err := os.WriteFile(filepath.Join(transfer, file), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	done := make(chan error, 1)
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	go func() {
+		_, err := s.prov.RunTask(runCtx, s.cfg.ID, provisioner.Task{
+			Image: image,
+			// Compares both files, as the task's user, with what the test
+			// left in the transfer directory (not in the command, which
+			// inspect shows), and says so; then waits to be inspected.
+			Command: []string{"sh", "-c", `
+				cmp "$RESTIC_PASSWORD_FILE" /transfer/want-password &&
+				cmp "$AWS_SHARED_CREDENTIALS_FILE" /transfer/want-credentials &&
+				[ ! -w "$RESTIC_PASSWORD_FILE" ] &&
+				stat -c %a "$RESTIC_PASSWORD_FILE" > /transfer/mode &&
+				touch /transfer/read-ok
+				sleep 300`},
+			Env: map[string]string{
+				"RESTIC_PASSWORD_FILE":        pwPath,
+				"AWS_SHARED_CREDENTIALS_FILE": credPath,
+			},
+			SecretFiles: map[string]redact.Secret{"restic-password": password, "aws-credentials": redact.Secret(credentials)},
+			TransferDir: transfer,
+			Timeout:     5 * time.Minute,
+		})
+		done <- err
+	}()
+
+	var name string
+	for deadline := time.Now().Add(2 * time.Minute); ; time.Sleep(200 * time.Millisecond) {
+		if _, err := os.Stat(filepath.Join(transfer, "read-ok")); err == nil {
+			name = s.taskContainer(t, ctx)
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("task ended before reading its secrets: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the task never read its secrets")
+		}
+	}
+	if mode, _ := os.ReadFile(filepath.Join(transfer, "mode")); strings.TrimSpace(string(mode)) != "400" && os.Geteuid() == 0 {
+		t.Errorf("secret file mode in the task = %q, want 400", mode)
+	}
+
+	// Everything the socket proxy would return, and the Docker CLI's other
+	// view of it.
+	inspect := s.docker(t, ctx, "inspect", name)
+	for _, v := range []string{password, keyID, secret, strings.ReplaceAll(secret, `"`, `\"`), "aws_secret_access_key"} {
+		if strings.Contains(inspect, v) {
+			t.Errorf("docker inspect of the running task holds %q:\n%s", v, inspect)
+		}
+	}
+	env := s.docker(t, ctx, "inspect", "--format", "{{json .Config.Env}}", name)
+	for _, want := range []string{"RESTIC_PASSWORD_FILE=" + pwPath, "AWS_SHARED_CREDENTIALS_FILE=" + credPath} {
+		if !strings.Contains(env, want) {
+			t.Errorf("task environment %s lacks %s", env, want)
+		}
+	}
+
+	stop()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("canceled task error = %v", err)
+		}
+	case <-time.After(2 * time.Minute):
+		t.Fatal("canceled task didn't return")
+	}
+	s.noTaskContainers(t, ctx)
 }

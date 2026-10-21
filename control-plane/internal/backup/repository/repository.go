@@ -578,13 +578,17 @@ func (m *Manager) localDir(rec Repository) (string, error) {
 // TaskAccess is what a site task container (provisioner.TaskRunner) needs to
 // run restic against a group's repository, e.g. `restic backup`.
 type TaskAccess struct {
-	// Env are the non-secret environment variables: RESTIC_REPOSITORY
-	// (provisioner.TaskRepositoryPath for local repositories, the s3: URL
-	// otherwise) and, on S3 with a region, AWS_DEFAULT_REGION.
+	// Env are the environment variables, none of them secret:
+	// RESTIC_REPOSITORY (provisioner.TaskRepositoryPath for local
+	// repositories, the s3: URL otherwise), RESTIC_PASSWORD_FILE and, on S3,
+	// AWS_SHARED_CREDENTIALS_FILE (paths of SecretFiles) and, with a region,
+	// AWS_DEFAULT_REGION.
 	Env map[string]string
-	// SecretEnv are the secret environment variables: RESTIC_PASSWORD and,
-	// on S3, AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.
-	SecretEnv map[string]redact.Secret
+	// SecretFiles are the secrets, for provisioner.Task.SecretFiles, in
+	// files rather than the environment so that they stay out of the task
+	// container's configuration (§6): PasswordFile and, on S3,
+	// S3CredentialsFile.
+	SecretFiles map[string]redact.Secret
 	// RepositoryDir is the host directory for provisioner.Task.RepositoryDir,
 	// which a task sees at provisioner.TaskRepositoryPath; empty for S3
 	// repositories. It belongs to the repository group
@@ -608,8 +612,8 @@ func (m *Manager) TaskAccess(ctx context.Context, clientGroupID string) (TaskAcc
 		return TaskAccess{}, err
 	}
 	a := TaskAccess{
-		Env:       map[string]string{},
-		SecretEnv: map[string]redact.Secret{"RESTIC_PASSWORD": password},
+		Env:         map[string]string{"RESTIC_PASSWORD_FILE": provisioner.TaskSecretPath(PasswordFile)},
+		SecretFiles: map[string]redact.Secret{PasswordFile: password},
 	}
 	switch rec.Backend {
 	case BackendLocal:
@@ -626,12 +630,34 @@ func (m *Manager) TaskAccess(ctx context.Context, clientGroupID string) (TaskAcc
 		a.Env["RESTIC_REPOSITORY"] = rec.Location
 		a.BackupNetwork = true
 		maps.Copy(a.Env, s3Env(m.s3))
-		a.SecretEnv["AWS_ACCESS_KEY_ID"] = m.s3.AccessKeyID
-		a.SecretEnv["AWS_SECRET_ACCESS_KEY"] = m.s3.SecretAccessKey
+		a.Env["AWS_SHARED_CREDENTIALS_FILE"] = provisioner.TaskSecretPath(S3CredentialsFile)
+		creds, err := s3CredentialsFile(m.s3)
+		if err != nil {
+			return TaskAccess{}, err
+		}
+		a.SecretFiles[S3CredentialsFile] = creds
 	default:
 		return TaskAccess{}, fmt.Errorf("unknown backend %q", rec.Backend)
 	}
 	return a, nil
+}
+
+// Names of TaskAccess.SecretFiles.
+const (
+	PasswordFile      = "restic-password"
+	S3CredentialsFile = "aws-credentials"
+)
+
+// s3CredentialsFile is an AWS shared credentials file holding the S3
+// service's keys, which restic's S3 backend reads from
+// AWS_SHARED_CREDENTIALS_FILE (profile default). Keys with line breaks would
+// add lines to it, so they are refused.
+func s3CredentialsFile(s S3Config) (redact.Secret, error) {
+	if strings.ContainsAny(s.AccessKeyID.Reveal()+s.SecretAccessKey.Reveal(), "\x00\r\n") {
+		return "", errors.New("S3 credentials can't contain line breaks or NUL bytes")
+	}
+	return redact.Secret("[default]\naws_access_key_id = " + s.AccessKeyID.Reveal() +
+		"\naws_secret_access_key = " + s.SecretAccessKey.Reveal() + "\n"), nil
 }
 
 // s3Env returns the non-secret S3 settings restic reads from its
