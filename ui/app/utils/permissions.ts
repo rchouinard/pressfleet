@@ -12,12 +12,15 @@ import { roleAtLeast, type Role } from './roles'
  * actions here (and to authz.go) before gating a control on them.
  */
 export const permissions = {
-  // View sites, client groups, jobs, backups, metrics, logs, and alerts.
+  // View sites, client groups, jobs, backups, metrics, and alerts.
   'site.view': 'viewer',
   'client_group.view': 'viewer',
   'job.view': 'viewer',
   'backup.view': 'viewer',
   'monitoring.view': 'viewer',
+  // Read site logs: the access log records query strings, which can carry
+  // secrets, so Viewers don't get it (#181).
+  'logs.view': 'operator',
 
   // Create and import sites; settings; go-live and domains; start/stop;
   // maintenance mode; cache purge.

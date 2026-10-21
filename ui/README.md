@@ -137,8 +137,8 @@ The server sends `script-src 'self'` plus the hashes of the few inline scripts N
 
 | Minimum role | Actions |
 | --- | --- |
-| viewer | view sites, client groups, jobs, backups, monitoring; own password, tokens, SSH keys |
-| operator | create/import/update sites, domains, start/stop, maintenance, cache purge, retrieve credentials; deploy code, export database, read-only DB sessions; create backups, restore, approve core updates; create/update client groups; manage alert rules |
+| viewer | view sites, client groups, jobs, backups, monitoring (metrics and alerts); own password, tokens, SSH keys |
+| operator | read site logs; create/import/update sites, domains, start/stop, maintenance, cache purge, retrieve credentials; deploy code, export database, read-only DB sessions; create backups, restore, approve core updates; create/update client groups; manage alert rules |
 | admin | delete sites (also with their backups); read-write DB sessions; delete/offboard client groups; manage users, reset their second factors, others' tokens, audit log; platform settings |
 
 ### Two-factor sign-in and reauthentication
@@ -223,6 +223,8 @@ On the site page, after "Domains": `<SiteSettings :site @changed>` wraps `SiteSe
 - **Core**: shows version and branch, whose policy applies, the next release, a major release waiting for approval, branch warnings and a failed update. Operators (`core_update.approve`) can hold the branch, approve the pending major branch, follow the client group again (`PUT /core/policy`), or "Update now" (confirmed; `POST /core/update`, a job; only for running sites with a target).
 
 ## Logs viewer
+
+Operators and Admins only (`logs.view`; Viewers can read metrics and alerts but not logs, #181): the sidebar entry and the site page's "Logs" button are hidden from Viewers, and both log pages are gated with `requires: 'logs.view'`. The API enforces it.
 
 `/logs` picks a site (the sites list API), `/sites/<id>/logs` shows it: a "Runtime" tab (`SiteLogViewer`, takes a site id) and a "Jobs" tab (`SiteJobLogs`, `GET /sites/{id}/job-logs`, newest first, "Load older").
 

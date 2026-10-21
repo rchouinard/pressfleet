@@ -8,12 +8,14 @@ import type { Role } from '../app/utils/roles'
 // test: the actions each row grants, and the least role that may take them.
 const matrix: Record<Role, Action[]> = {
   viewer: [
-    // "View sites, client groups, jobs, backups, metrics, logs, and alerts"
+    // "View sites, client groups, jobs, backups, metrics, and alerts"
     'site.view', 'client_group.view', 'job.view', 'backup.view', 'monitoring.view',
     // "Manage their own profile (display name), password, API tokens, and SSH keys"
     'self.profile.update', 'self.password.change', 'self.tokens.manage', 'self.ssh_keys.manage',
   ],
   operator: [
+    // "Read site logs"
+    'logs.view',
     // "Create and import sites; change site settings; go-live and domains; start/stop; maintenance mode; cache purge"
     'site.create', 'site.import', 'site.update', 'site.domains.manage', 'site.start', 'site.stop',
     'site.maintenance.set', 'site.cache.purge', 'site.credentials.retrieve',

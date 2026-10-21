@@ -487,7 +487,7 @@ docker compose exec control-plane pressfleet user reset-password --email admin@e
 docker compose exec control-plane pressfleet user reset-two-factor --email admin@example.com [--yes]
 ```
 
-Each user has one role (design doc §4.6): `viewer` can see everything except users and the audit log, `operator` can also create and change sites and client groups, and `admin` can also delete sites and client groups, manage users, and change platform settings. Role changes apply at once to the user's existing sessions and API tokens, and a `read-only` API token can only read, whatever its owner's role. The last enabled admin can't be demoted, disabled, or deleted.
+Each user has one role (design doc §4.6): `viewer` can see everything except users, the audit log, and site logs (the access log records query strings, which can carry one-time secrets such as password reset keys, so reading a site's logs needs `operator`), `operator` can also read site logs and create and change sites and client groups, and `admin` can also delete sites and client groups, manage users, and change platform settings. Role changes apply at once to the user's existing sessions and API tokens, and a `read-only` API token can only read, whatever its owner's role. The last enabled admin can't be demoted, disabled, or deleted.
 
 The default role is `admin`. `create` and `reset-password` generate a random password and print it once. To choose the password instead, pipe it in with `--password-stdin` (and `docker compose exec -T`). Passwords must be 12 to 256 characters. `reset-password` signs the user out everywhere and revokes their API tokens.
 

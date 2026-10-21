@@ -181,25 +181,64 @@ func mustAll(t *testing.T, get func(string) (gen.SiteLogList, *httptest.Response
 	return page.Items
 }
 
-// Viewers may read logs, but a caller without a role may not.
+// Runtime logs are an Operator action (#181): the access log records query
+// strings, which can carry one-time secrets. Viewers keep a site's job logs.
 func TestSiteLogsAuthorization(t *testing.T) {
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
 		e, _, site := logSite(t, db)
 		e.runJobs(t)
-		for _, role := range []store.Role{store.RoleViewer, store.RoleOperator} {
-			h := newHandler(t, api.Options{DB: db, Sites: e.svc, Logs: e.prov, Authenticator: &fakeAuth{principal: &auth.Principal{
-				UserID: "01j9zq3v6t8k4m2n5p7r9s1x3y", Role: role, Method: auth.MethodSession, SessionID: "test"}}})
-			for _, path := range []string{"/logs", "/job-logs"} {
-				if w := do(t, h, request{authed: true, method: http.MethodGet, target: "/api/v1/sites/" + site.ID + path}); w.Code != http.StatusOK {
-					t.Errorf("%s reading %s: %d %s", role, path, w.Code, w.Body)
-				}
+		handler := func(p auth.Principal) http.Handler {
+			return newHandler(t, api.Options{DB: db, Sites: e.svc, Logs: e.prov, Authenticator: &fakeAuth{principal: &p}})
+		}
+		session := func(role store.Role) auth.Principal {
+			return auth.Principal{UserID: "01j9zq3v6t8k4m2n5p7r9s1x3y", Role: role, Method: auth.MethodSession, SessionID: "test"}
+		}
+		readOnly := auth.Principal{UserID: "01j9zq3v6t8k4m2n5p7r9s1x3y", Role: store.RoleOperator, Method: auth.MethodToken, TokenID: "t", Scope: store.ScopeReadOnly}
+		base := "/api/v1/sites/" + site.ID
+		for _, tc := range []struct {
+			name   string
+			p      auth.Principal
+			target string
+			want   int
+		}{
+			{"viewer lists logs", session(store.RoleViewer), "/logs", http.StatusForbidden},
+			{"viewer streams logs", session(store.RoleViewer), "/logs/stream", http.StatusForbidden},
+			{"viewer reads job logs", session(store.RoleViewer), "/job-logs", http.StatusOK},
+			{"operator lists logs", session(store.RoleOperator), "/logs", http.StatusOK},
+			{"operator reads job logs", session(store.RoleOperator), "/job-logs", http.StatusOK},
+			{"admin lists logs", session(store.RoleAdmin), "/logs", http.StatusOK},
+			// Reading changes nothing, so a read-only token of an Operator reads too.
+			{"read-only operator token lists logs", readOnly, "/logs", http.StatusOK},
+		} {
+			w := do(t, handler(tc.p), request{authed: true, method: http.MethodGet, target: base + tc.target})
+			if w.Code != tc.want {
+				t.Errorf("%s: %d %s, want %d", tc.name, w.Code, w.Body, tc.want)
 			}
 		}
-		// A read-only token of a viewer reads too: it changes nothing.
-		h := newHandler(t, api.Options{DB: db, Sites: e.svc, Logs: e.prov, Authenticator: &fakeAuth{principal: &auth.Principal{
-			UserID: "01j9zq3v6t8k4m2n5p7r9s1x3y", Role: store.RoleViewer, Method: auth.MethodToken, TokenID: "t", Scope: store.ScopeReadOnly}}})
-		if w := do(t, h, request{authed: true, method: http.MethodGet, target: "/api/v1/sites/" + site.ID + "/logs"}); w.Code != http.StatusOK {
-			t.Errorf("read-only token: %d %s", w.Code, w.Body)
+		// An allowed stream stays open, so read only its status line. Headers go out
+		// with the first entry, so give it one.
+		e.prov.AddLogs(site.ID, provisioner.LogEntry{Time: time.Now().Add(-time.Minute).UTC(), Component: provisioner.ComponentPHP, Line: "PHP Warning:  stream"})
+		for _, tc := range []struct {
+			role store.Role
+			want int
+		}{{store.RoleViewer, http.StatusForbidden}, {store.RoleOperator, http.StatusOK}} {
+			srv := httptest.NewServer(handler(session(tc.role)))
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+base+"/logs/stream", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("X-Test-Auth", "ok")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("%s streams logs: %v", tc.role, err)
+			}
+			if resp.StatusCode != tc.want {
+				t.Errorf("%s streams logs: %d, want %d", tc.role, resp.StatusCode, tc.want)
+			}
+			_ = resp.Body.Close()
+			cancel()
+			srv.Close()
 		}
 	})
 }

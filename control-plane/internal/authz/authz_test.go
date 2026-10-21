@@ -19,12 +19,14 @@ import (
 var designTable = map[authz.Action]struct {
 	admin, operator, viewer, write bool
 }{
-	// View sites, client groups, jobs, backups, metrics, logs, and alerts.
+	// View sites, client groups, jobs, backups, metrics, and alerts.
 	authz.ViewSites:        {true, true, true, false},
 	authz.ViewClientGroups: {true, true, true, false},
 	authz.ViewJobs:         {true, true, true, false},
 	authz.ViewBackups:      {true, true, true, false},
 	authz.ViewMonitoring:   {true, true, true, false},
+	// Read site logs.
+	authz.ViewLogs: {true, true, false, false},
 	// Create sites; change site settings; go-live and domains; start/stop;
 	// maintenance mode; cache purge.
 	authz.CreateSite:              {true, true, false, true},

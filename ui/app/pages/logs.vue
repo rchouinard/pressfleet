@@ -6,6 +6,7 @@ import type { components } from '../api/schema.gen'
 
 type Site = components['schemas']['Site']
 
+definePageMeta({ requires: 'logs.view' })
 useHead({ title: 'Logs' })
 useBreadcrumbs([{ label: 'Logs' }])
 

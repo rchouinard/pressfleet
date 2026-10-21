@@ -12,7 +12,7 @@ This is the record #97 asks for. It says what was checked, how, what came out, a
 | --- | --- | --- | --- |
 | [F1](#f1-kin-openapi-request-validation-vulnerabilities) | Medium | kin-openapi v0.142.0 request validation: govulncheck-reachable nil-pointer panic (GO-2026-6112), and further DoS advisories | Fixed: v0.149.0 |
 | [F2](#f2-control-plane-image-built-with-go-1271) | Medium | Control plane image built with Go 1.27.1: net/http DoS (CVE-2026-78667) | Fixed: Go 1.27.2 |
-| [F3](#f3-viewers-can-read-secrets-in-access-log-query-strings) | Medium | Viewers read site access logs, which keep query strings such as WordPress password reset keys | Tracked in [#181](https://github.com/rchouinard/pressfleet/issues/181) |
+| [F3](#f3-viewers-can-read-secrets-in-access-log-query-strings) | Medium | Viewers read site access logs, which keep query strings such as WordPress password reset keys | Fixed: site logs are Operator-only ([#181](https://github.com/rchouinard/pressfleet/issues/181)) |
 | [F4](#f4-admin-api-tokens-can-mint-new-sessions) | Medium | An Admin API token can create users or set passwords, so a stolen token can mint sessions and tokens that outlive its revocation | Tracked in [#182](https://github.com/rchouinard/pressfleet/issues/182) |
 | [F5](#f5-traefik-metrics-are-reachable-from-every-site) | Low | Traefik's internal entry point (metrics) is reachable from every site network | Fixed ([#183](https://github.com/rchouinard/pressfleet/issues/183)) |
 | [F6](#f6-task-secrets-are-readable-through-the-socket-proxy) | Low | Backup task secrets sit in container environments, which the socket proxy hands to Traefik | Tracked in [#184](https://github.com/rchouinard/pressfleet/issues/184) |
@@ -37,7 +37,8 @@ This is the record #97 asks for. It says what was checked, how, what came out, a
 
 - **Location:** `images/site-nginx/conf/nginx.conf.template` (`log_format pressfleet` logs `"uri":"$request_uri"`, query string included), served to every role by `listSiteLogs` and `streamSiteLogs` (`authz.ViewMonitoring`, Viewer).
 - **Exploit path:** a site's administrator asks WordPress for a password reset. The emailed link is `GET /wp-login.php?action=rp&key=<key>&login=<user>`, and nginx logs it with the key. WordPress then moves the key into a cookie and redirects, but the key stays valid until the password is changed, by default for 24 hours. A Viewer polling the site's logs in the dashboard copies the key and sets the administrator's password with `POST /wp-login.php?action=resetpass`. They are then a WordPress administrator, which §4.6 and §5.9 deny Viewers. Other WordPress flows carry one-time secrets in URLs the same way (`confirmaction` keys for privacy requests, and many plugins' magic-login and order links). §5.9 already sends the platform's own login token in a POST body for exactly this reason.
-- **Why not fixed here:** what the access log keeps is a product decision. Options are to log `$uri` without the query, to drop or mask known parameters (`key`, `confirm_key`, `token`) with an nginx `map`, or to make site logs an Operator action. Each changes a documented log format or the §4.6 table, and the image change needs a site image rebuild.
+- **Fix:** reading site logs is an Operator action (`authz.ViewLogs`, [#181](https://github.com/rchouinard/pressfleet/issues/181)): `listSiteLogs` and `streamSiteLogs` answer `403` to Viewers and read-only tokens of Viewers, and the dashboard hides the logs viewer from them. Metrics and alerts stay Viewer actions. The other options (logging `$uri` only, or masking known parameters) were rejected for now, so the log format is unchanged: the access log still records query strings, and Operators and Admins can see them. They already have wp-admin and database access to the site.
+- **Tests:** `TestSiteLogsAuthorization` (a Viewer gets `403` and an Operator `200` from both endpoints), the `authz` table tests, and the dashboard's permission and navigation tests.
 
 ### F4: Admin API tokens can mint new sessions
 
@@ -103,7 +104,7 @@ Code was read at the locations named. Live checks ran against the e2e harness (`
 - **Authorization:** one `authorize` call per handler. Operations missing from `operationActions` make the server refuse to start. Only `getHealth`, `getReadiness`, `login`, and `loginSecondFactor` are public. Unknown actions, roles, methods, and scopes are denied.
 - **Dashboard login to WordPress (§5.9):** Ed25519 signature, site ID, a 60-second maximum lifetime, 10 seconds of skew, and a single-use `jti` stored under the unique `wp_options.option_name`. Deletion happens only after `exp` + 60 seconds. The token travels in a POST body.
 
-**Result:** holds, except **F3** (secrets in logs Viewers can read) and **F6** (secrets in container configuration).
+**Result:** holds, except **F6** (secrets in container configuration).
 
 ### Dashboard two-factor (§6.2)
 

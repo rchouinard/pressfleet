@@ -240,7 +240,9 @@ function when(iso: string): string {
           <IfCan action="site.stop">
             <UButton v-if="canStopSite(site)" icon="i-lucide-square" color="neutral" variant="outline" :loading="powerBusy" @click="power('stop')">Stop</UButton>
           </IfCan>
-          <UButton :to="`/sites/${site.id}/logs`" icon="i-lucide-scroll-text" color="neutral" variant="outline">Logs</UButton>
+          <IfCan action="logs.view">
+            <UButton :to="`/sites/${site.id}/logs`" icon="i-lucide-scroll-text" color="neutral" variant="outline">Logs</UButton>
+          </IfCan>
           <UButton :to="`/sites/${site.id}/backups`" icon="i-lucide-archive" color="neutral" variant="outline">Backups</UButton>
           <UButton :to="`/sites/${site.id}/metrics`" icon="i-lucide-chart-line" color="neutral" variant="outline">Metrics</UButton>
           <IfCan action="site.code.deploy">

@@ -23,6 +23,7 @@ const { data: site } = await useAsyncData(
 const loadError = computed(() => site.value?.error ?? undefined)
 const name = computed(() => site.value?.site?.name ?? id.value.slice(0, 8))
 
+definePageMeta({ requires: 'logs.view' })
 useHead({ title: computed(() => `Logs: ${name.value}`) })
 useBreadcrumbs(() => [{ label: 'Logs', to: '/logs' }, { label: name.value }])
 

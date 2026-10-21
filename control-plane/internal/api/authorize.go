@@ -134,12 +134,13 @@ var operationActions = map[string]authz.Action{
 	// Following a job reads it, as getJob does.
 	"streamJobEvents": authz.ViewJobs,
 
-	// Runtime logs are monitoring data; a site's job logs are job data.
-	"listSiteLogs":    authz.ViewMonitoring,
-	"streamSiteLogs":  authz.ViewMonitoring,
+	// Runtime logs are Operator-only: the access log records query strings,
+	// which can carry secrets. A site's job logs are job data.
+	"listSiteLogs":    authz.ViewLogs,
+	"streamSiteLogs":  authz.ViewLogs,
 	"listSiteJobLogs": authz.ViewJobs,
 
-	// Metrics, like logs, are monitoring data.
+	// Metrics are monitoring data.
 	"getMetricCatalog":          authz.ViewMonitoring,
 	"queryPlatformMetrics":      authz.ViewMonitoring,
 	"getPlatformMetricsSummary": authz.ViewMonitoring,

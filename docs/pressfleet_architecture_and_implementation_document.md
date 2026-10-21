@@ -359,7 +359,8 @@ Each user has one platform-wide role. The roles are fixed in the MVP; there are 
 
 | Action | Admin | Operator | Viewer |
 | :--- | :---: | :---: | :---: |
-| View sites, client groups, jobs, backups, metrics, logs, and alerts | ✓ | ✓ | ✓ |
+| View sites, client groups, jobs, backups, metrics, and alerts | ✓ | ✓ | ✓ |
+| Read a site's runtime logs (access, error, slow, and PHP logs; a job's own log lines stay with jobs) | ✓ | ✓ | |
 | Create and import sites; change site settings (PHP version, core branch hold, resources, preview password protection); go-live and domains; start/stop; maintenance mode; cache purge | ✓ | ✓ | |
 | Deploy code; connect over SFTP; export the database or the whole site, also from a backup (§5.7); open read-only database sessions (§5.8) | ✓ | ✓ | |
 | Log in to a site's WordPress admin from the dashboard (§5.9) | ✓ | ✓ | |
@@ -555,7 +556,7 @@ A button on a site's dashboard page logs the current platform user in to the sit
 * **Which user:** the administrator the platform created with the site (§5.1). If that user no longer exists or is no longer an administrator, or the site was imported and has no platform-created administrator (§5.7), the dashboard lists the site's administrators (read with WP-CLI) and the user picks one. They can also pick another administrator on purpose.
 * **Login tokens:** the control plane signs a short-lived, single-use token with a platform Ed25519 key. The private key is stored encrypted in the state database with the master key (so the state database backup of §5.10 includes `platform_keys` and its secret), and the public key and the site's ID are written to every site's `wp-config.php` as `PRESSFLEET_LOGIN_PUBLIC_KEY` and `PRESSFLEET_SITE_ID`, so sites hold no new secret and logging in needs no WP-CLI call. Existing sites get the constants when the control plane reconciles them at startup. Key rotation isn't part of the MVP.
 * **Token format (v1):** `v1.<payload>.<signature>`, both parts base64url without padding. The payload is JSON `{"site", "user", "actor", "jti", "iat", "exp"}`: the site ID, the WordPress user's login, the platform user's ID, a random 128-bit ID (hex), and Unix times 60 seconds apart. The signature is Ed25519 over the ASCII bytes `v1.<payload>`.
-* **Flow:** `POST /api/v1/sites/{id}/admin-login` returns the token and the site's login URL: `wp-login.php?action=pressfleet-login` on the primary domain once the site is live (§5.2), otherwise on the preview domain. The dashboard submits the token as a form POST in a new tab, so it never appears in a URL, an access log (which Viewers can read, §7.4), a `Referer` header, or browser history. The site must be running and not in maintenance mode.
+* **Flow:** `POST /api/v1/sites/{id}/admin-login` returns the token and the site's login URL: `wp-login.php?action=pressfleet-login` on the primary domain once the site is live (§5.2), otherwise on the preview domain. The dashboard submits the token as a form POST in a new tab, so it never appears in a URL, an access log (which only Operators and Admins can read, §7.4), a `Referer` header, or browser history. The site must be running and not in maintenance mode.
 * **Site side:** a module of the platform must-use plugin checks the signature, the site ID, the expiry, and that the token hasn't been used (each `jti` is recorded in the site's database until it expires, not in the object cache, which can evict it). It then checks that the user is an administrator, sets the WordPress auth cookie for a browser session, and redirects to wp-admin. Any failure shows one generic error. The session is marked as a platform login with the actor and `jti`.
 * **Two-factor:** the platform login counts as authentication. When the security set requires two-factor authentication (§6.1), a dashboard login asks for no second factor, and its session is exempt from the forced enrollment, so a shared administrator account isn't bound to one person's device. Password logins are unaffected. This is about wp-admin; dashboard sessions themselves can require a second factor (§6.2).
 * **Audit:** every issued token is an audit event (§4.6) naming the WordPress user and the `jti` (never the token), so a WordPress session can be traced to the platform user who opened it.
@@ -683,6 +684,7 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
 
 ### 7.4. Logs
 * Site access and error logs, PHP-FPM slow logs, and job logs are viewable per site in the dashboard, read from container logs via the orchestrator driver.
+* Reading a site's runtime logs (`listSiteLogs`, `streamSiteLogs`) is an Operator action (decided 2026-10-21, #181), and the dashboard hides the logs viewer from Viewers. The access log records `$request_uri` with its query string, and WordPress and plugins put one-time secrets there (password reset keys, magic-login links), so a Viewer who could read it could take over a WordPress account. The log format is unchanged, so Operators and Admins can still see those query strings; they already have wp-admin and database access (§5.8, §5.9). Viewers keep metrics and alerts, and a job's log lines. We may revisit this after the MVP.
 * Log rotation limits are set on all containers to cap disk usage.
 
 ---

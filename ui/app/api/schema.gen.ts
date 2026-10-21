@@ -1275,7 +1275,10 @@ export interface paths {
         };
         /**
          * Read a site's runtime logs
-         * @description The site's nginx access and error logs, PHP-FPM slow log, and PHP
+         * @description Needs an Operator or Admin; Viewers get `403`, since the access log
+         *     records query strings, which can carry secrets.
+         *
+         *     The site's nginx access and error logs, PHP-FPM slow log, and PHP
          *     output (design doc §7.4), read from the site's containers through
          *     the orchestrator driver. A stopped site's logs can be read. Logs
          *     are kept only as long as the container log rotation allows (a few
@@ -1327,7 +1330,9 @@ export interface paths {
         };
         /**
          * Follow a site's runtime logs
-         * @description Streams the site's logs as server-sent events (`text/event-stream`)
+         * @description Needs an Operator or Admin, like `GET /api/v1/sites/{site_id}/logs`.
+         *
+         *     Streams the site's logs as server-sent events (`text/event-stream`)
          *     until the client disconnects: first the newest `tail` entries that
          *     match the filters, then new entries as the site writes them. The
          *     entries are the ones `GET /api/v1/sites/{site_id}/logs` returns;
