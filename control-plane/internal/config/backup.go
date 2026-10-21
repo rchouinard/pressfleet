@@ -41,6 +41,30 @@ type BackupConfig struct {
 	// State is how the state database's disaster recovery backups are
 	// taken and kept.
 	State BackupStateConfig `yaml:"state"`
+	// TaskMemoryMB is the memory limit, in MiB, of every task container the
+	// driver runs: backups, restores, and imports on a site, and restic on
+	// a client group's or the state repository. Restic's memory grows with
+	// the repository's size, which the control plane's own limit shouldn't
+	// have to absorb (#178).
+	TaskMemoryMB int `yaml:"task_memory_mb"`
+}
+
+// Limits for BackupConfig.TaskMemoryMB. The default is about three times
+// the 160 MiB restic needed for a repository of 622k blobs (#178). The
+// minimum leaves a small repository's prune room; the maximum is more than
+// the hosts the MVP targets have.
+const (
+	DefaultBackupTaskMemoryMB = 512
+	MinBackupTaskMemoryMB     = 128
+	MaxBackupTaskMemoryMB     = 16384
+)
+
+// ValidateTaskMemory reports whether TaskMemoryMB is in range, or nil.
+func (b BackupConfig) ValidateTaskMemory() error {
+	if b.TaskMemoryMB < MinBackupTaskMemoryMB || b.TaskMemoryMB > MaxBackupTaskMemoryMB {
+		return fmt.Errorf("backup.task_memory_mb must be from %d to %d, got %d", MinBackupTaskMemoryMB, MaxBackupTaskMemoryMB, b.TaskMemoryMB)
+	}
+	return nil
 }
 
 // BackupStateConfig is the schedule and retention of the state database's

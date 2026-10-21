@@ -53,9 +53,10 @@ const (
 
 // RepositoryGID is the GID that owns local backup repositories
 // (Task.RepositoryDir). The sites of a client group share one repository
-// but each runs as its own UID, so tasks that use a repository also run
+// but each runs as its own UID, so site tasks that use a repository also run
 // with this supplementary group; on Kubernetes it maps to the Pod's
-// supplementalGroups. It sits just above the site UID range, below 65534
+// supplementalGroups. Repository tasks (RepositoryTaskRunner) run as it,
+// as both user and group. It sits just above the site UID range, below 65534
 // (nogroup) and the subordinate ID ranges user namespaces use.
 //
 // A repository is owned by root:RepositoryGID, with setgid directories

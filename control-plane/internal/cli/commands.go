@@ -56,6 +56,7 @@ func (a *app) siteRuntime(ctx context.Context, cat *catalog.Catalog, secretStore
 		RedisContainer:    platform.RedisContainer(a.cfg.PlatformProject),
 		TraefikContainer:  platform.TraefikContainer(a.cfg.PlatformProject),
 		TaskImage:         a.cfg.TaskImage,
+		TaskMemoryMB:      a.cfg.Backup.TaskMemoryMB,
 		PlatformProject:   a.cfg.PlatformProject,
 		BackupNetwork:     platform.BackupNetwork(a.cfg.PlatformProject),
 		TraefikDynamicDir: filepath.Join(a.cfg.Layout().PlatformDir(), platform.TraefikDynamicDir),

@@ -76,6 +76,15 @@ func TestTaskCreateArgs(t *testing.T) {
 			},
 		},
 		{
+			name: "memory limit and host name",
+			spec: func(s *taskSpec) { s.memoryMB, s.hostname = 512, "pf-task-0123" },
+			task: provisioner.Task{Command: []string{"restic", "version"}},
+			want: []string{
+				"--hostname", "pf-task-0123", "--memory", "512m", "--memory-swap", "512m",
+				"--entrypoint=restic", "--env", "HOME=/tmp", "--", "pressfleet-control-plane:dev", "version",
+			},
+		},
+		{
 			name: "HOME given",
 			task: provisioner.Task{Command: []string{"sh"}, Env: map[string]string{"HOME": "/transfer"}},
 			want: []string{"--entrypoint=sh", "--env", "HOME=/transfer", "--", "pressfleet-control-plane:dev"},
@@ -98,6 +107,50 @@ func TestTaskCreateArgs(t *testing.T) {
 				t.Errorf("args:\n got %q\nwant %q", got, want)
 			}
 		})
+	}
+}
+
+func TestRepositoryTaskCreateArgs(t *testing.T) {
+	spec := taskSpec{
+		name:          "pf-group-g1-task-abc",
+		repository:    "g1",
+		hostname:      "pf-task-abc",
+		network:       "none",
+		user:          "60000:60000",
+		image:         "pressfleet-control-plane:dev",
+		memoryMB:      512,
+		repositoryDir: "/data/backups/repositories/g1",
+		secretsDir:    "/data/tmp/task-secrets-1",
+	}
+	got := taskCreateArgs(spec, provisioner.Task{
+		Command: []string{"restic", "snapshots"},
+		Env:     map[string]string{"RESTIC_REPOSITORY": "/repository"},
+	})
+	want := []string{
+		"container", "create",
+		"--name", "pf-group-g1-task-abc",
+		"--label", "pressfleet.managed=true",
+		"--label", "pressfleet.repository=g1",
+		"--label", "pressfleet.task=true",
+		"--network", "none",
+		"--user", "60000:60000",
+		"--read-only",
+		"--tmpfs", "/tmp",
+		"--cap-drop", "ALL",
+		"--security-opt", "no-new-privileges:true",
+		"--init",
+		"--log-driver", "none",
+		"--hostname", "pf-task-abc",
+		"--memory", "512m", "--memory-swap", "512m",
+		"--entrypoint=restic",
+		"--env", "HOME=/tmp",
+		"--env", "RESTIC_REPOSITORY=/repository",
+		"--mount", "type=bind,source=/data/tmp/task-secrets-1,target=/run/pressfleet/secrets,readonly",
+		"--mount", "type=bind,source=/data/backups/repositories/g1,target=/repository",
+		"--", "pressfleet-control-plane:dev", "snapshots",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("args:\n got %q\nwant %q", got, want)
 	}
 }
 

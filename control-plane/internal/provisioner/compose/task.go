@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"maps"
 	"os"
 	"os/exec"
@@ -23,7 +24,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 )
 
-// ErrInvalidTask is returned by RunTask for a task it can't run as given.
+// ErrInvalidTask is returned by RunTask and RunRepositoryTask for a task it can't run as given.
 var ErrInvalidTask = errors.New("compose: invalid task")
 
 const (
@@ -53,6 +54,7 @@ const (
 	taskLabel       = "pressfleet.task"
 	managedLabel    = "pressfleet.managed"
 	siteIDLabel     = "pressfleet.site-id"
+	repositoryLabel = "pressfleet.repository"
 	taskNamePattern = "pf-%s-task-%s"
 )
 
@@ -155,34 +157,50 @@ func (p *Provisioner) RunTask(ctx context.Context, siteID string, task provision
 	if err := p.attachShared(ctx, siteID); err != nil {
 		return nil, fmt.Errorf("run task on site %s: %w", siteID, err)
 	}
+	uid, _ := siteUID(user) // checked by taskSiteAccess
 	if spec.transferDir != "" && os.Geteuid() == 0 {
-		uid, _ := siteUID(user) // checked by taskSiteAccess
 		if err := chownTree(spec.transferDir, uid); err != nil {
 			return nil, fmt.Errorf("run task on site %s: %w", siteID, err)
 		}
 	}
-	name, err := taskContainerName(siteID)
+	token, err := taskToken()
 	if err != nil {
 		return nil, fmt.Errorf("run task on site %s: %w", siteID, err)
 	}
-	spec.name = name
+	spec.name = fmt.Sprintf(taskNamePattern, siteID, token)
+	return p.runTask(ctx, taskTarget{what: "site " + siteID, log: p.log.With("site_id", siteID)}, spec, task, uid)
+}
+
+// taskTarget says who a task container is for, as errors and log lines name
+// it: a site, or a repository.
+type taskTarget struct {
+	what string       // "site <id>"
+	log  *slog.Logger // with the target's identifying attribute
+}
+
+// runTask creates the validated task's container from spec, which says where
+// and as whom it runs, starts it attached, and returns its result. It writes
+// the task's secret files, which belong to uid, and removes them and the
+// container afterwards whatever happened.
+func (p *Provisioner) runTask(ctx context.Context, target taskTarget, spec taskSpec, task provisioner.Task, uid int) (*provisioner.TaskResult, error) {
+	var err error
 	if len(task.SecretFiles) > 0 {
 		// Registered before the container's removal, so it runs after it:
 		// the secrets outlive the task's last read.
-		defer func() { p.removeTaskSecrets(ctx, siteID, spec.secretsDir) }()
-		if spec.secretsDir, err = p.writeTaskSecrets(task.SecretFiles, user); err != nil {
-			return nil, fmt.Errorf("run task on site %s: %w", siteID, err)
+		defer func() { p.removeTaskSecrets(ctx, target.log, spec.secretsDir) }()
+		if spec.secretsDir, err = p.writeTaskSecrets(task.SecretFiles, uid); err != nil {
+			return nil, fmt.Errorf("run task on %s: %w", target.what, err)
 		}
 	}
 
 	start := time.Now()
-	defer p.removeTask(ctx, siteID, name)
+	defer p.removeTask(ctx, target.log, spec.name)
 	if err := p.createTask(ctx, spec, task); err != nil {
-		return nil, fmt.Errorf("run task on site %s: %w", siteID, err)
+		return nil, fmt.Errorf("run task on %s: %w", target.what, err)
 	}
 	if task.BackupNetwork {
-		if err := p.connectBackupNetwork(ctx, siteID, name); err != nil {
-			return nil, fmt.Errorf("run task on site %s: %w", siteID, err)
+		if err := p.connectBackupNetwork(ctx, target.log, spec.name); err != nil {
+			return nil, fmt.Errorf("run task on %s: %w", target.what, err)
 		}
 	}
 	stdout := &headBuffer{max: taskMaxOutput + 1}
@@ -194,18 +212,18 @@ func (p *Provisioner) RunTask(ctx context.Context, siteID string, task provision
 		// running, is then reported as not run to completion and removed.
 		out = task.Stdout
 	}
-	runErr := p.taskDocker(ctx, out, stderr, "container", "start", "--attach", "--", name)
-	res, err := p.taskResult(ctx, siteID, name, stdout, stderr, runErr)
+	runErr := p.taskDocker(ctx, out, stderr, "container", "start", "--attach", "--", spec.name)
+	res, err := p.taskResult(ctx, target.what, spec.name, stdout, stderr, runErr)
 	if err != nil {
-		p.log.WarnContext(ctx, "task failed", "site_id", siteID, "container", name,
+		target.log.WarnContext(ctx, "task failed", "container", spec.name,
 			"command", task.Command[0], "duration", time.Since(start), "error", err)
 		return nil, err
 	}
-	p.log.InfoContext(ctx, "task finished", "site_id", siteID, "container", name,
+	target.log.InfoContext(ctx, "task finished", "container", spec.name,
 		"command", task.Command[0], "duration", time.Since(start))
 	if len(stdout.buf) > taskMaxOutput {
 		res.Stdout = res.Stdout[:taskMaxOutput]
-		return res, fmt.Errorf("run task on site %s: %w to the first %d bytes", siteID, ErrOutputTruncated, taskMaxOutput)
+		return res, fmt.Errorf("run task on %s: %w to the first %d bytes", target.what, ErrOutputTruncated, taskMaxOutput)
 	}
 	return res, nil
 }
@@ -214,19 +232,20 @@ func (p *Provisioner) RunTask(ctx context.Context, siteID string, task provision
 // backup network. A platform without one (a project rendered before it
 // existed, or none at all in development) is not an error: S3 services
 // elsewhere are still reachable through the site network.
-func (p *Provisioner) connectBackupNetwork(ctx context.Context, siteID, container string) error {
+func (p *Provisioner) connectBackupNetwork(ctx context.Context, log *slog.Logger, container string) error {
 	if p.backupNetwork == "" {
 		return nil
 	}
-	// --gw-priority -1 keeps the site network as the default gateway; the
-	// backup network is internal and has no route out anyway.
+	// --gw-priority -1 keeps the site network (or a repository task's
+	// egress network) as the default gateway; the backup network is
+	// internal and has no route out anyway.
 	_, err := p.docker(ctx, nil, "network", "connect", "--gw-priority", "-1", p.backupNetwork, container)
 	switch {
 	case err == nil:
 		return nil
 	case stderrContains(err, "not found", "no such network"):
-		p.log.WarnContext(ctx, "the platform's backup network doesn't exist; the task reaches S3 through the site network only",
-			"site_id", siteID, "network", p.backupNetwork)
+		log.WarnContext(ctx, "the platform's backup network doesn't exist; the task reaches S3 through its own network only",
+			"network", p.backupNetwork)
 		return nil
 	default:
 		return fmt.Errorf("connecting the task to the backup network %s: %w", p.backupNetwork, err)
@@ -236,19 +255,19 @@ func (p *Provisioner) connectBackupNetwork(ctx context.Context, siteID, containe
 // taskResult turns the attached run into RunTask's result. The container's
 // own exit code decides, since `docker start --attach` exits non-zero both
 // when the task does and when the CLI fails.
-func (p *Provisioner) taskResult(ctx context.Context, siteID, name string, stdout *headBuffer, stderr *tailBuffer, runErr error) (*provisioner.TaskResult, error) {
+func (p *Provisioner) taskResult(ctx context.Context, what, name string, stdout *headBuffer, stderr *tailBuffer, runErr error) (*provisioner.TaskResult, error) {
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return nil, fmt.Errorf("run task on site %s: %w", siteID, ctxErr)
+		return nil, fmt.Errorf("run task on %s: %w", what, ctxErr)
 	}
 	info, found, err := p.inspectContainer(ctx, name)
 	switch {
 	case err != nil:
-		return nil, fmt.Errorf("run task on site %s: %w", siteID, err)
+		return nil, fmt.Errorf("run task on %s: %w", what, err)
 	case !found || info.State.Status != "exited":
 		if runErr == nil {
 			runErr = fmt.Errorf("%w: task container did not run to completion", ErrCommandFailed)
 		}
-		return nil, fmt.Errorf("run task on site %s: %w: %s", siteID, runErr, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("run task on %s: %w: %s", what, runErr, strings.TrimSpace(stderr.String()))
 	}
 	res := &provisioner.TaskResult{Stdout: string(stdout.buf), Stderr: stderr.String()}
 	if info.State.ExitCode != 0 {
@@ -256,7 +275,7 @@ func (p *Provisioner) taskResult(ctx context.Context, siteID, name string, stdou
 		if len(out) > taskMaxOutput {
 			out = out[:taskMaxOutput]
 		}
-		return nil, fmt.Errorf("run task on site %s: %w", siteID,
+		return nil, fmt.Errorf("run task on %s: %w", what,
 			&provisioner.ExecError{ExitCode: info.State.ExitCode, Stdout: out, Stderr: res.Stderr})
 	}
 	return res, nil
@@ -297,9 +316,12 @@ func (p *Provisioner) taskSiteAccess(ctx context.Context, siteID string) (user, 
 // taskSpec is a validated task, and where it runs.
 type taskSpec struct {
 	name            string // container name
-	siteID          string
+	siteID          string // for a site task
+	repository      string // for a repository task: a client group ID, or provisioner.StateRepository
+	hostname        string // "" for the container ID, which is unique too
 	network         string
 	user            string // "uid:gid"
+	memoryMB        int    // 0: no limit
 	image           string
 	wpContentVolume string
 	wpContent       provisioner.MountMode
@@ -311,7 +333,14 @@ type taskSpec struct {
 // taskSpec validates task and resolves its image and directories.
 func (p *Provisioner) taskSpec(task provisioner.Task) (taskSpec, error) {
 	var errs []error
-	spec := taskSpec{image: task.Image, wpContent: task.WPContent}
+	spec := taskSpec{image: task.Image, wpContent: task.WPContent, memoryMB: task.MemoryLimitMB}
+	switch {
+	case task.MemoryLimitMB == 0:
+		spec.memoryMB = p.taskMemoryMB
+	case task.MemoryLimitMB < config.MinBackupTaskMemoryMB || task.MemoryLimitMB > config.MaxBackupTaskMemoryMB:
+		errs = append(errs, fmt.Errorf("memory limit must be from %d to %d MiB, got %d",
+			config.MinBackupTaskMemoryMB, config.MaxBackupTaskMemoryMB, task.MemoryLimitMB))
+	}
 	if spec.image == "" {
 		spec.image = p.taskImage
 	}
@@ -419,13 +448,14 @@ func dirUnder(root, dir string) (string, error) {
 	return resolved, nil
 }
 
-// taskContainerName returns a unique container name for a task on the site.
-func taskContainerName(siteID string) (string, error) {
+// taskToken returns a random string that makes a task's container name, and
+// a repository task's host name, unique.
+func taskToken() (string, error) {
 	b := make([]byte, 6)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf(taskNamePattern, siteID, hex.EncodeToString(b)), nil
+	return hex.EncodeToString(b), nil
 }
 
 // createTask creates the task's container.
@@ -442,12 +472,12 @@ const secretsDirPrefix = "task-secrets-"
 
 // writeTaskSecrets writes files into a new directory below the temporary
 // directory and returns it, removing it again if it can't finish. The
-// directory and files belong to the task's user, user ("uid:gid"), so the
-// task reads them and nobody else can; changing the owner needs the control
-// plane to run as root, as it does in the platform. Otherwise (development
-// and tests) the secrets are readable by every local user for as long as the
-// task runs, unless the task's user is the control plane's own.
-func (p *Provisioner) writeTaskSecrets(files map[string]redact.Secret, user string) (string, error) {
+// directory and files belong to the task's user, whose UID and GID are uid,
+// so the task reads them and nobody else can; changing the owner needs the
+// control plane to run as root, as it does in the platform. Otherwise
+// (development and tests) the secrets are readable by every local user for as
+// long as the task runs, unless the task's user is the control plane's own.
+func (p *Provisioner) writeTaskSecrets(files map[string]redact.Secret, uid int) (string, error) {
 	tmp := p.layout.TmpDir()
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
 		return "", fmt.Errorf("writing task secrets: %w", err)
@@ -463,10 +493,6 @@ func (p *Provisioner) writeTaskSecrets(files map[string]redact.Secret, user stri
 	fail := func(err error) (string, error) {
 		_ = os.RemoveAll(dir)
 		return "", fmt.Errorf("writing task secrets: %w", err)
-	}
-	uid, err := siteUID(user) // checked by taskSiteAccess
-	if err != nil {
-		return fail(err)
 	}
 	dirMode, fileMode := os.FileMode(0o700), os.FileMode(0o400)
 	switch {
@@ -497,12 +523,12 @@ func (p *Provisioner) writeTaskSecrets(files map[string]redact.Secret, user stri
 // removeTaskSecrets removes the task's secret files, after ctx may have
 // ended. A failure is logged without the path's contents: the directory
 // stays for RemoveStaleTaskSecrets.
-func (p *Provisioner) removeTaskSecrets(ctx context.Context, siteID, dir string) {
+func (p *Provisioner) removeTaskSecrets(ctx context.Context, log *slog.Logger, dir string) {
 	if dir == "" {
 		return
 	}
 	if err := os.RemoveAll(dir); err != nil {
-		p.log.ErrorContext(ctx, "removing task secrets failed", "site_id", siteID, "dir", dir, "error", err)
+		log.ErrorContext(ctx, "removing task secrets failed", "dir", dir, "error", err)
 	}
 }
 
@@ -528,8 +554,15 @@ func taskCreateArgs(spec taskSpec, task provisioner.Task) []string {
 		"container", "create",
 		"--name", spec.name,
 		"--label", managedLabel + "=true",
-		"--label", siteIDLabel + "=" + spec.siteID,
-		"--label", taskLabel + "=true",
+	}
+	if spec.siteID != "" {
+		args = append(args, "--label", siteIDLabel+"="+spec.siteID)
+	}
+	if spec.repository != "" {
+		args = append(args, "--label", repositoryLabel+"="+spec.repository)
+	}
+	args = append(args,
+		"--label", taskLabel+"=true",
 		"--network", spec.network,
 		"--user", spec.user,
 		"--read-only",
@@ -540,8 +573,18 @@ func taskCreateArgs(spec taskSpec, task provisioner.Task) []string {
 		// wrapper; output reaches RunTask by attaching, so no log is kept.
 		"--init",
 		"--log-driver", "none",
-		"--entrypoint=" + task.Command[0],
+	)
+	if spec.hostname != "" {
+		// A host name of its own: restic records it in its locks and judges
+		// those of its own host by their process IDs.
+		args = append(args, "--hostname", spec.hostname)
 	}
+	if spec.memoryMB > 0 {
+		// Equal limits leave no swap, so a task over its limit is killed
+		// instead of making the host swap.
+		args = append(args, "--memory", strconv.Itoa(spec.memoryMB)+"m", "--memory-swap", strconv.Itoa(spec.memoryMB)+"m")
+	}
+	args = append(args, "--entrypoint="+task.Command[0])
 	if _, ok := task.Env["HOME"]; !ok {
 		args = append(args, "--env", "HOME="+taskHome)
 	}
@@ -561,11 +604,13 @@ func taskCreateArgs(spec taskSpec, task provisioner.Task) []string {
 		args = append(args, "--mount", "type=bind,source="+spec.secretsDir+",target="+provisioner.TaskSecretsPath+",readonly")
 	}
 	if spec.repositoryDir != "" {
-		// Still the site's UID, but in the group that owns the repositories,
-		// which the client group's sites share.
-		args = append(args,
-			"--group-add", strconv.Itoa(provisioner.RepositoryGID),
-			"--mount", "type=bind,source="+spec.repositoryDir+",target="+provisioner.TaskRepositoryPath)
+		if spec.siteID != "" {
+			// Still the site's UID, but in the group that owns the
+			// repositories, which the client group's sites share. A
+			// repository task runs as the group.
+			args = append(args, "--group-add", strconv.Itoa(provisioner.RepositoryGID))
+		}
+		args = append(args, "--mount", "type=bind,source="+spec.repositoryDir+",target="+provisioner.TaskRepositoryPath)
 	}
 	args = append(args, "--", spec.image)
 	return append(args, task.Command[1:]...)
@@ -573,11 +618,11 @@ func taskCreateArgs(spec taskSpec, task provisioner.Task) []string {
 
 // removeTask force-removes the task's container, killing it if it still
 // runs. It runs after ctx may have ended, so it has its own deadline.
-func (p *Provisioner) removeTask(ctx context.Context, siteID, name string) {
+func (p *Provisioner) removeTask(ctx context.Context, log *slog.Logger, name string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), taskCleanupTimeout)
 	defer cancel()
 	if _, err := p.docker(ctx, nil, "container", "rm", "--force", "--volumes", "--", name); err != nil && !stderrContains(err, "no such container") {
-		p.log.ErrorContext(ctx, "removing task container failed", "site_id", siteID, "container", name, "error", err)
+		log.ErrorContext(ctx, "removing task container failed", "container", name, "error", err)
 	}
 }
 
