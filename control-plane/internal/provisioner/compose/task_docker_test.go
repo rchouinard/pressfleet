@@ -127,6 +127,10 @@ func TestRunTaskDocker(t *testing.T) {
 	if strings.Contains(argv, secret) || !strings.Contains(argv, "sleep 300") {
 		t.Errorf("task container argv = %s", argv)
 	}
+	// Site tasks have the memory limit too, with no swap on top.
+	if mem := s.docker(t, ctx, "inspect", "--format", "{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}", name); mem != "536870912 536870912" {
+		t.Errorf("task container memory and swap limits = %s, want 512 MiB for both", mem)
+	}
 	if user := s.docker(t, ctx, "inspect", "--format", "{{.Config.User}}", name); user != strconv.Itoa(s.cfg.UID)+":"+strconv.Itoa(s.cfg.UID) {
 		t.Errorf("task container user = %s", user)
 	}
@@ -281,6 +285,38 @@ func TestRunTaskRepositoryDocker(t *testing.T) {
 		}
 	}
 	t.Logf("repository files after two sites' backups:\n%s", files.String())
+
+	// A repository task, which runs as the group instead of a site, reads
+	// what the sites wrote and writes into what they share: after it prunes,
+	// a site still reads the repository.
+	repoTask := func(args ...string) string {
+		t.Helper()
+		res, err := s.prov.RunRepositoryTask(ctx, s.cfg.ClientGroupID, provisioner.Task{
+			Image:         cpImage,
+			Command:       append([]string{"restic", "--no-cache"}, args...),
+			Env:           map[string]string{"RESTIC_REPOSITORY": provisioner.TaskRepositoryPath, "RESTIC_PASSWORD_FILE": provisioner.TaskSecretPath("restic-password")},
+			SecretFiles:   map[string]redact.Secret{"restic-password": password},
+			RepositoryDir: repo,
+			Timeout:       2 * time.Minute,
+		})
+		if err != nil {
+			t.Fatalf("repository task: restic %q: %v", args, err)
+		}
+		return res.Stdout
+	}
+	out := repoTask("snapshots", "--json")
+	for _, site := range sites {
+		if !strings.Contains(out, "site:"+site.ID) {
+			t.Errorf("the repository task doesn't see site %s's snapshot:\n%s", site.ID, out)
+		}
+	}
+	repoTask("check")
+	repoTask("forget", "--tag", "site:"+other.ID, "--keep-last", "1", "--prune")
+	repoTask("unlock")
+	restic(s.cfg, "check")
+	if got := restic(s.cfg, "dump", "--tag", "site:"+s.cfg.ID, "latest", provisioner.TaskWPContentPath+"/pf-site.txt"); got != s.cfg.ID+"\n" {
+		t.Errorf("site %d restores %q after a repository task pruned", s.cfg.UID, got)
+	}
 
 	res, err := s.prov.RunTask(ctx, s.cfg.ID, provisioner.Task{Image: cpImage, Command: []string{"mariadb-dump", "--version"}})
 	if err != nil || !strings.Contains(res.Stdout, "mariadb-dump") {

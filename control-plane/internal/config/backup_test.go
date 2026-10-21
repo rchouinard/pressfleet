@@ -72,7 +72,7 @@ func TestBackupSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := config.BackupConfig{Backend: "s3", Schedule: config.DefaultBackupSchedule(), Retention: config.DefaultBackupRetention(), Check: config.DefaultBackupCheck(), State: config.DefaultBackupState(), S3: config.BackupS3Config{
+	want := config.BackupConfig{Backend: "s3", Schedule: config.DefaultBackupSchedule(), Retention: config.DefaultBackupRetention(), Check: config.DefaultBackupCheck(), State: config.DefaultBackupState(), TaskMemoryMB: config.DefaultBackupTaskMemoryMB, S3: config.BackupS3Config{
 		Endpoint: "https://s3.example.com", Bucket: "backups", Prefix: "pressfleet/prod", Region: "eu-west-1",
 		AccessKeyID: "AKIAEXAMPLE", SecretAccessKey: "pfenc1:abc:ZGVm",
 	}}
@@ -88,8 +88,45 @@ func TestBackupSettings(t *testing.T) {
 		"PRESSFLEET_BACKUP_S3_BUCKET":            "",
 		"PRESSFLEET_BACKUP_S3_SECRET_ACCESS_KEY": "",
 	}))
-	if err != nil || cfg.Backup != (config.BackupConfig{Backend: "local", Schedule: config.DefaultBackupSchedule(), Retention: config.DefaultBackupRetention(), Check: config.DefaultBackupCheck(), State: config.DefaultBackupState()}) {
+	if err != nil || cfg.Backup != (config.BackupConfig{Backend: "local", Schedule: config.DefaultBackupSchedule(), Retention: config.DefaultBackupRetention(), Check: config.DefaultBackupCheck(), State: config.DefaultBackupState(), TaskMemoryMB: config.DefaultBackupTaskMemoryMB}) {
 		t.Errorf("Backup from env = %+v, %v; want local", cfg.Backup, err)
+	}
+}
+
+func TestBackupTaskMemory(t *testing.T) {
+	if got := config.Default().Backup.TaskMemoryMB; got != 512 {
+		t.Errorf("default backup.task_memory_mb = %d, want 512", got)
+	}
+	path := writeFile(t, "backup:\n  task_memory_mb: 1024\n")
+	cfg, err := config.Load(path, env(nil))
+	if err != nil || cfg.Backup.TaskMemoryMB != 1024 {
+		t.Errorf("task_memory_mb from the file = %d, %v; want 1024", cfg.Backup.TaskMemoryMB, err)
+	}
+	cfg, err = config.Load(path, env(map[string]string{"PRESSFLEET_BACKUP_TASK_MEMORY_MB": "2048"}))
+	if err != nil || cfg.Backup.TaskMemoryMB != 2048 {
+		t.Errorf("task_memory_mb from the environment = %d, %v; want 2048", cfg.Backup.TaskMemoryMB, err)
+	}
+	for _, tc := range []struct {
+		mb      int
+		invalid bool
+	}{
+		{config.MinBackupTaskMemoryMB - 1, true},
+		{config.MinBackupTaskMemoryMB, false},
+		{config.DefaultBackupTaskMemoryMB, false},
+		{config.MaxBackupTaskMemoryMB, false},
+		{config.MaxBackupTaskMemoryMB + 1, true},
+		{0, true},
+		{-1, true},
+	} {
+		cfg := config.Default()
+		cfg.Backup.TaskMemoryMB = tc.mb
+		err := cfg.Validate()
+		switch {
+		case tc.invalid && (err == nil || !strings.Contains(err.Error(), "backup.task_memory_mb")):
+			t.Errorf("task_memory_mb %d: Validate() = %v, want an error naming the setting", tc.mb, err)
+		case !tc.invalid && err != nil:
+			t.Errorf("task_memory_mb %d: Validate() = %v", tc.mb, err)
+		}
 	}
 }
 

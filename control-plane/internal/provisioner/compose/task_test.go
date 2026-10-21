@@ -42,6 +42,8 @@ type taskDocker struct {
 	// connectErr is what `docker network connect` returns, createErr what
 	// `docker container create` returns.
 	connectErr, createErr error
+	// networkErr is what `docker network create` returns.
+	networkErr error
 
 	calls      []string
 	createArgs []string
@@ -83,6 +85,8 @@ func (f *taskDocker) exec(_ context.Context, _ io.Reader, args ...string) ([]byt
 			}
 		}
 		return []byte("0123abcd\n"), nil
+	case args[0] == "network" && args[1] == "create":
+		return nil, f.networkErr
 	case args[0] == "network" && args[1] == "connect":
 		return nil, f.connectErr
 	case args[0] == "container" && args[1] == "rm":

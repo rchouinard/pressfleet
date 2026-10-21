@@ -5,6 +5,7 @@ package provisionertest
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"iter"
@@ -17,10 +18,11 @@ import (
 
 // Call records one method invocation on the fake.
 type Call struct {
-	Op     string // method name, e.g. "CreateSite"
-	SiteID string
-	Args   []string          // ExecWPCLI arguments
-	Task   *provisioner.Task // RunTask task
+	Op         string // method name, e.g. "CreateSite"
+	SiteID     string
+	Repository string            // RunRepositoryTask's client group ID or provisioner.StateRepository
+	Args       []string          // ExecWPCLI arguments
+	Task       *provisioner.Task // RunTask and RunRepositoryTask task
 }
 
 // Site is the fake's view of a site's runtime state.
@@ -42,6 +44,9 @@ type Fake struct {
 	// RunTaskFunc, if set, handles RunTask calls for existing sites. By
 	// default tasks succeed with empty output.
 	RunTaskFunc func(siteID string, task provisioner.Task) (*provisioner.TaskResult, error)
+	// RunRepositoryTaskFunc, if set, handles RunRepositoryTask calls. By
+	// default tasks succeed with empty output.
+	RunRepositoryTaskFunc func(repository string, task provisioner.Task) (*provisioner.TaskResult, error)
 	// RunSessionFunc, if set, handles RunSession calls for existing sites,
 	// e.g. by serving SFTP from a temporary directory in the test process.
 	RunSessionFunc func(ctx context.Context, siteID string, s provisioner.Session) error
@@ -49,7 +54,8 @@ type Fake struct {
 	// they answer 200.
 	Probe func(siteID string, req provisioner.ProbeRequest) (*provisioner.ProbeResponse, error)
 	// Err, if set, is consulted at the start of every call; a non-nil result
-	// is returned without changing state. Use it to inject failures.
+	// is returned without changing state. Use it to inject failures. For
+	// RunRepositoryTask the second argument is the repository.
 	Err func(op, siteID string) error
 
 	mu    sync.Mutex
@@ -451,6 +457,36 @@ func (f *Fake) RunTask(_ context.Context, siteID string, task provisioner.Task) 
 		return &provisioner.TaskResult{}, nil
 	}
 	return handler(siteID, task)
+}
+
+// RunRepositoryTask implements provisioner.RepositoryTaskRunner. It records
+// the call, and refuses what the contract does: a task with wp-content, or
+// one that doesn't say where its repository is.
+func (f *Fake) RunRepositoryTask(_ context.Context, repository string, task provisioner.Task) (*provisioner.TaskResult, error) {
+	f.mu.Lock()
+	if err := f.begin("RunRepositoryTask", repository, nil); err != nil {
+		f.mu.Unlock()
+		return nil, err
+	}
+	call := &f.calls[len(f.calls)-1]
+	call.SiteID, call.Repository = "", repository
+	t := task
+	t.Command = slices.Clone(task.Command)
+	t.Env = maps.Clone(task.Env)
+	t.SecretFiles = maps.Clone(task.SecretFiles)
+	call.Task = &t
+	handler := f.RunRepositoryTaskFunc
+	f.mu.Unlock()
+
+	switch {
+	case task.WPContent != provisioner.MountNone:
+		return nil, fmt.Errorf("fake: repository task with wp-content (mount mode %d)", task.WPContent)
+	case task.RepositoryDir == "" && !task.BackupNetwork:
+		return nil, errors.New("fake: repository task without RepositoryDir or BackupNetwork")
+	case handler == nil:
+		return &provisioner.TaskResult{}, nil
+	}
+	return handler(repository, task)
 }
 
 // RunSession records the call and hands the session to RunSessionFunc for

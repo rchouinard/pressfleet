@@ -10,6 +10,7 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/provisionertest"
+	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 )
 
 func config(id string) *provisioner.SiteConfig {
@@ -262,5 +263,55 @@ func TestFakeStatsAndTasks(t *testing.T) {
 	}
 	if _, err := f.RunTask(ctx, "missing", task); !errors.Is(err, provisioner.ErrSiteNotFound) {
 		t.Errorf("RunTask(missing) err = %v", err)
+	}
+}
+
+func TestFakeRunRepositoryTask(t *testing.T) {
+	ctx := context.Background()
+	f := provisionertest.New()
+	task := provisioner.Task{
+		Command:       []string{"restic", "snapshots"},
+		Env:           map[string]string{"RESTIC_REPOSITORY": provisioner.TaskRepositoryPath},
+		SecretFiles:   map[string]redact.Secret{"restic-password": "pw"},
+		RepositoryDir: "/data/backups/repositories/g1",
+		MemoryLimitMB: 256,
+	}
+	// No site is needed, and by default a task succeeds with no output.
+	if res, err := f.RunRepositoryTask(ctx, "g1", task); err != nil || *res != (provisioner.TaskResult{}) {
+		t.Errorf("RunRepositoryTask = %+v, %v", res, err)
+	}
+	task.Env["RESTIC_REPOSITORY"] = "changed"
+	calls := f.Calls()
+	last := calls[len(calls)-1]
+	if last.Op != "RunRepositoryTask" || last.Repository != "g1" || last.SiteID != "" || last.Task == nil ||
+		last.Task.Env["RESTIC_REPOSITORY"] != provisioner.TaskRepositoryPath ||
+		last.Task.SecretFiles["restic-password"] != "pw" || last.Task.MemoryLimitMB != 256 {
+		t.Errorf("call not recorded with a copy of the task: %+v", last)
+	}
+
+	f.RunRepositoryTaskFunc = func(repository string, task provisioner.Task) (*provisioner.TaskResult, error) {
+		return &provisioner.TaskResult{Stdout: repository + ":" + task.Command[1]}, nil
+	}
+	if res, err := f.RunRepositoryTask(ctx, provisioner.StateRepository, provisioner.Task{Command: []string{"restic", "check"}, BackupNetwork: true}); err != nil || res.Stdout != "state:check" {
+		t.Errorf("RunRepositoryTask with a handler = %+v, %v", res, err)
+	}
+
+	// The contract: no wp-content, and a place for the repository.
+	if _, err := f.RunRepositoryTask(ctx, "g1", provisioner.Task{Command: []string{"restic"}, BackupNetwork: true, WPContent: provisioner.MountReadOnly}); err == nil {
+		t.Error("RunRepositoryTask accepted wp-content")
+	}
+	if _, err := f.RunRepositoryTask(ctx, "g1", provisioner.Task{Command: []string{"restic"}}); err == nil {
+		t.Error("RunRepositoryTask accepted a task without a repository")
+	}
+
+	boom := errors.New("boom")
+	f.Err = func(op, key string) error {
+		if op == "RunRepositoryTask" && key == "g2" {
+			return boom
+		}
+		return nil
+	}
+	if _, err := f.RunRepositoryTask(ctx, "g2", task); !errors.Is(err, boom) {
+		t.Errorf("RunRepositoryTask with an injected error = %v", err)
 	}
 }

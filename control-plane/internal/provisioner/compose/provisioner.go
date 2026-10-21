@@ -114,6 +114,10 @@ type ProvisionerConfig struct {
 	// Image: the control plane's own image (config.Config.TaskImage). Empty
 	// makes such tasks fail with ErrInvalidTask.
 	TaskImage string
+	// TaskMemoryMB is the memory limit, in MiB, of tasks that don't set
+	// provisioner.Task.MemoryLimitMB (config.BackupConfig.TaskMemoryMB). Zero
+	// means config.DefaultBackupTaskMemoryMB.
+	TaskMemoryMB int
 	// Logger receives lifecycle events; nil discards them.
 	Logger *slog.Logger
 	// WaitTimeout bounds how long starting a site waits for its containers
@@ -166,6 +170,7 @@ type Provisioner struct {
 	taskDocker    StreamExecFunc
 	sessionDocker AttachExecFunc
 	taskImage     string
+	taskMemoryMB  int
 	backupNetwork string // ProvisionerConfig.BackupNetwork
 }
 
@@ -205,6 +210,10 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 			errs = append(errs, err)
 		}
 	}
+	if cfg.TaskMemoryMB != 0 && (cfg.TaskMemoryMB < config.MinBackupTaskMemoryMB || cfg.TaskMemoryMB > config.MaxBackupTaskMemoryMB) {
+		errs = append(errs, fmt.Errorf("task memory limit must be from %d to %d MiB, got %d",
+			config.MinBackupTaskMemoryMB, config.MaxBackupTaskMemoryMB, cfg.TaskMemoryMB))
+	}
 	if err := errors.Join(errs...); err != nil {
 		return nil, fmt.Errorf("compose provisioner: %w", err)
 	}
@@ -235,6 +244,7 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 		taskDocker:     cfg.DockerStream,
 		sessionDocker:  cfg.DockerAttach,
 		taskImage:      cfg.TaskImage,
+		taskMemoryMB:   cfg.TaskMemoryMB,
 		backupNetwork:  cfg.BackupNetwork,
 	}
 	if p.wpcliTimeout == 0 {
@@ -242,6 +252,9 @@ func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
 	}
 	if p.wpcliMaxOutput == 0 {
 		p.wpcliMaxOutput = DefaultWPCLIMaxOutput
+	}
+	if p.taskMemoryMB == 0 {
+		p.taskMemoryMB = config.DefaultBackupTaskMemoryMB
 	}
 	if p.taskDocker == nil {
 		p.taskDocker = DockerStreamExec

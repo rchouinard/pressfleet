@@ -18,6 +18,7 @@ type Driver interface {
 	LogReader
 	StatsReader
 	TaskRunner
+	RepositoryTaskRunner
 	SessionRunner
 	Prober
 	ImagePinner
@@ -175,7 +176,8 @@ const (
 )
 
 // Task is a short-lived command run with access to a site's data, e.g.
-// backing up or restoring wp-content (§5.3, §5.4).
+// backing up or restoring wp-content (§5.3, §5.4), or, with
+// RepositoryTaskRunner, to a backup repository alone.
 //
 // Inside the task:
 //   - wp-content is at TaskWPContentPath (if WPContent is not MountNone)
@@ -215,14 +217,23 @@ type Task struct {
 	// directory holding a local Restic repository, bind-mounted read-write at
 	// TaskRepositoryPath. Like TransferDir, it relies on the data directory
 	// being at the same path on the host and in the control plane container.
-	// The task keeps the site's UID and gets RepositoryGID as a supplementary
-	// group, so the repository must be group-writable by RepositoryGID (see
-	// there), not owned by the site's UID: other sites share it.
+	// A site task keeps the site's UID and gets RepositoryGID as a
+	// supplementary group (a repository task runs as RepositoryGID), so the
+	// repository must be group-writable by RepositoryGID (see there), not
+	// owned by the site's UID: other sites share it.
 	RepositoryDir string
 	// BackupNetwork asks for the platform's backup network too, where a
 	// self-hosted S3 service holding the repository may live. Drivers
-	// without one ignore it.
+	// without one ignore it. For a repository task it also means that the
+	// repository is on S3: the task gets a route to the internet, which it
+	// has no other way to have (see RepositoryTaskRunner).
 	BackupNetwork bool
+	// MemoryLimitMB is the task's hard memory limit in MiB, with no swap on
+	// top. Zero means the driver's default (backup.task_memory_mb, 512). A
+	// task that exceeds it is killed by the kernel and fails; limits keep
+	// restic, whose memory grows with the repository, from taking the
+	// memory sites and platform services need.
+	MemoryLimitMB int
 	// Timeout bounds the task's run time; zero means no limit beyond ctx.
 	Timeout time.Duration
 	// Stdout, if set, receives the task's standard output as it is
@@ -257,6 +268,52 @@ type TaskRunner interface {
 	// finish. A non-zero exit yields an *ExecError. Returns ErrSiteNotFound if
 	// the site does not exist. The task's container is always removed.
 	RunTask(ctx context.Context, siteID string, task Task) (*TaskResult, error)
+}
+
+// StateRepository is the repository argument of RunRepositoryTask for the
+// platform's own state repository (§5.10) instead of a client group's. It
+// can't be a client group ID, which are 26 characters.
+const StateRepository = "state"
+
+// RepositoryTaskRunner runs tasks against a backup repository with no site:
+// restic's group-level work (init, cat config, snapshots, forget and prune,
+// check and unlock, stats, export, and reads of snapshots of deleted sites),
+// and the state repository's (§5.3, §5.10). It is what keeps restic out of
+// the control plane's own memory (#178).
+//
+// It is a variant of TaskRunner.RunTask keyed by repository instead of site,
+// because RunTask borrows the site's network, UID, and wp-content volume,
+// which a group task has no use for and, for a deleted site, no access to.
+// A task is the same data (Task) either way, and a repository task needs
+// only what Kubernetes offers a Job: a Pod that mounts the repositories'
+// volume (RepositoryDir) or reaches the S3 endpoint (BackupNetwork), Secret
+// volumes for SecretFiles, and a memory limit. No Compose type appears in
+// the interface.
+//
+// What a repository task has:
+//   - RepositoryDir at TaskRepositoryPath (local repositories), TransferDir
+//     at TaskTransferPath, SecretFiles in TaskSecretsPath, and Env;
+//   - no wp-content (Task.WPContent must be MountNone) and none of the
+//     platform's services: not MariaDB, Redis, or the control plane;
+//   - no network at all, unless Task.BackupNetwork says the repository is on
+//     S3. Then it has a network of its own, shared with other repository
+//     tasks only, with a route to the internet but no access to sites or the
+//     platform, and the platform's backup network too, if it has one, where
+//     a self-hosted S3 service may live. On Kubernetes this is a
+//     NetworkPolicy that allows egress to the S3 endpoint.
+//   - the user and group RepositoryGID, which own local repositories, instead
+//     of a site's UID;
+//   - a host name of its own, unique for every task, so that restic, which
+//     records it in its locks, never takes a lock of another container for
+//     one of its own, left behind by a process that no longer exists.
+type RepositoryTaskRunner interface {
+	// RunRepositoryTask runs task for the repository of the client group,
+	// or for the state repository if repository is StateRepository, and
+	// waits for it to finish. RepositoryDir or BackupNetwork has to say where
+	// the repository is. Secrets, output, timeouts, and the container's
+	// removal work as they do for RunTask, and a non-zero exit yields an
+	// *ExecError.
+	RunRepositoryTask(ctx context.Context, repository string, task Task) (*TaskResult, error)
 }
 
 // Session is one developer session on a site's files (§5.8): a command,

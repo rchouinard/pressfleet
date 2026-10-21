@@ -99,7 +99,7 @@ func (p *Provisioner) RunSession(ctx context.Context, siteID string, s provision
 	}
 
 	start := time.Now()
-	defer p.removeTask(ctx, siteID, name)
+	defer p.removeTask(ctx, p.log.With("site_id", siteID), name)
 	if _, err := p.docker(ctx, nil, sessionCreateArgs(name, siteID, user, volume, image, s.Command)...); err != nil {
 		return fmt.Errorf("run session on site %s: creating the worker: %w", siteID, err)
 	}
