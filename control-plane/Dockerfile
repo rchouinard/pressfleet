@@ -8,14 +8,14 @@
 #
 # or `make image`. Base images are pinned by linux/amd64 digest.
 
-ARG GO_IMAGE=golang:1.27.2-trixie@sha256:2d658507a011f1eadc0114d7a421b312b2e77d9042a24036a26e267cc9231677
+ARG GO_IMAGE=golang:1.27.3-trixie@sha256:8aa2821993207ae840ce09e4223217efcd14e01f71525db734faf4232bd59999
 # Source of the docker CLI and Compose v2 plugin. Both are static binaries.
-ARG DOCKER_CLI_IMAGE=docker:29.8.1-cli@sha256:6602978e2be3c20e530e33773b8cadcef5fe998a71a534ee24516f1176973cdf
+ARG DOCKER_CLI_IMAGE=docker:29.9.2-cli@sha256:46d89b565041ec4d08f8a7657b4f4b08c8425a87896249f7ae1a10514235b7e6
 # Builds the dashboard (ui/), which the binary embeds. Only used at build time.
-ARG NODE_IMAGE=node:24-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6
+ARG NODE_IMAGE=node:24-slim@sha256:a8efdaa8f2458a83ad61c9b8e957c94c2312a9e60604d5b9b093cf89ad9f5984
 # Debian rather than distroless: the MariaDB client for backups comes from
 # Debian packages.
-ARG BASE_IMAGE=debian:13.7-slim@sha256:7792b1f7702a86946cd518db72b6a407302c3e9bc1635634368b878189e8221c
+ARG BASE_IMAGE=debian:13.7-slim@sha256:4876fdea29cac1a33a3195f1eb1952feb1fca7dd6dd00be3e2f1879cf20d34d2
 # Backup tools (design doc §5.3). Backup tasks run in this image
 # (provisioner.Task). restic is the upstream static binary, verified against
 # the release's SHA256SUMS; the MariaDB client is the Debian trixie package.

@@ -41,6 +41,14 @@ LABEL org.opencontainers.image.title="pressfleet site-nginx" \
 	org.opencontainers.image.licenses="MIT" \
 	io.pressfleet.wordpress-version="${WP_VERSION}"
 
+# Alpine security fixes (libexpat, libx11, ...) reach the nginx base image only
+# when upstream rebuilds it, which can lag the fixes by weeks; upgrading here
+# closes the gap. See docs/releasing.md ("Vulnerability scanning").
+RUN --mount=type=secret,id=extra_ca,required=false \
+	--mount=type=bind,source=shared/extra-ca.sh,target=/run/extra-ca.sh \
+	. /run/extra-ca.sh \
+	&& apk upgrade --no-cache
+
 # The upstream entrypoint scripts write to /etc/nginx and expect root; ours
 # renders into /tmp as the site UID instead.
 RUN rm -rf /docker-entrypoint.sh /docker-entrypoint.d /etc/nginx/conf.d /usr/share/nginx/html
