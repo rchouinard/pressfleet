@@ -140,6 +140,29 @@ func TestSites(t *testing.T) {
 			t.Error("SetStatus to an invalid status succeeded")
 		}
 
+		// Going to updating records the status it replaces (#187).
+		for _, tt := range []struct {
+			from, want store.SiteStatus
+		}{
+			{store.SiteStopped, store.SiteStopped},
+			{store.SiteRunning, store.SiteRunning},
+			{store.SiteUpdating, store.SiteRunning}, // already updating: kept
+			{store.SiteFailed, ""},
+		} {
+			if _, err := sites.SetStatus(ctx, s.ID, tt.from, ""); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := sites.SetStatus(ctx, s.ID, store.SiteUpdating, ""); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := sites.ResumeStatus(ctx, s.ID); err != nil || got != tt.want {
+				t.Errorf("ResumeStatus after updating from %s = %q, %v; want %q", tt.from, got, err, tt.want)
+			}
+		}
+		if _, err := sites.ResumeStatus(ctx, id.New()); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("ResumeStatus of a missing site: %v, want ErrNotFound", err)
+		}
+
 		// The admin password is taken once.
 		if ok, err := sites.TakeAdminPassword(ctx, s.ID, "wrong"); err != nil || ok {
 			t.Errorf("TakeAdminPassword with the wrong ref = %v, %v", ok, err)

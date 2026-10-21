@@ -19,9 +19,11 @@ import (
 // and its object cache holds no site users. [PrepareRecovery] runs in the
 // transaction that loads the backup. It fails every unfinished job (their
 // work was lost with the old host, and resuming them would act on resources
-// that don't exist), and for each site that was running or stopped it sets
-// the status to updating and queues a [RecoverJobType] job on the site's
-// lock key. The startup reconciliation leaves updating sites alone. Sites
+// that don't exist), and for each site that was running, stopped, or being
+// updated it sets the status to updating and queues a [RecoverJobType] job
+// on the site's lock key. The site comes back stopped if an interrupted stop
+// job asked for that, or if it was stopped before the job updating it
+// (Sites.ResumeStatus); an interrupted start job brings it back running. The startup reconciliation leaves updating sites alone. Sites
 // that were provisioning or being deleted are marked failed: their jobs were
 // interrupted, and the operator decides what to do with them.
 //
@@ -71,7 +73,7 @@ const interruptedByRestore = "interrupted: the platform's state was restored fro
 
 // recoverPayload is the site.recover job's payload.
 type recoverPayload struct {
-	// Status is the status the site had in the backup: running or stopped.
+	// Status is the status the site comes back with: running or stopped.
 	Status store.SiteStatus `json:"status"`
 }
 
@@ -90,7 +92,11 @@ type Recovery struct {
 // transaction q that loads it; see the comment at the top of this file.
 func PrepareRecovery(ctx context.Context, q store.Querier, now time.Time) (Recovery, error) {
 	var rec Recovery
-	var err error
+	// Read before the jobs are failed below.
+	power, err := interruptedPower(ctx, q)
+	if err != nil {
+		return rec, fmt.Errorf("prepare site recovery: %w", err)
+	}
 	if rec.InterruptedJobs, err = store.NewJobs(q).FailUnfinished(ctx, interruptedByRestore, now); err != nil {
 		return rec, err
 	}
@@ -123,7 +129,9 @@ func PrepareRecovery(ctx context.Context, q store.Querier, now time.Time) (Recov
 			continue
 		}
 		p := recoverPayload{Status: store.SiteRunning}
-		if site.Status == store.SiteStopped {
+		if stopped, err := recoverStopped(ctx, sites, site, power); err != nil {
+			return rec, fmt.Errorf("prepare site recovery: %w", err)
+		} else if stopped {
 			p.Status = store.SiteStopped
 		}
 		if _, err := sites.SetStatus(ctx, id, store.SiteUpdating, "recovering from its newest backup", site.Status); err != nil {
@@ -138,6 +146,52 @@ func PrepareRecovery(ctx context.Context, q store.Querier, now time.Time) (Recov
 		rec.Recovering = append(rec.Recovering, id)
 	}
 	return rec, nil
+}
+
+// recoverStopped reports whether a site comes back stopped: as its
+// interrupted start or stop job asked (power), or as it was before the job
+// that was updating it, or as it is.
+func recoverStopped(ctx context.Context, sites store.Sites, site store.Site, power map[string]store.SiteStatus) (bool, error) {
+	if want, ok := power[site.ID]; ok {
+		return want == store.SiteStopped, nil
+	}
+	if site.Status != store.SiteUpdating {
+		return site.Status == store.SiteStopped, nil
+	}
+	before, err := sites.ResumeStatus(ctx, site.ID)
+	if err != nil {
+		return false, err
+	}
+	return before == store.SiteStopped, nil
+}
+
+// interruptedPower returns, for each site with an unfinished start or stop
+// job, the status its newest one asked for. Those jobs don't change the
+// site's status until they finish, so the status alone would bring the
+// site back as it was before the request.
+func interruptedPower(ctx context.Context, q store.Querier) (map[string]store.SiteStatus, error) {
+	power := map[string]store.SiteStatus{}
+	f := store.JobFilter{Types: []string{StartJobType, StopJobType}, States: unfinished, TargetType: store.JobTargetSite, Limit: 200}
+	for {
+		page, err := store.NewJobs(q).List(ctx, f)
+		if err != nil {
+			return nil, err
+		}
+		// Newest first: the first job seen for a site is its latest request.
+		for _, j := range page.Jobs {
+			if _, seen := power[j.TargetID]; seen {
+				continue
+			}
+			power[j.TargetID] = store.SiteRunning
+			if j.Type == StopJobType {
+				power[j.TargetID] = store.SiteStopped
+			}
+		}
+		if page.NextCursor == "" {
+			return power, nil
+		}
+		f.Before = page.NextCursor
+	}
 }
 
 func (s *Service) recoverHandler() jobs.Handler {

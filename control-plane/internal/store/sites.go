@@ -544,12 +544,24 @@ func (r Sites) MemoryReservations(ctx context.Context, except ...SiteStatus) (to
 // only a site whose current status is one of them changes, so a job can't
 // overwrite a status another request has set since. It reports whether the
 // site changed; a missing site is not an error.
+//
+// Setting updating also records the status it replaces, if that is running
+// or stopped, for ResumeStatus; a site already updating keeps the one it
+// has.
 func (r Sites) SetStatus(ctx context.Context, siteID string, status SiteStatus, message string, from ...SiteStatus) (bool, error) {
 	if !status.Valid() {
 		return false, fmt.Errorf("set status of site %s: invalid status %q", siteID, status)
 	}
-	query := "UPDATE sites SET status = ?, status_message = ?, updated_at = ? WHERE id = ?"
-	args := []any{string(status), message, now(), siteID}
+	query := "UPDATE sites SET status = ?, status_message = ?, updated_at = ?"
+	args := []any{string(status), message, now()}
+	if status == SiteUpdating {
+		// SET expressions see the row as it was, so status here is the
+		// status being replaced.
+		query += ", resume_status = CASE WHEN status IN (?, ?) THEN status WHEN status = ? THEN resume_status ELSE '' END"
+		args = append(args, string(SiteRunning), string(SiteStopped), string(SiteUpdating))
+	}
+	query += " WHERE id = ?"
+	args = append(args, siteID)
 	if len(from) > 0 {
 		query += " AND status IN (" + placeholders(len(from)) + ")"
 		for _, s := range from {
@@ -557,6 +569,23 @@ func (r Sites) SetStatus(ctx context.Context, siteID string, status SiteStatus, 
 		}
 	}
 	return r.exec(ctx, "set status of site "+siteID, query, args...)
+}
+
+// ResumeStatus returns the status the site had before it last went to
+// updating: running or stopped, or empty if it was neither. Recovering
+// the state database on a new host (#96) uses it for sites that were being
+// updated, whose status the update would otherwise have read back from
+// their containers. It returns ErrNotFound if the site doesn't exist.
+func (r Sites) ResumeStatus(ctx context.Context, siteID string) (SiteStatus, error) {
+	var status string
+	err := r.q.QueryRowContext(ctx, "SELECT resume_status FROM sites WHERE id = ?", siteID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("resume status of site %s: %w", siteID, ErrNotFound)
+	}
+	if err != nil {
+		return "", fmt.Errorf("resume status of site %s: %w", siteID, err)
+	}
+	return SiteStatus(status), nil
 }
 
 // ClearSecretRefs forgets the site's salts, admin password, and preview

@@ -159,6 +159,80 @@ func TestRecoverSites(t *testing.T) {
 	})
 }
 
+// Sites that a job was working on when the host was lost come back as the
+// job left them or as it asked: an update keeps the status the site had
+// before it, and an interrupted start or stop job's request wins (#187).
+func TestRecoverInterruptedJobs(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		e := newRestoreEnv(t, db)
+		site := func(name string, stop bool) store.Site {
+			t.Helper()
+			s := e.runningSite(t, name, "post="+name)
+			e.snapshot(t, s.ID)
+			if stop {
+				if _, err := e.svc.Stop(ctx, s.ID, ""); err != nil {
+					t.Fatal(err)
+				}
+				e.runJobs(t)
+			}
+			return s
+		}
+		updating := func(s store.Site) {
+			t.Helper()
+			// What every update does when it is queued.
+			if _, err := store.NewSites(db).SetStatus(ctx, s.ID, store.SiteUpdating, "", store.SiteRunning, store.SiteStopped); err != nil {
+				t.Fatal(err)
+			}
+		}
+		stoppedUpdating := site("stopped-updating", true)
+		updating(stoppedUpdating)
+		runningUpdating := site("running-updating", false)
+		updating(runningUpdating)
+		stopping := site("stopping", false)
+		starting := site("starting", true)
+		// Queued last, so no setup above runs them.
+		if _, err := e.svc.Stop(ctx, stopping.ID, ""); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.svc.Start(ctx, starting.ID, ""); err != nil {
+			t.Fatal(err)
+		}
+
+		all := []store.Site{stoppedUpdating, runningUpdating, stopping, starting}
+		var ids []string
+		for _, s := range all {
+			ids = append(ids, s.ID)
+		}
+		e.loseHost(t, ids...)
+		if rec := e.prepareRecovery(t); len(rec.Recovering) != len(all) {
+			t.Fatalf("recovering %v, want %d sites", rec.Recovering, len(all))
+		}
+		e.runJobs(t)
+
+		for _, tc := range []struct {
+			site  store.Site
+			want  store.SiteStatus
+			phase provisioner.SitePhase
+		}{
+			{stoppedUpdating, store.SiteStopped, provisioner.SiteStopped},
+			{runningUpdating, store.SiteRunning, provisioner.SiteRunning},
+			{stopping, store.SiteStopped, provisioner.SiteStopped},
+			{starting, store.SiteRunning, provisioner.SiteRunning},
+		} {
+			if d := e.recoverJob(t, tc.site.ID); d.Job.State != store.JobSucceeded {
+				t.Fatalf("recovering %s: %s %s\n%s", tc.site.Name, d.Job.State, d.Job.Error, jobLog(d))
+			}
+			if got := e.site(t, tc.site.ID); got.Status != tc.want {
+				t.Errorf("site %s after recovery: %s, want %s", tc.site.Name, got.Status, tc.want)
+			}
+			if rt, ok := e.prov.Site(tc.site.ID); !ok || rt.Phase != tc.phase {
+				t.Errorf("site %s containers: %v %s, want %s", tc.site.Name, ok, rt.Phase, tc.phase)
+			}
+		}
+	})
+}
+
 // A snapshot from a newer core moves the site to that core first.
 func TestRecoverMovesCore(t *testing.T) {
 	ctx := context.Background()
