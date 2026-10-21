@@ -14,7 +14,7 @@ mise exec -- make test    # prefix Go/lint commands with `mise exec --`
 | Command | Purpose |
 | --- | --- |
 | `make build` | Static linux/amd64 binary in `bin/pressfleet`, with the dashboard embedded when pnpm is available (`UI=yes\|prebuilt\|no\|auto`) |
-| `make test` | `go test -race ./...` |
+| `make test` | `go test -race -timeout 30m ./...` |
 | `make lint` | golangci-lint (config in `.golangci.yml`) |
 | `make vulncheck` | govulncheck: known vulnerabilities the Go code can reach |
 | `make generate` | Code generators, including the TypeScript API client (needs Node) |

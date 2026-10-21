@@ -54,8 +54,11 @@ ui-check: ui/node_modules/.modules.yaml ## Lint, typecheck, and unit-test the da
 	pnpm -C ui test
 
 .PHONY: test
+# The api package's tests take close to go test's default 10-minute limit
+# under the race detector on SQLite and PostgreSQL, which a slower machine
+# (a busy runner, a self-hosted one) goes past.
 test: ## Run tests with the race detector
-	CGO_ENABLED=1 go test -race ./...
+	CGO_ENABLED=1 go test -race -timeout 30m ./...
 
 # Extra `docker build` options for builds behind a TLS-intercepting proxy,
 # from PRESSFLEET_BUILD_EXTRA_CA, PRESSFLEET_BUILD_NETWORK, and the proxy
