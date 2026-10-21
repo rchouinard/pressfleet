@@ -229,6 +229,7 @@ func (a *app) stateRecover(ctx context.Context, out io.Writer, f stateRecoverFla
 	var (
 		loginKey adminlogin.RestoredKey
 		recovery sites.Recovery
+		moved    int
 	)
 	res, err := statebackup.Restore(ctx, repo, snap, statebackup.RestoreOptions{
 		Store: a.storeConfig(), BackupDir: a.cfg.Layout().StateBackupsDir(), Logger: a.log,
@@ -238,6 +239,10 @@ func (a *app) stateRecover(ctx context.Context, out io.Writer, f stateRecoverFla
 			}
 			var err error
 			if loginKey, err = adminlogin.CheckRestored(ctx, q, secrets.NewStore(q, keys)); err != nil {
+				return err
+			}
+			// The backup records where the old host kept the repositories.
+			if moved, err = repository.RelocateLocal(ctx, q, a.cfg.Layout()); err != nil {
 				return err
 			}
 			now := time.Now()
@@ -251,7 +256,7 @@ func (a *app) stateRecover(ctx context.Context, out io.Writer, f stateRecoverFla
 	if err != nil {
 		return err
 	}
-	return printRecovery(out, res, loginKey, recovery)
+	return printRecovery(out, res, loginKey, recovery, moved, a.cfg.Layout().BackupRepositoriesDir())
 }
 
 func orUnknown(s string) string {
@@ -283,7 +288,7 @@ func (a *app) checkFreshState(ctx context.Context) error {
 	return nil
 }
 
-func printRecovery(out io.Writer, res store.LoadResult, key adminlogin.RestoredKey, rec sites.Recovery) error {
+func printRecovery(out io.Writer, res store.LoadResult, key adminlogin.RestoredKey, rec sites.Recovery, relocated int, reposDir string) error {
 	var lines []string
 	add := func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
 	add("Restored %d rows in %d tables; the state database is at schema version %d.", res.Dump.Rows, res.Dump.Tables, res.SchemaVersion)
@@ -298,6 +303,9 @@ func printRecovery(out io.Writer, res store.LoadResult, key adminlogin.RestoredK
 		add("The backup has no platform login key; the control plane generates one when it starts, and sites get it as they are recovered.")
 	case adminlogin.KeyDiscarded:
 		add("The backup's platform login key was unusable and was removed; the control plane generates a new one when it starts, and sites get it as they are recovered.")
+	}
+	if relocated > 0 {
+		add("Pointed %d local backup repositories at %s, where this host's data directory keeps them.", relocated, reposDir)
 	}
 	if rec.InterruptedJobs > 0 {
 		add("Failed %d jobs the old host hadn't finished.", rec.InterruptedJobs)

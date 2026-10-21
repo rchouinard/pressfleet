@@ -24,6 +24,13 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
 )
 
+// What the old host's site backup holds: a file in siteFilesDir under the
+// data directory.
+const (
+	siteFilesDir = "site-files"
+	siteFile     = "uploaded media\n"
+)
+
 // oldHost is a platform's data directory with a state backup in its state
 // repository: one client group, one running site, and the login key.
 func oldHost(t *testing.T) (dataDir, siteID, loginKey string) {
@@ -56,6 +63,25 @@ func oldHost(t *testing.T) (dataDir, siteID, loginKey string) {
 		}
 		siteID = site.ID
 		layout := config.Layout{Root: dataDir}
+		// The group's local repository, with a backup of the site's files.
+		groupRepos, err := repository.New(repository.Options{
+			DB: db, Secrets: sec, Layout: layout, Logger: storetest.Logger(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(dataDir, siteFilesDir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dataDir, siteFilesDir, "keep.txt"), []byte(siteFile), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := groupRepos.Ensure(ctx, groups[0].ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := groupRepos.Restic(ctx, groups[0].ID, "backup", "--tag", "site:"+siteID, filepath.Join(dataDir, siteFilesDir)); err != nil {
+			t.Fatal(err)
+		}
 		repo, err := repository.New(repository.Options{
 			Layout: layout, StatePassword: keys.StateBackupPassword(), Logger: storetest.Logger(),
 		})
@@ -73,13 +99,14 @@ func oldHost(t *testing.T) (dataDir, siteID, loginKey string) {
 	return dataDir, siteID, loginKey
 }
 
-// newHost is a fresh installation's data directory with the old host's
-// backups copied in.
+// newHost is a fresh installation's data directory, at another path than the
+// old host's, with the old host's backups copied in.
 func newHost(t *testing.T, oldDataDir string) string {
 	t.Helper()
 	dataDir := t.TempDir()
-	src := config.Layout{Root: oldDataDir}.StateBackupRepositoryDir()
-	dst := config.Layout{Root: dataDir}.StateBackupRepositoryDir()
+	// The saved backup location: the state repository and the client groups'.
+	src := filepath.Join(oldDataDir, "backups")
+	dst := filepath.Join(dataDir, "backups")
 	if err := os.CopyFS(dst, os.DirFS(src)); err != nil {
 		t.Fatal(err)
 	}
@@ -122,6 +149,7 @@ func TestStateRecover(t *testing.T) {
 		"opens with this installation's master key",
 		"login key was restored and decrypts with the master key",
 		"1 sites will be recovered",
+		"Pointed 1 local backup repositories at " + filepath.Join(dataDir, "backups", "repositories"),
 	} {
 		if !strings.Contains(r.stdout, want) {
 			t.Errorf("stdout missing %q:\n%s", want, r.stdout)
@@ -138,6 +166,7 @@ func TestStateRecover(t *testing.T) {
 	if err != nil || len(page.Jobs) != 1 || page.Jobs[0].TargetID != siteID {
 		t.Fatalf("recover jobs = %+v, %v", page.Jobs, err)
 	}
+	checkRelocatedRepository(t, db, dataDir, old)
 	signer, err := adminlogin.Ensure(ctx, db, secrets.NewStore(db, secretstest.Keyring(t, 1)))
 	if err != nil || signer.PublicKeyBase64() != loginKey {
 		t.Errorf("login key after the restore: %v (same as before: %v)", err, err == nil && signer.PublicKeyBase64() == loginKey)
@@ -158,6 +187,46 @@ func TestStateRecover(t *testing.T) {
 	r = run(t, ctx, []string{"state", "recover", "--force", "--data-dir", dataDir}, nil)
 	if r.code != 0 || !strings.Contains(r.stdout, "The replaced database was saved as") {
 		t.Errorf("recover --force: exit %d\n%s%s", r.code, r.stdout, r.stderr)
+	}
+}
+
+// checkRelocatedRepository checks that the restored state finds the client
+// group's repository under the new data directory, not the old one, and
+// that the site's backup from the old host restores from it.
+func checkRelocatedRepository(t *testing.T, db *store.DB, dataDir, oldDataDir string) {
+	t.Helper()
+	ctx := context.Background()
+	groups, err := store.NewClientGroups(db).List(ctx, store.ClientGroupFilter{})
+	if err != nil || len(groups) != 1 {
+		t.Fatalf("client groups = %+v, %v", groups, err)
+	}
+	layout := config.Layout{Root: dataDir}
+	want, _ := layout.BackupRepositoryDir(groups[0].ID)
+	if groups[0].BackupRepository != want {
+		t.Errorf("client group's backup_repository = %q, want %q", groups[0].BackupRepository, want)
+	}
+	repos, err := repository.New(repository.Options{
+		DB: db, Secrets: secrets.NewStore(db, secretstest.Keyring(t, 1)), Layout: layout, Logger: storetest.Logger(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := repos.Get(ctx, groups[0].ID)
+	if err != nil || rec.Location != want {
+		t.Fatalf("repository record = %+v, %v; want location %s", rec, err, want)
+	}
+	// What a site.recover job asks for first, then what restoring runs.
+	access, err := repos.TaskAccess(ctx, groups[0].ID)
+	if err != nil || access.RepositoryDir != want {
+		t.Fatalf("TaskAccess = %+v, %v; want repository dir %s", access, err, want)
+	}
+	target := t.TempDir()
+	if _, err := repos.Restic(ctx, groups[0].ID, "restore", "latest", "--target", target); err != nil {
+		t.Fatalf("restoring the site's backup: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(target, oldDataDir, siteFilesDir, "keep.txt"))
+	if err != nil || string(got) != siteFile {
+		t.Errorf("restored file = %q, %v", got, err)
 	}
 }
 

@@ -331,6 +331,60 @@ func TestEnsureDamagedRepository(t *testing.T) {
 	})
 }
 
+// A state backup restored on a host with another data directory carries the
+// old directory in its local repository records; RelocateLocal points them
+// at the new one, on both dialects.
+func TestRelocateLocal(t *testing.T) {
+	t.Parallel()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		f := newFixture(t, db, repository.Options{})
+		local, other := f.group(t, "Acme"), f.group(t, "Beta")
+		if _, err := f.m.Ensure(ctx, local); err != nil {
+			t.Fatal(err)
+		}
+		// A repository on S3 keeps its location.
+		const s3Location = "s3:https://s3.example.com/bucket/other"
+		ref, err := f.secrets.Put(ctx, secrets.KindResticRepoKey, "pw")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx,
+			"INSERT INTO backup_repositories (client_group_id, backend, location, secret_ref, created_at) VALUES (?, ?, ?, ?, ?)",
+			other, repository.BackendS3, s3Location, string(ref), time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.NewClientGroups(db).SetBackupRepository(ctx, other, s3Location); err != nil {
+			t.Fatal(err)
+		}
+		before, err := store.NewClientGroups(db).Get(ctx, local)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		newRoot := t.TempDir()
+		layout := config.Layout{Root: newRoot}
+		want, _ := layout.BackupRepositoryDir(local)
+		n, err := repository.RelocateLocal(ctx, db, layout)
+		if err != nil || n != 1 {
+			t.Fatalf("RelocateLocal = %d, %v; want 1", n, err)
+		}
+		if rec, err := f.m.Get(ctx, local); err != nil || rec.Location != want {
+			t.Errorf("local record = %+v, %v; want location %s", rec, err, want)
+		}
+		g, err := store.NewClientGroups(db).Get(ctx, local)
+		if err != nil || g.BackupRepository != want || !g.UpdatedAt.Equal(before.UpdatedAt) {
+			t.Errorf("client group = %q (updated %v), %v; want %s, not updated since %v", g.BackupRepository, g.UpdatedAt, err, want, before.UpdatedAt)
+		}
+		if rec, err := f.m.Get(ctx, other); err != nil || rec.Location != s3Location {
+			t.Errorf("S3 record = %+v, %v; want it unchanged", rec, err)
+		}
+		if n, err := repository.RelocateLocal(ctx, db, layout); err != nil || n != 0 {
+			t.Errorf("second RelocateLocal = %d, %v; want nothing to do", n, err)
+		}
+	})
+}
+
 func TestEnsureErrors(t *testing.T) {
 	t.Parallel()
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
