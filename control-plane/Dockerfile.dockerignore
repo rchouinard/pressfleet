@@ -16,6 +16,9 @@ ui/dist
 !images/images.go
 !images/manifest.json
 !images/shared/plugins.json
+# Bind-mounted into the RUNs that download (builds behind a TLS-intercepting
+# proxy).
+!images/shared/extra-ca.sh
 control-plane/Dockerfile*
 **/testdata/
 **/*_test.go

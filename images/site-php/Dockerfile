@@ -13,9 +13,17 @@ ARG PHP_VERSION
 ARG DEBIAN_SUITE=trixie
 
 # ---------------------------------------------------------------------------
-# Download tools for the WordPress and plugin stages.
+# Download tools for the WordPress, plugin, and PECL stages.
+#
+# Every RUN that downloads sources shared/extra-ca.sh first, which trusts the
+# optional extra_ca build secret for that RUN only (builds behind a
+# TLS-intercepting proxy; docs/testing.md). Without the secret it does
+# nothing.
 FROM debian:${DEBIAN_SUITE}-slim AS fetch
-RUN apt-get update \
+RUN --mount=type=secret,id=extra_ca,required=false \
+	--mount=type=bind,source=shared/extra-ca.sh,target=/run/extra-ca.sh \
+	. /run/extra-ca.sh \
+	&& apt-get update \
 	&& apt-get install -y --no-install-recommends ca-certificates curl jq \
 	&& rm -rf /var/lib/apt/lists/*
 
@@ -26,7 +34,21 @@ RUN apt-get update \
 FROM fetch AS plugins
 COPY shared/fetch-plugins.sh /usr/local/bin/fetch-plugins
 COPY shared/plugins.json /tmp/plugins.json
-RUN sh /usr/local/bin/fetch-plugins /tmp/plugins.json /out
+RUN --mount=type=secret,id=extra_ca,required=false \
+	--mount=type=bind,source=shared/extra-ca.sh,target=/run/extra-ca.sh \
+	. /run/extra-ca.sh \
+	&& sh /usr/local/bin/fetch-plugins /tmp/plugins.json /out
+
+# ---------------------------------------------------------------------------
+# PECL extension tarballs (shared/pecl.json), verified against their pinned
+# SHA-256, so the PHP stage builds them without network access.
+FROM fetch AS pecl
+COPY shared/fetch-pecl.sh /usr/local/bin/fetch-pecl
+COPY shared/pecl.json /tmp/pecl.json
+RUN --mount=type=secret,id=extra_ca,required=false \
+	--mount=type=bind,source=shared/extra-ca.sh,target=/run/extra-ca.sh \
+	. /run/extra-ca.sh \
+	&& sh /usr/local/bin/fetch-pecl /tmp/pecl.json /out
 
 # ---------------------------------------------------------------------------
 # WordPress core download and verification (shared with site-nginx).
@@ -34,18 +56,27 @@ FROM fetch AS wordpress
 ARG WP_VERSION
 ARG WP_SHA1=""
 COPY shared/fetch-wordpress.sh /usr/local/bin/fetch-wordpress
-RUN sh /usr/local/bin/fetch-wordpress "$WP_VERSION" "$WP_SHA1" /out
+RUN --mount=type=secret,id=extra_ca,required=false \
+	--mount=type=bind,source=shared/extra-ca.sh,target=/run/extra-ca.sh \
+	. /run/extra-ca.sh \
+	&& sh /usr/local/bin/fetch-wordpress "$WP_VERSION" "$WP_SHA1" /out
 
 # ---------------------------------------------------------------------------
 # WP-CLI download and verification against the pinned SHA-512 from the
 # release's published wp-cli-<version>.phar.sha512.
 FROM debian:${DEBIAN_SUITE}-slim AS wpcli
-RUN apt-get update \
+RUN --mount=type=secret,id=extra_ca,required=false \
+	--mount=type=bind,source=shared/extra-ca.sh,target=/run/extra-ca.sh \
+	. /run/extra-ca.sh \
+	&& apt-get update \
 	&& apt-get install -y --no-install-recommends ca-certificates curl \
 	&& rm -rf /var/lib/apt/lists/*
 ARG WPCLI_VERSION=2.12.0
 ARG WPCLI_SHA512=be928f6b8ca1e8dfb9d2f4b75a13aa4aee0896f8a9a0a1c45cd5d2c98605e6172e6d014dda2e27f88c98befc16c040cbb2bd1bfa121510ea5cdf5f6a30fe8832
-RUN curl -fsSL --retry 3 -o /wp \
+RUN --mount=type=secret,id=extra_ca,required=false \
+	--mount=type=bind,source=shared/extra-ca.sh,target=/run/extra-ca.sh \
+	. /run/extra-ca.sh \
+	&& curl -fsSL --retry 3 -o /wp \
 		"https://github.com/wp-cli/wp-cli/releases/download/v${WPCLI_VERSION}/wp-cli-${WPCLI_VERSION}.phar" \
 	&& echo "${WPCLI_SHA512}  /wp" | sha512sum -c - \
 	&& chmod 0755 /wp
@@ -55,9 +86,6 @@ FROM php:${PHP_VERSION}-fpm-${DEBIAN_SUITE}
 
 ARG PHP_VERSION
 ARG WP_VERSION
-ARG IGBINARY_VERSION=3.2.17RC1
-ARG REDIS_VERSION=6.3.0
-ARG IMAGICK_VERSION=3.8.1
 
 LABEL org.opencontainers.image.title="pressfleet site-php" \
 	org.opencontainers.image.description="PHP-FPM and WordPress core for PressFleet site stacks" \
@@ -68,8 +96,21 @@ LABEL org.opencontainers.image.title="pressfleet site-php" \
 
 # Extensions: see site-php/README.md for the list and rationale. Build
 # dependencies are purged afterwards; runtime libraries are kept by resolving
-# the shared objects the new extensions link against.
-RUN set -eux; \
+# the shared objects the new extensions link against. PECL extensions build
+# from the pecl stage's verified tarballs (versions in shared/pecl.json), so
+# pecl itself never downloads.
+#
+# imagick is built from its tarball as a bundled extension rather than with
+# `pecl install`: pecl's extraction doesn't keep file times, which leaves the
+# shipped *_arginfo.h older than their .stub.php, and `make install` then
+# regenerates them with gen_stub.php, which downloads PHP-Parser from GitHub.
+# tar keeps the times, and touching the headers makes sure the shipped ones
+# are used.
+RUN --mount=type=secret,id=extra_ca,required=false \
+	--mount=type=bind,source=shared/extra-ca.sh,target=/run/extra-ca.sh \
+	--mount=type=bind,from=pecl,source=/out,target=/run/pecl \
+	. /run/extra-ca.sh; \
+	set -eux; \
 	savedAptMark="$(apt-mark showmanual)"; \
 	apt-get update; \
 	apt-get install -y --no-install-recommends \
@@ -79,11 +120,16 @@ RUN set -eux; \
 	docker-php-ext-install -j"$(nproc)" bcmath exif gd intl mysqli zip; \
 	# OPcache is compiled into PHP 8.5+; older branches build it as an extension.
 	if ! php -m | grep -qi '^zend opcache$'; then docker-php-ext-install opcache; fi; \
-	pecl install "igbinary-${IGBINARY_VERSION}"; \
+	pecl install /run/pecl/igbinary.tgz; \
 	docker-php-ext-enable igbinary; \
-	pecl install -D 'enable-redis-igbinary="yes" enable-redis-lzf="no" enable-redis-zstd="no" enable-redis-msgpack="no" enable-redis-lz4="no"' "redis-${REDIS_VERSION}"; \
-	pecl install "imagick-${IMAGICK_VERSION}"; \
-	docker-php-ext-enable redis imagick; \
+	pecl install -D 'enable-redis-igbinary="yes" enable-redis-lzf="no" enable-redis-zstd="no" enable-redis-msgpack="no" enable-redis-lz4="no"' /run/pecl/redis.tgz; \
+	docker-php-ext-enable redis; \
+	docker-php-source extract; \
+	mkdir /usr/src/php/ext/imagick; \
+	tar -xzf /run/pecl/imagick.tgz -C /usr/src/php/ext/imagick --strip-components 1 --wildcards 'imagick-*/*'; \
+	find /usr/src/php/ext/imagick -name '*_arginfo.h' -exec touch '{}' +; \
+	docker-php-ext-install imagick; \
+	docker-php-source delete; \
 	rm -rf /tmp/pear ~/.pearrc; \
 	apt-mark auto '.*' > /dev/null; \
 	apt-mark manual $savedAptMark > /dev/null; \

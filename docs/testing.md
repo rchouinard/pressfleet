@@ -11,6 +11,37 @@ PressFleet has four kinds of tests.
 
 Unit tests never need Docker. Besides `make test-platform`, a few packages have Docker tests that start the pinned platform image they need, such as `sitedb/mariadb` and `objectcache/redis` (the object cache isolation test: one site can't read, list, or flush another's keys). Tests that do are skipped unless `PRESSFLEET_DOCKER_TESTS=1`. The `sitedb/mariadb` dump and import round trip also runs the `mariadb-dump` and `mariadb` client programs, from `PATH` or from the directory in `PRESSFLEET_TEST_MARIADB_CLIENT_DIR`, and is skipped if they aren't found. State database tests run against SQLite, and also against PostgreSQL when `PRESSFLEET_TEST_POSTGRES_DSN` is set.
 
+## Building behind a TLS-intercepting proxy
+
+A proxy that re-signs TLS with its own CA (a corporate proxy, or a sandbox's egress proxy) breaks image builds: the build containers don't trust that CA, and can't reach a proxy listening on the host's loopback. Every image build in the repository reads three settings from the environment, so no Dockerfile needs editing:
+
+| Variable | Effect |
+| --- | --- |
+| `PRESSFLEET_BUILD_EXTRA_CA` | Path of a PEM file of extra CA certificates (the proxy's CA, or a bundle that includes it). Passed as the BuildKit secret `extra_ca` (`--secret id=extra_ca,src=<path>`; the path can't contain spaces). |
+| `PRESSFLEET_BUILD_NETWORK` | The build containers' network (`--network`). `host` lets them reach a proxy on the host's loopback. |
+| `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`, `FTP_PROXY` (and lowercase) | Passed as build args when set. They are Docker's predefined proxy args: `RUN` steps see them, but the image's config and history don't keep them. A proxy on a loopback address (`127.*`, `localhost`, `[::1]`) is left out unless `PRESSFLEET_BUILD_NETWORK=host`, since a container on the default network can't reach it. `NO_PROXY` goes only with a proxy. |
+
+For example, with the proxy's CA in `/etc/ssl/proxy-ca.pem` and the proxy at `http://127.0.0.1:3128`:
+
+```sh
+export PRESSFLEET_BUILD_EXTRA_CA=/etc/ssl/proxy-ca.pem PRESSFLEET_BUILD_NETWORK=host
+make image
+make images SITE_PHP="8.5 8.4"
+```
+
+If the proxy intercepts traffic transparently instead (build containers' HTTPS reaches it without any proxy setting), `PRESSFLEET_BUILD_EXTRA_CA` alone is enough.
+
+The settings reach `make image` (and so `make test-e2e`, `make test-ui-e2e`, `make test-platform`, `make dev-up`, and `make dev-update`, which build the control plane image with it), `make images`, `images/test.sh`, and `compose.BuildImage`, which the end-to-end tests use to derive images (`TestImageUpdate`, `TestCoreUpdate`, `TestUpgradeRecovery`); `images/build-flags.sh` and `compose.BuildFlags` turn them into `docker build` options by the same rules. With none of them set the builds are exactly as before; CI sets none of them.
+
+How the Dockerfiles use the CA: every `RUN` that downloads (apt, curl, npm and pnpm, `go mod download`, the Go build) mounts the `extra_ca` secret (`required=false`) and bind-mounts [`images/shared/extra-ca.sh`](../images/shared/extra-ca.sh), which it sources first. With the secret present, the script writes the system bundle plus the CA to a temporary file and points `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS`, and apt's `Acquire::https::CaInfo` (through `APT_CONFIG`) at it for that `RUN` only. It never touches the system trust store, and secret and bind mounts aren't part of any layer, so no image (or intermediate stage) carries the CA. Secrets don't count towards the build cache key either, so builds with and without the CA share cached layers. The site-php image's PECL extensions are downloaded in a fetch stage from `pecl.php.net/get/<name>-<version>.tgz` and verified against the SHA-256 in [`images/shared/pecl.json`](../images/shared/pecl.json), so they build from local tarballs without network access: igbinary and redis with `pecl install <tarball>`, imagick with `docker-php-ext-install` (with `pecl install`, its build regenerates its `*_arginfo.h` and downloads PHP-Parser from GitHub for that; see the comment in `images/site-php/Dockerfile`).
+
+Limits:
+
+- The secret mounts need BuildKit, which `docker build` uses by default since Docker 23 when the buildx plugin is installed (`docker buildx version`). The Dockerfiles already need it for their cache mounts; the legacy builder rejects them.
+- Base image pulls, the `# syntax` frontend, and the control plane Dockerfile's `ADD` of restic are fetched by the Docker daemon, not a build container. They use the daemon's proxy settings (its environment or `proxies` in `daemon.json`) and the host's trust store, so add the CA there too.
+- The CA is for builds only. Containers started from the images (the platform in the end-to-end tests, sites, the Playwright browser) don't trust it. The end-to-end suites' containers talk to local services (Pebble, RustFS, Traefik) and pull images through the daemon, so they don't need it; a new test that makes a container reach the internet over HTTPS would.
+- The end-to-end tests use local site images when they exist; build them from the tree with the settings above (`make images SITE_PHP=...`) when GHCR isn't reachable.
+
 ## End-to-end tests
 
 The end-to-end tests live in `control-plane/internal/e2e`. For each test, the harness:

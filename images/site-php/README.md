@@ -36,7 +36,7 @@ Already in the official image and relied on: `curl`, `dom`, `fileinfo`, `filter`
 
 Deliberately not included: `apcu` and `memcached` (the object cache is Redis), `ssh2`/`ftp`/`sockets` (WordPress writes to `wp-content` directly with `FS_METHOD=direct`), and JIT (disabled).
 
-`docker run --rm <image> php -m` prints the exact list.
+The PECL extensions' versions and tarball checksums are pinned in [`../shared/pecl.json`](../shared/pecl.json) (`images/update-pecl.sh` updates both). `docker run --rm <image> php -m` prints the exact list.
 
 ## Configuration
 

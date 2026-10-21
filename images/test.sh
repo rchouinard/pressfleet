@@ -13,6 +13,8 @@
 #
 # Environment:
 #   SKIP_BUILD=1     use existing images instead of building
+#   PRESSFLEET_BUILD_EXTRA_CA, PRESSFLEET_BUILD_NETWORK, proxy variables:
+#                    builds behind a TLS-intercepting proxy (build-flags.sh)
 #   IMAGE_REPO       image repository (default: "registry" from manifest.json)
 #   WP_VERSION       WordPress version to test (default: the manifest's latest;
 #                    must be in the manifest, e.g. a pinned version)
@@ -104,11 +106,13 @@ build() {
 	local dockerfile="$1" tag="$2"
 	shift 2
 	echo "==> building $tag"
-	docker build -q -f "$here/$dockerfile" -t "$tag" \
+	docker build -q "${build_flags[@]}" -f "$here/$dockerfile" -t "$tag" \
 		--build-arg "WP_VERSION=$WP_VERSION" --build-arg "WP_SHA1=$WP_SHA1" "$@" "$here" >/dev/null
 }
 
 if [ "${SKIP_BUILD:-0}" != 1 ]; then
+	# Options for a TLS-intercepting proxy (PRESSFLEET_BUILD_*; build-flags.sh).
+	mapfile -t build_flags < <("$here/build-flags.sh")
 	build site-nginx/Dockerfile "$nginx_image"
 	for v in "${versions[@]}"; do
 		build site-php/Dockerfile "$registry/site-php:php$v-wp$WP_VERSION" --build-arg "PHP_VERSION=$v"
