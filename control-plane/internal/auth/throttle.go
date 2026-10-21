@@ -17,6 +17,13 @@ const (
 	throttleWindow        = 15 * time.Minute
 	maxFailuresPerAccount = 5
 	maxFailuresPerAddress = 20
+	// Reauthentication options are counted per call, not per failure: each
+	// one stores a challenge. The limits leave room for a person who
+	// reopens the prompt, but not for a loop. They're separate keys from
+	// the login's, so asking for options never locks anyone out of logging
+	// in.
+	maxOptionsPerUser    = 20
+	maxOptionsPerAddress = 60
 	// maxThrottleEntries bounds memory if a client invents many emails or
 	// addresses.
 	maxThrottleEntries = 100_000
@@ -177,4 +184,14 @@ func addressKey(ip string) throttleKey {
 		}
 	}
 	return throttleKey{key: "address:" + ip, limit: maxFailuresPerAddress}
+}
+
+// optionsKeys are the counters of reauthentication option requests for a
+// user and a client address.
+func optionsKeys(userID, ip string) []throttleKey {
+	a := addressKey(ip)
+	return []throttleKey{
+		{key: "reauth-options-user:" + userID, limit: maxOptionsPerUser},
+		{key: "reauth-options-" + a.key, limit: maxOptionsPerAddress},
+	}
 }

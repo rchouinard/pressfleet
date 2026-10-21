@@ -26,7 +26,7 @@ func (h *Handlers) StartReauthentication(ctx context.Context, _ gen.StartReauthe
 	if err != nil {
 		return nil, err
 	}
-	opts, err := h.auth.StartReauthentication(ctx, p)
+	opts, err := h.auth.StartReauthentication(ctx, p, clientFromContext(ctx).IP)
 	if err != nil {
 		return nil, authError(err, "")
 	}

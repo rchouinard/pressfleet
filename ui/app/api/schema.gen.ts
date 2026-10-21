@@ -199,6 +199,9 @@ export interface paths {
          *     challenge and returns its request options as `webauthn`.
          *
          *     Only dashboard sessions may call this; API tokens get `403`.
+         *
+         *     Each call stores a challenge, so calls are limited per user and per
+         *     client address (`429` with `Retry-After`).
          */
         post: operations["startReauthentication"];
         delete?: never;
@@ -5752,6 +5755,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
             default: components["responses"]["Error"];
         };
     };

@@ -623,3 +623,77 @@ func TestWebAuthnRemoveLastWithoutPolicy(t *testing.T) {
 		login(t, svc, "a@example.com")
 	})
 }
+
+// TestWebAuthnFloodKeepsOtherLogins is #185 (F7): a user who floods
+// reauthentication options once evicted other users' login challenges
+// from the shared store.
+func TestWebAuthnFloodKeepsOtherLogins(t *testing.T) {
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		svc, _ := newWebAuthnService(t, db, auth.TwoFactorPolicy{})
+		svc.LimitChallenges(8)
+		victim := mustCreate(t, svc, "victim@example.com", store.RoleViewer)
+		attacker := mustCreate(t, svc, "attacker@example.com", store.RoleViewer)
+		va, aa := authtest.NewAuthenticator(rpOrigin), authtest.NewAuthenticator(rpOrigin)
+		registerKey(t, svc, victim.ID, va, "Key")
+		registerKey(t, svc, attacker.ID, aa, "Key")
+
+		pending := startLogin(t, svc, "victim@example.com")
+		p, err := svc.AuthenticateSession(ctx, webAuthnLogin(t, svc, "attacker@example.com", aa).Token)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// More calls than the whole store holds, from within the throttle.
+		for range 15 {
+			if _, err := svc.StartReauthentication(ctx, p, "192.0.2.9"); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		assertion, err := va.Assert(pending.Challenges[auth.FactorWebAuthn])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := webAuthnStep(svc, pending, assertion); err != nil {
+			t.Errorf("victim's login after the flood = %v, want success", err)
+		}
+	})
+}
+
+// TestWebAuthnChallengesPerUser checks that a user keeps only their newest
+// few live challenges, and that the limit is per user.
+func TestWebAuthnChallengesPerUser(t *testing.T) {
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		svc, _ := newWebAuthnService(t, db, auth.TwoFactorPolicy{})
+		a := mustCreate(t, svc, "a@example.com", store.RoleViewer)
+		b := mustCreate(t, svc, "b@example.com", store.RoleViewer)
+		ka, kb := authtest.NewAuthenticator(rpOrigin), authtest.NewAuthenticator(rpOrigin)
+		registerKey(t, svc, a.ID, ka, "Key")
+		registerKey(t, svc, b.ID, kb, "Key")
+
+		first := startLogin(t, svc, "b@example.com")
+		var logins []*auth.SecondFactorRequiredError
+		for range 7 {
+			logins = append(logins, startLogin(t, svc, "a@example.com"))
+		}
+		// With a limit of 5, a's two oldest challenges are gone and its
+		// newest five work; b's is untouched.
+		for i, l := range logins {
+			assertion, err := ka.Assert(l.Challenges[auth.FactorWebAuthn])
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = webAuthnStep(svc, l, assertion)
+			if want := i >= 2; (err == nil) != want {
+				t.Errorf("login %d: err = %v, want success = %v", i, err, want)
+			}
+		}
+		assertion, err := kb.Assert(first.Challenges[auth.FactorWebAuthn])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := webAuthnStep(svc, first, assertion); err != nil {
+			t.Errorf("b's login = %v, want success", err)
+		}
+	})
+}

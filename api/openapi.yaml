@@ -456,6 +456,9 @@ paths:
         challenge and returns its request options as `webauthn`.
 
         Only dashboard sessions may call this; API tokens get `403`.
+
+        Each call stores a challenge, so calls are limited per user and per
+        client address (`429` with `Retry-After`).
       responses:
         "200":
           description: The ways to reauthenticate.
@@ -467,6 +470,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         default:
           $ref: "#/components/responses/Error"
 

@@ -45,7 +45,9 @@ func (s *Service) Now() time.Time { return s.now() }
 
 // StartReauthentication returns the ways the session's user can
 // reauthenticate, starting the challenges of the methods that need one.
-func (s *Service) StartReauthentication(ctx context.Context, p Principal) (ReauthenticationOptions, error) {
+// Every call counts against a per-user and per-address limit, because each
+// stores a challenge; it returns a *ThrottledError past the limit.
+func (s *Service) StartReauthentication(ctx context.Context, p Principal, clientIP string) (ReauthenticationOptions, error) {
 	if p.Method != MethodSession {
 		return ReauthenticationOptions{}, ErrUnauthenticated
 	}
@@ -53,6 +55,11 @@ func (s *Service) StartReauthentication(ctx context.Context, p Principal) (Reaut
 	if err != nil {
 		return ReauthenticationOptions{}, err
 	}
+	keys := optionsKeys(user.ID, clientIP)
+	if err := s.throttle.check(keys...); err != nil {
+		return ReauthenticationOptions{}, err
+	}
+	s.throttle.fail(keys...)
 	has, err := s.hasSecondFactor(ctx, s.db, user.ID)
 	if err != nil {
 		return ReauthenticationOptions{}, fmt.Errorf("reauthenticate: %w", err)
