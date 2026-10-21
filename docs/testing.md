@@ -82,6 +82,10 @@ The preview base domain is `preview.e2e.test`, which nothing resolves. The test 
 
 The test can't read a site's project directory: the control plane runs as root and creates `sites/<id>` with mode `0700`, and the test runs as an unprivileged user (in CI, at least; Docker Desktop doesn't enforce the ownership). So it never runs `docker compose` against that directory. It addresses the site's project by name with an empty directory of its own (`ps` and `down` work from the Compose labels), and runs commands in the site's containers with `compose.Project.ExecService` and inspects them with `ServiceContainer`, which find the containers by label and use `docker exec` and `docker container inspect`.
 
+#### Tenant isolation
+
+`TestTenantIsolation` (#97) provisions two sites and checks, on the running containers, what the other tests leave out of design doc §6: each site's nginx and php run as one non-root UID from the site range, a different one per site; `wp-config.php` is owned by that UID with mode `0400` and isn't in nginx; a PHP file in `wp-content`, requested through nginx and PHP-FPM, sees the expected `open_basedir` and can't read `/etc/hostname`, `/proc/self/environ`, or list `/` (reading its own site's `index.php` is the positive control); and, with the credentials in `wp-config.php`, the site's MariaDB user sees only its own database, is refused the other site's tables, `mysql.user`, and `CREATE DATABASE`, and gets `NULL` from `LOAD_FILE` (no `FILE` privilege). Network isolation is checked by `TestSiteCreateDelete`, the object cache by `TestM2Acceptance` and the `objectcache/redis` Docker test, and the socket proxy by `TestIngress`. [The security review](security-review.md) lists what each proves.
+
 #### Preview domains
 
 `TestSitePreview` provisions one site and checks its preview domain through `p.IngressClient`:
