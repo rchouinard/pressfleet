@@ -5400,6 +5400,9 @@ type ClientInterface interface {
 	//
 	// Only dashboard sessions may call this; API tokens get `403`.
 	//
+	// Each call stores a challenge, so calls are limited per user and per
+	// client address (`429` with `Retry-After`).
+	//
 	// Corresponds with POST /api/v1/auth/reauthenticate/options (the `StartReauthentication` operationId).
 	StartReauthentication(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -8292,6 +8295,9 @@ func (c *Client) Reauthenticate(ctx context.Context, body ReauthenticateJSONRequ
 // challenge and returns its request options as `webauthn`.
 //
 // Only dashboard sessions may call this; API tokens get `403`.
+//
+// Each call stores a challenge, so calls are limited per user and per
+// client address (`429` with `Retry-After`).
 //
 // Corresponds with POST /api/v1/auth/reauthenticate/options (the `StartReauthentication` operationId).
 func (c *Client) StartReauthentication(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -18241,6 +18247,9 @@ type ClientWithResponsesInterface interface {
 	//
 	// Only dashboard sessions may call this; API tokens get `403`.
 	//
+	// Each call stores a challenge, so calls are limited per user and per
+	// client address (`429` with `Retry-After`).
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/v1/auth/reauthenticate/options (the `StartReauthentication` operationId).
@@ -22461,6 +22470,11 @@ func (r ReauthenticateResponse) ContentType() string {
 	return ""
 }
 
+// StartReauthenticationResponse429Headers the declared response headers of an HTTP 429 response for StartReauthentication
+type StartReauthenticationResponse429Headers struct {
+	RetryAfter int
+}
+
 type StartReauthenticationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -22470,8 +22484,12 @@ type StartReauthenticationResponse struct {
 	ApplicationProblemJSON401 *Unauthorized
 	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationProblemJSON429 *TooManyRequests
 	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
 	ApplicationProblemJSONDefault *Error
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *StartReauthenticationResponse429Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -22487,6 +22505,11 @@ func (r StartReauthenticationResponse) GetApplicationProblemJSON401() *Unauthori
 // GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
 func (r StartReauthenticationResponse) GetApplicationProblemJSON403() *Forbidden {
 	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r StartReauthenticationResponse) GetApplicationProblemJSON429() *TooManyRequests {
+	return r.ApplicationProblemJSON429
 }
 
 // GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
@@ -30955,6 +30978,9 @@ func (c *ClientWithResponses) ReauthenticateWithResponse(ctx context.Context, bo
 //
 // Only dashboard sessions may call this; API tokens get `403`.
 //
+// Each call stores a challenge, so calls are limited per user and per
+// client address (`429` with `Retry-After`).
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/v1/auth/reauthenticate/options (the `StartReauthentication` operationId).
@@ -35644,6 +35670,13 @@ func ParseStartReauthenticationResponse(rsp *http.Response) (*StartReauthenticat
 		}
 		response.ApplicationProblemJSON403 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest TooManyRequests
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -35651,6 +35684,19 @@ func ParseStartReauthenticationResponse(rsp *http.Response) (*StartReauthenticat
 		}
 		response.ApplicationProblemJSONDefault = &dest
 
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers StartReauthenticationResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = value
+		}
+		response.Headers429 = &headers
 	}
 
 	return response, nil

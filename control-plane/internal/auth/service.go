@@ -147,7 +147,7 @@ func NewService(db *store.DB, opts Options) *Service {
 
 		twoFactor: opts.TwoFactor,
 
-		ceremonies: newChallengeStore[webAuthnCeremony](now),
+		ceremonies: newOwnedChallengeStore(now, func(c webAuthnCeremony) string { return c.userID }),
 	}
 	s.rp = opts.RelyingParty
 	if s.rp.ID == "" {

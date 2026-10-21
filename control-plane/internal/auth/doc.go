@@ -60,7 +60,10 @@
 // from a request. Challenges live in a challenge store like pending
 // logins, keyed by challenge and bound to the user they were made for but
 // not to a login, so reauthentication and passwordless sign-in can use
-// them; taking one makes it single use. Registration prefers resident
+// them; taking one makes it single use. A user holds at most
+// maxChallengesPerOwner live challenges, the oldest going first, so one
+// user's flood can't evict another's login, and starting reauthentication
+// is throttled per user and per address. Registration prefers resident
 // keys and gives each user a random 64-byte user handle, and each
 // credential's user verification and backup flags are stored, so
 // passwordless sign-in needs no migration. A signature counter that goes

@@ -75,7 +75,7 @@ func TestStaleWebAuthnWithoutPolicy(t *testing.T) {
 			t.Errorf("session = %+v, %v; want unrestricted", p, err)
 		}
 		// Reauthentication takes the password.
-		opts, err := svc.StartReauthentication(ctx, p)
+		opts, err := svc.StartReauthentication(ctx, p, "")
 		if err != nil || !slices.Equal(opts.Methods, []auth.FactorMethod{auth.ReauthenticatePassword}) {
 			t.Errorf("reauthentication methods = %v, %v; want password", opts.Methods, err)
 		}

@@ -63,3 +63,56 @@ func TestChallengeStoreBounded(t *testing.T) {
 		t.Errorf("%d entries after replacing one, want 3", n)
 	}
 }
+
+func TestChallengeStoreOwnerLimit(t *testing.T) {
+	type v struct{ owner, name string }
+	now := time.Unix(1_700_000_000, 0)
+	c := newOwnedChallengeStore(func() time.Time { return now }, func(x v) string { return x.owner })
+	c.perOwner = 3
+
+	// A's challenges are put a second apart, so the oldest is clear.
+	for i := range 3 {
+		c.put(fmt.Sprint("a", i), v{"a", "x"}, now.Add(time.Minute+time.Duration(i)*time.Second))
+	}
+	c.put("b", v{"b", "x"}, now.Add(time.Minute))
+	c.put("anon", v{"", "x"}, now.Add(time.Minute))
+	c.put("a3", v{"a", "x"}, now.Add(time.Minute+3*time.Second))
+
+	if _, _, ok := c.take("a0"); ok {
+		t.Error("a's oldest survived its limit")
+	}
+	for _, k := range []string{"a1", "a2", "a3", "b", "anon"} {
+		if _, _, ok := c.take(k); !ok {
+			t.Errorf("%s was dropped", k)
+		}
+	}
+	if n := c.size(); n != 0 || len(c.byOwner) != 0 {
+		t.Errorf("%d entries and %d owners left after taking everything", n, len(c.byOwner))
+	}
+
+	// Expired entries go before live ones, and putting one back after a
+	// take counts like any other put.
+	c.put("old", v{"a", "x"}, now.Add(time.Second))
+	c.put("live1", v{"a", "x"}, now.Add(time.Hour))
+	c.put("live2", v{"a", "x"}, now.Add(2*time.Hour))
+	now = now.Add(time.Minute)
+	c.put("live3", v{"a", "x"}, now.Add(3*time.Hour))
+	for _, k := range []string{"live1", "live2", "live3"} {
+		if _, _, ok := c.take(k); !ok {
+			t.Errorf("%s was dropped instead of the expired entry", k)
+		}
+	}
+}
+
+func TestChallengeStoreOwnerLimitWithinTotalBound(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	c := newOwnedChallengeStore(func() time.Time { return now }, func(s string) string { return s[:1] })
+	c.max = 3
+	c.put("a1", "a", now.Add(time.Minute))
+	c.put("b1", "b", now.Add(2*time.Minute))
+	c.put("c1", "c", now.Add(3*time.Minute))
+	c.put("d1", "d", now.Add(4*time.Minute))
+	if n, o := c.size(), len(c.byOwner); n != 3 || o != 3 {
+		t.Errorf("%d entries, %d owners; want 3 and 3", n, o)
+	}
+}

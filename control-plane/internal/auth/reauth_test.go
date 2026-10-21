@@ -137,7 +137,7 @@ func TestReauthenticate(t *testing.T) {
 		if _, err := reauth(svc, token, auth.ReauthenticatePassword, pw); !errors.Is(err, auth.ErrUnauthenticated) {
 			t.Errorf("token caller: %v, want ErrUnauthenticated", err)
 		}
-		if _, err := svc.StartReauthentication(ctx, token); !errors.Is(err, auth.ErrUnauthenticated) {
+		if _, err := svc.StartReauthentication(ctx, token, ""); !errors.Is(err, auth.ErrUnauthenticated) {
 			t.Errorf("token caller starting: %v, want ErrUnauthenticated", err)
 		}
 		// A session that has ended can't be refreshed.
@@ -165,11 +165,11 @@ func TestStartReauthentication(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		opts, err := svc.StartReauthentication(ctx, sessionOf(t, svc, plain.Email, false))
+		opts, err := svc.StartReauthentication(ctx, sessionOf(t, svc, plain.Email, false), "")
 		if err != nil || !slices.Equal(opts.Methods, []auth.FactorMethod{auth.ReauthenticatePassword}) || len(opts.Challenges) != 0 {
 			t.Errorf("without a factor: %+v, %v; want only the password", opts, err)
 		}
-		opts, err = svc.StartReauthentication(ctx, sessionOf(t, svc, secured.Email, true))
+		opts, err = svc.StartReauthentication(ctx, sessionOf(t, svc, secured.Email, true), "")
 		if err != nil || !slices.Equal(opts.Methods, []auth.FactorMethod{auth.FactorWebAuthn, auth.FactorRecoveryCode}) {
 			t.Errorf("with a factor: %+v, %v; want webauthn and recovery codes", opts, err)
 		}
@@ -227,6 +227,40 @@ func TestReauthenticateThrottled(t *testing.T) {
 		}
 		if _, err := reauth(svc, s, auth.FactorWebAuthn, "good"); err != nil {
 			t.Errorf("count not reset by a successful reauthentication: %v", err)
+		}
+	})
+}
+
+// TestStartReauthenticationThrottled shows that calls to start
+// reauthentication are limited per user, each one storing a challenge, and
+// that the limit neither reaches other users nor blocks the user's logins.
+func TestStartReauthenticationThrottled(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		svc, clk := newReauthService(t, db)
+		a := mustCreate(t, svc, "a@example.com", store.RoleViewer)
+		b := mustCreate(t, svc, "b@example.com", store.RoleViewer)
+		pa, pb := sessionOf(t, svc, a.Email, false), sessionOf(t, svc, b.Email, false)
+
+		var err error
+		n := 0
+		for ; err == nil && n < 100; n++ {
+			_, err = svc.StartReauthentication(ctx, pa, "192.0.2.1")
+		}
+		var te *auth.ThrottledError
+		if !errors.As(err, &te) || te.RetryAfter <= 0 || n < 5 || n > 50 {
+			t.Fatalf("after %d calls: %v, want a *ThrottledError at a modest limit", n, err)
+		}
+		if _, err := svc.StartReauthentication(ctx, pb, "192.0.2.2"); err != nil {
+			t.Errorf("another user = %v, want success", err)
+		}
+		// Neither a's password logins nor its reauthentication are locked.
+		if _, err := svc.Login(ctx, auth.LoginRequest{Email: a.Email, Password: pw, ClientIP: "192.0.2.1"}); err != nil {
+			t.Errorf("login after the throttle = %v, want success", err)
+		}
+		clk.Add(16 * time.Minute)
+		if _, err := svc.StartReauthentication(ctx, pa, "192.0.2.1"); err != nil {
+			t.Errorf("after the window = %v, want success", err)
 		}
 	})
 }

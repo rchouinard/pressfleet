@@ -12438,6 +12438,23 @@ func (response StartReauthentication403ApplicationProblemPlusJSONResponse) Visit
 	return err
 }
 
+type StartReauthentication429ApplicationProblemPlusJSONResponse struct {
+	TooManyRequestsApplicationProblemPlusJSONResponse
+}
+
+func (response StartReauthentication429ApplicationProblemPlusJSONResponse) VisitStartReauthenticationResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type StartReauthenticationdefaultApplicationProblemPlusJSONResponse struct {
 	Body       Problem
 	StatusCode int
