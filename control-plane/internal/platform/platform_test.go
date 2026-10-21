@@ -36,12 +36,12 @@ func testConfig() platform.Config {
 		DataDir: "/var/lib/pressfleet",
 		Images: platform.Images{
 			ControlPlane: "ghcr.io/rchouinard/pressfleet/control-plane:v1.2.3",
-			MariaDB:      "docker.io/library/mariadb:12.3.3@sha256:2f4f46f80e7251990bfdc601ae3f7f2964ddb4dc1868f7deca699fc1ece8c35e",
+			MariaDB:      "docker.io/library/mariadb:12.3.3@sha256:0bc74b350f89ce2e1c4e69e3bfd920139498fae237141cad57315c03484020c8",
 			Redis:        "docker.io/valkey/valkey:9.1.2@sha256:ac9c858b86dc81f3482d53a9d854547379a5f41e012500f839ab257c399063e0",
-			Traefik:      "docker.io/library/traefik:v3.7.13@sha256:3429c14149401de2ac82fc72ddc6a92642332b90deb3012301ff211b9d2d0f18",
+			Traefik:      "docker.io/library/traefik:v3.7.16@sha256:c120e0ab66664c7e124e1cd3d3a10a35e3781c578e75892cadd4b9a90e6c7c0d",
 			SocketProxy:  "docker.io/wollomatic/socket-proxy:1.13.1@sha256:14b0afd0939218e02736794447868b7d5e1d5b231207b727a935845236f08507",
 
-			VictoriaMetrics: "docker.io/victoriametrics/victoria-metrics:v1.153.0@sha256:8d4ccd756bdb0d0fc3f1e7d3664ff188ec49cdf0ef0d685d0d557674f49702c8",
+			VictoriaMetrics: "docker.io/victoriametrics/victoria-metrics:v1.154.1@sha256:5297c6d688a79008911767193267067836f1cc769ecb05a9e0f7e057490b35ca",
 		},
 		MariaDBRootPassword: testPassword,
 		RedisAdminPassword:  testRedisPassword,

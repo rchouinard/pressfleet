@@ -50,6 +50,27 @@ jobs:
           fi
           if [[ "$TAG" == *-* ]]; then echo "prerelease=true"; else echo "prerelease=false"; fi >>"$GITHUB_OUTPUT"
 
+  # The platform images the release pins (templates/platform/images.yaml) are
+  # third-party, so they're scanned here rather than in the Images workflow.
+  platform-images:
+    name: Platform images (Trivy)
+    needs: check
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: images
+        name: List the pinned platform images
+        run: |
+          {
+            echo 'list<<EOF'
+            sed -n 's/^[a-z-]*: \(.*@sha256:[0-9a-f]\{64\}\)$/\1/p' templates/platform/images.yaml
+            echo EOF
+          } >>"$GITHUB_OUTPUT"
+      - uses: ./.github/actions/trivy-scan
+        with:
+          fail-on: CRITICAL
+          images: ${{ steps.images.outputs.list }}
+
   images:
     name: Images
     needs: check
@@ -77,7 +98,7 @@ jobs:
 
   release:
     name: Publish the release
-    needs: [check, images, ui]
+    needs: [check, platform-images, images, ui]
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: write # create the release
