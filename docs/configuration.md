@@ -503,6 +503,18 @@ They can now log in with their password alone.
 
 The user then logs in with their password alone, and if `two_factor.required` covers their role, must enroll a new second factor before doing anything else. The command exits `0` when it reset the user, and also when the user had no second factors (it says `Nothing to reset` and changes nothing), so running it again is harmless. It exits `1` for an unknown email, a declined or unanswered question (nothing changes), and other errors. Each reset is in the audit log as `user.two_factor.reset`, like the dashboard's, but with no actor user or token and `"actor": "cli"` in `details`, beside the same counts.
 
+### API tokens
+
+Users create API tokens from a dashboard session (`POST /api/v1/auth/tokens`; a token can't create tokens). A token's permissions are its scope intersected with its owner's current role: a `read-only` token can only read, and a `full` token can do whatever the owner's role allows. Tokens are never asked to [reauthenticate](#reauthenticating-for-sensitive-actions).
+
+**A full-scope Admin token is as powerful as the Admin account.** Only an Admin's full token can create, update, or delete users, or reset other users' second factors (Operator tokens and every read-only token get `403`), and it isn't asked for a second factor first. That includes minting a new user with a password of its holder's choosing, whose access survives the token's revocation. PressFleet accepts this risk and documents it (security review F4, #182):
+
+- Treat a full-scope Admin token like the Admin's password: keep it out of CI systems and shared files you don't fully control, give it an expiry, and revoke it when it is no longer needed.
+- Prefer read-only tokens, or tokens owned by an Operator, for automation. Most automation (deploys, backups, monitoring) needs nothing an Operator can't do.
+- After revoking a leaked Admin token, review the [audit log](#audit-log) for events from that token, above all `user.create` and `user.update`, and disable or delete any user you don't recognize. Revoking the token doesn't remove users it created or passwords it set.
+
+The dashboard warns an Admin who creates a full-scope token.
+
 ## Audit log
 
 The control plane records every authenticated request that changes state, every request refused by authorization, and every login (successful or not) and logout. Each event holds the user and API token that made the request, the action (such as `site.delete` or `user.update`), the target, the result (`success`, `failure`, or `denied`), the client address (from `X-Forwarded-For` when the request came through a trusted proxy), and the time. Request bodies, passwords, and tokens are never recorded. Reads that succeed aren't recorded.

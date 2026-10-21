@@ -49,6 +49,9 @@ info:
       one step.
     * **Bearer API token (automation).** Send `Authorization: Bearer pft_...`.
       Tokens are created with `POST /api/v1/auth/tokens` and shown only once.
+      A full-scope Admin token is as powerful as the Admin account: it can
+      create and change users without reauthenticating, and users it creates
+      outlive its revocation. Treat it like the Admin password.
       If an `Authorization` header is present, the cookie is ignored.
 
     ### CSRF protection

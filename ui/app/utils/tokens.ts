@@ -25,6 +25,16 @@ export function scopeView(scope: TokenScope | string): ScopeView {
   }
 }
 
+/**
+ * The warning shown when an Admin creates a full-scope token (#182): it is
+ * as powerful as the Admin account, including creating users, whose access
+ * outlives the token's revocation. Other roles and read-only tokens get none.
+ */
+export function fullAdminTokenWarning(role: string | undefined, scope: TokenScope | string): string | undefined {
+  if (role !== 'admin' || scope !== 'full') return undefined
+  return 'A full token for an Admin is as powerful as your account: it can create and change users without asking for a second factor. Treat it like your password, and prefer a read-only token for automation.'
+}
+
 export interface ExpiryChoice {
   value: 'never' | '7' | '30' | '90' | '365'
   label: string
