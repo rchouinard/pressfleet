@@ -39,7 +39,10 @@ test('sets up an authenticator app and signs in with its codes', async ({ asRole
 
   // The first factor comes with ten recovery codes, shown once.
   const shown = page.getByRole('dialog', { name: 'Your recovery codes' })
-  const codes = await shown.getByRole('list', { name: 'Recovery codes' }).getByRole('listitem').allTextContents()
+  // allTextContents doesn't wait, so wait for the list first.
+  const list = shown.getByRole('list', { name: 'Recovery codes' })
+  await expect(list.getByRole('listitem')).toHaveCount(10)
+  const codes = await list.getByRole('listitem').allTextContents()
   expect(codes).toHaveLength(10)
   for (const c of codes) expect(c).toMatch(/^[A-Za-z0-9]{4}(-[A-Za-z0-9]{4}){3}$/)
   await shown.getByRole('button', { name: 'Done, I\'ve saved them' }).click()
