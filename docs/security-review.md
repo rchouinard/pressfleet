@@ -12,12 +12,12 @@ This is the record #97 asks for. It says what was checked, how, what came out, a
 | --- | --- | --- | --- |
 | [F1](#f1-kin-openapi-request-validation-vulnerabilities) | Medium | kin-openapi v0.142.0 request validation: govulncheck-reachable nil-pointer panic (GO-2026-6112), and further DoS advisories | Fixed: v0.149.0 |
 | [F2](#f2-control-plane-image-built-with-go-1271) | Medium | Control plane image built with Go 1.27.1: net/http DoS (CVE-2026-78667) | Fixed: Go 1.27.2 |
-| [F3](#f3-viewers-can-read-secrets-in-access-log-query-strings) | Medium | Viewers read site access logs, which keep query strings such as WordPress password reset keys | Proposed issue |
-| [F4](#f4-admin-api-tokens-can-mint-new-sessions) | Medium | An Admin API token can create users or set passwords, so a stolen token can mint sessions and tokens that outlive its revocation | Proposed issue |
-| [F5](#f5-traefik-metrics-are-reachable-from-every-site) | Low | Traefik's internal entry point (metrics) is reachable from every site network | Proposed issue |
-| [F6](#f6-task-secrets-are-readable-through-the-socket-proxy) | Low | Backup task secrets sit in container environments, which the socket proxy hands to Traefik | Proposed issue |
-| [F7](#f7-webauthn-challenge-store-can-be-flooded) | Low | One session can flood the WebAuthn challenge store and evict other users' login challenges | Proposed issue |
-| [F8](#f8-image-vulnerabilities-and-the-scan-policy) | Low | Every shipped image has HIGH findings with fixed versions; the new scan is report-only | Proposed issue |
+| [F3](#f3-viewers-can-read-secrets-in-access-log-query-strings) | Medium | Viewers read site access logs, which keep query strings such as WordPress password reset keys | Tracked in [#181](https://github.com/rchouinard/pressfleet/issues/181) |
+| [F4](#f4-admin-api-tokens-can-mint-new-sessions) | Medium | An Admin API token can create users or set passwords, so a stolen token can mint sessions and tokens that outlive its revocation | Tracked in [#182](https://github.com/rchouinard/pressfleet/issues/182) |
+| [F5](#f5-traefik-metrics-are-reachable-from-every-site) | Low | Traefik's internal entry point (metrics) is reachable from every site network | Tracked in [#183](https://github.com/rchouinard/pressfleet/issues/183) |
+| [F6](#f6-task-secrets-are-readable-through-the-socket-proxy) | Low | Backup task secrets sit in container environments, which the socket proxy hands to Traefik | Tracked in [#184](https://github.com/rchouinard/pressfleet/issues/184) |
+| [F7](#f7-webauthn-challenge-store-can-be-flooded) | Low | One session can flood the WebAuthn challenge store and evict other users' login challenges | Tracked in [#185](https://github.com/rchouinard/pressfleet/issues/185) |
+| [F8](#f8-image-vulnerabilities-and-the-scan-policy) | Low | Every shipped image has HIGH findings with fixed versions; the new scan is report-only | Tracked in [#186](https://github.com/rchouinard/pressfleet/issues/186) |
 
 ### F1: kin-openapi request validation vulnerabilities
 
