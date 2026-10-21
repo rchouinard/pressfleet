@@ -42,8 +42,9 @@ const ProjectName = "pressfleet"
 // against it): 384 MiB until group-level restic leaves the control plane
 // (#178), then 256. Its Go process gets ControlPlaneGoMemLimitMB of that,
 // not a share of the limit: a Go memory limit of 85% of the container's was
-// measured to do nothing. Traefik shares the §4.1 budget line. Traefik uses about 25 MiB idle, but
-// about 50 MiB while it starts and while it gets certificates; with 64 MiB
+// measured to do nothing. Traefik shares the §4.1 budget line. Traefik
+// uses about 25 MiB idle, but about 50 MiB while it starts and while it
+// gets certificates; with 64 MiB
 // (a Go memory limit of 48 MiB) it spent its time collecting garbage and
 // failed its healthcheck, so it gets 96 MiB, the extra 32 MiB out of the
 // headroom line. The socket proxy, a small Go program serving one client,
