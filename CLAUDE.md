@@ -16,11 +16,12 @@ mise exec -- make test    # prefix Go/lint commands with `mise exec --`
 | `make build` | Static linux/amd64 binary in `bin/pressfleet`, with the dashboard embedded when pnpm is available (`UI=yes\|prebuilt\|no\|auto`) |
 | `make test` | `go test -race ./...` |
 | `make lint` | golangci-lint (config in `.golangci.yml`) |
+| `make vulncheck` | govulncheck: known vulnerabilities the Go code can reach |
 | `make generate` | Code generators, including the TypeScript API client (needs Node) |
 | `make ui` / `make ui-check` | Build the dashboard / lint, typecheck, and test it |
 | `make fmt` | Format |
 
-CI (`.github/workflows/ci.yml`) runs lint, a `go mod tidy` check, tests, and the build. Keep all of them passing.
+CI (`.github/workflows/ci.yml`) runs lint, a `go mod tidy` check, tests, and the build, and `.github/workflows/security.yml` runs govulncheck. Keep all of them passing.
 
 ## Layout
 

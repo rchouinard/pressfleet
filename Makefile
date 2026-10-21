@@ -111,6 +111,15 @@ test-ui-e2e: ui/node_modules/.modules.yaml ## Run the dashboard's end-to-end tes
 lint: ## Run golangci-lint
 	golangci-lint run ./...
 
+# govulncheck reports the known vulnerabilities the code can reach. Pinned,
+# like every tool CI runs; `go run` builds it with the mise Go toolchain, so
+# it checks the standard library the binary is built with.
+GOVULNCHECK_VERSION ?= v1.9.0
+
+.PHONY: vulncheck
+vulncheck: ## Check Go code and dependencies for known vulnerabilities (govulncheck)
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+
 .PHONY: generate
 generate: ## Run code generators (OpenAPI server and clients, TypeScript client; needs Node.js)
 	go generate ./...
