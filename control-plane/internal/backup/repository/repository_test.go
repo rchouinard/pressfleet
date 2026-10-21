@@ -277,13 +277,19 @@ func TestEnsureDamagedRepository(t *testing.T) {
 		}
 		pw := f.password(t, r).Reveal()
 
-		// What a second init leaves: a key for another master key with the
-		// same password. restic names key files by their hash and opens the
-		// first one it reads, so try keys until one gets read before the
-		// config's.
-		env := []string{"RESTIC_REPOSITORY=" + r.Location, "RESTIC_PASSWORD=" + pw}
-		var stray string
-		for range 20 {
+		// What racing inits leave: key files for master keys the config
+		// isn't encrypted with. Which key restic tries first isn't
+		// deterministic, so the key the config needs is set aside rather
+		// than left to chance: two stray keys stay, neither of which can
+		// verify the config.
+		keysDir := filepath.Join(r.Location, "keys")
+		orig := keyFiles(t, r.Location)[0]
+		origData, err := os.ReadFile(filepath.Join(keysDir, orig))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var strays []string
+		for range 2 {
 			other := filepath.Join(t.TempDir(), "other")
 			if _, err := restic(t, []string{"RESTIC_REPOSITORY=" + other, "RESTIC_PASSWORD=" + pw}, "init"); err != nil {
 				t.Fatal(err)
@@ -293,19 +299,13 @@ func TestEnsureDamagedRepository(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(r.Location, "keys", name), data, 0o600); err != nil {
+			if err := os.WriteFile(filepath.Join(keysDir, name), data, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := restic(t, env, "cat", "config"); err != nil && strings.Contains(err.Error(), "ciphertext verification failed") {
-				stray = name
-				break
-			}
-			if err := os.Remove(filepath.Join(r.Location, "keys", name)); err != nil {
-				t.Fatal(err)
-			}
+			strays = append(strays, name)
 		}
-		if stray == "" {
-			t.Fatal("couldn't break the test repository with a second key")
+		if err := os.Remove(filepath.Join(keysDir, orig)); err != nil {
+			t.Fatal(err)
 		}
 
 		_, err = f.m.Ensure(ctx, groupID)
@@ -321,8 +321,14 @@ func TestEnsureDamagedRepository(t *testing.T) {
 			t.Errorf("Ensure changed the key files: %v", keys)
 		}
 
-		// The repair the error describes works.
-		if err := os.Remove(filepath.Join(r.Location, "keys", stray)); err != nil {
+		// The repair the error describes works: keep the key the config
+		// opens with, delete the others.
+		for _, k := range strays {
+			if err := os.Remove(filepath.Join(keysDir, k)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(keysDir, orig), origData, 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := f.m.Ensure(ctx, groupID); err != nil {
