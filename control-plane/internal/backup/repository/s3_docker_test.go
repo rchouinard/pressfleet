@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository"
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
@@ -158,17 +159,12 @@ func TestS3Backend(t *testing.T) {
 			t.Fatal(err)
 		}
 		if access.RepositoryDir != "" || !access.BackupNetwork || access.Env["RESTIC_REPOSITORY"] != a.Location ||
-			access.SecretEnv["AWS_ACCESS_KEY_ID"] != s3TestAccessKey || access.SecretEnv["AWS_SECRET_ACCESS_KEY"] != s3TestSecretKey ||
-			access.SecretEnv["RESTIC_PASSWORD"].Reveal() != pwA {
+			access.SecretFiles[repository.PasswordFile].Reveal() != pwA ||
+			access.Env["AWS_SHARED_CREDENTIALS_FILE"] != provisioner.TaskSecretPath(repository.S3CredentialsFile) ||
+			access.SecretFiles[repository.S3CredentialsFile].Reveal() != "[default]\naws_access_key_id = "+s3TestAccessKey+"\naws_secret_access_key = "+s3TestSecretKey+"\n" {
 			t.Errorf("TaskAccess = %+v", access)
 		}
-		env := []string{}
-		for k, v := range access.Env {
-			env = append(env, k+"="+v)
-		}
-		for k, v := range access.SecretEnv {
-			env = append(env, k+"="+v.Reveal())
-		}
+		env := taskEnv(t, access)
 		src := t.TempDir()
 		content := []byte("uploaded media\n")
 		if err := os.WriteFile(filepath.Join(src, "photo.jpg"), content, 0o600); err != nil {

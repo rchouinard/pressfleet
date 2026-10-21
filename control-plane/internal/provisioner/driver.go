@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"iter"
+	"path"
 	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
@@ -180,6 +181,7 @@ const (
 //   - wp-content is at TaskWPContentPath (if WPContent is not MountNone)
 //   - TransferDir is at TaskTransferPath (if set)
 //   - RepositoryDir is at TaskRepositoryPath (if set)
+//   - SecretFiles are in TaskSecretsPath (if any)
 //   - the platform services the site can reach (MariaDB, Redis) are reachable
 //     the same way the site reaches them
 type Task struct {
@@ -190,9 +192,17 @@ type Task struct {
 	Command []string
 	// Env holds non-secret environment variables.
 	Env map[string]string
-	// SecretEnv holds environment variables with secret values (repository
-	// passwords, storage credentials). Drivers must never log them.
-	SecretEnv map[string]redact.Secret
+	// SecretFiles holds files with secret contents (repository passwords,
+	// storage credentials), by file name. Each is readable by the task's user
+	// alone at TaskSecretPath(name), and gone when the task ends. Env points
+	// the program at them (RESTIC_PASSWORD_FILE and the like). Secrets are
+	// files rather than environment variables because a driver's container
+	// configuration, which anything allowed to inspect the container can
+	// read, holds the environment (§6); a mounted secret (a Kubernetes
+	// Secret volume, say) stays out of it. Names are plain file names:
+	// letters, digits, dots, hyphens, and underscores. Drivers must never log
+	// the contents.
+	SecretFiles map[string]redact.Secret
 	// WPContent controls access to the site's wp-content volume.
 	WPContent MountMode
 	// TransferDir, if set, is a directory under the control plane's data
@@ -228,7 +238,12 @@ const (
 	TaskWPContentPath  = "/site/wp-content"
 	TaskTransferPath   = "/transfer"
 	TaskRepositoryPath = "/repository"
+	TaskSecretsPath    = "/run/pressfleet/secrets" //nolint:gosec // G101: a directory, not a credential
 )
+
+// TaskSecretPath returns where a task sees the secret file name
+// (Task.SecretFiles).
+func TaskSecretPath(name string) string { return path.Join(TaskSecretsPath, name) }
 
 // TaskResult is the outcome of a task that ran to completion.
 type TaskResult struct {

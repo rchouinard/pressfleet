@@ -70,7 +70,7 @@ func (e *Engine) Restore(ctx context.Context, siteID string, snap backup.Snapsho
 	}()
 	task := provisioner.Task{
 		Env:           access.Env,
-		SecretEnv:     access.SecretEnv,
+		SecretFiles:   access.SecretFiles,
 		RepositoryDir: access.RepositoryDir,
 		BackupNetwork: access.BackupNetwork,
 		Timeout:       e.timeout,

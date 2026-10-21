@@ -122,10 +122,18 @@ func (f *fixture) runTaskDirect(t *testing.T, siteID string, task provisioner.Ta
 	f.mu.Lock()
 	root := f.siteRoots[siteID]
 	f.mu.Unlock()
+	// The task's secret files, where the task would find them.
+	secrets := t.TempDir()
+	for name, v := range task.SecretFiles {
+		if err := os.WriteFile(filepath.Join(secrets, name), []byte(v.Reveal()), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	paths := strings.NewReplacer(
 		provisioner.TaskWPContentPath, filepath.Join(root, "wp-content"),
 		provisioner.TaskTransferPath, task.TransferDir,
 		provisioner.TaskRepositoryPath, task.RepositoryDir,
+		provisioner.TaskSecretsPath, secrets,
 	)
 	if task.Command[0] != "restic" {
 		t.Errorf("task command = %q", task.Command)
@@ -151,9 +159,6 @@ func (f *fixture) runTaskDirect(t *testing.T, siteID string, task provisioner.Ta
 	cmd.Env = []string{"HOME=" + t.TempDir()}
 	for k, v := range task.Env {
 		cmd.Env = append(cmd.Env, k+"="+paths.Replace(v))
-	}
-	for k, v := range task.SecretEnv {
-		cmd.Env = append(cmd.Env, k+"="+v.Reveal())
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -336,7 +341,7 @@ func TestBackupAndListSnapshots(t *testing.T) {
 		repoDir, _ := f.layout.BackupRepositoryDir(groupID)
 		if task.WPContent != provisioner.MountReadOnly || task.RepositoryDir != repoDir ||
 			filepath.Dir(task.TransferDir) != f.layout.TmpDir() || task.Env["RESTIC_REPOSITORY"] != provisioner.TaskRepositoryPath ||
-			task.SecretEnv["RESTIC_PASSWORD"] == "" || task.Image != "" || task.Timeout != restic.DefaultTaskTimeout {
+			task.SecretFiles[repository.PasswordFile] == "" || task.Env["RESTIC_PASSWORD_FILE"] != provisioner.TaskSecretPath(repository.PasswordFile) || task.Image != "" || task.Timeout != restic.DefaultTaskTimeout {
 			t.Errorf("task = %+v", task)
 		}
 		wantCmd := []string{"restic", "backup", "--json", "--quiet", "--no-scan", "--retry-lock", "30m0s", "--host", "site-" + site.ID,
@@ -594,7 +599,7 @@ func TestRestore(t *testing.T) {
 		wantDump := append(slices.Clone(lock), string(snap.ID)+":/transfer", "--target", "/transfer", "--include", "/database.sql")
 		wantFiles := append(slices.Clone(lock), string(snap.ID)+":/site/wp-content", "--target", "/site/wp-content", "--delete")
 		if d := tasks[0]; !slices.Equal(d.Command, wantDump) || d.WPContent != provisioner.MountNone ||
-			filepath.Dir(d.TransferDir) != f.layout.TmpDir() || d.RepositoryDir != repoDir || d.SecretEnv["RESTIC_PASSWORD"] == "" {
+			filepath.Dir(d.TransferDir) != f.layout.TmpDir() || d.RepositoryDir != repoDir || d.SecretFiles[repository.PasswordFile] == "" {
 			t.Errorf("dump task = %+v\nwant command %q", d, wantDump)
 		}
 		if w := tasks[1]; !slices.Equal(w.Command, wantFiles) || w.WPContent != provisioner.MountReadWrite ||
