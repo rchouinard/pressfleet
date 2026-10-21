@@ -487,7 +487,7 @@ docker compose exec control-plane pressfleet user reset-password --email admin@e
 docker compose exec control-plane pressfleet user reset-two-factor --email admin@example.com [--yes]
 ```
 
-Each user has one role (design doc §4.6): `viewer` can see everything except users and the audit log, `operator` can also create and change sites and client groups, and `admin` can also delete sites and client groups, manage users, and change platform settings. Role changes apply at once to the user's existing sessions and API tokens, and a `read-only` API token can only read, whatever its owner's role. The last enabled admin can't be demoted, disabled, or deleted.
+Each user has one role (design doc §4.6): `viewer` can see everything except users, the audit log, and site logs (the access log records query strings, which can carry one-time secrets such as password reset keys, so reading a site's logs needs `operator`), `operator` can also read site logs and create and change sites and client groups, and `admin` can also delete sites and client groups, manage users, and change platform settings. Role changes apply at once to the user's existing sessions and API tokens, and a `read-only` API token can only read, whatever its owner's role. The last enabled admin can't be demoted, disabled, or deleted.
 
 The default role is `admin`. `create` and `reset-password` generate a random password and print it once. To choose the password instead, pipe it in with `--password-stdin` (and `docker compose exec -T`). Passwords must be 12 to 256 characters. `reset-password` signs the user out everywhere and revokes their API tokens.
 
@@ -502,6 +502,18 @@ They can now log in with their password alone.
 ```
 
 The user then logs in with their password alone, and if `two_factor.required` covers their role, must enroll a new second factor before doing anything else. The command exits `0` when it reset the user, and also when the user had no second factors (it says `Nothing to reset` and changes nothing), so running it again is harmless. It exits `1` for an unknown email, a declined or unanswered question (nothing changes), and other errors. Each reset is in the audit log as `user.two_factor.reset`, like the dashboard's, but with no actor user or token and `"actor": "cli"` in `details`, beside the same counts.
+
+### API tokens
+
+Users create API tokens from a dashboard session (`POST /api/v1/auth/tokens`; a token can't create tokens). A token's permissions are its scope intersected with its owner's current role: a `read-only` token can only read, and a `full` token can do whatever the owner's role allows. Tokens are never asked to [reauthenticate](#reauthenticating-for-sensitive-actions).
+
+**A full-scope Admin token is as powerful as the Admin account.** Only an Admin's full token can create, update, or delete users, or reset other users' second factors (Operator tokens and every read-only token get `403`), and it isn't asked for a second factor first. That includes minting a new user with a password of its holder's choosing, whose access survives the token's revocation. PressFleet accepts this risk and documents it (security review F4, #182):
+
+- Treat a full-scope Admin token like the Admin's password: keep it out of CI systems and shared files you don't fully control, give it an expiry, and revoke it when it is no longer needed.
+- Prefer read-only tokens, or tokens owned by an Operator, for automation. Most automation (deploys, backups, monitoring) needs nothing an Operator can't do.
+- After revoking a leaked Admin token, review the [audit log](#audit-log) for events from that token, above all `user.create` and `user.update`, and disable or delete any user you don't recognize. Revoking the token doesn't remove users it created or passwords it set.
+
+The dashboard warns an Admin who creates a full-scope token.
 
 ## Audit log
 

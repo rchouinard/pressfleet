@@ -5,11 +5,11 @@
 import { computed, ref } from 'vue'
 import type { ApiError } from '../../utils/api-error'
 import {
-  expiryChoices, scopeView, tokenCreateBody, validateTokenForm,
+  expiryChoices, fullAdminTokenWarning, scopeView, tokenCreateBody, validateTokenForm,
   type ApiTokenCreate, type ExpiryChoice, type TokenScope,
 } from '../../utils/tokens'
 
-const props = defineProps<{ submitting?: boolean, error?: ApiError }>()
+const props = defineProps<{ submitting?: boolean, error?: ApiError, /** The creator's role, for the Admin warning. */ role?: string }>()
 const emit = defineEmits<{ submit: [body: ApiTokenCreate], cancel: [] }>()
 
 const name = ref('')
@@ -23,6 +23,7 @@ const scopeItems = (['full', 'read-only'] as const).map(value => ({
   description: scopeView(value).hint,
 }))
 
+const warning = computed(() => fullAdminTokenWarning(props.role, scope.value))
 const nameError = computed(() => local.value.name ?? props.error?.fieldError('/name'))
 const scopeError = computed(() => props.error?.fieldError('/scope'))
 const expiryError = computed(() => props.error?.fieldError('/expires_at'))
@@ -42,6 +43,7 @@ function submit() {
     <UFormField name="scope" :error="scopeError">
       <URadioGroup v-model="scope" legend="Scope" :items="scopeItems" :disabled="submitting" />
     </UFormField>
+    <p v-if="warning" role="note" class="text-sm text-warning">{{ warning }}</p>
     <UFormField label="Expiry" name="expires_at" :error="expiryError">
       <USelect v-model="expiry" :items="[...expiryChoices]" value-key="value" class="w-full" :disabled="submitting" />
     </UFormField>

@@ -30,7 +30,7 @@ const (
 // entries first by page and oldest first within it. The cursor is the time
 // in Unix nanoseconds that the older page ends before.
 func (h *Handlers) ListSiteLogs(ctx context.Context, req gen.ListSiteLogsRequestObject) (gen.ListSiteLogsResponseObject, error) {
-	if _, err := h.authorize(ctx, authz.ViewMonitoring, authz.Site(req.SiteID)); err != nil {
+	if _, err := h.authorize(ctx, authz.ViewLogs, authz.Site(req.SiteID)); err != nil {
 		return nil, err
 	}
 	if _, _, err := h.sites.Get(ctx, req.SiteID); err != nil {
@@ -166,7 +166,7 @@ func parseLogCursor(s string) (time.Time, error) {
 
 // StreamSiteLogs follows the site's logs as server-sent events.
 func (h *Handlers) StreamSiteLogs(ctx context.Context, req gen.StreamSiteLogsRequestObject) (gen.StreamSiteLogsResponseObject, error) {
-	if _, err := h.authorize(ctx, authz.ViewMonitoring, authz.Site(req.SiteID)); err != nil {
+	if _, err := h.authorize(ctx, authz.ViewLogs, authz.Site(req.SiteID)); err != nil {
 		return nil, err
 	}
 	if _, _, err := h.sites.Get(ctx, req.SiteID); err != nil {

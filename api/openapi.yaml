@@ -49,6 +49,9 @@ info:
       one step.
     * **Bearer API token (automation).** Send `Authorization: Bearer pft_...`.
       Tokens are created with `POST /api/v1/auth/tokens` and shown only once.
+      A full-scope Admin token is as powerful as the Admin account: it can
+      create and change users without reauthenticating, and users it creates
+      outlive its revocation. Treat it like the Admin password.
       If an `Authorization` header is present, the cookie is ignored.
 
     ### CSRF protection
@@ -78,7 +81,9 @@ info:
     * Every role may read sites, client groups, and jobs, and manage its own
       password, API tokens, and SSH keys. Only Operators and Admins may
       connect to the SFTP gateway with their keys.
-    * Operators and Admins may also create and change sites and client groups.
+    * Operators and Admins may also read sites' runtime logs (the access log
+      records query strings, which can carry secrets; Viewers get `403`) and
+      create and change sites and client groups.
     * Only Admins may delete sites and client groups and manage users.
     * `read-only` tokens may only read, whatever the owner's role.
 
@@ -2237,6 +2242,9 @@ paths:
       tags: [logs]
       summary: Read a site's runtime logs
       description: |
+        Needs an Operator or Admin; Viewers get `403`, since the access log
+        records query strings, which can carry secrets.
+
         The site's nginx access and error logs, PHP-FPM slow log, and PHP
         output (design doc §7.4), read from the site's containers through
         the orchestrator driver. A stopped site's logs can be read. Logs
@@ -2317,6 +2325,8 @@ paths:
       tags: [logs]
       summary: Follow a site's runtime logs
       description: |
+        Needs an Operator or Admin, like `GET /api/v1/sites/{site_id}/logs`.
+
         Streams the site's logs as server-sent events (`text/event-stream`)
         until the client disconnects: first the newest `tail` entries that
         match the filters, then new entries as the site writes them. The

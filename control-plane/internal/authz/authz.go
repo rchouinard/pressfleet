@@ -90,12 +90,17 @@ type Action string
 // them. Some have no API endpoint yet; they are listed so the table here is
 // complete and the endpoints that arrive later only need to use them.
 const (
-	// View sites, client groups, jobs, backups, metrics, logs, and alerts.
+	// View sites, client groups, jobs, backups, metrics, and alerts.
 	ViewSites        Action = "site.view"
 	ViewClientGroups Action = "client_group.view"
 	ViewJobs         Action = "job.view"
 	ViewBackups      Action = "backup.view"
-	ViewMonitoring   Action = "monitoring.view" // metrics, logs, and alerts
+	ViewMonitoring   Action = "monitoring.view" // metrics and alerts
+
+	// Read a site's runtime logs. The access log records query strings,
+	// which can carry one-time secrets such as password reset keys, so
+	// Viewers don't get it (design doc §4.6).
+	ViewLogs Action = "logs.view"
 
 	// Create and import sites; change site settings (PHP version, core branch hold,
 	// resources, preview password protection); go-live and domains;
@@ -327,6 +332,7 @@ var rules = map[Action]rule{
 	ViewJobs:         {store.RoleViewer, false},
 	ViewBackups:      {store.RoleViewer, false},
 	ViewMonitoring:   {store.RoleViewer, false},
+	ViewLogs:         {store.RoleOperator, false},
 
 	CreateSite:              {store.RoleOperator, true},
 	RetrieveSiteCredentials: {store.RoleOperator, true}, // consumes the one-time credentials

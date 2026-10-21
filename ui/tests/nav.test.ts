@@ -32,6 +32,15 @@ describe('navFor', () => {
     expect(ids(navFor('viewer'))).toContain('jobs')
   })
 
+  it('hides logs from viewers, who keep metrics and alerts (#181)', () => {
+    const viewer = ids(navFor('viewer'))
+    expect(viewer).not.toContain('logs')
+    expect(viewer).toContain('metrics')
+    expect(viewer).toContain('alerts')
+    expect(ids(navFor('operator'))).toContain('logs')
+    expect(ids(navFor('admin'))).toContain('logs')
+  })
+
   it('shows nothing without a session', () => {
     expect(navFor(undefined)).toEqual([])
   })

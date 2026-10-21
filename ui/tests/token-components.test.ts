@@ -104,6 +104,17 @@ describe('TokenForm', () => {
     expect(wrapper.emitted('submit')![0]).toEqual([{ name: 'Reports', scope: 'read-only', expires_at: null }])
   })
 
+  it('warns an Admin creating a full token, and nobody else', async () => {
+    const admin = mount(TokenForm, { props: { role: 'admin' }, global })
+    expect(admin.find('[role=note]').text()).toContain('as powerful as your account')
+    await admin.findAll('input[type=radio]')[1]!.trigger('change')
+    expect(admin.find('[role=note]').exists()).toBe(false)
+
+    for (const role of ['operator', 'viewer', undefined]) {
+      expect(mount(TokenForm, { props: { role }, global }).find('[role=note]').exists()).toBe(false)
+    }
+  })
+
   it('shows server field errors next to the field', () => {
     const error = new ApiError({
       type: 'about:blank', title: 'Unprocessable Content', status: 422,
