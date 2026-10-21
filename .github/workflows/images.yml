@@ -114,7 +114,12 @@ jobs:
             VERSION=${{ needs.plan.outputs.version }}
             COMMIT=${{ github.sha }}
           tags: ${{ needs.plan.outputs.registry }}/control-plane:${{ needs.plan.outputs.version }}
+          # For the vulnerability scan below.
+          load: true
           cache-from: type=gha,scope=control-plane
+      - uses: ./.github/actions/trivy-scan
+        with:
+          images: ${{ needs.plan.outputs.registry }}/control-plane:${{ needs.plan.outputs.version }}
 
   control-plane-publish:
     name: Control plane (publish)
@@ -224,6 +229,12 @@ jobs:
           PHP: ${{ matrix.php }}
           VERBOSE: "1"
         run: images/test.sh "$PHP"
+      - if: matrix.smoke
+        uses: ./.github/actions/trivy-scan
+        with:
+          images: |
+            ${{ needs.plan.outputs.registry }}/site-php:php${{ matrix.php }}-wp${{ matrix.wp }}
+            ${{ needs.plan.outputs.registry }}/site-nginx:wp${{ matrix.wp }}
 
   site-nginx-publish:
     name: site-nginx wp${{ matrix.wp }} (publish)

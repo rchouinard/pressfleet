@@ -1,0 +1,56 @@
+name: Security
+
+# Known-vulnerability checks (#97; docs/security-review.md).
+#
+#   govulncheck       every push and PR, and weekly: new advisories appear
+#                     without any change here. It reports only vulnerabilities
+#                     the code can reach, so a finding fails the job.
+#   platform images   weekly and on demand, report-only: Trivy scans the
+#                     third-party images in templates/platform/images.yaml.
+#                     The images PressFleet builds are scanned where they are
+#                     built (images.yml).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "41 5 * * 1" # Mondays 05:41 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v4
+      - uses: ./.github/actions/go-cache
+      - run: make vulncheck
+
+  platform-images:
+    name: Platform images (Trivy)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: images
+        name: List the pinned platform images
+        run: |
+          # Every "<name>: <ref>@sha256:..." line; the control plane is
+          # PressFleet's own and is scanned in images.yml.
+          {
+            echo 'list<<EOF'
+            sed -n 's/^[a-z-]*: \(.*@sha256:[0-9a-f]\{64\}\)$/\1/p' templates/platform/images.yaml
+            echo EOF
+          } >>"$GITHUB_OUTPUT"
+      - uses: ./.github/actions/trivy-scan
+        with:
+          images: ${{ steps.images.outputs.list }}
