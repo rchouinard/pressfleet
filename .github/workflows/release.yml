@@ -28,7 +28,7 @@ concurrency:
 jobs:
   check:
     name: Check the tag
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     outputs:
       prerelease: ${{ steps.tag.outputs.prerelease }}
     steps:
@@ -61,7 +61,7 @@ jobs:
   ui:
     name: UI
     needs: check
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4
@@ -78,7 +78,7 @@ jobs:
   release:
     name: Publish the release
     needs: [check, images, ui]
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: write # create the release
       packages: read # inspect the control plane image

@@ -47,7 +47,7 @@ jobs:
   e2e:
     name: E2E
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e')
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     # The tests run one after another, about 25 minutes on a workstation
     # (go test's own limit is 60m, in the Makefile); a cold runner that
     # also builds the site images needs more.
@@ -103,7 +103,7 @@ jobs:
   dashboard:
     name: Dashboard E2E
     if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e')
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     # The suite takes about five minutes on a workstation, in two runs
     # (go test's own limit is 40m, in the Makefile); building the image and,
     # when images/ changed, the site images, takes most of the rest.

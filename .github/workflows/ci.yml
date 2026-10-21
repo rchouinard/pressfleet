@@ -15,7 +15,7 @@ concurrency:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4
@@ -33,7 +33,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     services:
       # State database tests run on SQLite and on this PostgreSQL server.
       postgres:
@@ -57,7 +57,7 @@ jobs:
 
   ui:
     name: UI
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4
@@ -79,7 +79,7 @@ jobs:
 
   build:
     name: Build (linux/amd64)
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     needs: ui
     steps:
       - uses: actions/checkout@v7

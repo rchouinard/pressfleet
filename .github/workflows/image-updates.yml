@@ -35,7 +35,7 @@ jobs:
   manifest:
     name: Update version manifest
     if: github.repository == 'rchouinard/pressfleet'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: write # push the automation branch
       pull-requests: write

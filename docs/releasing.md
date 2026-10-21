@@ -31,6 +31,23 @@ The release is created only after the images are pushed, so a published CLI neve
 
 4. Watch the Release workflow; the release appears when it finishes. If it fails before creating the release, fix the cause on `main`, delete the tag (`git push --delete origin v0.2.0 && git tag -d v0.2.0`), and tag again. Don't move a tag after its release is published: installs and upgrades reference its images by tag.
 
+## Running workflows on a self-hosted runner
+
+Every job's `runs-on` is `${{ vars.RUNNER || 'ubuntu-latest' }}`, so the repository variable `RUNNER` moves all of them (CI, E2E, Images, Release, Security, Image updates) onto a self-hosted runner. Jobs on a self-hosted runner don't use GitHub Actions minutes, so releases and CI keep working when the minutes run out. Unset the variable to go back to GitHub-hosted runners.
+
+1. Register the runner: Settings → Actions → Runners → New self-hosted runner, Linux x64, and follow the steps there (`config.sh`, then `run.sh` or `svc.sh install` to keep it running). It gets the labels `self-hosted`, `Linux`, and `X64`.
+2. Set the variable: Settings → Secrets and variables → Actions → Variables → `RUNNER` = `self-hosted`.
+
+The runner's host needs what `ubuntu-latest` provides and the jobs don't install themselves:
+
+- Docker Engine with the buildx and Compose plugins, usable by the runner's user (the `docker` group). The Test job runs PostgreSQL as a service container published on port 5432, so nothing else on the host can hold that port.
+- `git`, `bash`, `curl`, `jq`, `sha256sum`, and the GitHub CLI (`gh`, for the Release job). mise installs Go, Node, pnpm, and the other pinned tools (`mise.toml`).
+- Room for the image builds and the e2e suites: tens of GB of disk, and enough memory for a platform with a few sites.
+
+One runner runs one job at a time, so a release, which builds the whole site image matrix, takes longer than on GitHub's parallel runners. Jobs share the host's Docker, so leftover e2e containers from a cancelled run can get in the next one's way: `docker ps -a --filter label=com.docker.compose.project` shows them.
+
+While the repository is private, only its collaborators can trigger the workflows. If it ever accepts pull requests from forks, unset `RUNNER` or keep the `pull_request` workflows on GitHub-hosted runners: on a self-hosted runner, a fork's pull request would run its own code on the host.
+
 ## Minimum upgradable-from version
 
 `skew.MinUpgradeFrom` is the oldest release that `pressfleet upgrade` of this release upgrades from. Raise it only when a release can no longer upgrade older control planes directly, for example because it drops a migration path. Operators on older releases then upgrade through an intermediate release first, and the release notes say from which version.
