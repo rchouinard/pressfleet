@@ -64,6 +64,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/metricsapi"
 	"github.com/rchouinard/pressfleet/control-plane/internal/pluginupdates"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
+	"github.com/rchouinard/pressfleet/control-plane/internal/releasecheck"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 	"github.com/rchouinard/pressfleet/control-plane/internal/uploads"
@@ -173,7 +174,14 @@ type Options struct {
 	SFTP SFTPInfo
 	// Build is what GET /api/v1/platform reports about the running binary.
 	Build buildinfo.Info
+	// LatestRelease returns what the release check found, for GET
+	// /api/v1/platform. If nil, as when the check is off, it reports none.
+	LatestRelease LatestReleaseFunc
 }
+
+// LatestReleaseFunc returns the newest release the release check found; ok
+// is false if it found none yet. releasecheck.Checker.Latest is one.
+type LatestReleaseFunc func() (_ releasecheck.Result, ok bool)
 
 // SFTPInfo is where developers reach the SFTP gateway.
 type SFTPInfo struct {
@@ -209,6 +217,7 @@ type Handlers struct {
 	secureCookies bool
 	sftp          SFTPInfo
 	build         buildinfo.Info
+	latestRelease LatestReleaseFunc
 }
 
 var _ gen.StrictServerInterface = (*Handlers)(nil)
@@ -252,7 +261,7 @@ func newHandler(opts Options, requireAll bool) (http.Handler, error) {
 	}
 
 	h := &Handlers{log: opts.Logger, readiness: opts.Readiness, db: opts.DB, auth: opts.Auth, sites: opts.Sites, backups: opts.Backups,
-		uploads: opts.Uploads, secureCookies: opts.SecureCookies, sftp: opts.SFTP, build: opts.Build}
+		uploads: opts.Uploads, secureCookies: opts.SecureCookies, sftp: opts.SFTP, build: opts.Build, latestRelease: opts.LatestRelease}
 	if opts.Sites != nil {
 		h.rollouts = opts.Sites.Rollouts()
 	}

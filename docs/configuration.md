@@ -211,6 +211,7 @@ Old names are accepted for at least one minor release after the change, and unti
 | `metrics.url` | `PRESSFLEET_METRICS_URL` | | `http://victoria-metrics:8428` | VictoriaMetrics' base URL, used for writes and queries. The platform's own service by default. |
 | `metrics.interval_seconds` | `PRESSFLEET_METRICS_INTERVAL_SECONDS` | | `30` | How often collectors run by default, from 5 to 3600 seconds. A collector may run less often. |
 | `updates.images.check_hours` | `PRESSFLEET_UPDATES_IMAGES_CHECK_HOURS` | | `6` | How often, in hours (0 to 168), the image rollout pulls the site image tags in use from their registry to find new builds. `0`: never; only builds that reach the host otherwise (built locally, pulled by hand) roll out. See [Platform image updates](#platform-image-updates). |
+| `updates.release_check` | `PRESSFLEET_UPDATES_RELEASE_CHECK` | | `true` | Check for a newer PressFleet release at startup and once a day. `false`: no request is made, as air-gapped installs need. See [Release check](#release-check). |
 | `image_manifest_file` | `PRESSFLEET_IMAGE_MANIFEST_FILE` | | (built in) | Absolute path of a site image version manifest (`images/manifest.json` format) that replaces the one built into the control plane, read at startup. For rolling out a WordPress release before the PressFleet release that carries it, and for tests. |
 | `wordpress_security.block_user_enumeration` | `PRESSFLEET_WORDPRESS_SECURITY_BLOCK_USER_ENUMERATION` | | `true` | Hide which user names exist from visitors. See [WordPress security set](#wordpress-security-set). |
 | `wordpress_security.password_policy.enabled` | `PRESSFLEET_WORDPRESS_SECURITY_PASSWORD_POLICY_ENABLED` | | `true` | Check new WordPress passwords on the server: minimum length and a common-password list. |
@@ -748,6 +749,7 @@ The DNS checks are skipped until `dashboard_domain` and `preview_base_domain` ar
 <data_dir>/
   state/              control plane database (SQLite)
     backups/          state database backups taken before migrations and restores
+    release-check.json the newest PressFleet release the release check found (see "Release check")
   platform/           rendered platform services Compose project
   upgrade/            kept by `pressfleet upgrade` for a manual recovery (see docs/upgrading.md):
     upgrade.json      the last upgrade's versions, status, and previous images
@@ -1003,6 +1005,18 @@ A platform upgrade (see [Upgrading](upgrading.md)) can change how sites are rend
 - If it fails, the copied files are put back and the containers brought up on them, and the site's `status_message` says so. The rollout doesn't try those templates on the site again; a release with other templates, or a site update, does.
 - After `updates.max_failures` failed updates in a row the rollout halts; `GET /api/v1/template-rollout` shows the current fingerprint, the sites still pending, and the failures, and `POST /api/v1/template-rollout/resume`, or a release with other templates, resumes it.
 - Until the rollout reaches a running site, the startup reconciliation (which applies install-wide settings such as the security set) leaves that site's containers as they are. Stopped sites are reconciled as before.
+
+## Release check
+
+The control plane checks for a newer PressFleet release when it starts and once a day after that (`updates.release_check`, on by default). It lists the project's releases on GitHub (`https://api.github.com/repos/rchouinard/pressfleet/releases`) and takes the highest stable version: drafts, pre-releases (`v1.2.0-rc.1`), and tags that aren't semantic versions are ignored. The request carries no credentials, cookies, or anything about the install beyond a `User-Agent` of `PressFleet/<version>`.
+
+What it found is shown in three places, with whether it is newer than the running control plane:
+
+- `pressfleet version` on the host prints a notice under the control plane's version when an update is available, saying to install the new release's CLI and run [`pressfleet upgrade`](upgrading.md) (or just to run `pressfleet upgrade` when the CLI is already that release).
+- The dashboard flags the version under the navigation with "Update available"; the About dialog shows the latest release and links to its notes.
+- `GET /api/v1/platform` reports it as `release` (`latest_version`, `release_url`, `checked_at`, `update_available`), and `pressfleet admin info` as its `release` field. Both leave it out when the check is off or hasn't succeeded yet.
+
+The result is kept in `<data_dir>/state/release-check.json`, so the last one found survives a restart. A failed check (no route to GitHub, rate limiting, a `404`) is logged at `debug` level only, keeps the previous result, and affects nothing else. Air-gapped installs, or installs that shouldn't contact GitHub, set `updates.release_check: false` (`PRESSFLEET_UPDATES_RELEASE_CHECK=false`): the control plane then makes no request for it, and nothing reports a release. Development builds (`dev`) never report an update.
 
 ## Site databases
 

@@ -20,3 +20,17 @@ export function buildSummary(build: PlatformBuild): string {
   const commit = shortCommit(build)
   return `pressfleet ${build.version} (${commit ? `commit ${commit}, ` : ''}${build.go_version}, ${build.os}/${build.arch})`
 }
+
+/**
+ * The newest release the control plane's release check found, from
+ * `GET /api/v1/platform`; absent when the check is off or found none.
+ */
+export type PlatformRelease = components['schemas']['PlatformRelease']
+
+/**
+ * The release to upgrade to, or undefined when the running version is the
+ * newest (or nothing is known).
+ */
+export function availableUpdate(release?: PlatformRelease): PlatformRelease | undefined {
+  return release?.update_available ? release : undefined
+}

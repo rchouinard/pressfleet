@@ -661,6 +661,7 @@ var boolEnvVars = []struct {
 	{"PRESSFLEET_METRICS_ENABLED", func(c *Config) *bool { return &c.Metrics.Enabled }},
 	{"PRESSFLEET_ALERTS_ENABLED", func(c *Config) *bool { return &c.Alerts.Enabled }},
 	{"PRESSFLEET_ALERTS_WEBHOOK_ALLOW_LOCAL_TARGETS", func(c *Config) *bool { return &c.Alerts.WebhookAllowLocalTargets }},
+	{"PRESSFLEET_UPDATES_RELEASE_CHECK", func(c *Config) *bool { return &c.Updates.ReleaseCheck }},
 }
 
 // listEnvVars maps environment variables to the list fields they set from

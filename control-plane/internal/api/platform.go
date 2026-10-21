@@ -22,14 +22,23 @@ func (h *Handlers) GetPlatform(ctx context.Context, _ gen.GetPlatformRequestObje
 	if h.build.Commit != "" {
 		build.Commit = &h.build.Commit
 	}
-	return gen.GetPlatform200JSONResponse{
+	out := gen.GetPlatform200JSONResponse{
 		Sftp: gen.PlatformSftp{
 			Enabled: h.sftp.Enabled,
 			Host:    h.sftp.Host,
 			Port:    h.sftp.Port,
 		},
 		Build: build,
-	}, nil
+	}
+	if h.latestRelease != nil {
+		if r, ok := h.latestRelease(); ok {
+			out.Release = &gen.PlatformRelease{
+				LatestVersion: r.LatestVersion, ReleaseURL: r.ReleaseURL, CheckedAt: r.CheckedAt.UTC(),
+				UpdateAvailable: r.UpdateAvailable(h.build.Version),
+			}
+		}
+	}
+	return out, nil
 }
 
 // DoctorFunc runs the preflight checks that can run from the control plane.

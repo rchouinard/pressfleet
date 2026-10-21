@@ -6,6 +6,8 @@
 # pressfleet upgrade
 ```
 
+The control plane checks for new releases once a day, and `pressfleet version` and the dashboard say when one is available ([Release check](configuration.md#release-check)).
+
 Run it as root, like `init`. Upgrades are **forward-only**: there is no `--rollback`. If the upgraded platform doesn't come back healthy, `upgrade` prints the commands that return it to the previous release ([Recovering from a failed upgrade](#recovering-from-a-failed-upgrade)). Automatic rollback is planned after the MVP (#141).
 
 ## What it does

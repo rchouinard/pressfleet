@@ -3,7 +3,7 @@ import { defineComponent, h } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import AppAbout from '../app/components/app/AppAbout.vue'
 import AppVersion from '../app/components/app/AppVersion.vue'
-import { buildSummary, shortCommit, type PlatformBuild } from '../app/utils/build'
+import { availableUpdate, buildSummary, shortCommit, type PlatformBuild, type PlatformRelease } from '../app/utils/build'
 import { uiStubs } from './stubs'
 
 const build = (over: Partial<PlatformBuild> = {}): PlatformBuild => ({
@@ -16,7 +16,21 @@ const build = (over: Partial<PlatformBuild> = {}): PlatformBuild => ({
   ...over,
 })
 
+const release = (over: Partial<PlatformRelease> = {}): PlatformRelease => ({
+  latest_version: 'v0.5.0',
+  release_url: 'https://github.com/rchouinard/pressfleet/releases/tag/v0.5.0',
+  checked_at: '2026-10-20T12:00:00Z',
+  update_available: true,
+  ...over,
+})
+
 describe('build helpers', () => {
+  it('offers an update only when the release check says so', () => {
+    expect(availableUpdate(release())?.latest_version).toBe('v0.5.0')
+    expect(availableUpdate(release({ update_available: false }))).toBeUndefined()
+    expect(availableUpdate(undefined)).toBeUndefined()
+  })
+
   it('shortens the commit like `pressfleet version`', () => {
     expect(shortCommit(build())).toBe('adbf70e45beb')
     expect(shortCommit(build({ modified: true }))).toBe('adbf70e45beb-dirty')
@@ -57,6 +71,29 @@ describe('AppAbout', () => {
     expect(writeText).toHaveBeenCalledWith('adbf70e45beb349cc44022eebc2afaa2d55790e8')
   })
 
+  it('points to `pressfleet upgrade` when a newer release is available', () => {
+    const wrapper = mount(AppAbout, { props: { build: build(), release: release(), open: true }, global })
+    expect(wrapper.find('[data-testid=latest]').text()).toBe('v0.5.0')
+    const update = wrapper.find('[data-testid=update]')
+    expect(update.text()).toContain('PressFleet v0.5.0 is available')
+    expect(update.text()).toContain('pressfleet upgrade')
+    const link = update.find('a')
+    expect(link.attributes('href')).toBe('https://github.com/rchouinard/pressfleet/releases/tag/v0.5.0')
+    expect(link.attributes('rel')).toContain('noopener')
+  })
+
+  it('says when the running version is the newest', () => {
+    const wrapper = mount(AppAbout, { props: { build: build({ version: 'v0.5.0' }), release: release({ update_available: false }), open: true }, global })
+    expect(wrapper.find('[data-testid=latest]').text()).toBe('v0.5.0 (up to date)')
+    expect(wrapper.find('[data-testid=update]').exists()).toBe(false)
+  })
+
+  it('leaves the release out when nothing is known', () => {
+    const wrapper = mount(AppAbout, { props: { build: build(), open: true }, global })
+    expect(wrapper.find('[data-testid=latest]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid=update]').exists()).toBe(false)
+  })
+
   it('says when the commit is unknown', () => {
     const wrapper = mount(AppAbout, { props: { build: build({ commit: undefined, modified: undefined }), open: true }, global })
     expect(wrapper.find('[data-testid=commit]').text()).toBe('Unknown')
@@ -70,6 +107,15 @@ describe('AppVersion', () => {
     expect(wrapper.text()).toBe('PressFleet v0.4.0')
     await wrapper.find('button').trigger('click')
     expect(wrapper.emitted('about')).toHaveLength(1)
+  })
+
+  it('flags an available update, in words', () => {
+    const wrapper = mount(AppVersion, { props: { build: build(), release: release() }, global: { stubs: uiStubs } })
+    expect(wrapper.find('[data-testid=update-badge]').text()).toBe('Update available')
+    expect(wrapper.find('button').attributes('title')).toBe('PressFleet v0.4.0: v0.5.0 is available')
+
+    const current = mount(AppVersion, { props: { build: build(), release: release({ update_available: false }) }, global: { stubs: uiStubs } })
+    expect(current.find('[data-testid=update-badge]').exists()).toBe(false)
   })
 
   it('renders nothing before the platform answers', () => {

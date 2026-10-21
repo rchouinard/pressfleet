@@ -34,6 +34,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache/redis"
 	"github.com/rchouinard/pressfleet/control-plane/internal/pluginupdates"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
+	"github.com/rchouinard/pressfleet/control-plane/internal/releasecheck"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sftpgw"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sitecron"
@@ -106,6 +107,8 @@ type server struct {
 	scheduler    *jobs.Scheduler
 	gateway      *sftpgw.Server
 	gatewayLn    net.Listener
+	// releases is the release check; nil when it is off.
+	releases *releasecheck.Checker
 }
 
 // buildServer opens the state database and constructs every component and
@@ -280,6 +283,13 @@ func (a *app) buildServer(ctx context.Context) (_ *server, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("platform login key: %w", err)
 	}
+	if s.releases, err = a.releaseChecker(); err != nil {
+		return nil, err
+	}
+	var latestRelease api.LatestReleaseFunc
+	if s.releases != nil {
+		latestRelease = s.releases.Latest
+	}
 	// The pool tells job event streams when a job changes.
 	jobChanges := jobs.NewChanges()
 	handler, err := api.NewHandler(api.Options{
@@ -303,6 +313,7 @@ func (a *app) buildServer(ctx context.Context) (_ *server, err error) {
 		Metrics:          metricsSvc,
 		TrustedProxies:   proxies,
 		Build:            a.build(),
+		LatestRelease:    latestRelease,
 		SFTP:             api.SFTPInfo{Enabled: a.cfg.SFTP.Enabled(), Host: a.cfg.DashboardDomain, Port: a.cfg.SFTP.Port},
 		SecureCookies:    a.cfg.HTTP.SecureCookies == config.SecureCookiesAlways,
 	})
@@ -485,6 +496,10 @@ func (s *server) run(ctx context.Context) error {
 			s.log.Warn("reconciling database sessions failed; the sweep job retries", "error", err)
 		}
 	})
+	// Checks at startup and once a day; a failure only costs a debug log.
+	if s.releases != nil {
+		w.Go("release check", s.releases.Run)
+	}
 	// The SFTP gateway stops with the workers, ending its sessions, before
 	// the database closes.
 	if s.gateway != nil {

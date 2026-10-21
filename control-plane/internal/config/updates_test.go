@@ -10,14 +10,14 @@ import (
 
 func TestUpdatesSettings(t *testing.T) {
 	def := config.Default()
-	if u := def.Updates; u.HasWindow() || u.MaxFailures != 3 || u.Core.MajorAutoApproveDays != 0 || u.Core.HoldWarningDays != 90 || u.Images.CheckHours != 6 {
+	if u := def.Updates; u.HasWindow() || u.MaxFailures != 3 || u.Core.MajorAutoApproveDays != 0 || u.Core.HoldWarningDays != 90 || u.Images.CheckHours != 6 || !u.ReleaseCheck {
 		t.Errorf("default updates = %+v", u)
 	}
 	if def.ImageManifestFile != "" {
 		t.Errorf("default image_manifest_file = %q", def.ImageManifestFile)
 	}
 	path := writeFile(t, "updates:\n  window_start: \"01:30\"\n  window_hours: 3\n  core:\n    major_auto_approve_days: 14\n"+
-		"image_manifest_file: /etc/pressfleet/manifest.json\n")
+		"  release_check: false\nimage_manifest_file: /etc/pressfleet/manifest.json\n")
 	cfg, err := config.Load(path, env(map[string]string{
 		"PRESSFLEET_UPDATES_MAX_FAILURES":           "5",
 		"PRESSFLEET_UPDATES_CORE_HOLD_WARNING_DAYS": "30",
@@ -43,13 +43,20 @@ func TestUpdatesSettings(t *testing.T) {
 		"PRESSFLEET_UPDATES_WINDOW_HOURS":                 "6",
 		"PRESSFLEET_UPDATES_CORE_MAJOR_AUTO_APPROVE_DAYS": "0",
 		"PRESSFLEET_IMAGE_MANIFEST_FILE":                  "/srv/manifest.json",
+		"PRESSFLEET_UPDATES_RELEASE_CHECK":                "true",
 	}))
-	if err != nil || cfg.Updates.HasWindow() || cfg.Updates.WindowHours != 6 || cfg.Updates.Core.MajorAutoApproveDays != 0 ||
+	if err != nil || cfg.Updates.HasWindow() || !cfg.Updates.ReleaseCheck || cfg.Updates.WindowHours != 6 || cfg.Updates.Core.MajorAutoApproveDays != 0 ||
 		cfg.ImageManifestFile != "/srv/manifest.json" {
 		t.Errorf("from env: %+v, %q, %v", cfg.Updates, cfg.ImageManifestFile, err)
 	}
 	if _, err := config.Load(path, env(map[string]string{"PRESSFLEET_UPDATES_MAX_FAILURES": "three"})); err == nil {
 		t.Error("Load accepted max_failures that isn't a number")
+	}
+	if _, err := config.Load(path, env(map[string]string{"PRESSFLEET_UPDATES_RELEASE_CHECK": "sometimes"})); err == nil {
+		t.Error("Load accepted a release_check that isn't true or false")
+	}
+	if _, err := config.Load(writeFile(t, "updates:\n  release_check: daily\n"), env(nil)); err == nil {
+		t.Error("Load accepted a release_check in the file that isn't true or false")
 	}
 
 	for _, tt := range []struct {
