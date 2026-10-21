@@ -8,7 +8,7 @@
 #
 # or `make image`. Base images are pinned by linux/amd64 digest.
 
-ARG GO_IMAGE=golang:1.27.1-trixie@sha256:7bffdb405cd12940d2980daa49a86ef575ed4525a17ee7d0c9562547357ab46a
+ARG GO_IMAGE=golang:1.27.2-trixie@sha256:2d658507a011f1eadc0114d7a421b312b2e77d9042a24036a26e267cc9231677
 # Source of the docker CLI and Compose v2 plugin. Both are static binaries.
 ARG DOCKER_CLI_IMAGE=docker:29.8.1-cli@sha256:6602978e2be3c20e530e33773b8cadcef5fe998a71a534ee24516f1176973cdf
 # Builds the dashboard (ui/), which the binary embeds. Only used at build time.
