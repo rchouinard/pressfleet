@@ -37,10 +37,13 @@ entryPoints:
       tls: {}
     # HTTP/2 comes with TLS; HTTP/3 needs UDP 443 published as well.
     http3: {}
-  # Ping (the container healthcheck) and Prometheus metrics. Not published
-  # on the host; the control plane scrapes it over the platform network.
+  # Ping (the container healthcheck) and Prometheus metrics. Loopback only:
+  # Traefik is on every site's network, so any other address would let a
+  # site read every site's traffic. The healthcheck runs inside the
+  # container, and the control plane reads the metrics by running a command
+  # there (provisioner.TraefikMetricsReader), not over a network.
   {{ .EntryPointInternal }}:
-    address: ":{{ .InternalPort }}"
+    address: "127.0.0.1:{{ .InternalPort }}"
 
 ping:
   entryPoint: {{ .EntryPointInternal }}
