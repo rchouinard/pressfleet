@@ -1,0 +1,129 @@
+# Pre-release security review
+
+**Issue:** [#97](https://github.com/rchouinard/pressfleet/issues/97), Security review: tenant isolation and secrets
+**Date:** 2026-10-20, against `main` at `34dbb7e` (after #160)
+**Scope:** design doc §6 and §6.2, and [the dashboard two-factor plan](dashboard-two-factor-plan.md): tenant isolation, the Docker socket proxy, secrets handling, authentication, CSRF and sessions, dashboard two-factor, and known-vulnerability scanning in CI.
+
+This is the record #97 asks for. It says what was checked, how, what came out, and what happened to each finding. Severities are this review's own. **Critical** means a remote compromise without credentials. **High** means a compromise from a low-privilege position. **Medium** means escalation or denial of service with a realistic precondition. **Low** means limited disclosure or a precondition that is already a serious compromise. Only findings with a concrete path are listed. Things that were checked and hold are under [Checked and holding](#checked-and-holding).
+
+## Findings
+
+| ID | Severity | Finding | Status |
+| --- | --- | --- | --- |
+| [F1](#f1-kin-openapi-request-validation-vulnerabilities) | Medium | kin-openapi v0.142.0 request validation: govulncheck-reachable nil-pointer panic (GO-2026-6112), and further DoS advisories | Fixed: v0.149.0 |
+| [F2](#f2-control-plane-image-built-with-go-1271) | Medium | Control plane image built with Go 1.27.1: net/http DoS (CVE-2026-78667) | Fixed: Go 1.27.2 |
+| [F3](#f3-viewers-can-read-secrets-in-access-log-query-strings) | Medium | Viewers read site access logs, which keep query strings such as WordPress password reset keys | Proposed issue |
+| [F4](#f4-admin-api-tokens-can-mint-new-sessions) | Medium | An Admin API token can create users or set passwords, so a stolen token can mint sessions and tokens that outlive its revocation | Proposed issue |
+| [F5](#f5-traefik-metrics-are-reachable-from-every-site) | Low | Traefik's internal entry point (metrics) is reachable from every site network | Proposed issue |
+| [F6](#f6-task-secrets-are-readable-through-the-socket-proxy) | Low | Backup task secrets sit in container environments, which the socket proxy hands to Traefik | Proposed issue |
+| [F7](#f7-webauthn-challenge-store-can-be-flooded) | Low | One session can flood the WebAuthn challenge store and evict other users' login challenges | Proposed issue |
+| [F8](#f8-image-vulnerabilities-and-the-scan-policy) | Low | Every shipped image has HIGH findings with fixed versions; the new scan is report-only | Proposed issue |
+
+### F1: kin-openapi request validation vulnerabilities
+
+- **Location:** `go.mod` (`github.com/getkin/kin-openapi v0.142.0`), used by `control-plane/internal/api/validate.go` (`openapi3filter.ValidateRequest`).
+- **What:** govulncheck reports GO-2026-6112 (nil-pointer panic on a content parameter without a schema) as reachable from `api.validateRequests`. Trivy also reports CVE-2026-100349, -100351, -100352, -100353 and -100354 (nil dereferences, non-finite numbers, unbounded recursion in schema validation, and a path-decoding discrepancy), fixed in v0.146.0 to v0.149.0. GO-2026-6095 (the `NoopAuthenticationFunc` default) and GHSA-r277-6w6q-xmqw (`ValidationHandler.Load()` fails open) don't apply. PressFleet authenticates in its own middleware before validation (`api.authenticate`), sets `NoopAuthenticationFunc` deliberately, and doesn't use `ValidationHandler`.
+- **Exploit path:** validation runs before the handler on every operation. For the public ones (`login`, `loginSecondFactor`), that is before any authentication. An unauthenticated client sends a crafted body to `POST /api/v1/auth/login` through Traefik. A nil dereference panics the request, which the `Recover` middleware turns into a 500. Unbounded recursion overflows the goroutine stack, which can't be recovered and stops the control plane. That ends the dashboard, API, jobs and the SFTP gateway until Docker restarts it. Whether PressFleet's own spec exposes each code path wasn't reproduced. The advisories' preconditions are about request input, and the fix costs a version bump.
+- **Fix:** upgraded to v0.149.0, the oldest release that fixes all of them. `make vulncheck` now reports nothing reachable, Trivy reports nothing for kin-openapi, and the API package tests pass. The test that fails without the fix is govulncheck itself, which now runs in CI (see [CI scanning](#ci-scanning)).
+
+### F2: control plane image built with Go 1.27.1
+
+- **Location:** `control-plane/Dockerfile` (`ARG GO_IMAGE=golang:1.27.1-trixie@…`).
+- **What:** the release binary in the image is built by the pinned Go image, not by the toolchain in `mise.toml`. Trivy reports CVE-2026-78667 (net/http denial of service via a crafted HTTP request) for the `pressfleet` binary, fixed in Go 1.27.2. govulncheck run locally with Go 1.27.2 can't see it, because it checks the standard library of the toolchain that runs it.
+- **Exploit path:** any client on the internet reaches the control plane's `net/http` server through Traefik on the dashboard domain. Like F1, this wasn't reproduced; the advisory names the server code PressFleet runs.
+- **Fix:** `GO_IMAGE` is now `golang:1.27.2-trixie` pinned by its linux/amd64 digest. A rebuilt image no longer reports the stdlib finding for `pressfleet`. The Trivy step added to the Images workflow is what shows it.
+
+### F3: Viewers can read secrets in access log query strings
+
+- **Location:** `images/site-nginx/conf/nginx.conf.template` (`log_format pressfleet` logs `"uri":"$request_uri"`, query string included), served to every role by `listSiteLogs` and `streamSiteLogs` (`authz.ViewMonitoring`, Viewer).
+- **Exploit path:** a site's administrator asks WordPress for a password reset. The emailed link is `GET /wp-login.php?action=rp&key=<key>&login=<user>`, and nginx logs it with the key. WordPress then moves the key into a cookie and redirects, but the key stays valid until the password is changed, by default for 24 hours. A Viewer polling the site's logs in the dashboard copies the key and sets the administrator's password with `POST /wp-login.php?action=resetpass`. They are then a WordPress administrator, which §4.6 and §5.9 deny Viewers. Other WordPress flows carry one-time secrets in URLs the same way (`confirmaction` keys for privacy requests, and many plugins' magic-login and order links). §5.9 already sends the platform's own login token in a POST body for exactly this reason.
+- **Why not fixed here:** what the access log keeps is a product decision. Options are to log `$uri` without the query, to drop or mask known parameters (`key`, `confirm_key`, `token`) with an nginx `map`, or to make site logs an Operator action. Each changes a documented log format or the §4.6 table, and the image change needs a site image rebuild.
+
+### F4: Admin API tokens can mint new sessions
+
+- **Location:** `control-plane/internal/authz/authz.go`. `CreateUser` and `UpdateUser` (including `password`) aren't in `sessionActions`, and tokens are never asked to reauthenticate (`CheckReauthentication`).
+- **Exploit path:** an Admin's full-scope API token leaks, for example from a CI system. Its holder calls `POST /api/v1/users` to create an Admin with a password they choose. Alternatively, `PATCH /api/v1/users/{id}` sets the password of an existing user without a second factor. They then log in to the dashboard and create tokens of their own from that session. Revoking the leaked token doesn't end their access. That defeats the property §4.6 and §6.2 give session-only token creation ("a stolen token can't mint replacements that outlive its revocation"). When `two_factor.required` covers the new user, the attacker simply enrolls their own TOTP. Each step is audited, which helps after the fact but doesn't stop it.
+- **Why not fixed here:** making user creation and password changes session-only changes the API contract for automation (onboarding scripts) and the decision recorded in the plan ("Token callers… can still manage SSH keys"). It needs a design decision on which user-management actions, if any, tokens keep.
+
+### F5: Traefik metrics are reachable from every site
+
+- **Location:** `templates/platform/traefik.yaml.tmpl` (the `traefik` entry point on `:8082` serves `/ping` and `/metrics` on every interface). `compose/provisioner.go` connects Traefik to each site network as `pf-traefik`.
+- **Verified:** from site A's php container, `http://pf-traefik:8082/metrics` answered with `traefik_router_*` and `traefik_service_*` series for site B, named by B's site ID (`router="pf-<id>-preview@docker"`), with B's request counts, status codes, bytes, and latencies. With certificates, `traefik_tls_certs_*` adds every certificate's names.
+- **Exploit path:** code running in any site (a vulnerable or malicious plugin) lists every other site on the host and watches their traffic, a cross-tenant disclosure that §6 rules out ("Sites must not be able to reach other sites' containers"; this isn't another site's container, but it is their data). It discloses no content or credentials.
+- **Why not fixed here:** the entry point can't simply be bound to the platform network, whose address isn't known when the configuration is rendered. A fix takes Traefik's `manualRouting` for metrics, with a router restricted by credentials or source, or a fixed platform subnet with an `ipAllowList`. The control plane scraper (`metrics.DefaultTraefikURL`) and the healthcheck have to change with it.
+
+### F6: task secrets are readable through the socket proxy
+
+- **Location:** `control-plane/internal/provisioner/compose/task.go` (`createTask` passes `Task.SecretEnv` with `--env-file`) and `templates/platform/compose.yaml.tmpl` (the socket proxy allows `GET /containers/<id>/json` to Traefik).
+- **What:** backup, restore, and export tasks get `RESTIC_PASSWORD`, plus `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` on S3, as environment variables. The code notes that Docker keeps them in the container's configuration until the container is removed. That configuration is what the allowlisted inspect endpoint returns.
+- **Exploit path:** an attacker who gains code execution in Traefik, the internet-facing service the socket proxy exists to contain (§6), polls `containers/json` for task containers while scheduled backups run and inspects them through the proxy. They get a client group's plaintext Restic repository key and the S3 credentials, and with both, every backup in that bucket. This wasn't reproduced end to end. `TestIngress` confirms the proxy serves `containers/<id>/json`, and the env-file path is in the code.
+- **Why not fixed here:** the secrets need another way in. Options are a file in the task's transfer directory with `RESTIC_PASSWORD_FILE` and an AWS shared credentials file, or standard input. That changes the task contract in `provisioner.Task` and every caller.
+
+### F7: WebAuthn challenge store can be flooded
+
+- **Location:** `control-plane/internal/auth/challenge.go` (one store of 10,000 entries for all users, pruning the soonest-expiring entry when full) and `StartReauthentication` (`POST /api/v1/auth/reauthenticate/options`, any role, not rate limited), which stores a challenge per call for a user with a security key.
+- **Exploit path:** any logged-in user, a Viewer included, registers a security key and calls the options endpoint in a loop. After 10,000 calls in five minutes, every new challenge evicts the oldest live one, which includes other users' in-flight WebAuthn login challenges. Their login then fails with "unknown or expired challenge" until the flood stops. This is a denial of service against WebAuthn logins and reauthentication only. TOTP and recovery codes are unaffected, and the calls are attributable to the session.
+- **Why not fixed here:** the fix (a per-user cap on live ceremonies, or a separate bound per kind) changes the shared store that passwordless sign-in is designed to reuse.
+
+### F8: image vulnerabilities and the scan policy
+
+- **What:** Trivy 0.75.0 (HIGH and CRITICAL, fixed versions only) finds HIGH issues with fixed versions in every shipped image, almost all in layers PressFleet doesn't build. In the control plane image: Debian `libpcre2-8-0`, and the bundled `docker` CLI, Compose plugin, and `restic` binaries (Go stdlib, `x/crypto`, `x/net`, and others). In `site-php`: Debian `curl`/`libcurl` and `linux-libc-dev`. In `site-nginx`: Alpine `libexpat` and `libx11`. In the platform images: MariaDB (`openssl`, and `gosu` built with an old Go, one CRITICAL), Traefik, the socket proxy, Valkey, and VictoriaMetrics (Go stdlib and `x/net`, Debian `openssl` and `pcre2`).
+- **Exploit path:** depends on the component. Most are DoS issues in network-facing Go code: Traefik and the socket proxy's HTTP servers. The rest are in libraries the services link but don't expose (`libx11`, `linux-libc-dev`, and `gosu`, which only runs at container start).
+- **Status:** the scans now run in CI (below) but report rather than fail, since a gate would fail every pull request on findings that only an image bump upstream fixes. Proposed: bump the pinned images (`templates/platform/images.yaml`, `DOCKER_CLI_IMAGE`, `RESTIC_VERSION`, `BASE_IMAGE`). Then decide a gating policy, for example failing release builds on fixed CRITICAL findings, with a reviewed `.trivyignore`.
+
+## What was checked, and how
+
+Code was read at the locations named. Live checks ran against the e2e harness (`PRESSFLEET_DOCKER_TESTS=1`) with a locally built control plane image. The sandbox's TLS proxy needed a CA added to a build-only copy of the Dockerfile, which isn't in the repository. The site images were pulled from GHCR (`site-php:php8.5-wp7.1.2`, `site-nginx:wp7.1.2`). The Docker host used cgroup v1, which the harness tolerates because it skips preflight.
+
+### Tenant isolation (§6)
+
+| Control | How it was checked | Result |
+| --- | --- | --- |
+| UID separation | `store.AllocateSiteUID` (never reused, range 20000–59999), `templates/compose/site.yaml.tmpl` (`user`, `read_only`, `cap_drop: ALL`, `no-new-privileges`), `compose.RenderSite` (`wp-config.php` owned by the site UID, `0400`, in a `0700` root-owned directory). Live: **new** `TestTenantIsolation` | Holds. Each site's nginx and php run as one UID, distinct per site; `wp-config.php` is `<uid> 400` and absent from nginx. |
+| `open_basedir` | `images/site-php/conf/pool.conf` (`php_admin_value`, so `ini_set` can't widen it). Live: a PHP file in `wp-content` requested through nginx and FPM | Holds. Reads of `/etc/hostname` and `/proc/self/environ` and `scandir('/')` fail; its own files read. WP-CLI runs without `open_basedir`, but only inside the site's own containers, which hold nothing of other sites. |
+| Network isolation | `site.yaml.tmpl` (one network per site, no ports), `compose/provisioner.go` (Traefik, MariaDB, and Redis joined to site networks). Live: existing `TestSiteCreateDelete` ("sites can't reach each other"), run and passing | Holds for site containers: the other site's containers neither resolve nor answer by IP. Shared services joined to site networks are reachable on their service ports, as designed. Traefik's internal port is too: **F5**. |
+| Redis ACLs, `SCAN`, per-site database | `objectcache/redis/names.go` (`siteRules`: `reset`, hashed password, `~<id>:*`, `resetchannels`, `db=<n>`, `-@admin -@dangerous -@pubsub`, scripting limited to `EVAL`/`EVALSHA`/`SCRIPT LOAD|EXISTS`, `CLIENT` and `MEMORY` subcommands for the caller's own connection only, `+info +flushdb`), `valkey.conf.tmpl` (default user off). Live: the `objectcache/redis` Docker test (`TestObjectCacheIsolation`), run and passing. `TestM2Acceptance` checks the same from WordPress, but needs Pebble and wasn't run here | Holds. Another site's keys, `SELECT`/`MOVE`/`COPY … DB`/`SWAPDB`/`FLUSHALL`/`KEYS` are refused; `SCAN` sees only the site's own database. |
+| MariaDB grants | `sitedb/mariadb/server.go` and `names.go` (`ALL PRIVILEGES` on `` `pf\_<id>`.* `` with `_` escaped, no global privileges or `GRANT OPTION`, `MAX_USER_CONNECTIONS`, passwords sent as hashes). Temporary users: `SELECT, SHOW VIEW` or `ALL` on the site's database only, `REVOKE` before `GRANT`, `KILL HARD USER` on drop. Live: **new** `TestTenantIsolation`, with the site's own credentials | Holds. `SHOW DATABASES` lists only its own; the other site's tables, `mysql.user`, and `CREATE DATABASE` are refused; `LOAD_FILE` returns `NULL` (no `FILE`). |
+| SFTP and database tunnels | `sftpgw/sftpgw.go` (sftp subsystem only; no shell, exec, or remote forwarding), `dbsession/forward.go` (only the configured database host and port; an active session on that site; the key and role rechecked per connection; the deadline at expiry) | Holds (code review; `TestSFTP` and the database session e2e tests cover it and weren't rerun). |
+
+### Docker socket (§6)
+
+`templates/platform/compose.yaml.tmpl`: only the control plane mounts `/var/run/docker.sock` read-write. The socket proxy mounts it read-only and allows `HEAD /_ping` and `GET` on `version`, `containers/json`, `containers/<64 hex>/json`, and `events`, from the Traefik container only, on an internal network that only the two share. Traefik reaches Docker only through it. Live: existing `TestIngress` ("no docker socket in traefik", "socket proxy is read-only": writes, logs, exec, and archives are refused), run and passing. **Holds**, with **F6** on what the allowed inspect endpoint discloses.
+
+### Secrets, logging, auth, CSRF, and sessions
+
+- **`redact.Secret`** prints `[REDACTED]` for every `fmt` verb, `slog`, JSON, and text marshaling. Secrets are revealed at the point of use: SQL takes password hashes, Redis takes `#<sha256>` rules, WP-CLI takes argv kept out of errors (`compose.ExecWPCLI`), and tasks take env-files (see F6).
+- **Logs:** every `slog` call in `auth`, `api`, `sites`, and `backup` was grepped for secret-bearing attributes, and none log one. The access log records the path, not the query (`httpserver.AccessLog`). Traefik's access log drops request headers.
+- **Errors, job logs, and audit:** webhook errors drop the URL (`alertchannels/webhook.go`), and channels show only `RedactURL`. Job `Logf` lines name no secrets. Audit details for two-factor events hold methods, counts, and credential IDs only.
+- **API responses** reveal secrets only once, where designed: new API tokens, recovery codes, TOTP enrollment, site admin credentials, database session credentials, and the preview password.
+- **Authentication:** argon2id passwords, with a dummy hash for unknown emails. Session and API tokens are 256-bit and stored as SHA-256. Idle and absolute session expiry apply. A password change, disable, or reset revokes the user's sessions and tokens. Throttling is per account and per address (IPv6 by /64). The role is read on every request.
+- **CSRF:** cookie requests with unsafe methods need `X-CSRF-Token`, an HMAC of the session token. Unsafe requests without `Authorization` also pass `http.CrossOriginProtection`, which covers login CSRF. The session cookie is `HttpOnly`, `SameSite=Lax`, and `Secure` over HTTPS. The pending-login cookie is `SameSite=Strict` and path-scoped. `X-Forwarded-*` is believed only from trusted proxies, rightmost-untrusted first.
+- **Authorization:** one `authorize` call per handler. Operations missing from `operationActions` make the server refuse to start. Only `getHealth`, `getReadiness`, `login`, and `loginSecondFactor` are public. Unknown actions, roles, methods, and scopes are denied.
+- **Dashboard login to WordPress (§5.9):** Ed25519 signature, site ID, a 60-second maximum lifetime, 10 seconds of skew, and a single-use `jti` stored under the unique `wp_options.option_name`. Deletion happens only after `exp` + 60 seconds. The token travels in a POST body.
+
+**Result:** holds, except **F3** (secrets in logs Viewers can read) and **F6** (secrets in container configuration).
+
+### Dashboard two-factor (§6.2)
+
+| Area | Checked | Result |
+| --- | --- | --- |
+| Login flow | `auth.Login` and `LoginSecondFactor`. The pending login is 256-bit and keyed by hash, lasts 5 minutes, and is taken atomically and put back on failure. A right password doesn't reset the account's throttle while a second step is pending. Disabled or deleted users are refused at step two. Failures are audited with the user as actor | Holds. A password holder gets at most 5 TOTP guesses per 15 minutes, as designed (expected time to guess a code is over a year at that rate, and the account is visibly locked meanwhile). |
+| TOTP storage and replay | The secret is sealed with the master key (`secrets.KindTOTPSecret`) and deleted with its row. `matchTOTP` compares every skew step in constant time. `UseStep` is `UPDATE … WHERE last_used_step < ?`, which is atomic. Confirmation records the step too | Holds. |
+| WebAuthn origin and RP ID | `RelyingPartyFor`: the RP ID is the dashboard domain and the only origin is `https://<domain>`, both from configuration, never from the request. Challenges are bound to the user and to registration or login, and taken single-use. `ValidateLogin` checks the user handle, allowed credentials, user presence, origin, and RP ID hash. Credentials from another RP ID don't count. Counter regressions are logged and audited | Holds; the `authtest` software authenticator tests cover wrong origin and RP ID. **F7** on the store's bound. |
+| Recovery codes | 10 codes × 80 bits, SHA-256 hashed, `Use` is atomic, shown once, replaced as a set, not counted as enrollment, session-only to regenerate | Holds. |
+| Forced enrollment | `Principal.EnrollmentRequired` is computed per request. `authz.Check` denies everything outside `enrollmentActions` before the role check, and the last factor can't be removed while required | Holds. |
+| Reauthentication | `sessions.verified_at` is set at login and by `Reauthenticate`, which is throttled like login. `CheckReauthentication` covers every action in the §6.2 table (`sensitiveActions`) | Holds for sessions. Tokens are exempt by design, which is how **F4** arises. |
+| Session-only token creation | `sessionActions` holds `CreateOwnToken`, factor management, reauthentication, and `ResetUserTwoFactor` | Holds as specified; see **F4** for a path around its intent. |
+| Resets | Removing a factor ends the user's other sessions. The Admin reset is session-only, other users only, and ends all of the target's sessions. The CLI resets inside the container | Holds. |
+
+Live: existing `TestTwoFactor` e2e, run and passing.
+
+### CI scanning
+
+- **govulncheck** (`make vulncheck`, pinned at v1.9.0, run with the mise Go toolchain) runs in the new `.github/workflows/security.yml` on every push and pull request, and weekly. It reports only reachable vulnerabilities, so any finding fails the job. Run locally before F1's fix: one reachable (GO-2026-6112), one in an imported package (GO-2026-6095), and one in a required module (GO-2026-5932, `x/crypto/openpgp`, which PressFleet doesn't import and which has no fix). After the fix: none reachable, GO-2026-5932 remains as module-only.
+- **Trivy** (`aquasec/trivy:0.75.0`, pinned by linux/amd64 digest, run as a container rather than through `aquasecurity/trivy-action`) is a composite action, `.github/actions/trivy-scan`. It scans for HIGH and CRITICAL findings with a fixed version and writes them to the job summary. The Images workflow scans the control plane image it builds for pull requests, and the site images of the smoke-tested matrix entries. `security.yml` scans the third-party images in `templates/platform/images.yaml` weekly and on demand. It is report-only for now; see **F8**. Published images aren't rescanned between rebuilds.
+
+## Other observations
+
+- `TestTwoFactorStatusOverHTTP` (`control-plane/internal/api/twofactor_status_test.go`) fails about one run in three on an unchanged checkout. It creates two WebAuthn credentials within one millisecond and expects `ListForUser` (`ORDER BY id`, ULIDs) to return them oldest first. This is a test-stability problem, not a security one; `id.Monotonic` or ordering by `created_at, id` would settle it.
+- Not covered here: `TestM2Acceptance` (needs Pebble), the dashboard's Playwright suite, and Kubernetes templates (post-MVP, nothing to review).
