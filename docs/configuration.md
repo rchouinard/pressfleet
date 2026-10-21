@@ -189,6 +189,13 @@ Old names are accepted for at least one minor release after the change, and unti
 | `backup.retention.keep_yearly` | `PRESSFLEET_BACKUP_RETENTION_KEEP_YEARLY` | | `0` | Likewise for years. With every `keep_*` setting `0`, no snapshot is ever removed. |
 | `backup.check.interval_days` | `PRESSFLEET_BACKUP_CHECK_INTERVAL_DAYS` | | `7` | Days between integrity checks of each backup repository, from 1 to 365. |
 | `backup.check.read_data_percent` | `PRESSFLEET_BACKUP_CHECK_READ_DATA_PERCENT` | | `10` | Share of a repository's data, from 0 to 100, that each check downloads and verifies, chosen at random each time. `0` checks only the repository's structure. On S3, each check downloads this share of the repository. |
+| `backup.state.interval_hours` | `PRESSFLEET_BACKUP_STATE_INTERVAL_HOURS` | | `1` | Hours between the state database's disaster recovery backups, from 1 to 168. What the platform records after the last backup (new sites, changed settings) is lost if the host is. See [Disaster recovery](disaster-recovery.md). |
+| `backup.state.retention.keep_last` | `PRESSFLEET_BACKUP_STATE_RETENTION_KEEP_LAST` | | `0` | The state repository keeps the newest this many state backups. From 0 to 10000. |
+| `backup.state.retention.keep_hourly` | `PRESSFLEET_BACKUP_STATE_RETENTION_KEEP_HOURLY` | | `24` | It keeps the newest state backup of each of the last this many hours that have one. |
+| `backup.state.retention.keep_daily` | `PRESSFLEET_BACKUP_STATE_RETENTION_KEEP_DAILY` | | `14` | Likewise for days. |
+| `backup.state.retention.keep_weekly` | `PRESSFLEET_BACKUP_STATE_RETENTION_KEEP_WEEKLY` | | `8` | Likewise for weeks. |
+| `backup.state.retention.keep_monthly` | `PRESSFLEET_BACKUP_STATE_RETENTION_KEEP_MONTHLY` | | `0` | Likewise for months. |
+| `backup.state.retention.keep_yearly` | `PRESSFLEET_BACKUP_STATE_RETENTION_KEEP_YEARLY` | | `0` | Likewise for years. With every `keep_*` setting `0`, no state backup is ever removed. |
 | `uploads.max_size_mb` | `PRESSFLEET_UPLOADS_MAX_SIZE_MB` | | `10240` | Largest file, in MiB, that can be sent through the upload API for a site import or a code deployment, from 1 to 1048576. Uploads are stored under `<data_dir>/uploads/`, so leave room there. See [Uploads](#uploads). |
 | `uploads.expiry_hours` | `PRESSFLEET_UPLOADS_EXPIRY_HOURS` | | `24` | How long an upload that no import or deployment has taken may go without a new chunk before it is removed as abandoned, from 1 to 720. |
 | `alerts.enabled` | `PRESSFLEET_ALERTS_ENABLED` | | `true` | Whether the control plane evaluates alert rules. The rules and alerts API works either way; with `false`, nothing fires. See [Alerts](#alerts). |
@@ -759,6 +766,9 @@ The DNS checks are skipped until `dashboard_domain` and `preview_base_domain` ar
     repositories/<client-group-id>/
                       the client group's Restic repository (backup.backend local;
                       mode 2770, group 60000; see "Backup repositories")
+    state/            the state repository: the state database's disaster
+                      recovery backups (backup.backend local; see
+                      docs/disaster-recovery.md)
   uploads/<upload-id> files sent through the upload API (never backed up; see "Uploads")
   exports/            database and site exports waiting to be downloaded,
                       <export-id>.<file>, deleted when they expire (see
@@ -784,11 +794,13 @@ pressfleet state restore <backup>
 
 `<backup>` is a path, or a file name in the backups directory. The restore refuses backups from a newer schema than the binary supports, so run it with the PressFleet version that made the backup. The database being replaced is saved to the backups directory first (`...-pre-restore.db`), so a restore can be undone the same way.
 
-**PostgreSQL** is supported for larger installs. PressFleet does not back up or restore PostgreSQL itself; that is the operator's responsibility. Take a backup (`pg_dump`, a managed snapshot, or point-in-time recovery) before upgrading PressFleet, because the control plane migrates the schema on startup and only logs a warning. Dumping from inside the control plane would mean shipping PostgreSQL client tools matched to your server's major version, and PostgreSQL operators usually already have better tools for this. `pressfleet state restore` only supports SQLite.
+**PostgreSQL** is supported for larger installs. PressFleet doesn't take pre-migration backups of PostgreSQL; that is the operator's responsibility. Take a backup (`pg_dump`, a managed snapshot, or point-in-time recovery) before upgrading PressFleet, because the control plane migrates the schema on startup and only logs a warning. Dumping from inside the control plane would mean shipping PostgreSQL client tools matched to your server's major version, and PostgreSQL operators usually already have better tools for this. `pressfleet state restore` only supports SQLite.
+
+**Disaster recovery backups** are separate from the pre-migration backups and cover both drivers: every hour the control plane writes a copy of the whole state database, encrypted, into the state repository beside the backup repositories, and `pressfleet recover` rebuilds a lost platform on a new host from it, the master key, and the site backups. See [Disaster recovery](disaster-recovery.md).
 
 ## Backup repositories
 
-Each client group has its own [Restic](https://restic.net) repository, encrypted with its own random password (design doc §5.3). Sites in a group deduplicate against each other, and offboarding a client means handing over or deleting one repository. The passwords are stored in the state database, encrypted with the master key: **without the master key, no backup can be read**.
+Each client group has its own [Restic](https://restic.net) repository, encrypted with its own random password (design doc §5.3). Sites in a group deduplicate against each other, and offboarding a client means handing over or deleting one repository. The passwords are stored in the state database, encrypted with the master key: **without the master key, no backup can be read**. The state database itself is backed up into the state repository next to them (`<data_dir>/backups/state`, or `<prefix>/state` on S3), whose password is derived from the master key; see [Disaster recovery](disaster-recovery.md).
 
 Where repositories are created is chosen at install time with `backup.backend`:
 

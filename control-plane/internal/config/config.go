@@ -601,7 +601,7 @@ func Default() Config {
 		SMTP: SMTPConfig{Encryption: SMTPEncryptionSTARTTLS},
 		Backup: BackupConfig{
 			Backend: BackupBackendLocal, Schedule: DefaultBackupSchedule(),
-			Retention: DefaultBackupRetention(), Check: DefaultBackupCheck(),
+			Retention: DefaultBackupRetention(), Check: DefaultBackupCheck(), State: DefaultBackupState(),
 		},
 		WordPressSecurity: DefaultWordPressSecurity(),
 		TwoFactor:         DefaultTwoFactor(),
@@ -630,6 +630,13 @@ var intEnvVars = []struct {
 	{"PRESSFLEET_BACKUP_RETENTION_KEEP_YEARLY", func(c *Config) *int { return &c.Backup.Retention.KeepYearly }},
 	{"PRESSFLEET_BACKUP_CHECK_INTERVAL_DAYS", func(c *Config) *int { return &c.Backup.Check.IntervalDays }},
 	{"PRESSFLEET_BACKUP_CHECK_READ_DATA_PERCENT", func(c *Config) *int { return &c.Backup.Check.ReadDataPercent }},
+	{"PRESSFLEET_BACKUP_STATE_INTERVAL_HOURS", func(c *Config) *int { return &c.Backup.State.IntervalHours }},
+	{"PRESSFLEET_BACKUP_STATE_RETENTION_KEEP_LAST", func(c *Config) *int { return &c.Backup.State.Retention.KeepLast }},
+	{"PRESSFLEET_BACKUP_STATE_RETENTION_KEEP_HOURLY", func(c *Config) *int { return &c.Backup.State.Retention.KeepHourly }},
+	{"PRESSFLEET_BACKUP_STATE_RETENTION_KEEP_DAILY", func(c *Config) *int { return &c.Backup.State.Retention.KeepDaily }},
+	{"PRESSFLEET_BACKUP_STATE_RETENTION_KEEP_WEEKLY", func(c *Config) *int { return &c.Backup.State.Retention.KeepWeekly }},
+	{"PRESSFLEET_BACKUP_STATE_RETENTION_KEEP_MONTHLY", func(c *Config) *int { return &c.Backup.State.Retention.KeepMonthly }},
+	{"PRESSFLEET_BACKUP_STATE_RETENTION_KEEP_YEARLY", func(c *Config) *int { return &c.Backup.State.Retention.KeepYearly }},
 	{"PRESSFLEET_UPLOADS_MAX_SIZE_MB", func(c *Config) *int { return &c.Uploads.MaxSizeMB }},
 	{"PRESSFLEET_UPLOADS_EXPIRY_HOURS", func(c *Config) *int { return &c.Uploads.ExpiryHours }},
 	{"PRESSFLEET_ALERTS_EVALUATION_INTERVAL_SECONDS", func(c *Config) *int { return &c.Alerts.EvaluationIntervalSeconds }},
@@ -991,6 +998,9 @@ func (c Config) Validate() error {
 		errs = append(errs, err)
 	}
 	if err := c.Backup.Check.Validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.Backup.State.Validate(); err != nil {
 		errs = append(errs, err)
 	}
 	if err := c.Uploads.Validate(); err != nil {

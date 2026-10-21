@@ -155,6 +155,27 @@ func (p Project) Stop(ctx context.Context) error {
 	return err
 }
 
+// StopServices stops the named services' containers without removing them.
+func (p Project) StopServices(ctx context.Context, services ...string) error {
+	if len(services) == 0 {
+		return fmt.Errorf("%w: stop needs a service", ErrInvalidProject)
+	}
+	_, err := p.run(ctx, nil, append([]string{"stop", "--"}, services...)...)
+	return err
+}
+
+// RunService runs a command in a new, removed-after container of a service
+// (compose run --rm --no-deps), without a TTY, and returns its standard
+// output. It is how the host CLI runs a state command while the service's
+// own container is stopped, e.g. restoring the control plane's state
+// database (§4.7). As with Exec, never pass secrets as arguments.
+func (p Project) RunService(ctx context.Context, service string, command ...string) ([]byte, error) {
+	if service == "" {
+		return nil, fmt.Errorf("%w: run needs a service", ErrInvalidProject)
+	}
+	return p.run(ctx, nil, append([]string{"run", "--rm", "--no-deps", "--no-TTY", service}, command...)...)
+}
+
 // waitSeconds formats a wait timeout for Compose, which takes whole seconds
 // and reads 0 as no limit, so a positive timeout never rounds down to 0.
 func waitSeconds(d time.Duration) string {

@@ -38,6 +38,50 @@ type BackupConfig struct {
 	Retention BackupRetentionConfig `yaml:"retention"`
 	// Check is how repositories are checked for damage.
 	Check BackupCheckConfig `yaml:"check"`
+	// State is how the state database's disaster recovery backups are
+	// taken and kept.
+	State BackupStateConfig `yaml:"state"`
+}
+
+// BackupStateConfig is the schedule and retention of the state database's
+// disaster recovery backups (#96): an encrypted copy of the state database
+// in the state repository beside the client group repositories, which
+// rebuilds the platform on a new host together with the master key.
+type BackupStateConfig struct {
+	// IntervalHours is the time between backups, 1 to 168. Whatever the
+	// platform recorded since the last backup (new sites, settings) is
+	// lost if the host is.
+	IntervalHours int `yaml:"interval_hours"`
+	// Retention is which backups are kept, as backup.retention is for
+	// sites. All rules zero keeps every backup.
+	Retention BackupRetentionConfig `yaml:"retention"`
+}
+
+// DefaultBackupState backs the state database up hourly, keeping the last
+// day's hourly backups, then one a day for two weeks and one a week for two
+// months.
+func DefaultBackupState() BackupStateConfig {
+	return BackupStateConfig{
+		IntervalHours: 1,
+		Retention:     BackupRetentionConfig{KeepHourly: 24, KeepDaily: 14, KeepWeekly: 8},
+	}
+}
+
+// Interval returns IntervalHours as a duration.
+func (c BackupStateConfig) Interval() time.Duration {
+	return time.Duration(c.IntervalHours) * time.Hour
+}
+
+// Validate reports every problem with the state backup settings, or nil.
+func (c BackupStateConfig) Validate() error {
+	var errs []error
+	if c.IntervalHours < 1 || c.IntervalHours > 168 {
+		errs = append(errs, fmt.Errorf("backup.state.interval_hours must be from 1 to 168, got %d", c.IntervalHours))
+	}
+	if err := c.Retention.validate("backup.state.retention"); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // BackupRetentionConfig is the retention policy (#54): which of each site's
@@ -86,10 +130,15 @@ func (r BackupRetentionConfig) KeepsEverything() bool { return r == BackupRetent
 
 // Validate reports every problem with the retention policy, or nil.
 func (r BackupRetentionConfig) Validate() error {
+	return r.validate("backup.retention")
+}
+
+// validate is Validate for the policy at the config key prefix.
+func (r BackupRetentionConfig) validate(prefix string) error {
 	var errs []error
 	for _, rule := range r.rules() {
 		if rule.n < 0 || rule.n > maxKeep {
-			errs = append(errs, fmt.Errorf("backup.retention.%s must be from 0 to %d, got %d", rule.key, maxKeep, rule.n))
+			errs = append(errs, fmt.Errorf("%s.%s must be from 0 to %d, got %d", prefix, rule.key, maxKeep, rule.n))
 		}
 	}
 	return errors.Join(errs...)

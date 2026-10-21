@@ -71,4 +71,8 @@
 // duplicate what PostgreSQL operators already have: managed snapshots,
 // point-in-time recovery, or their own pg_dump schedule. For the same reason
 // [Restore] supports SQLite only.
+//
+// Disaster recovery backups are different: [DB.Dump] and [Load] (dump.go)
+// copy the whole database in a dialect-neutral format, for both drivers,
+// which package backup/statebackup keeps in the state repository (#96).
 package store

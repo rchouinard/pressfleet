@@ -75,7 +75,7 @@ func (m *Manager) Export(ctx context.Context, clientGroupID, dest string) (Expor
 	err = m.exec(ctx, map[string]string{
 		"RESTIC_REPOSITORY":    e.RepositoryDir,
 		"RESTIC_PASSWORD_FILE": e.PasswordFile,
-	}, nil, io.Discard, "check")
+	}, nil, nil, io.Discard, "check")
 	if err != nil {
 		return Export{}, fmt.Errorf("export backup repository of client group %s: checking the copy: %w", clientGroupID, err)
 	}

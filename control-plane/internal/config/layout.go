@@ -75,6 +75,13 @@ func (l Layout) BackupRepositoriesDir() string {
 	return filepath.Join(l.Root, "backups", "repositories")
 }
 
+// StateBackupRepositoryDir holds the Restic repository of the state
+// database's disaster recovery backups (package backup/statebackup) when
+// backups are kept locally.
+func (l Layout) StateBackupRepositoryDir() string {
+	return filepath.Join(l.Root, "backups", "state")
+}
+
 // BackupRepositoryDir returns the directory of one client group's local
 // Restic repository. It rejects IDs that would escape the repositories
 // directory.

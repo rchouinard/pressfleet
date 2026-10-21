@@ -32,6 +32,9 @@ const (
 	labelKeyID      = "pressfleet master key id v1"
 	labelCheckValue = "pressfleet master key check v1"
 	labelSecretsKey = "pressfleet secrets aes-256-gcm v1" //nolint:gosec // G101: an HKDF label, not a credential
+	// labelStateBackup derives the password of the platform's state backup
+	// repository, which can't be stored in the state database it backs up.
+	labelStateBackup = "pressfleet state backup restic password v1"
 )
 
 // Sentinel errors for master keys.
@@ -131,6 +134,16 @@ func (k MasterKey) derive(label string) []byte {
 // secretsKey returns the AES-256 key for secrets.
 func (k MasterKey) secretsKey() ([]byte, error) {
 	return hkdf.Key(sha256.New, k.raw, nil, labelSecretsKey, 32)
+}
+
+// stateBackupPassword returns the restic password of the state backup
+// repository: 256 bits derived from the key, base64url.
+func (k MasterKey) stateBackupPassword() (redact.Secret, error) {
+	b, err := hkdf.Key(sha256.New, k.raw, nil, labelStateBackup, 32)
+	if err != nil {
+		return "", err
+	}
+	return redact.Secret(base64.RawURLEncoding.EncodeToString(b)), nil
 }
 
 // String implements fmt.Stringer.

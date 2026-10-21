@@ -172,6 +172,12 @@ func Verify(ctx context.Context, db *store.DB, keys *Keyring) (firstUse bool, er
 	return firstUse, err
 }
 
+// VerifyIn is Verify inside a transaction the caller holds, e.g. to check a
+// state database loaded from a backup before committing it.
+func VerifyIn(ctx context.Context, q store.Querier, keys *Keyring) (firstUse bool, err error) {
+	return verify(ctx, q, keys.current)
+}
+
 func verify(ctx context.Context, q store.Querier, k *keyEntry) (firstUse bool, err error) {
 	var (
 		currentID string

@@ -258,3 +258,50 @@ func flip(s string) string {
 	}
 	return string(b)
 }
+
+func TestCheckRestored(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		sec := secrets.NewStore(db, secretstest.Keyring(t, 1))
+		check := func(sec secrets.Store) adminlogin.RestoredKey {
+			t.Helper()
+			var got adminlogin.RestoredKey
+			if err := db.InTx(ctx, func(q store.Querier) error {
+				var err error
+				got, err = adminlogin.CheckRestored(ctx, q, sec)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			return got
+		}
+		if got := check(sec); got != adminlogin.KeyMissing {
+			t.Errorf("without a key: %q", got)
+		}
+		signer, err := adminlogin.Ensure(ctx, db, sec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := check(sec); got != adminlogin.KeyRestored {
+			t.Errorf("with the key: %q", got)
+		}
+		assertCounts(t, db, 1)
+
+		// A key that doesn't match its public half is discarded, and Ensure
+		// then makes a new one.
+		if _, err := db.ExecContext(ctx, "UPDATE platform_keys SET public_key = ?", base64.StdEncoding.EncodeToString(make([]byte, 32))); err != nil {
+			t.Fatal(err)
+		}
+		if got := check(sec); got != adminlogin.KeyDiscarded {
+			t.Errorf("with a damaged key: %q", got)
+		}
+		assertCounts(t, db, 0)
+		renewed, err := adminlogin.Ensure(ctx, db, sec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Equal(renewed.PublicKey(), signer.PublicKey()) {
+			t.Error("Ensure after a discarded key returned the old key")
+		}
+	})
+}

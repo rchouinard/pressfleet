@@ -72,7 +72,7 @@ func TestBackupSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := config.BackupConfig{Backend: "s3", Schedule: config.DefaultBackupSchedule(), Retention: config.DefaultBackupRetention(), Check: config.DefaultBackupCheck(), S3: config.BackupS3Config{
+	want := config.BackupConfig{Backend: "s3", Schedule: config.DefaultBackupSchedule(), Retention: config.DefaultBackupRetention(), Check: config.DefaultBackupCheck(), State: config.DefaultBackupState(), S3: config.BackupS3Config{
 		Endpoint: "https://s3.example.com", Bucket: "backups", Prefix: "pressfleet/prod", Region: "eu-west-1",
 		AccessKeyID: "AKIAEXAMPLE", SecretAccessKey: "pfenc1:abc:ZGVm",
 	}}
@@ -88,7 +88,7 @@ func TestBackupSettings(t *testing.T) {
 		"PRESSFLEET_BACKUP_S3_BUCKET":            "",
 		"PRESSFLEET_BACKUP_S3_SECRET_ACCESS_KEY": "",
 	}))
-	if err != nil || cfg.Backup != (config.BackupConfig{Backend: "local", Schedule: config.DefaultBackupSchedule(), Retention: config.DefaultBackupRetention(), Check: config.DefaultBackupCheck()}) {
+	if err != nil || cfg.Backup != (config.BackupConfig{Backend: "local", Schedule: config.DefaultBackupSchedule(), Retention: config.DefaultBackupRetention(), Check: config.DefaultBackupCheck(), State: config.DefaultBackupState()}) {
 		t.Errorf("Backup from env = %+v, %v; want local", cfg.Backup, err)
 	}
 }
@@ -194,6 +194,11 @@ func TestBackupRetentionAndCheckSettings(t *testing.T) {
 		{"read all", func(b *config.BackupConfig) { b.Check.ReadDataPercent = 100 }, ""},
 		{"read more than all", func(b *config.BackupConfig) { b.Check.ReadDataPercent = 101 }, "backup.check.read_data_percent"},
 		{"read negative", func(b *config.BackupConfig) { b.Check.ReadDataPercent = -5 }, "backup.check.read_data_percent"},
+		{"state weekly", func(b *config.BackupConfig) { b.State.IntervalHours = 168 }, ""},
+		{"state never", func(b *config.BackupConfig) { b.State.IntervalHours = 0 }, "backup.state.interval_hours"},
+		{"state too rare", func(b *config.BackupConfig) { b.State.IntervalHours = 169 }, "backup.state.interval_hours"},
+		{"state keeps everything", func(b *config.BackupConfig) { b.State.Retention = config.BackupRetentionConfig{} }, ""},
+		{"state retention negative", func(b *config.BackupConfig) { b.State.Retention.KeepDaily = -1 }, "backup.state.retention.keep_daily"},
 	} {
 		cfg := config.Default()
 		tt.edit(&cfg.Backup)
@@ -204,5 +209,25 @@ func TestBackupRetentionAndCheckSettings(t *testing.T) {
 		case tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)):
 			t.Errorf("%s: Validate() = %v, want error mentioning %q", tt.name, err, tt.want)
 		}
+	}
+}
+
+func TestBackupStateSettings(t *testing.T) {
+	def := config.Default().Backup.State
+	if def != (config.BackupStateConfig{IntervalHours: 1, Retention: config.BackupRetentionConfig{KeepHourly: 24, KeepDaily: 14, KeepWeekly: 8}}) ||
+		def.Interval() != time.Hour {
+		t.Errorf("default state backups = %+v", def)
+	}
+	path := writeFile(t, "backup:\n  state:\n    interval_hours: 6\n    retention:\n      keep_hourly: 0\n")
+	cfg, err := config.Load(path, env(map[string]string{"PRESSFLEET_BACKUP_STATE_RETENTION_KEEP_LAST": "10"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := config.BackupStateConfig{IntervalHours: 6, Retention: config.BackupRetentionConfig{KeepLast: 10, KeepDaily: 14, KeepWeekly: 8}}
+	if cfg.Backup.State != want {
+		t.Errorf("State = %+v, want %+v", cfg.Backup.State, want)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v", err)
 	}
 }

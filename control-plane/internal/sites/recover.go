@@ -1,0 +1,314 @@
+package sites
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup"
+	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
+	"github.com/rchouinard/pressfleet/control-plane/internal/store"
+)
+
+// Recovering sites on a new host (#96).
+//
+// When the state database is restored from its disaster recovery backup
+// (package backup/statebackup), the site records come back but nothing
+// else does: the new host has no site containers, volumes, or databases,
+// and its object cache holds no site users. [PrepareRecovery] runs in the
+// transaction that loads the backup. It fails every unfinished job (their
+// work was lost with the old host, and resuming them would act on resources
+// that don't exist), and for each site that was running or stopped it sets
+// the status to updating and queues a [RecoverJobType] job on the site's
+// lock key. The startup reconciliation leaves updating sites alone. Sites
+// that were provisioning or being deleted are marked failed: their jobs were
+// interrupted, and the operator decides what to do with them.
+//
+// The recover job's steps are:
+//
+//  1. prepare: pick the newest snapshot of the site in its client group's
+//     repository (the repository, not the restored backup records, is the
+//     truth: it may hold snapshots newer than the state backup). If it
+//     was taken on a newer WordPress core than the site record says, the
+//     site moves to an image with at least that core (as a restore does).
+//  2. create_database and create_object_cache: as provisioning does, with
+//     the restored credentials. Both are idempotent.
+//  3. start_stack: provisioner.CreateSite renders the site with the current
+//     configuration, which includes the platform login key, so a key the
+//     restore generated reaches the site here.
+//  4. restore: backup.Engine.Restore puts the snapshot's wp-content and
+//     database in place.
+//  5. restart_site and upgrade_database: as a restore does.
+//  6. finish: a site that was stopped is stopped again, and the status
+//     is set from the containers.
+//
+// Every step converges, so a retried job, or one queued again, ends in the
+// same place. A job that fails for good marks the site failed with the
+// reason and leaves what it created for the operator to look at: deleting
+// the site (or restoring it from a backup once it runs) removes or replaces
+// it, and there is no earlier state to roll back to.
+
+// RecoverJobType recreates a site from its newest backup after the state
+// database was restored on a new host.
+const RecoverJobType = "site.recover"
+
+// Step names of the site.recover job. Keep them stable: a queued job
+// resumes by step name.
+const (
+	stepRecoverPrepare = "prepare"
+	stepRecoverRestore = "restore"
+	stepRecoverFinish  = "finish"
+)
+
+// Job data keys of the site.recover job.
+const (
+	dataRecoverSnapshot = "snapshot_id"
+)
+
+// interruptedByRestore is the error of jobs failed by PrepareRecovery.
+const interruptedByRestore = "interrupted: the platform's state was restored from a backup on a new host"
+
+// recoverPayload is the site.recover job's payload.
+type recoverPayload struct {
+	// Status is the status the site had in the backup: running or stopped.
+	Status store.SiteStatus `json:"status"`
+}
+
+// Recovery is what PrepareRecovery did.
+type Recovery struct {
+	// Recovering are the sites that got a recover job.
+	Recovering []string
+	// Failed are the sites marked failed because their provisioning or
+	// deletion was interrupted.
+	Failed []string
+	// InterruptedJobs counts the unfinished jobs that were failed.
+	InterruptedJobs int
+}
+
+// PrepareRecovery readies restored state for its new host, in the
+// transaction q that loads it; see the comment at the top of this file.
+func PrepareRecovery(ctx context.Context, q store.Querier, now time.Time) (Recovery, error) {
+	var rec Recovery
+	var err error
+	if rec.InterruptedJobs, err = store.NewJobs(q).FailUnfinished(ctx, interruptedByRestore, now); err != nil {
+		return rec, err
+	}
+	sites := store.NewSites(q)
+	ids, err := sites.ListIDs(ctx)
+	if err != nil {
+		return rec, fmt.Errorf("prepare site recovery: %w", err)
+	}
+	for _, id := range ids {
+		site, err := sites.Get(ctx, id)
+		if err != nil {
+			return rec, fmt.Errorf("prepare site recovery: %w", err)
+		}
+		switch site.Status {
+		case store.SiteFailed:
+			continue
+		case store.SiteProvisioning, store.SiteDeleting:
+			what := "provisioning"
+			if site.Status == store.SiteDeleting {
+				what = "deletion"
+			}
+			msg := "the site's " + what + " was interrupted by restoring the platform on a new host; delete the site, or create it again"
+			if _, err := sites.SetStatus(ctx, id, store.SiteFailed, msg, site.Status); err != nil {
+				return rec, fmt.Errorf("prepare site recovery: %w", err)
+			}
+			rec.Failed = append(rec.Failed, id)
+			continue
+		}
+		if site.WPSaltsSecretRef == "" {
+			continue
+		}
+		p := recoverPayload{Status: store.SiteRunning}
+		if site.Status == store.SiteStopped {
+			p.Status = store.SiteStopped
+		}
+		if _, err := sites.SetStatus(ctx, id, store.SiteUpdating, "recovering from its newest backup", site.Status); err != nil {
+			return rec, fmt.Errorf("prepare site recovery: %w", err)
+		}
+		if _, err := jobs.Enqueue(ctx, q, jobs.Spec{
+			Type: RecoverJobType, TargetType: store.JobTargetSite, TargetID: id,
+			LockKey: store.SiteLockKey(id), Payload: p,
+		}); err != nil {
+			return rec, fmt.Errorf("prepare site recovery: %w", err)
+		}
+		rec.Recovering = append(rec.Recovering, id)
+	}
+	return rec, nil
+}
+
+func (s *Service) recoverHandler() jobs.Handler {
+	return jobs.Handler{
+		Type: RecoverJobType,
+		Steps: []jobs.Step{
+			{Name: stepRecoverPrepare, Do: s.prepareRecovery, Undo: s.failRecovery},
+			{Name: stepCreateDatabase, Do: s.createDatabase},
+			{Name: stepCreateCache, Do: s.createObjectCache},
+			{Name: stepStartStack, Do: s.startRecoveredStack},
+			{Name: stepRecoverRestore, Do: s.restoreRecovered},
+			{Name: stepRestartSite, Do: s.restartRestoredSite},
+			{Name: stepUpgradeDatabase, Do: s.upgradeRecoveredDatabase},
+			{Name: stepRecoverFinish, Do: s.finishRecovery},
+		},
+	}
+}
+
+// recoveringSite loads the site of a recover job, which must be updating.
+func (s *Service) recoveringSite(ctx context.Context, r *jobs.Run) (store.Site, error) {
+	site, err := s.managedSite(ctx, r)
+	if err != nil {
+		return store.Site{}, err
+	}
+	if site.Status != store.SiteUpdating {
+		return store.Site{}, jobs.Permanent(fmt.Errorf("the site is %s, not recovering", site.Status))
+	}
+	return site, nil
+}
+
+// prepareRecovery picks the snapshot to recover from, and moves the site to
+// a core at least as new as the snapshot's.
+func (s *Service) prepareRecovery(ctx context.Context, r *jobs.Run) error {
+	site, err := s.recoveringSite(ctx, r)
+	if err != nil {
+		return err
+	}
+	var snapID string
+	if ok, err := r.Get(dataRecoverSnapshot, &snapID); err != nil || ok {
+		return err
+	}
+	snaps, err := s.engine.ListSnapshots(ctx, site.ID)
+	if err != nil {
+		return fmt.Errorf("listing the site's backups: %w", err)
+	}
+	if len(snaps) == 0 {
+		return jobs.Permanent(errors.New("the site has no backup to recover from"))
+	}
+	snap := snaps[len(snaps)-1]
+	core, err := s.coreFor(snap.WPCoreVersion, site.WPCoreVersion)
+	if err != nil {
+		return jobs.Permanent(err)
+	}
+	if core != "" {
+		if _, err := store.NewSites(s.db).SetWPCoreVersion(ctx, site.ID, core); err != nil {
+			return err
+		}
+		r.Logf("The backup was taken on WordPress %s; the site moves to WordPress %s.", snap.WPCoreVersion, core)
+	}
+	if err := r.Set(dataRecoverSnapshot, string(snap.ID)); err != nil {
+		return err
+	}
+	r.Logf("Recovering the site from backup %s, taken %s.", shortSnapshot(string(snap.ID)), snap.Time.UTC().Format(time.RFC3339))
+	return nil
+}
+
+// startRecoveredStack creates the site's containers with its recorded
+// domains, as provisioning does.
+func (s *Service) startRecoveredStack(ctx context.Context, r *jobs.Run) error {
+	site, err := s.recoveringSite(ctx, r)
+	if err != nil {
+		return err
+	}
+	aliases, err := store.NewSites(s.db).Aliases(ctx, site.ID)
+	if err != nil {
+		return err
+	}
+	dbRef, cacheRef, err := s.secretRefs(ctx, r)
+	if err != nil {
+		return err
+	}
+	cfg := SiteConfig(site, aliases, dbRef, cacheRef)
+	if err := cfg.Validate(); err != nil {
+		return jobs.Permanent(err)
+	}
+	if cfg.PinnedImages, err = s.pinnedImages(ctx, site); err != nil {
+		return err
+	}
+	st, err := s.prov.CreateSite(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	if err := s.recordRender(ctx, site.ID); err != nil {
+		return err
+	}
+	r.Logf("Containers are up (%s).", st.Phase)
+	return nil
+}
+
+// restoreRecovered restores the chosen snapshot into the site.
+func (s *Service) restoreRecovered(ctx context.Context, r *jobs.Run) error {
+	site, err := s.recoveringSite(ctx, r)
+	if err != nil {
+		return err
+	}
+	var snapID string
+	ok, err := r.Get(dataRecoverSnapshot, &snapID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return jobs.Permanent(errors.New("the job has no snapshot to recover from"))
+	}
+	if err := s.engine.Restore(ctx, site.ID, backup.SnapshotID(snapID), site.ID); err != nil {
+		return permanentRestoreError(err)
+	}
+	r.Logf("Restored the backup's wp-content and database.")
+	return nil
+}
+
+// upgradeRecoveredDatabase applies the site's core's database schema to the
+// restored database, which may come from an older core.
+func (s *Service) upgradeRecoveredDatabase(ctx context.Context, r *jobs.Run) error {
+	site, err := s.recoveringSite(ctx, r)
+	if err != nil {
+		return err
+	}
+	if _, err := s.wpcliRestored(ctx, site.ID, "core", "update-db"); err != nil {
+		return fmt.Errorf("upgrading the restored database to WordPress %s: %w", site.WPCoreVersion, err)
+	}
+	r.Logf("The restored database is up to date with WordPress %s.", site.WPCoreVersion)
+	return nil
+}
+
+// finishRecovery stops a site that was stopped, and sets the status from
+// its containers.
+func (s *Service) finishRecovery(ctx context.Context, r *jobs.Run) error {
+	site, err := s.recoveringSite(ctx, r)
+	if err != nil {
+		return err
+	}
+	var p recoverPayload
+	if err := r.Payload(&p); err != nil {
+		return jobs.Permanent(err)
+	}
+	if p.Status == store.SiteStopped {
+		if err := s.prov.StopSite(ctx, site.ID); err != nil {
+			return fmt.Errorf("stopping the site: %w", err)
+		}
+	}
+	status := s.observedStatus(ctx, site.ID)
+	if _, err := store.NewSites(s.db).SetStatus(ctx, site.ID, status, "", store.SiteUpdating); err != nil {
+		return err
+	}
+	if err := r.SetResult("site_id", site.ID); err != nil {
+		return err
+	}
+	r.Logf("The site is recovered and %s.", status)
+	return nil
+}
+
+// failRecovery marks the site failed with the job's error. Nothing is
+// removed: there is no earlier state of the site to go back to.
+func (s *Service) failRecovery(ctx context.Context, r *jobs.Run) error {
+	msg := statusMessage("recovering the site from its backup failed", r.Job().Error)
+	changed, err := store.NewSites(s.db).SetStatus(ctx, r.Job().TargetID, store.SiteFailed, msg, store.SiteUpdating)
+	if err != nil {
+		return err
+	}
+	if changed {
+		r.Warnf("The site is marked failed.")
+	}
+	return nil
+}

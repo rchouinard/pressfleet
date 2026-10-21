@@ -45,6 +45,12 @@ func (m *Manager) run(ctx context.Context, rec Repository, password redact.Secre
 // runTo runs restic against rec with its password, writing its standard
 // output to stdout.
 func (m *Manager) runTo(ctx context.Context, rec Repository, password redact.Secret, stdout io.Writer, args ...string) error {
+	return m.runIO(ctx, rec, password, nil, stdout, args...)
+}
+
+// runIO runs restic against rec with its password, connecting stdin (nil
+// for none) and stdout.
+func (m *Manager) runIO(ctx context.Context, rec Repository, password redact.Secret, stdin io.Reader, stdout io.Writer, args ...string) error {
 	env := map[string]string{"RESTIC_REPOSITORY": rec.Location}
 	secretEnv := map[string]redact.Secret{"RESTIC_PASSWORD": password}
 	if rec.Backend == BackendS3 {
@@ -55,14 +61,14 @@ func (m *Manager) runTo(ctx context.Context, rec Repository, password redact.Sec
 		secretEnv["AWS_ACCESS_KEY_ID"] = m.s3.AccessKeyID
 		secretEnv["AWS_SECRET_ACCESS_KEY"] = m.s3.SecretAccessKey
 	}
-	return m.exec(ctx, env, secretEnv, stdout, args...)
+	return m.exec(ctx, env, secretEnv, stdin, stdout, args...)
 }
 
 // exec runs restic with the given environment and nothing else from the
 // control plane's but inheritedEnv. Secrets reach the child only through
 // its environment. Group-level commands run without a local cache: they
 // are rare, and the cache would need a home of its own.
-func (m *Manager) exec(ctx context.Context, env map[string]string, secretEnv map[string]redact.Secret, stdout io.Writer, args ...string) error {
+func (m *Manager) exec(ctx context.Context, env map[string]string, secretEnv map[string]redact.Secret, stdin io.Reader, stdout io.Writer, args ...string) error {
 	cmd := exec.CommandContext(ctx, m.restic, slices.Concat([]string{"--no-cache"}, args)...) //nolint:gosec // G204: the operator-configured restic binary with our own arguments
 	for _, k := range inheritedEnv {
 		if v, ok := os.LookupEnv(k); ok {
@@ -76,7 +82,7 @@ func (m *Manager) exec(ctx context.Context, env map[string]string, secretEnv map
 		cmd.Env = append(cmd.Env, k+"="+v.Reveal())
 	}
 	var stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = stdout, &stderr
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, &stderr
 	err := cmd.Run()
 	if err == nil {
 		return nil

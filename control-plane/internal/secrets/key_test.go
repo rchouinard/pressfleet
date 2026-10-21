@@ -117,3 +117,33 @@ func TestKeyNeverFormatted(t *testing.T) {
 		t.Errorf("keyring output should name its key ID:\n%s", out.String())
 	}
 }
+
+// The state backup password depends only on the master key, so a new host
+// with the key derives the same one, and differs between keys.
+func TestStateBackupPassword(t *testing.T) {
+	k := secrets.GenerateMasterKey()
+	parsed, err := secrets.ParseMasterKey(k.Encode())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := secrets.NewKeyring(k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := secrets.NewKeyring(parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := secrets.NewKeyring(secrets.GenerateMasterKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pw := a.StateBackupPassword()
+	if len(pw.Reveal()) != 43 || pw != b.StateBackupPassword() || pw == other.StateBackupPassword() {
+		t.Errorf("passwords: %d chars, same key equal %v, other key equal %v",
+			len(pw.Reveal()), pw == b.StateBackupPassword(), pw == other.StateBackupPassword())
+	}
+	if strings.Contains(pw.Reveal(), k.Encode().Reveal()[len("pfmk1:"):][:8]) {
+		t.Error("the password contains the key")
+	}
+}

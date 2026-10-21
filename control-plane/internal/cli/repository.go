@@ -57,9 +57,12 @@ func (a *app) backupRepositories(db *store.DB, secretStore secrets.Store, keys *
 		Layout:  a.cfg.Layout(),
 		Backend: a.cfg.Backup.Backend,
 		S3:      s3,
-		Created: repomaint.OnRepositoryCreated(a.maintenanceTiming()),
-		Deleted: repomaint.OnRepositoryDeleted,
-		Logger:  a.log.With("component", "backup-repositories"),
+		// The state repository's password comes from the master key, as a
+		// new host has nothing else to open it with.
+		StatePassword: keys.StateBackupPassword(),
+		Created:       repomaint.OnRepositoryCreated(a.maintenanceTiming()),
+		Deleted:       repomaint.OnRepositoryDeleted,
+		Logger:        a.log.With("component", "backup-repositories"),
 	})
 }
 
@@ -71,6 +74,15 @@ func (a *app) backupWindow() sitebackup.Window {
 // maintenanceTiming is when repositories are pruned and checked.
 func (a *app) maintenanceTiming() repomaint.Timing {
 	return repomaint.Timing{Window: a.backupWindow(), CheckInterval: a.cfg.Backup.Check.Interval()}
+}
+
+// stateBackupRetention is the retention policy of the state backups.
+func (a *app) stateBackupRetention() backup.Retention {
+	r := a.cfg.Backup.State.Retention
+	return backup.Retention{
+		KeepLast: r.KeepLast, KeepHourly: r.KeepHourly, KeepDaily: r.KeepDaily,
+		KeepWeekly: r.KeepWeekly, KeepMonthly: r.KeepMonthly, KeepYearly: r.KeepYearly,
+	}
 }
 
 // backupRetention is the retention policy the backup engine applies.

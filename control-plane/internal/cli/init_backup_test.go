@@ -39,7 +39,7 @@ func TestInitBackupLocalByDefault(t *testing.T) {
 	e := newInitEnv(t)
 	r := e.run("", e.nonInteractiveArgs()...)
 	key := e.assertInstalled(r)
-	if b, _ := backupConfigOf(t, e, key); b != (config.BackupConfig{Backend: config.BackupBackendLocal, Schedule: config.DefaultBackupSchedule(), Retention: config.DefaultBackupRetention(), Check: config.DefaultBackupCheck()}) {
+	if b, _ := backupConfigOf(t, e, key); b != (config.BackupConfig{Backend: config.BackupBackendLocal, Schedule: config.DefaultBackupSchedule(), Retention: config.DefaultBackupRetention(), Check: config.DefaultBackupCheck(), State: config.DefaultBackupState()}) {
 		t.Errorf("backup = %+v, want local", b)
 	}
 	if want := "Backups:          " + filepath.Join(e.dataDir, "backups", "repositories"); !strings.Contains(r.stdout, want) {
@@ -63,7 +63,7 @@ func TestInitBackupS3(t *testing.T) {
 	key := e.assertInstalled(r)
 
 	b, secret := backupConfigOf(t, e, key)
-	want := config.BackupConfig{Backend: "s3", Schedule: config.DefaultBackupSchedule(), Retention: config.DefaultBackupRetention(), Check: config.DefaultBackupCheck(), S3: config.BackupS3Config{
+	want := config.BackupConfig{Backend: "s3", Schedule: config.DefaultBackupSchedule(), Retention: config.DefaultBackupRetention(), Check: config.DefaultBackupCheck(), State: config.DefaultBackupState(), S3: config.BackupS3Config{
 		Endpoint: "http://minio.internal:9000", Bucket: "pf-backups", Prefix: "prod", AccessKeyID: "pressfleet",
 		SecretAccessKey: b.S3.SecretAccessKey,
 	}}
