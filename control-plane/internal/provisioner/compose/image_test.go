@@ -51,6 +51,10 @@ func TestEnsureImage(t *testing.T) {
 }
 
 func TestBuildAndRemoveImage(t *testing.T) {
+	// BuildImage adds BuildFlags from the environment.
+	for _, v := range []string{"PRESSFLEET_BUILD_EXTRA_CA", "PRESSFLEET_BUILD_NETWORK", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "FTP_PROXY", "ftp_proxy"} {
+		t.Setenv(v, "")
+	}
 	var calls []string
 	var stdin string
 	noSuchImage := &compose.CommandError{Stderr: "Error response from daemon: No such image: x", Err: errors.New("exit status 1")}
@@ -77,5 +81,49 @@ func TestBuildAndRemoveImage(t *testing.T) {
 	want := []string{"build --quiet --tag e2e.local/x:1 -", "image tag e2e.local/x:1 e2e.local/y:1", "image rm -- e2e.local/x:1"}
 	if !slices.Equal(calls, want) || stdin != "FROM scratch\n" {
 		t.Errorf("calls = %q (stdin %q), want %q", calls, stdin, want)
+	}
+}
+
+func TestBuildFlags(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+		want []string
+	}{
+		{"nothing set", nil, nil},
+		{"no proxy alone", map[string]string{"NO_PROXY": "localhost"}, nil},
+		{
+			"extra CA and host network",
+			map[string]string{"PRESSFLEET_BUILD_EXTRA_CA": "/ca.pem", "PRESSFLEET_BUILD_NETWORK": "host"},
+			[]string{"--secret", "id=extra_ca,src=/ca.pem", "--network", "host"},
+		},
+		{
+			"remote proxy",
+			map[string]string{"HTTPS_PROXY": "http://proxy.corp:3128", "http_proxy": "proxy.corp:3128", "NO_PROXY": ".corp"},
+			[]string{"--build-arg", "http_proxy", "--build-arg", "HTTPS_PROXY", "--build-arg", "NO_PROXY"},
+		},
+		{
+			"loopback proxy on the default network",
+			map[string]string{"HTTPS_PROXY": "http://127.0.0.1:33583", "https_proxy": "localhost:3128", "ALL_PROXY": "socks5://[::1]:1080", "NO_PROXY": "x"},
+			nil,
+		},
+		{
+			"loopback proxy on the host network",
+			map[string]string{"HTTPS_PROXY": "http://127.0.0.1:33583", "PRESSFLEET_BUILD_NETWORK": "host", "no_proxy": "x"},
+			[]string{"--network", "host", "--build-arg", "HTTPS_PROXY", "--build-arg", "no_proxy"},
+		},
+		{
+			"loopback-like host name",
+			map[string]string{"HTTPS_PROXY": "http://localhost.corp:3128"},
+			[]string{"--build-arg", "HTTPS_PROXY"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := compose.BuildFlags(func(k string) string { return tt.env[k] })
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("BuildFlags = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

@@ -23,20 +23,34 @@ ARG RESTIC_VERSION=0.19.1
 ARG RESTIC_SHA256=f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c
 ARG MARIADB_CLIENT_VERSION=1:11.8.6-0+deb13u1
 
+# Every RUN that may download sources images/shared/extra-ca.sh first, which
+# trusts the optional extra_ca build secret for that RUN only (builds behind
+# a TLS-intercepting proxy; docs/testing.md). Without the secret it does
+# nothing, and the CA never reaches an image layer.
+
 FROM ${NODE_IMAGE} AS ui
 # Keep in step with the pnpm version in mise.toml and ui/package.json.
-RUN npm install --global pnpm@10.34.6
+RUN --mount=type=secret,id=extra_ca,required=false \
+    --mount=type=bind,source=images/shared/extra-ca.sh,target=/run/extra-ca.sh \
+    . /run/extra-ca.sh && npm install --global pnpm@10.34.6
 WORKDIR /src/ui
 COPY ui/package.json ui/pnpm-lock.yaml ./
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile --ignore-scripts
+    --mount=type=secret,id=extra_ca,required=false \
+    --mount=type=bind,source=images/shared/extra-ca.sh,target=/run/extra-ca.sh \
+    . /run/extra-ca.sh && pnpm install --frozen-lockfile --ignore-scripts
 COPY ui/ ./
-RUN pnpm generate
+RUN --mount=type=secret,id=extra_ca,required=false \
+    --mount=type=bind,source=images/shared/extra-ca.sh,target=/run/extra-ca.sh \
+    . /run/extra-ca.sh && pnpm generate
 
 FROM ${GO_IMAGE} AS build
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=secret,id=extra_ca,required=false \
+    --mount=type=bind,source=images/shared/extra-ca.sh,target=/run/extra-ca.sh \
+    . /run/extra-ca.sh && go mod download
 COPY . .
 COPY --from=ui /src/ui/.output/public ui/.output/public
 ARG VERSION=dev
@@ -45,6 +59,9 @@ ARG VERSION=dev
 ARG COMMIT=
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=secret,id=extra_ca,required=false \
+    --mount=type=bind,source=images/shared/extra-ca.sh,target=/run/extra-ca.sh \
+    . /run/extra-ca.sh && \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -buildvcs=false -tags webui -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
       -o /out/pressfleet ./control-plane/cmd/pressfleet
@@ -57,7 +74,10 @@ FROM ${BASE_IMAGE} AS backup-tools
 ARG RESTIC_VERSION
 ARG RESTIC_SHA256
 ARG MARIADB_CLIENT_VERSION
-RUN apt-get update \
+RUN --mount=type=secret,id=extra_ca,required=false \
+    --mount=type=bind,source=images/shared/extra-ca.sh,target=/run/extra-ca.sh \
+    . /run/extra-ca.sh \
+    && apt-get update \
     && apt-get install -y --no-install-recommends bzip2 "mariadb-client=${MARIADB_CLIENT_VERSION}" \
     && rm -rf /var/lib/apt/lists/*
 ADD --checksum=sha256:${RESTIC_SHA256} \
@@ -70,7 +90,10 @@ ARG MARIADB_CLIENT_VERSION
 # ca-certificates: TLS to registries, S3 backup targets, and ACME endpoints.
 # mariadb-client-core: the `mariadb` client and the libraries mariadb-dump
 # links against, without mariadb-client's Perl dependencies.
-RUN apt-get update \
+RUN --mount=type=secret,id=extra_ca,required=false \
+    --mount=type=bind,source=images/shared/extra-ca.sh,target=/run/extra-ca.sh \
+    . /run/extra-ca.sh \
+    && apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates "mariadb-client-core=${MARIADB_CLIENT_VERSION}" \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=backup-tools /usr/bin/mariadb-dump /usr/bin/mariadb-dump

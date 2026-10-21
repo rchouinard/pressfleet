@@ -12,15 +12,23 @@
 ARG NGINX_VERSION=1.30
 
 # ---------------------------------------------------------------------------
-# WordPress core download and verification (shared with site-php).
+# WordPress core download and verification (shared with site-php). Its RUNs
+# trust the optional extra_ca build secret through shared/extra-ca.sh (see
+# site-php/Dockerfile).
 FROM debian:trixie-slim AS wordpress
-RUN apt-get update \
+RUN --mount=type=secret,id=extra_ca,required=false \
+	--mount=type=bind,source=shared/extra-ca.sh,target=/run/extra-ca.sh \
+	. /run/extra-ca.sh \
+	&& apt-get update \
 	&& apt-get install -y --no-install-recommends ca-certificates curl jq \
 	&& rm -rf /var/lib/apt/lists/*
 ARG WP_VERSION
 ARG WP_SHA1=""
 COPY shared/fetch-wordpress.sh /usr/local/bin/fetch-wordpress
-RUN sh /usr/local/bin/fetch-wordpress "$WP_VERSION" "$WP_SHA1" /out
+RUN --mount=type=secret,id=extra_ca,required=false \
+	--mount=type=bind,source=shared/extra-ca.sh,target=/run/extra-ca.sh \
+	. /run/extra-ca.sh \
+	&& sh /usr/local/bin/fetch-wordpress "$WP_VERSION" "$WP_SHA1" /out
 
 # ---------------------------------------------------------------------------
 FROM nginx:${NGINX_VERSION}-alpine

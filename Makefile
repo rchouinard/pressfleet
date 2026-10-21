@@ -57,9 +57,15 @@ ui-check: ui/node_modules/.modules.yaml ## Lint, typecheck, and unit-test the da
 test: ## Run tests with the race detector
 	CGO_ENABLED=1 go test -race ./...
 
+# Extra `docker build` options for builds behind a TLS-intercepting proxy,
+# from PRESSFLEET_BUILD_EXTRA_CA, PRESSFLEET_BUILD_NETWORK, and the proxy
+# variables (images/build-flags.sh; docs/testing.md). Empty when none is set.
+# The two settings are passed on so that they also work as make arguments.
+DOCKER_BUILD_FLAGS = $(shell PRESSFLEET_BUILD_EXTRA_CA='$(PRESSFLEET_BUILD_EXTRA_CA)' PRESSFLEET_BUILD_NETWORK='$(PRESSFLEET_BUILD_NETWORK)' images/build-flags.sh)
+
 .PHONY: image
 image: ## Build the control plane container image (tag: IMAGE=...)
-	docker build -f control-plane/Dockerfile --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMAGE) .
+	docker build $(DOCKER_BUILD_FLAGS) -f control-plane/Dockerfile --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMAGE) .
 
 DEV_IMAGE ?= pressfleet-control-plane:dev
 
@@ -142,10 +148,10 @@ images: ## Build the site image matrix from images/manifest.json (needs jq; SITE
 	@set -e; php="$(if $(SITE_PHP),$(SITE_PHP),$$(images/matrix.sh php))"; wps="$$(images/matrix.sh wp)"; \
 	for wp in $$wps; do \
 		sha1="$$(images/matrix.sh sha1 $$wp)"; \
-		docker build -f images/site-nginx/Dockerfile -t $(IMAGE_REPO)/site-nginx:wp$$wp \
+		docker build $(DOCKER_BUILD_FLAGS) -f images/site-nginx/Dockerfile -t $(IMAGE_REPO)/site-nginx:wp$$wp \
 			--build-arg WP_VERSION=$$wp --build-arg WP_SHA1=$$sha1 images; \
 		for v in $$php; do \
-			docker build -f images/site-php/Dockerfile -t $(IMAGE_REPO)/site-php:php$$v-wp$$wp \
+			docker build $(DOCKER_BUILD_FLAGS) -f images/site-php/Dockerfile -t $(IMAGE_REPO)/site-php:php$$v-wp$$wp \
 				--build-arg PHP_VERSION=$$v --build-arg WP_VERSION=$$wp --build-arg WP_SHA1=$$sha1 images; \
 		done; \
 	done

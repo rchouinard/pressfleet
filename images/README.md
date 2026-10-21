@@ -61,8 +61,11 @@ Build args:
 | both | `WP_SHA1` | no | Expected SHA-1 of `wordpress-<WP>.tar.gz`. When empty, it is fetched from wordpress.org. Either way, every extracted file is also checked against the MD5s from the WordPress checksums API. |
 | site-php | `PHP_VERSION` | yes | PHP branch; selects the `php:<PHP>-fpm-trixie` base image |
 | site-php | `WPCLI_VERSION`, `WPCLI_SHA512` | no | WP-CLI release and the SHA-512 it is verified against (defaults pinned in the Dockerfile) |
-| site-php | `IGBINARY_VERSION`, `REDIS_VERSION`, `IMAGICK_VERSION` | no | PECL extension versions (pinned in the Dockerfile) |
 | site-nginx | `NGINX_VERSION` | no | `nginx:<version>-alpine` base (default `1.30`, the stable branch) |
+
+The PECL extensions (igbinary, redis, imagick) are pinned with the SHA-256 of their release tarballs in [`shared/pecl.json`](shared/pecl.json). `images/update-pecl.sh <name> <version>` moves one to another version and records its checksum; then update the version in [`site-php/README.md`](site-php/README.md). The build downloads and verifies the tarballs in a stage of their own, so `pecl install` needs no network access.
+
+Behind a TLS-intercepting proxy, set `PRESSFLEET_BUILD_EXTRA_CA` (and `PRESSFLEET_BUILD_NETWORK=host` for a proxy on the host's loopback); see [Building behind a TLS-intercepting proxy](../docs/testing.md#building-behind-a-tls-intercepting-proxy).
 
 ## Runtime contract
 
