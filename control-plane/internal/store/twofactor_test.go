@@ -250,10 +250,23 @@ func TestWebAuthnCredentials(t *testing.T) {
 		}
 
 		list, err := creds.ListForUser(ctx, u.ID)
-		want := []string{c1.ID, c2.ID}
-		slices.Sort(want)
-		if err != nil || len(list) != 2 || list[0].ID != want[0] || list[1].ID != want[1] {
-			t.Errorf("ListForUser = %+v, %v; want IDs %v", list, err, want)
+		if err != nil || len(list) != 2 || list[0].ID != c1.ID || list[1].ID != c2.ID {
+			t.Errorf("ListForUser = %+v, %v; want IDs %v, %v in creation order", list, err, c1.ID, c2.ID)
+		}
+		// Credentials registered in the same millisecond keep their order.
+		burst := createUser(t, db, "c@example.com", store.RoleOperator)
+		burstAt := time.Now()
+		var order []string
+		for i := range 20 {
+			c := newCredential(burst.ID, fmt.Sprintf("burst-%d", i))
+			c.CreatedAt = burstAt
+			if err := creds.Create(ctx, &c); err != nil {
+				t.Fatal(err)
+			}
+			order = append(order, c.ID)
+		}
+		if list, err := creds.ListForUser(ctx, burst.ID); err != nil || !slices.Equal(credentialIDs(list), order) {
+			t.Errorf("ListForUser after a burst = %v, %v; want %v", credentialIDs(list), err, order)
 		}
 		if list, err := creds.ListForUser(ctx, id.New()); err != nil || list == nil || len(list) != 0 {
 			t.Errorf("ListForUser without credentials = %v, %v; want empty", list, err)
@@ -612,4 +625,13 @@ func TestSessionVerifiedAtMigrationBackfill(t *testing.T) {
 			}
 		})
 	}
+}
+
+// credentialIDs returns the IDs of list, in order.
+func credentialIDs(list []store.WebAuthnCredential) []string {
+	ids := make([]string, len(list))
+	for i, c := range list {
+		ids[i] = c.ID
+	}
+	return ids
 }

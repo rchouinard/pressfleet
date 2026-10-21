@@ -229,15 +229,19 @@ func scanWebAuthnCredential(s scanner) (WebAuthnCredential, error) {
 // Create inserts c, filling in its ID and, if zero, CreatedAt. It returns
 // ErrConflict if the credential ID is already registered, and ErrReference if
 // the user doesn't exist.
+// webAuthnCredentialIDs keeps credentials registered in the same millisecond
+// in order, so ListForUser's creation order holds.
+var webAuthnCredentialIDs id.Monotonic
+
 func (r WebAuthnCredentials) Create(ctx context.Context, c *WebAuthnCredential) error {
 	if c.UserID == "" || len(c.CredentialID) == 0 || len(c.PublicKey) == 0 || c.RPID == "" || c.Name == "" {
 		return errors.New("create WebAuthn credential: user, credential ID, public key, relying party ID, and name are required")
 	}
 	created := *c
-	created.ID = id.New()
 	if created.CreatedAt.IsZero() {
 		created.CreatedAt = now()
 	}
+	created.ID = webAuthnCredentialIDs.NewAt(created.CreatedAt)
 	created.CreatedAt, created.LastUsedAt = utc(created.CreatedAt), utcPtr(created.LastUsedAt)
 	if created.Transports == nil {
 		created.Transports = []string{}
