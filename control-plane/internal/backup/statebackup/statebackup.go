@@ -368,6 +368,16 @@ func Restore(ctx context.Context, repo Repository, snap Snapshot, opts RestoreOp
 	return res, nil
 }
 
+// SettleRestored marks the backup job that took a restored backup as
+// succeeded: the dump was taken while it ran, so the restored state has it
+// running, although it finished on the old host (the backup exists). Call
+// it in the restore's transaction, before failing the jobs the old host
+// left unfinished.
+func SettleRestored(ctx context.Context, q store.Querier, now time.Time) error {
+	_, err := store.NewJobs(q).FinishRunning(ctx, JobType, store.JobSucceeded, "", now)
+	return err
+}
+
 // Handler returns the job handler that backs the state database up and
 // then applies the retention policy.
 func (s *Service) Handler() jobs.Handler {

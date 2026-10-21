@@ -240,7 +240,11 @@ func (a *app) stateRecover(ctx context.Context, out io.Writer, f stateRecoverFla
 			if loginKey, err = adminlogin.CheckRestored(ctx, q, secrets.NewStore(q, keys)); err != nil {
 				return err
 			}
-			recovery, err = sites.PrepareRecovery(ctx, q, time.Now())
+			now := time.Now()
+			if err := statebackup.SettleRestored(ctx, q, now); err != nil {
+				return err
+			}
+			recovery, err = sites.PrepareRecovery(ctx, q, now)
 			return err
 		},
 	})

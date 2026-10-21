@@ -634,6 +634,28 @@ func (r Jobs) FailUnfinished(ctx context.Context, errMsg string, now time.Time) 
 	return int(n), nil
 }
 
+// FinishRunning moves the running jobs of a type to a final state, without
+// running the rest of their steps, and returns how many it moved. Like
+// FailUnfinished, it is for a restored state database: the state backup
+// job that took the backup is running in it (package backup/statebackup).
+func (r Jobs) FinishRunning(ctx context.Context, jobType string, state JobState, errMsg string, now time.Time) (int, error) {
+	if !state.Final() {
+		return 0, fmt.Errorf("finish running %s jobs: %q is not a final state", jobType, state)
+	}
+	res, err := r.q.ExecContext(ctx,
+		"UPDATE jobs SET state = ?, error = ?, lease_owner = NULL, lease_expires_at = NULL, finished_at = ?, updated_at = ? "+
+			"WHERE type = ? AND state = ?",
+		state, errMsg, now, now, jobType, JobRunning)
+	if err != nil {
+		return 0, fmt.Errorf("finish running %s jobs: %w", jobType, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("finish running %s jobs: %w", jobType, err)
+	}
+	return int(n), nil
+}
+
 // The methods below change a leased job. Each takes the lease owner and
 // returns ErrLeaseLost, changing nothing, if the caller no longer holds the
 // lease.

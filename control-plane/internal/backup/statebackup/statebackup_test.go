@@ -224,8 +224,33 @@ func TestJobAndSchedule(t *testing.T) {
 				t.Fatalf("job %s: %s", d.Job.State, d.Job.Error)
 			}
 		}
-		if snaps, err := statebackup.List(ctx, repo); err != nil || len(snaps) != 1 {
-			t.Errorf("after two jobs keeping the last 1: %+v, %v", snaps, err)
+		snaps, err := statebackup.List(ctx, repo)
+		if err != nil || len(snaps) != 1 {
+			t.Fatalf("after two jobs keeping the last 1: %+v, %v", snaps, err)
+		}
+
+		// The backup was taken while its job ran; the restore settles it.
+		cfg := storetest.Config(t, db.Dialect())
+		var running, settled int
+		_, err = statebackup.Restore(ctx, repo, snaps[0], statebackup.RestoreOptions{
+			Store: cfg, BackupDir: t.TempDir(), Logger: storetest.Logger(),
+			Check: func(ctx context.Context, q store.Querier) error {
+				if err := q.QueryRowContext(ctx, "SELECT COUNT(*) FROM jobs WHERE type = ? AND state = ?",
+					statebackup.JobType, store.JobRunning).Scan(&running); err != nil {
+					return err
+				}
+				if err := statebackup.SettleRestored(ctx, q, time.Now()); err != nil {
+					return err
+				}
+				return q.QueryRowContext(ctx, "SELECT COUNT(*) FROM jobs WHERE type = ? AND state = ?",
+					statebackup.JobType, store.JobSucceeded).Scan(&settled)
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if running != 1 || settled != 2 {
+			t.Errorf("restored backup jobs: %d running before settling, %d succeeded after; want 1 and 2", running, settled)
 		}
 	})
 }

@@ -34,6 +34,13 @@
 // Snapshots of sites are taken by the backup engine in a site task
 // container instead (§4.4); TaskAccess returns what such a task needs.
 //
+// # The state repository
+//
+// Beside the client group repositories, the state repository holds the
+// state database's disaster recovery backups (state.go, package
+// backup/statebackup). Its password is derived from the master key rather
+// than stored, and its commands run like the group-level ones.
+//
 // # Lifecycle
 //
 // Repositories are created lazily: Ensure (and TaskAccess, which calls it)

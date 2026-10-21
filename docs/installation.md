@@ -28,7 +28,7 @@ The binary carries the release's platform templates and pinned image list, and i
 
 > **⚠️ Master key warning:** The master key is required to decrypt backup repository keys. If the host is lost and the master key was not saved elsewhere, **all backups are unrecoverable**. Setup requires the operator to download the key and confirm it has been stored somewhere safe (e.g. a password manager), separate from the host and its backups.
 
-`init` prints the key and its key ID, then asks you to type `yes` or the key ID once the key is stored somewhere safe (`no` aborts). Nothing is written until you confirm. The key file must be outside the data directory, because the data directory is backed up. See [Master key](configuration.md#master-key) for how the control plane uses it.
+`init` prints the key and its key ID, then asks you to type `yes` or the key ID once the key is stored somewhere safe (`no` aborts). Nothing is written until you confirm. The key file must be outside the data directory, because the data directory is backed up. See [Master key](configuration.md#master-key) for how the control plane uses it, and [Disaster recovery](disaster-recovery.md) for rebuilding a lost host from the key and the backups; keep a copy of the config file with the key.
 
 ## Settings
 
@@ -145,6 +145,8 @@ The master key is printed on standard output (the line starting with `pfmk1:`); 
 - Keeps the encrypted DNS provider credentials the same way unless `--dns-credentials-file` gives new ones, in which case it recreates Traefik so it reads them.
 - Leaves an existing admin user with the same email alone. To set a new password, run `pressfleet user reset-password` in the control plane container.
 
+On a new host replacing a lost one, `init --force` with the saved master key file and the same answers installs an empty platform, and `pressfleet recover` then restores its state from the backups (see [Disaster recovery](disaster-recovery.md)).
+
 ## CLI and control plane versions
 
 The `pressfleet` binary on the host (the host CLI) and the control plane container must be compatible versions (design doc §4.7):
@@ -163,7 +165,7 @@ control plane: v0.4.0 (admin interface 1)
 
 `pressfleet version --client` prints only the CLI's version.
 
-Host commands (`init`, `doctor`, `metrics-access`) check the installed control plane's version before they do anything, and refuse to run outside the policy. There is no override. If the CLI is newer, upgrade the control plane to the CLI's version with `pressfleet upgrade` (see [Upgrading](upgrading.md)), or use a CLI that matches the control plane. If the CLI is older, install a matching CLI: the control plane can't be downgraded. `version` and `upgrade` are exempt, and so are the commands you run inside the control plane container, where the CLI is the control plane's own binary.
+Host commands (`init`, `recover`, `doctor`, `metrics-access`) check the installed control plane's version before they do anything, and refuse to run outside the policy. There is no override. If the CLI is newer, upgrade the control plane to the CLI's version with `pressfleet upgrade` (see [Upgrading](upgrading.md)), or use a CLI that matches the control plane. If the CLI is older, install a matching CLI: the control plane can't be downgraded. `version` and `upgrade` are exempt, and so are the commands you run inside the control plane container, where the CLI is the control plane's own binary.
 
 The CLI asks the control plane for its version through a small admin interface: it runs `pressfleet admin info` in the control plane container, which prints its version and readiness as JSON. If the control plane doesn't answer, because it is stopped or failing, the CLI reads the version from the container's image instead (the `org.opencontainers.image.version` label, or else the image tag). If there is no control plane container, there is nothing to check. If the CLI can't reach Docker, or either side is a development build without a release version, the command runs with a warning; `doctor` is how such problems get diagnosed.
 

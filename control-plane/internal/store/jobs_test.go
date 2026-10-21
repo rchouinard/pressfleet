@@ -460,6 +460,19 @@ func TestJobsFailUnfinished(t *testing.T) {
 		if err := jobs.Finish(ctx, done.ID, "w", store.JobSucceeded, "", now); err != nil {
 			t.Fatal(err)
 		}
+		other := enqueue(t, db, "d", "")
+		if _, err := db.ExecContext(ctx, "UPDATE jobs SET state = ?, lease_owner = ? WHERE id = ?", store.JobRunning, "w", other.ID); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := jobs.FinishRunning(ctx, "d", store.JobSucceeded, "", now); err != nil || n != 1 {
+			t.Fatalf("FinishRunning = %d, %v; want 1", n, err)
+		}
+		if got, err := jobs.Get(ctx, other.ID); err != nil || got.State != store.JobSucceeded || got.LeaseOwner != "" {
+			t.Errorf("finished job = %+v, %v", got, err)
+		}
+		if _, err := jobs.FinishRunning(ctx, "d", store.JobRunning, "", now); err == nil {
+			t.Error("FinishRunning to a running state succeeded")
+		}
 		n, err := jobs.FailUnfinished(ctx, "interrupted", now)
 		if err != nil || n != 2 {
 			t.Fatalf("FailUnfinished = %d, %v; want 2", n, err)

@@ -764,6 +764,9 @@ The DNS checks are skipped until `dashboard_domain` and `preview_base_domain` ar
     repositories/<client-group-id>/
                       the client group's Restic repository (backup.backend local;
                       mode 2770, group 60000; see "Backup repositories")
+    state/            the state repository: the state database's disaster
+                      recovery backups (backup.backend local; see
+                      docs/disaster-recovery.md)
   uploads/<upload-id> files sent through the upload API (never backed up; see "Uploads")
   exports/            database and site exports waiting to be downloaded,
                       <export-id>.<file>, deleted when they expire (see
@@ -789,11 +792,13 @@ pressfleet state restore <backup>
 
 `<backup>` is a path, or a file name in the backups directory. The restore refuses backups from a newer schema than the binary supports, so run it with the PressFleet version that made the backup. The database being replaced is saved to the backups directory first (`...-pre-restore.db`), so a restore can be undone the same way.
 
-**PostgreSQL** is supported for larger installs. PressFleet does not back up or restore PostgreSQL itself; that is the operator's responsibility. Take a backup (`pg_dump`, a managed snapshot, or point-in-time recovery) before upgrading PressFleet, because the control plane migrates the schema on startup and only logs a warning. Dumping from inside the control plane would mean shipping PostgreSQL client tools matched to your server's major version, and PostgreSQL operators usually already have better tools for this. `pressfleet state restore` only supports SQLite.
+**PostgreSQL** is supported for larger installs. PressFleet doesn't take pre-migration backups of PostgreSQL; that is the operator's responsibility. Take a backup (`pg_dump`, a managed snapshot, or point-in-time recovery) before upgrading PressFleet, because the control plane migrates the schema on startup and only logs a warning. Dumping from inside the control plane would mean shipping PostgreSQL client tools matched to your server's major version, and PostgreSQL operators usually already have better tools for this. `pressfleet state restore` only supports SQLite.
+
+**Disaster recovery backups** are separate from the pre-migration backups and cover both drivers: every hour the control plane writes a copy of the whole state database, encrypted, into the state repository beside the backup repositories, and `pressfleet recover` rebuilds a lost platform on a new host from it, the master key, and the site backups. See [Disaster recovery](disaster-recovery.md).
 
 ## Backup repositories
 
-Each client group has its own [Restic](https://restic.net) repository, encrypted with its own random password (design doc §5.3). Sites in a group deduplicate against each other, and offboarding a client means handing over or deleting one repository. The passwords are stored in the state database, encrypted with the master key: **without the master key, no backup can be read**.
+Each client group has its own [Restic](https://restic.net) repository, encrypted with its own random password (design doc §5.3). Sites in a group deduplicate against each other, and offboarding a client means handing over or deleting one repository. The passwords are stored in the state database, encrypted with the master key: **without the master key, no backup can be read**. The state database itself is backed up into the state repository next to them (`<data_dir>/backups/state`, or `<prefix>/state` on S3), whose password is derived from the master key; see [Disaster recovery](disaster-recovery.md).
 
 Where repositories are created is chosen at install time with `backup.backend`:
 
