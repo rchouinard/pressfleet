@@ -809,6 +809,8 @@ Where repositories are created is chosen at install time with `backup.backend`:
 
 A group's repository is created the first time the group needs one, i.e. on its first backup, or ahead of time with `pressfleet repository create`. A client group can't be deleted while its repository exists (`409`, whose detail gives the group's ID and the commands below), so backups are never lost by accident.
 
+Creating a repository is single-flight per group: concurrent first backups of a new group wait for one `restic init`, and an `init` interrupted by a control plane restart (a key but no config, and no snapshots) is cleaned up and redone by the next backup. If a repository was broken before by several `restic init` runs (issue #188), its backups fail with `repository has conflicting key files` and an error listing the key files; the platform doesn't delete any of them. The backups are intact. Repair it by moving all key files but one out of the repository's `keys/` directory (or S3 prefix) and running `restic -r <location> cat config` with the group's password (`pressfleet repository export` writes it to `password.txt`) until it prints the config, then delete the other key files. A repository without backups can just be deleted; the next backup creates it again.
+
 To offboard a client from the dashboard, delete its sites, then, on the client group's page (which shows the group's ID with a copy button):
 
 1. Export the backups the client should keep from "Backups of deleted sites". Each export is a site in the two files a site import takes (see [Site exports](#site-exports)).

@@ -30,7 +30,7 @@ docker compose exec control-plane pressfleet state backups    # list the backups
 
 ## Rebuilding on a new host
 
-Run these steps as root on the new host. Use the same data directory path as before: local repositories are recorded by path.
+Run these steps as root on the new host. The data directory can be at another path than before: `recover` points the local repositories' records at the new one.
 
 1. **Prepare the host** as for a first installation ([Installation](installation.md)): Docker, the address pools, and the DNS records, pointed at the new host's address.
 
@@ -41,7 +41,7 @@ Run these steps as root on the new host. Use the same data directory path as bef
    (umask 077; cat > /etc/pressfleet/master.key)   # paste the key, then Ctrl-D
    ```
 
-3. **Install** with `pressfleet init`, giving the same answers as the first installation (or prefilled from the saved config file), and `--force`, because the master key file is already there. `init` reuses the key; it never replaces one. It starts an empty platform and creates an admin user, which the restore replaces with the old users.
+3. **Install** with `pressfleet init`, giving the same answers as the first installation (or prefilled from the saved config file), except that the data directory may differ, and `--force`, because the master key file is already there. `init` reuses the key; it never replaces one. It starts an empty platform and creates an admin user, which the restore replaces with the old users.
 
    ```sh
    pressfleet init --force
@@ -60,6 +60,7 @@ Run these steps as root on the new host. Use the same data directory path as bef
    Restored 5310 rows in 42 tables; the state database is at schema version 30.
    The backup opens with this installation's master key.
    The platform login key was restored and decrypts with the master key; sites keep their public key.
+   Pointed 4 local backup repositories at /srv/pressfleet/backups/repositories, where this host's data directory keeps them.
    Failed 3 jobs the old host hadn't finished.
    12 sites will be recovered from their newest backups when the control plane starts.
    ```

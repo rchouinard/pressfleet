@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -151,6 +152,235 @@ func TestEnsure(t *testing.T) {
 		// A client group can't be deleted while its repository exists.
 		if err := store.NewClientGroups(db).Delete(ctx, groupID); !errors.Is(err, store.ErrReference) {
 			t.Errorf("deleting the group: err = %v, want ErrReference", err)
+		}
+	})
+}
+
+// keyFiles returns the names of the key files of a local repository.
+func keyFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	des, err := os.ReadDir(filepath.Join(dir, "keys"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, de := range des {
+		names = append(names, de.Name())
+	}
+	return names
+}
+
+// Concurrent first backups of a new group call Ensure at once. Each restic
+// init writes a master key, and with more than one the repository is
+// unreadable for good (#188).
+func TestEnsureConcurrent(t *testing.T) {
+	t.Parallel()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		f := newFixture(t, db, repository.Options{})
+		// Plain restic broke 14 of 20 trials with four inits, so a few
+		// groups of eight make a missing lock all but certain to show.
+		for _, name := range []string{"Acme", "Beta", "Gamma"} {
+			groupID := f.group(t, name)
+			const callers = 8
+			recs := make([]repository.Repository, callers)
+			errs := make([]error, callers)
+			var wg sync.WaitGroup
+			start := make(chan struct{})
+			for i := range callers {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					<-start
+					recs[i], errs[i] = f.m.Ensure(ctx, groupID)
+				}()
+			}
+			close(start)
+			wg.Wait()
+			for i, err := range errs {
+				if err != nil {
+					t.Fatalf("%s: Ensure #%d: %v", name, i, err)
+				}
+				if recs[i].SecretRef != recs[0].SecretRef {
+					t.Errorf("%s: Ensure #%d used secret %s, #0 used %s", name, i, recs[i].SecretRef, recs[0].SecretRef)
+				}
+			}
+			if keys := keyFiles(t, recs[0].Location); len(keys) != 1 {
+				t.Errorf("%s: %d key files %v, want 1", name, len(keys), keys)
+			}
+			env := []string{"RESTIC_REPOSITORY=" + recs[0].Location, "RESTIC_PASSWORD=" + f.password(t, recs[0]).Reveal()}
+			if _, err := restic(t, env, "cat", "config"); err != nil {
+				t.Errorf("%s: the repository doesn't open: %v", name, err)
+			}
+		}
+		if n := f.count(t, "secrets"); n != 3 {
+			t.Errorf("secrets = %d, want 3", n)
+		}
+	})
+}
+
+// A control plane that stops between restic's writing the master key and
+// the config leaves a key without a config. The next Ensure must not add a
+// second key to it.
+func TestEnsureAfterInterruptedInit(t *testing.T) {
+	t.Parallel()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		f := newFixture(t, db, repository.Options{})
+		groupID := f.group(t, "Acme")
+		r, err := f.m.Ensure(ctx, groupID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(filepath.Join(r.Location, "config")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.m.Ensure(ctx, groupID); err != nil {
+			t.Fatalf("Ensure after an interrupted init: %v", err)
+		}
+		if keys := keyFiles(t, r.Location); len(keys) != 1 {
+			t.Errorf("%d key files %v, want 1", len(keys), keys)
+		}
+		env := []string{"RESTIC_REPOSITORY=" + r.Location, "RESTIC_PASSWORD=" + f.password(t, r).Reveal()}
+		if _, err := restic(t, env, "cat", "config"); err != nil {
+			t.Errorf("the repository doesn't open: %v", err)
+		}
+
+		// Snapshots without a config aren't an interrupted init: the keys
+		// stay.
+		if err := os.Remove(filepath.Join(r.Location, "config")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(r.Location, "snapshots", "0123"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.m.Ensure(ctx, groupID); !errors.Is(err, repository.ErrRepositoryUnfinished) {
+			t.Errorf("Ensure over a repository with snapshots and no config: err = %v, want ErrRepositoryUnfinished", err)
+		}
+		if keys := keyFiles(t, r.Location); len(keys) != 1 {
+			t.Errorf("keys were removed: %v", keys)
+		}
+	})
+}
+
+// A repository already broken by racing inits is reported, with its key
+// files, and left alone.
+func TestEnsureDamagedRepository(t *testing.T) {
+	t.Parallel()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		f := newFixture(t, db, repository.Options{})
+		groupID := f.group(t, "Acme")
+		r, err := f.m.Ensure(ctx, groupID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pw := f.password(t, r).Reveal()
+
+		// What a second init leaves: a key for another master key with the
+		// same password. restic names key files by their hash and opens the
+		// first one it reads, so try keys until one gets read before the
+		// config's.
+		env := []string{"RESTIC_REPOSITORY=" + r.Location, "RESTIC_PASSWORD=" + pw}
+		var stray string
+		for range 20 {
+			other := filepath.Join(t.TempDir(), "other")
+			if _, err := restic(t, []string{"RESTIC_REPOSITORY=" + other, "RESTIC_PASSWORD=" + pw}, "init"); err != nil {
+				t.Fatal(err)
+			}
+			name := keyFiles(t, other)[0]
+			data, err := os.ReadFile(filepath.Join(other, "keys", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(r.Location, "keys", name), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := restic(t, env, "cat", "config"); err != nil && strings.Contains(err.Error(), "ciphertext verification failed") {
+				stray = name
+				break
+			}
+			if err := os.Remove(filepath.Join(r.Location, "keys", name)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if stray == "" {
+			t.Fatal("couldn't break the test repository with a second key")
+		}
+
+		_, err = f.m.Ensure(ctx, groupID)
+		if !errors.Is(err, repository.ErrRepositoryDamaged) {
+			t.Fatalf("Ensure of a damaged repository: err = %v, want ErrRepositoryDamaged", err)
+		}
+		for _, want := range append(keyFiles(t, r.Location), "issue #188", "2 key files") {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error doesn't mention %q: %v", want, err)
+			}
+		}
+		if keys := keyFiles(t, r.Location); len(keys) != 2 {
+			t.Errorf("Ensure changed the key files: %v", keys)
+		}
+
+		// The repair the error describes works.
+		if err := os.Remove(filepath.Join(r.Location, "keys", stray)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.m.Ensure(ctx, groupID); err != nil {
+			t.Errorf("Ensure after the repair: %v", err)
+		}
+	})
+}
+
+// A state backup restored on a host with another data directory carries the
+// old directory in its local repository records; RelocateLocal points them
+// at the new one, on both dialects.
+func TestRelocateLocal(t *testing.T) {
+	t.Parallel()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		f := newFixture(t, db, repository.Options{})
+		local, other := f.group(t, "Acme"), f.group(t, "Beta")
+		if _, err := f.m.Ensure(ctx, local); err != nil {
+			t.Fatal(err)
+		}
+		// A repository on S3 keeps its location.
+		const s3Location = "s3:https://s3.example.com/bucket/other"
+		ref, err := f.secrets.Put(ctx, secrets.KindResticRepoKey, "pw")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx,
+			"INSERT INTO backup_repositories (client_group_id, backend, location, secret_ref, created_at) VALUES (?, ?, ?, ?, ?)",
+			other, repository.BackendS3, s3Location, string(ref), time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.NewClientGroups(db).SetBackupRepository(ctx, other, s3Location); err != nil {
+			t.Fatal(err)
+		}
+		before, err := store.NewClientGroups(db).Get(ctx, local)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		newRoot := t.TempDir()
+		layout := config.Layout{Root: newRoot}
+		want, _ := layout.BackupRepositoryDir(local)
+		n, err := repository.RelocateLocal(ctx, db, layout)
+		if err != nil || n != 1 {
+			t.Fatalf("RelocateLocal = %d, %v; want 1", n, err)
+		}
+		if rec, err := f.m.Get(ctx, local); err != nil || rec.Location != want {
+			t.Errorf("local record = %+v, %v; want location %s", rec, err, want)
+		}
+		g, err := store.NewClientGroups(db).Get(ctx, local)
+		if err != nil || g.BackupRepository != want || !g.UpdatedAt.Equal(before.UpdatedAt) {
+			t.Errorf("client group = %q (updated %v), %v; want %s, not updated since %v", g.BackupRepository, g.UpdatedAt, err, want, before.UpdatedAt)
+		}
+		if rec, err := f.m.Get(ctx, other); err != nil || rec.Location != s3Location {
+			t.Errorf("S3 record = %+v, %v; want it unchanged", rec, err)
+		}
+		if n, err := repository.RelocateLocal(ctx, db, layout); err != nil || n != 0 {
+			t.Errorf("second RelocateLocal = %d, %v; want nothing to do", n, err)
 		}
 	})
 }

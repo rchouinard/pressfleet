@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
@@ -65,4 +66,51 @@ func ClientGroupIDs(ctx context.Context, q store.Querier) ([]string, error) {
 		return nil, fmt.Errorf("listing backup repositories: %w", err)
 	}
 	return ids, nil
+}
+
+// RelocateLocal points every local repository record at layout's
+// repositories directory, and returns how many it changed. A local
+// repository is recorded by absolute path, which a state backup restored on
+// a host with another data directory carries over from the old one; the
+// repositories themselves are under the new directory, copied there with
+// the rest of <data_dir>/backups. It is for state recovery, in the
+// restoring transaction, and works on any dialect: the location of a local
+// repository is a function of the data directory and the group, so nothing
+// else is needed to rewrite it. S3 records are left alone.
+func RelocateLocal(ctx context.Context, q store.Querier, layout config.Layout) (int, error) {
+	rows, err := q.QueryContext(ctx, "SELECT client_group_id, location FROM backup_repositories WHERE backend = ?", BackendLocal)
+	if err != nil {
+		return 0, fmt.Errorf("listing local backup repositories: %w", err)
+	}
+	moves := map[string]string{}
+	for rows.Next() {
+		var groupID, location string
+		if err := rows.Scan(&groupID, &location); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("listing local backup repositories: %w", err)
+		}
+		want, err := layout.BackupRepositoryDir(groupID)
+		if err != nil {
+			_ = rows.Close()
+			return 0, err
+		}
+		if location != want {
+			moves[groupID] = want
+		}
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return 0, fmt.Errorf("listing local backup repositories: %w", err)
+	}
+	for groupID, location := range moves {
+		if _, err := q.ExecContext(ctx, "UPDATE backup_repositories SET location = ? WHERE client_group_id = ?", location, groupID); err != nil {
+			return 0, fmt.Errorf("relocating backup repository of client group %s: %w", groupID, err)
+		}
+		// The mirror for display; not a change of the group, so updated_at stays.
+		if _, err := q.ExecContext(ctx, "UPDATE client_groups SET backup_repository = ? WHERE id = ?", location, groupID); err != nil {
+			return 0, fmt.Errorf("relocating backup repository of client group %s: %w", groupID, err)
+		}
+	}
+	return len(moves), nil
 }

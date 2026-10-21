@@ -23,6 +23,17 @@
 // Each repository keeps the location it was created with, so changing the
 // backend later only affects new repositories.
 //
+// # Initialization is single-flight
+//
+// Each restic init writes its own master key, and a repository with several
+// is unreadable for good ("ciphertext verification failed"), so Ensure
+// initializes under a per-location lock (initlock.go); the only concurrent
+// callers are this process's jobs. An init cut short by a restart leaves a
+// key without a config, which restic refuses to init over, so Ensure removes
+// such keys first when the repository has no snapshots or index. A
+// repository already broken is reported with ErrRepositoryDamaged, naming
+// its key files and the repair, and never changed (damage.go).
+//
 // # Running restic
 //
 // Group-level commands (init, and later forget, prune, and check) run in the

@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -108,6 +110,42 @@ func TestS3Backend(t *testing.T) {
 		}
 		b, err := f.m.Ensure(ctx, groupB)
 		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Concurrent first backups of a new group initialize it once (#188):
+		// one key object, and a repository that opens.
+		groupC := f.group(t, "Gamma")
+		const callers = 8
+		errs := make([]error, callers)
+		recs := make([]repository.Repository, callers)
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i := range callers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				recs[i], errs[i] = f.m.Ensure(ctx, groupC)
+			}()
+		}
+		close(start)
+		wg.Wait()
+		for i, err := range errs {
+			if err != nil {
+				t.Fatalf("concurrent Ensure #%d: %v", i, err)
+			}
+		}
+		pwC := f.password(t, recs[0]).Reveal()
+		if out, err := restic(t, append(awsEnv, "RESTIC_REPOSITORY="+recs[0].Location, "RESTIC_PASSWORD="+pwC), "list", "keys"); err != nil {
+			t.Errorf("the concurrently created repository doesn't open: %v", err)
+		} else if n := len(strings.Fields(string(out))); n != 1 {
+			t.Errorf("concurrently created repository has %d keys, want 1", n)
+		}
+		if _, err := f.m.Restic(ctx, groupC, "cat", "config"); err != nil {
+			t.Errorf("the concurrently created repository doesn't open: %v", err)
+		}
+		if err := f.m.Delete(ctx, groupC); err != nil {
 			t.Fatal(err)
 		}
 		pwA := f.password(t, a).Reveal()
