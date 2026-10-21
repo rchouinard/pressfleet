@@ -89,7 +89,7 @@ type Pebble struct {
 // VerifyingIngressClient verifies certificates against Pebble's root.
 func StartWithPebble(t *testing.T) *Platform {
 	t.Helper()
-	return start(t, true, 0)
+	return start(t, true)
 }
 
 // preparePebble writes Pebble's configuration and the certificate of its

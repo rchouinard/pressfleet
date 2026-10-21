@@ -159,11 +159,18 @@ The MVP target is **50 sites on a single 8 GiB host**.
 | Consumer | Memory Budget |
 | :--- | :--- |
 | Sites (50 × 128 MiB baseline) | 6.25 GiB |
-| MariaDB | ~768 MiB |
-| Redis (`maxmemory`) | ~256 MiB |
-| VictoriaMetrics | ~256 MiB |
-| Traefik + control plane | ~256 MiB |
-| OS and headroom | ~256 MiB |
+| MariaDB | 768 MiB |
+| Redis (`maxmemory` 256 MiB; container limit +64 MiB) | 320 MiB |
+| VictoriaMetrics | 256 MiB |
+| Control plane | 384 MiB |
+| Traefik | 96 MiB |
+| Socket proxy, maintenance page | 24 MiB + 24 MiB |
+| **Left of 8 GiB (OS and headroom)** | **−80 MiB** (+48 MiB at a 256 MiB control plane) |
+| Backup and maintenance tasks (transient) | `jobs.concurrency` × task limit, out of site burst capacity |
+
+The limits are the ones `platform.go` sets, and they add up to more than 8 GiB until the control plane drops to 256 MiB. They are limits, not reservations, so this works: sites reserve 128 MiB and burst, and platform services rarely sit at theirs. Backup and maintenance task containers have no line of their own; they run mostly at night, on the memory sites leave unused, and the capacity test (below) has to run through a backup window and a maintenance window, not only traffic.
+
+* **Control plane memory (#178):** the control plane's limit is mostly for its child processes (`docker`, `docker compose`, and restic, which today runs inside it for group-level repository work). Measured, ordinary nightly work (eight backups at `jobs.concurrency: 4`) peaked at 206 MiB, so the 192 MiB limit was too small, and a login burst on top of provisioning was the #176 out-of-memory kill. The decision: the Go process gets `GOMEMLIMIT=96MiB` (`platform.ControlPlaneGoMemLimitMB`, its share rather than a fraction of the container limit); the limit is **384 MiB** until group-level restic moves into task containers, then **256 MiB** (which leaves 48 MiB); `jobs.concurrency` stays at 4; task containers get their own memory limit (default 512 MiB). `GOGC=50` for the docker CLI children (about 15% less memory) is not set: the control plane passes its environment to them unchanged, so a container-level `GOGC` would also apply to the control plane's own Go process. Details and measurements: `docs/decisions/178-control-plane-memory.md`.
 
 * **Per-site memory:** each site has a **128 MiB reservation** (the guaranteed baseline, split between `nginx` and `php`) and a higher **hard limit** (default 512 MiB) that allows bursting. Bursting relies on not every site peaking at once. Reservations must not exceed host memory; `pressfleet doctor` and the dashboard warn when they do.
 * **PHP-FPM:** runs with `pm = ondemand` so idle sites hold no worker processes. `pm.max_children` is derived from the site's memory limit.

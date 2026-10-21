@@ -20,6 +20,9 @@ services:
     # Reaps the docker/docker compose child processes the control plane runs.
     init: true
     environment:
+      # The Go process's share of the container limit; the rest is for the
+      # docker, docker compose, and restic children (design doc §4.1).
+      GOMEMLIMIT: "96MiB"
       PRESSFLEET_DATA_DIR: "/var/lib/pressfleet"
       PRESSFLEET_LISTEN: ":8080"
       PRESSFLEET_MASTER_KEY_FILE: "/run/secrets/master_key"
@@ -89,7 +92,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 192M
+          memory: 384M
     healthcheck:
       test: ["CMD", "pressfleet", "healthcheck"]
       interval: 30s
