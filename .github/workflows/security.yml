@@ -5,10 +5,14 @@ name: Security
 #   govulncheck       every push and PR, and weekly: new advisories appear
 #                     without any change here. It reports only vulnerabilities
 #                     the code can reach, so a finding fails the job.
-#   platform images   weekly and on demand, report-only: Trivy scans the
-#                     third-party images in templates/platform/images.yaml.
-#                     The images PressFleet builds are scanned where they are
-#                     built (images.yml).
+#   platform images   weekly and on demand: Trivy scans the third-party images
+#                     in templates/platform/images.yaml. A fixed CRITICAL
+#                     finding that .trivyignore.yaml doesn't cover fails the
+#                     run, which is the alert between releases; HIGH findings
+#                     are listed in the summary only. The images PressFleet
+#                     builds are scanned where they are built (images.yml).
+#                     docs/releasing.md ("Vulnerability scanning") has the
+#                     policy.
 
 on:
   push:
@@ -53,4 +57,5 @@ jobs:
           } >>"$GITHUB_OUTPUT"
       - uses: ./.github/actions/trivy-scan
         with:
+          fail-on: CRITICAL
           images: ${{ steps.images.outputs.list }}

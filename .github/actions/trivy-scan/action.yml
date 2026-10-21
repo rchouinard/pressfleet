@@ -2,13 +2,28 @@ name: Trivy image scan
 description: >-
   Scan container images for known vulnerabilities with Trivy and write the
   findings to the job summary. The images must be in the local Docker daemon
-  or pullable. Report-only: the step fails only if Trivy itself can't run (see
-  docs/security-review.md for why findings don't fail the build yet).
+  or pullable. The report always lists every HIGH and CRITICAL finding that has
+  a fix. With fail-on set, the step also fails when an image has fixed
+  findings of those severities that .trivyignore.yaml doesn't cover (the
+  policy is in docs/releasing.md, "Vulnerability scanning").
 
 inputs:
   images:
     description: Image references to scan, one per line.
     required: true
+  fail-on:
+    description: >-
+      Comma-separated severities that fail the step (for example CRITICAL).
+      Empty: report only, and fail only if Trivy can't run.
+    required: false
+    default: ""
+  ignore-file:
+    description: >-
+      Reviewed exceptions, as a Trivy YAML ignore file (path from the
+      repository root). Applies to the fail-on check only; the report shows
+      everything.
+    required: false
+    default: .trivyignore.yaml
 
 runs:
   using: composite
@@ -17,6 +32,8 @@ runs:
       shell: bash
       env:
         IMAGES: ${{ inputs.images }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        IGNORE_FILE: ${{ inputs.ignore-file }}
         # Pinned like the platform images: <tag>@<linux/amd64 manifest digest>.
         # The Trivy container is used rather than aquasecurity/trivy-action, so
         # nothing but this one digest-pinned image runs with the job's token.
@@ -25,16 +42,19 @@ runs:
         set -euo pipefail
         cache="$RUNNER_TEMP/trivy-cache"
         mkdir -p "$cache"
+        trivy() {
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock:ro \
+            -v "$cache:/root/.cache/trivy" \
+            "$@"
+        }
         status=0
         while IFS= read -r image; do
           [ -n "$image" ] || continue
           echo "::group::Trivy: $image"
           # HIGH and CRITICAL findings that have a fixed version; the rest
           # can't be acted on by updating anything.
-          if ! out="$(docker run --rm \
-            -v /var/run/docker.sock:/var/run/docker.sock:ro \
-            -v "$cache:/root/.cache/trivy" \
-            "$TRIVY_IMAGE" image --quiet --scanners vuln \
+          if ! out="$(trivy "$TRIVY_IMAGE" image --quiet --scanners vuln \
             --severity HIGH,CRITICAL --ignore-unfixed --format table "$image")"; then
             echo "::error::Trivy couldn't scan $image"
             status=1
@@ -48,5 +68,34 @@ runs:
             printf '%s\n' "${out:-no output}"
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
+
+          [ -n "$FAIL_ON" ] || continue
+          # The gate: exit code 10 means findings, anything else non-zero
+          # means Trivy itself failed. Entries in the ignore file stop
+          # counting once their expired_at date passes.
+          rc=0
+          gate="$(trivy -v "$GITHUB_WORKSPACE/$IGNORE_FILE:/trivy-ignore.yaml:ro" \
+            "$TRIVY_IMAGE" image --quiet --scanners vuln \
+            --severity "$FAIL_ON" --ignore-unfixed --ignorefile /trivy-ignore.yaml \
+            --exit-code 10 --format table "$image")" || rc=$?
+          case "$rc" in
+          0) ;;
+          10)
+            echo "::error::$image has fixed $FAIL_ON findings. Fix them, or add a reviewed entry to $IGNORE_FILE (docs/releasing.md)."
+            printf '%s\n' "$gate"
+            {
+              echo "**Failing: fixed $FAIL_ON findings not covered by \`$IGNORE_FILE\`**"
+              echo
+              echo '```'
+              printf '%s\n' "$gate"
+              echo '```'
+            } >>"$GITHUB_STEP_SUMMARY"
+            status=1
+            ;;
+          *)
+            echo "::error::Trivy couldn't check $image against the $FAIL_ON gate"
+            status=1
+            ;;
+          esac
         done <<<"$IMAGES"
         exit "$status"

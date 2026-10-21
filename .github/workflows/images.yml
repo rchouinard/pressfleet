@@ -5,12 +5,16 @@ name: Images
 #
 #   pull requests       build without pushing; site images only when images/**
 #                       or this workflow changed, plus the site smoke test for
-#                       the newest and oldest PHP branch on the latest WordPress
+#                       the newest and oldest PHP branch on the latest WordPress.
+#                       The images built are scanned with Trivy, and fixed
+#                       CRITICAL findings fail the job (docs/releasing.md,
+#                       "Vulnerability scanning")
 #   push to main        push control-plane:sha-<short>; push the site matrix
 #                       when images/** or this workflow changed
-#   release (v* tag)    push control-plane:<tag> and the site matrix; the
-#                       Release workflow calls this one and publishes the
-#                       release once the images are pushed
+#   release (v* tag)    push control-plane:<tag> and the site matrix, each
+#                       image only after a Trivy scan finds no fixed CRITICAL
+#                       vulnerability; the Release workflow calls this one and
+#                       publishes the release once the images are pushed
 #   weekly schedule     rebuild (without cache) and push the site matrix, to
 #                       pick up base image and Debian security patches
 #   manual (on main)    push control-plane:sha-<short> and the site matrix
@@ -119,6 +123,7 @@ jobs:
           cache-from: type=gha,scope=control-plane
       - uses: ./.github/actions/trivy-scan
         with:
+          fail-on: CRITICAL
           images: ${{ needs.plan.outputs.registry }}/control-plane:${{ needs.plan.outputs.version }}
 
   control-plane-publish:
@@ -137,6 +142,25 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+      # Release builds are scanned before anything is pushed: a fixed CRITICAL
+      # finding stops the release (docs/releasing.md, "Vulnerability scanning").
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: control-plane/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            VERSION=${{ needs.plan.outputs.version }}
+            COMMIT=${{ github.sha }}
+          tags: ${{ needs.plan.outputs.registry }}/control-plane:${{ needs.plan.outputs.version }}
+          load: true
+          cache-from: type=gha,scope=control-plane
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: ./.github/actions/trivy-scan
+        with:
+          fail-on: CRITICAL
+          images: ${{ needs.plan.outputs.registry }}/control-plane:${{ needs.plan.outputs.version }}
       - uses: docker/build-push-action@v7
         with:
           context: .
@@ -232,6 +256,7 @@ jobs:
       - if: matrix.smoke
         uses: ./.github/actions/trivy-scan
         with:
+          fail-on: CRITICAL
           images: |
             ${{ needs.plan.outputs.registry }}/site-php:php${{ matrix.php }}-wp${{ matrix.wp }}
             ${{ needs.plan.outputs.registry }}/site-nginx:wp${{ matrix.wp }}
@@ -256,6 +281,26 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+      # Release builds are scanned before anything is pushed: a fixed CRITICAL
+      # finding stops the release (docs/releasing.md, "Vulnerability scanning").
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/build-push-action@v7
+        with:
+          context: images
+          file: images/site-nginx/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            WP_VERSION=${{ matrix.wp }}
+            WP_SHA1=${{ matrix.sha1 }}
+          tags: ${{ needs.plan.outputs.registry }}/site-nginx:wp${{ matrix.wp }}
+          load: true
+          pull: true
+          cache-from: type=gha,scope=site-nginx
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: ./.github/actions/trivy-scan
+        with:
+          fail-on: CRITICAL
+          images: ${{ needs.plan.outputs.registry }}/site-nginx:wp${{ matrix.wp }}
       - uses: docker/build-push-action@v7
         with:
           context: images
@@ -298,6 +343,27 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+      # Release builds are scanned before anything is pushed: a fixed CRITICAL
+      # finding stops the release (docs/releasing.md, "Vulnerability scanning").
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/build-push-action@v7
+        with:
+          context: images
+          file: images/site-php/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            PHP_VERSION=${{ matrix.php }}
+            WP_VERSION=${{ matrix.wp }}
+            WP_SHA1=${{ matrix.sha1 }}
+          tags: ${{ needs.plan.outputs.registry }}/site-php:php${{ matrix.php }}-wp${{ matrix.wp }}
+          load: true
+          pull: true
+          cache-from: type=gha,scope=site-php-${{ matrix.php }}
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: ./.github/actions/trivy-scan
+        with:
+          fail-on: CRITICAL
+          images: ${{ needs.plan.outputs.registry }}/site-php:php${{ matrix.php }}-wp${{ matrix.wp }}
       - uses: docker/build-push-action@v7
         with:
           context: images

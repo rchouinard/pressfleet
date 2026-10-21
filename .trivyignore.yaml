@@ -1,0 +1,21 @@
+# Reviewed exceptions for the Trivy scans (.github/actions/trivy-scan). Only
+# fixed CRITICAL findings gate a build, so these are the findings the gate
+# would otherwise fail on that nothing in this repository can fix yet.
+#
+# Every entry needs `statement` (why it is safe to ship and what unblocks the
+# fix) and `expired_at` (at most 60 days out; Trivy stops ignoring the finding
+# after that date, which fails the gate and forces a re-review). Scope an entry
+# with `paths` or `purls` so that it can't hide the same ID in another place.
+# docs/releasing.md ("Vulnerability scanning") describes the review.
+vulnerabilities:
+  - id: CVE-2025-68121
+    paths:
+      - usr/local/bin/gosu
+    statement: >-
+      crypto/tls session resumption in gosu 1.x, which the MariaDB image
+      (12.3.3) builds with Go 1.24.6. gosu only runs at container start to drop
+      privileges from root to mysql and never opens a TLS connection. Fixed by
+      a MariaDB image that rebuilds gosu with Go 1.24.13 or later; the MariaDB
+      series is pinned (upgrades refuse a series change), so there is no other
+      remedy. Reviewed 2026-10-21 (#186).
+    expired_at: 2026-12-15
