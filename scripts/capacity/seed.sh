@@ -41,6 +41,9 @@ seed_site() {
 		echo "$slug: already seeded"
 		return 0
 	fi
+	# Pretty permalinks, as real sites have: the page cache skips URLs with a
+	# query string, so "?p=ID" posts would never be cached.
+	wp rewrite structure '/%postname%/' --quiet
 	wp post generate --count="$POSTS" --post_content --quiet
 	# Images made in the container, so it needs no network for them. GD
 	# noise doesn't compress, which makes the uploads (and backups) realistic.

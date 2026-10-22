@@ -12,7 +12,8 @@
 #   host.csv         every INTERVAL s: MemAvailable, MemFree, swap used, memory
 #                    pressure (PSI some/full avg10/avg60), load, swap in/out
 #   containers.csv   every INTERVAL s, per container: cgroup memory.current,
-#                    memory.peak, and the cgroup's oom_kill count (cgroup v2)
+#                    memory.peak, the cgroup's oom_kill count, and its anon
+#                    and file memory (cgroup v2); anon is what can't be reclaimed
 #   events.log       docker events: oom, die, restart, health_status
 #   api.jsonl        every API_INTERVAL s: platform capacity, site statuses,
 #                    failed job count, firing alerts
@@ -52,14 +53,14 @@ sample_host() {
 }
 
 sample_containers() {
-	echo "ts,name,memory_current,memory_peak,oom_kill" >"$1/containers.csv"
+	echo "ts,name,memory_current,memory_peak,oom_kill,anon,file" >"$1/containers.csv"
 	while :; do
 		local ts
 		ts="$(now)"
 		docker ps --no-trunc --format '{{.ID}} {{.Names}}' | while read -r id name; do
 			d="/sys/fs/cgroup/system.slice/docker-$id.scope"
 			[[ -d "$d" ]] || continue
-			echo "$ts,$name,$(<"$d/memory.current"),$(<"$d/memory.peak"),$(awk '/^oom_kill / {print $2}' "$d/memory.events")"
+			echo "$ts,$name,$(<"$d/memory.current"),$(<"$d/memory.peak"),$(awk '/^oom_kill / {print $2}' "$d/memory.events"),$(awk '/^anon / {a=$2} /^file / {f=$2} END {print a","f}' "$d/memory.stat")"
 		done >>"$1/containers.csv" 2>/dev/null || true
 		sleep "$INTERVAL"
 	done
@@ -89,15 +90,17 @@ start)
 	echo "$out" >"$STATE_DIR/current-run"
 	rm -f "$out/pids" "$out/cgmem.stop"
 	echo "$(now) collectors started" >>"$out/timeline.log"
-	sample_host "$out" & echo $! >>"$out/pids"
-	sample_containers "$out" & echo $! >>"$out/pids"
-	sample_api "$out" & echo $! >>"$out/pids"
+	# Detach the samplers from the terminal, or an ssh session running this
+	# command waits for them to exit.
+	sample_host "$out" >/dev/null 2>&1 </dev/null & echo $! >>"$out/pids"
+	sample_containers "$out" >/dev/null 2>&1 </dev/null & echo $! >>"$out/pids"
+	sample_api "$out" >/dev/null 2>&1 </dev/null & echo $! >>"$out/pids"
 	docker events --filter type=container \
 		--filter event=oom --filter event=die --filter event=restart --filter event=health_status \
-		--format '{{.TimeNano}} {{.Action}} {{.Actor.Attributes.name}} exit={{.Actor.Attributes.exitCode}}' >"$out/events.log" 2>&1 &
+		--format '{{.TimeNano}} {{.Action}} {{.Actor.Attributes.name}} exit={{.Actor.Attributes.exitCode}}' >"$out/events.log" 2>&1 </dev/null &
 	echo $! >>"$out/pids"
 	cp=pressfleet-control-plane-1
-	"$here/../memory/cgmem.sh" "$cp" 0.05 "$out/cgmem.stop" >"$out/cgmem.txt" 2>&1 &
+	"$here/../memory/cgmem.sh" "$cp" 0.05 "$out/cgmem.stop" >"$out/cgmem.txt" 2>&1 </dev/null &
 	echo $! >>"$out/pids"
 	disown -a
 	echo "collecting into $out"
