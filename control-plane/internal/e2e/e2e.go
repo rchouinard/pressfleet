@@ -26,6 +26,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -636,4 +637,89 @@ func HostKey(t *testing.T) redact.Secret {
 // in Compose project names and passwords alike.
 func randomToken(n int) string {
 	return strings.ToLower(rand.Text())[:n]
+}
+
+// ProcessWatch samples the processes running in the control plane container
+// (docker compose top), to show what the control plane runs while a test
+// drives it. It follows the service across restarts. Sampling every 100 ms or
+// so can miss a process that lives for less than that, which is why tests
+// keep a positive control: something they know the watch should see.
+type ProcessWatch struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+
+	mu      sync.Mutex
+	seen    map[string]int // program name -> samples that showed it
+	samples int
+}
+
+// WatchControlPlane starts sampling the control plane's processes. Call Stop
+// to end the watch and get what it saw.
+func (p *Platform) WatchControlPlane(t *testing.T) *ProcessWatch {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	w := &ProcessWatch{cancel: cancel, done: make(chan struct{}), seen: map[string]int{}}
+	go func() {
+		defer close(w.done)
+		for ctx.Err() == nil {
+			out, err := p.Project.Top(ctx, Service)
+			if err == nil {
+				w.record(out)
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+	}()
+	t.Cleanup(w.cancel)
+	return w
+}
+
+// record notes the programs in one `compose top` listing.
+func (w *ProcessWatch) record(out []byte) {
+	progs := ParseTop(string(out))
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.samples++
+	for _, prog := range progs {
+		w.seen[prog]++
+	}
+}
+
+// ParseTop returns the distinct program names (the base name of the command's
+// first word) in the listing `docker compose top` prints: per container a
+// name line and a table whose header has CMD as its last column.
+func ParseTop(out string) []string {
+	var progs []string
+	cmdCol := -1
+	for line := range strings.Lines(out) {
+		line = strings.TrimRight(line, "\r\n")
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if i := slices.Index(fields, "CMD"); i >= 0 && slices.Contains(fields, "PID") {
+			cmdCol = i
+			continue
+		}
+		if cmdCol < 0 || len(fields) <= cmdCol {
+			continue // a container's name line
+		}
+		prog := filepath.Base(fields[cmdCol])
+		if !slices.Contains(progs, prog) {
+			progs = append(progs, prog)
+		}
+	}
+	return progs
+}
+
+// Stop ends the watch and returns how many samples showed each program, and
+// how many samples there were.
+func (w *ProcessWatch) Stop() (seen map[string]int, samples int) {
+	w.cancel()
+	<-w.done
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return maps.Clone(w.seen), w.samples
 }

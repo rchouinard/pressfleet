@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 )
 
 // The state repository holds the disaster recovery backups of the state
@@ -17,10 +16,9 @@ import (
 // it can't be stored in the database it backs up: a new host has only the
 // master key, its configuration, and the backups.
 //
-// Its restic commands run like the group-level ones, as child processes of
-// the control plane with the same environment rules (restic.go), so they
-// move with them should group-level restic move into task containers
-// (#178).
+// Its restic commands run like the group-level ones, in repository tasks
+// (restic.go), so the state repository's local directory belongs to the
+// repository group like theirs.
 
 // stateRepositoryName is the state repository's name on S3.
 const stateRepositoryName = "state"
@@ -58,10 +56,12 @@ func (m *Manager) EnsureState(ctx context.Context) error {
 		}
 		return nil
 	}
+	var dir string
 	if rec.Backend == BackendLocal {
-		// Only the control plane uses it: no group sharing, unlike the
-		// client group repositories that site tasks open.
-		if err := os.MkdirAll(rec.Location, 0o700); err != nil {
+		// The tasks that run restic belong to the repository group, not to
+		// root, so the directory does too.
+		dir = m.layout.StateBackupRepositoryDir()
+		if err := m.prepareLocalDir(dir); err != nil {
 			return fmt.Errorf("creating the state repository directory: %w", err)
 		}
 	}
@@ -72,6 +72,9 @@ func (m *Manager) EnsureState(ctx context.Context) error {
 		return nil
 	}
 	m.log.Info("state backup repository initialized", "location", rec.Location)
+	if dir != "" {
+		return m.shareLocal(dir)
+	}
 	return nil
 }
 
@@ -83,11 +86,9 @@ func (m *Manager) StateRestic(ctx context.Context, stdin io.Reader, stdout io.Wr
 		return ErrNoStatePassword
 	}
 	rec := m.stateRecord()
-	if rec.Backend == BackendS3 {
-		// See probe: restic would retry a missing bucket for minutes.
-		if err := m.probe(ctx, rec, m.statePassword); errors.Is(err, errRepositoryMissing) {
-			return fmt.Errorf("state repository at %s: %w", rec.Location, ErrNoRepository)
-		}
+	// See s3Exists: restic would retry a missing bucket for minutes.
+	if err := m.s3Exists(ctx, rec); errors.Is(err, errRepositoryMissing) {
+		return fmt.Errorf("state repository at %s: %w", rec.Location, ErrNoRepository)
 	}
 	err := m.runIO(ctx, rec, m.statePassword, stdin, stdout, args...)
 	if errors.Is(err, errRepositoryMissing) {

@@ -7,8 +7,11 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 )
 
 // Names inside an export directory.
@@ -38,9 +41,11 @@ type Export struct {
 //	dest/README.txt     how to use them with plain restic
 //
 // S3 repositories are downloaded, so the export is always a local
-// repository. dest must be an absolute path that doesn't exist or is an
-// empty directory. The copy is checked with `restic check`, opened with the
-// exported password file, before Export returns.
+// repository. dest must be an absolute path below the data directory's tmp
+// directory (config.Layout.TmpDir), the only place a task can share with the
+// control plane, that doesn't exist or is an empty directory. The copy is
+// checked with `restic check`, run in a repository task that sees dest and
+// opens the copy with the exported password file, before Export returns.
 //
 // The repository isn't locked while it is copied: callers must not run it
 // concurrently with prune, and a backup that is running meanwhile may be
@@ -50,7 +55,7 @@ func (m *Manager) Export(ctx context.Context, clientGroupID, dest string) (Expor
 	if err != nil {
 		return Export{}, err
 	}
-	if err := prepareDest(dest); err != nil {
+	if err := m.prepareDest(dest); err != nil {
 		return Export{}, err
 	}
 	password, err := m.password(ctx, rec)
@@ -72,11 +77,7 @@ func (m *Manager) Export(ctx context.Context, clientGroupID, dest string) (Expor
 		return Export{}, fmt.Errorf("export backup repository of client group %s: %w", clientGroupID, err)
 	}
 	// Proves the export opens with the exported password alone.
-	err = m.exec(ctx, map[string]string{
-		"RESTIC_REPOSITORY":    e.RepositoryDir,
-		"RESTIC_PASSWORD_FILE": e.PasswordFile,
-	}, nil, nil, io.Discard, "check")
-	if err != nil {
+	if err := m.checkExport(ctx, clientGroupID, e); err != nil {
 		return Export{}, fmt.Errorf("export backup repository of client group %s: checking the copy: %w", clientGroupID, err)
 	}
 	m.log.Info("backup repository exported", "client_group_id", clientGroupID, "dir", dest)
@@ -84,9 +85,14 @@ func (m *Manager) Export(ctx context.Context, clientGroupID, dest string) (Expor
 }
 
 // prepareDest creates dest, or accepts it if it is an empty directory.
-func prepareDest(dest string) error {
+func (m *Manager) prepareDest(dest string) error {
 	if !filepath.IsAbs(dest) {
 		return fmt.Errorf("%w: %q is not an absolute path", ErrExportDestination, dest)
+	}
+	tmp := m.layout.TmpDir()
+	if rel, err := filepath.Rel(tmp, dest); err != nil || rel == "." || !filepath.IsLocal(rel) {
+		return fmt.Errorf("%w: %s is not a directory below %s, which is where the control plane shares files with the task that checks the copy",
+			ErrExportDestination, dest, tmp)
 	}
 	entries, err := os.ReadDir(dest)
 	switch {
@@ -101,6 +107,61 @@ func prepareDest(dest string) error {
 		return fmt.Errorf("%w: %s is not empty", ErrExportDestination, dest)
 	}
 	return nil
+}
+
+// checkExport runs `restic check` on the copy in a repository task with the
+// export directory as its transfer directory. The task runs as the
+// repository group, which takes the directory and everything in it over (the
+// driver does that when the control plane is root); they are given back to
+// the control plane's user afterwards, so the export belongs to whoever ran
+// it.
+func (m *Manager) checkExport(ctx context.Context, clientGroupID string, e Export) error {
+	task := provisioner.Task{
+		Image:   m.image,
+		Command: []string{"restic", "--no-cache", "check"},
+		Env: map[string]string{
+			"RESTIC_REPOSITORY":    provisioner.TaskRepositoryPath,
+			"RESTIC_PASSWORD_FILE": path.Join(provisioner.TaskTransferPath, ExportPasswordFile),
+		},
+		// The copy is the repository, and with its password file the
+		// transfer directory: the check opens it with nothing else.
+		RepositoryDir: e.RepositoryDir,
+		TransferDir:   e.Dir,
+		Stdout:        io.Discard,
+	}
+	release, err := m.acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("waiting for a free task slot: %w", err)
+	}
+	defer release()
+	_, err = m.tasks.RunRepositoryTask(ctx, clientGroupID, task)
+	if rerr := reclaim(e.Dir); rerr != nil && err == nil {
+		return rerr
+	}
+	return resticError("restic check", err)
+}
+
+// reclaim gives a directory tree back to the control plane's user and group
+// after a task, which runs as the repository group and was handed the tree,
+// has used it. Only root can have been handed anything, and only root can
+// take it back.
+func reclaim(dir string) error {
+	if os.Geteuid() != 0 {
+		return nil
+	}
+	uid, gid := os.Geteuid(), os.Getegid()
+	// Scoped to the directory, so a symlink in it can't redirect a change.
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return fs.WalkDir(root.FS(), ".", func(p string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return root.Lchown(p, uid, gid)
+	})
 }
 
 // skipExport reports whether a repository-relative path (slash-separated)

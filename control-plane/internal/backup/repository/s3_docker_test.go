@@ -174,7 +174,7 @@ func TestS3Backend(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		exp, err := f.m.Export(ctx, groupA, filepath.Join(t.TempDir(), "export"))
+		exp, err := f.m.Export(ctx, groupA, filepath.Join(f.layout.TmpDir(), "export"))
 		if err != nil {
 			t.Fatal(err)
 		}

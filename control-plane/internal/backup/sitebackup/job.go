@@ -199,7 +199,12 @@ func (s *Service) snapshot(ctx context.Context, r *jobs.Run) error {
 	if _, err := records.Start(ctx, backupID); err != nil {
 		return err
 	}
-	snap, err := s.engine.Backup(ctx, rec.SiteID, backup.Options{Kind: string(rec.Kind), BackupID: backupID})
+	snap, err := s.engine.Backup(ctx, rec.SiteID, backup.Options{
+		Kind: string(rec.Kind), BackupID: backupID,
+		// The first attempt has no earlier one to find; a later one may
+		// follow a snapshot whose result was lost.
+		Retry: r.Job().Attempts > 1,
+	})
 	if err != nil {
 		if permanent(err) {
 			return jobs.Permanent(err)

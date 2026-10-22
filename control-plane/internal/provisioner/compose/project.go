@@ -216,6 +216,17 @@ func (p Project) Ps(ctx context.Context) ([]Container, error) {
 	return parsePs(out)
 }
 
+// Top lists the processes running in the service's containers, as
+// `docker compose top` prints them: for each container, its name and a table
+// whose last column is the command line. It is how end-to-end tests check
+// what a container runs.
+func (p Project) Top(ctx context.Context, service string) ([]byte, error) {
+	if service == "" {
+		return nil, fmt.Errorf("%w: top needs a service", ErrInvalidProject)
+	}
+	return p.run(ctx, nil, "top", service)
+}
+
 // Exec runs a command in a running service container without a TTY and
 // returns its standard output. It is how the host CLI runs state commands
 // inside the control plane (§4.7). Arguments appear in error messages, so

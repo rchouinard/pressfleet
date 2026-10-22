@@ -16,6 +16,7 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository/repositorytest"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/restic"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/id"
@@ -29,17 +30,6 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
 )
 
-// resticBinary returns the restic binary. mise.toml pins it, so
-// `mise exec -- make test` has it on PATH.
-func resticBinary(t *testing.T) string {
-	t.Helper()
-	p, err := exec.LookPath("restic")
-	if err != nil {
-		t.Fatal("restic is not on PATH; run the tests with `mise exec -- make test` after `mise install`")
-	}
-	return p
-}
-
 // fixture is an Engine on a real local repository, with a fake task runner
 // that runs restic on the host instead of in a container: it maps the task
 // paths (/site/wp-content, /transfer, /repository) to host directories.
@@ -52,7 +42,8 @@ type fixture struct {
 	prov   *provisionertest.Fake
 	dbs    *sitedbtest.Fake
 	layout config.Layout
-	restic string
+	// local runs the repository tasks restic would, on the host.
+	local *repositorytest.LocalRunner
 
 	mu sync.Mutex
 	// siteRoots maps site IDs to a directory standing for the site's
@@ -73,7 +64,7 @@ func newFixture(t *testing.T, db *store.DB, opts ...func(*restic.Options)) *fixt
 	t.Helper()
 	f := &fixture{
 		db: db, prov: provisionertest.New(), dbs: sitedbtest.New(),
-		layout: config.Layout{Root: t.TempDir()}, restic: resticBinary(t), siteRoots: map[string]string{},
+		layout: config.Layout{Root: t.TempDir()}, local: repositorytest.NewLocalRunner(t), siteRoots: map[string]string{},
 		snapPaths: map[string]snapPaths{},
 	}
 	if err := f.layout.Ensure(); err != nil {
@@ -82,7 +73,7 @@ func newFixture(t *testing.T, db *store.DB, opts ...func(*restic.Options)) *fixt
 	var err error
 	f.repos, err = repository.New(repository.Options{
 		DB: db, Secrets: secrets.NewStore(db, secretstest.Keyring(t, 1)), Layout: f.layout,
-		Restic: f.restic, Logger: storetest.Logger(),
+		Tasks: f.local, Logger: storetest.Logger(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +129,7 @@ func (f *fixture) runTaskDirect(t *testing.T, siteID string, task provisioner.Ta
 	if task.Command[0] != "restic" {
 		t.Errorf("task command = %q", task.Command)
 	}
-	cmd := exec.Command(f.restic, task.Command[1:]...)
+	cmd := exec.Command(f.local.Restic, task.Command[1:]...)
 	for i, a := range cmd.Args {
 		// A restore's <snapshot>:<path> names a path in the snapshot,
 		// which holds the host paths of the backup's task.
@@ -384,24 +375,39 @@ func TestBackupAndListSnapshots(t *testing.T) {
 		}
 
 		// A retry of the same backup finds the snapshot instead of taking
-		// another.
-		again, err := f.engine.Backup(ctx, site.ID, backup.Options{Kind: "manual", BackupID: backupID})
+		// another, with one restic command: its `snapshots` task.
+		before := len(f.local.Calls())
+		again, err := f.engine.Backup(ctx, site.ID, backup.Options{Kind: "manual", BackupID: backupID, Retry: true})
 		if err != nil || again.ID != snap.ID {
 			t.Errorf("repeated Backup = %+v, %v; want snapshot %s", again, err, snap.ID)
 		}
 		if n := len(f.tasks()); n != 1 {
 			t.Errorf("repeated Backup ran a task: %d tasks", n)
 		}
+		if calls := f.local.Calls()[before:]; len(calls) != 1 || !slices.Contains(calls[0].Task.Command, "snapshots") {
+			t.Errorf("repeated Backup ran repository tasks %v, want one `snapshots`", calls)
+		}
 
-		// Another backup of the site and one of another site in the same
-		// repository.
+		// The hot path: a first attempt at a backup of a group whose
+		// repository exists runs one restic command, the backup task, and
+		// nothing in a repository task (#191): no probe of the repository,
+		// no look for an earlier attempt's snapshot.
+		before, sitesBefore := len(f.local.Calls()), len(f.tasks())
 		second, err := f.engine.Backup(ctx, site.ID, backup.Options{Kind: "scheduled"})
 		if err != nil {
 			t.Fatal(err)
 		}
+		if n := len(f.local.Calls()) - before; n != 0 {
+			t.Errorf("a backup of an existing repository ran %d repository tasks: %v", n, f.local.Calls()[before:])
+		}
+		if n := len(f.tasks()) - sitesBefore; n != 1 {
+			t.Errorf("a backup ran %d site tasks, want 1", n)
+		}
 		if second.BackupID != "" || slices.ContainsFunc(second.Tags, func(t string) bool { return strings.HasPrefix(t, "backup:") }) {
 			t.Errorf("snapshot without a backup ID = %+v", second)
 		}
+
+		// A backup of another site in the same repository.
 		otherSnap, err := f.engine.Backup(ctx, other.ID, backup.Options{Kind: "manual"})
 		if err != nil {
 			t.Fatal(err)

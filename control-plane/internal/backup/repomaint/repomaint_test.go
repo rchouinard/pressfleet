@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +13,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/backuptest"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repomaint"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository/repositorytest"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
@@ -296,10 +296,6 @@ func TestJobsWithoutRepository(t *testing.T) {
 
 func TestSchedules(t *testing.T) {
 	ctx := context.Background()
-	restic, err := exec.LookPath("restic")
-	if err != nil {
-		t.Fatal("restic is not on PATH; run the tests with `mise exec -- make test` after `mise install`")
-	}
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
 		timing := repomaint.Timing{
 			Window:        sitebackup.Window{Start: 22 * time.Hour, Length: 4 * time.Hour},
@@ -307,7 +303,7 @@ func TestSchedules(t *testing.T) {
 		}
 		repos, err := repository.New(repository.Options{
 			DB: db, Secrets: secrets.NewStore(db, secretstest.Keyring(t, 1)), Layout: config.Layout{Root: t.TempDir()},
-			Restic: restic, Created: repomaint.OnRepositoryCreated(timing), Logger: storetest.Logger(),
+			Tasks: repositorytest.NewLocalRunner(t), Created: repomaint.OnRepositoryCreated(timing), Logger: storetest.Logger(),
 		})
 		if err != nil {
 			t.Fatal(err)

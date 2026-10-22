@@ -23,7 +23,7 @@ var ErrDumpFailed = errors.New("restic dump failed")
 // been deleted since: its snapshots stay in its client group's repository
 // until that is deleted. Nothing about the site is touched.
 //
-// It runs `restic dump --archive tar` in the control plane process, like
+// It runs `restic dump --archive tar` in a repository task, like
 // Prune and Check, rather than in a site task: a deleted site has no
 // containers to run a task with. restic takes a non-exclusive lock and
 // waits for an exclusive one (LockWait). The archive holds what restic

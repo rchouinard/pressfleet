@@ -3,13 +3,13 @@ package statebackup_test
 import (
 	"context"
 	"errors"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository/repositorytest"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/statebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
@@ -19,21 +19,12 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
 )
 
-func resticBinary(t *testing.T) string {
-	t.Helper()
-	p, err := exec.LookPath("restic")
-	if err != nil {
-		t.Fatal("restic is not on PATH; run the tests with `mise exec -- make test` after `mise install`")
-	}
-	return p
-}
-
 // newRepo returns a repository manager for a data directory, whose state
 // repository opens with the master key's derived password.
 func newRepo(t *testing.T, db *store.DB, layout config.Layout, keys *secrets.Keyring) *repository.Manager {
 	t.Helper()
 	m, err := repository.New(repository.Options{
-		DB: db, Secrets: secrets.NewStore(db, keys), Layout: layout, Restic: resticBinary(t),
+		DB: db, Secrets: secrets.NewStore(db, keys), Layout: layout, Tasks: repositorytest.NewLocalRunner(t),
 		StatePassword: keys.StateBackupPassword(), Logger: storetest.Logger(),
 	})
 	if err != nil {
