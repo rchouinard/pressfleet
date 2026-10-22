@@ -83,7 +83,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 384M
+          memory: 256M
     healthcheck:
       test: ["CMD", "pressfleet", "healthcheck"]
       interval: 30s

@@ -339,7 +339,7 @@ func TestRenderedCompose(t *testing.T) {
 	if !found {
 		t.Errorf("data dir not bind-mounted at the identical path: %+v", cp.Volumes)
 	}
-	if cp.Deploy.Resources.Limits.Memory != "384M" {
+	if cp.Deploy.Resources.Limits.Memory != "256M" {
 		t.Errorf("control plane memory = %q", cp.Deploy.Resources.Limits.Memory)
 	}
 	db := file.Services["mariadb"]

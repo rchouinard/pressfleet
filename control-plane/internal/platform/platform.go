@@ -39,10 +39,10 @@ const ProjectName = "pressfleet"
 
 // Memory limits from the §4.1 capacity budget. The control plane's limit is
 // mostly for its children (docker and docker compose, which count against
-// it; restic left it for task containers in #191): 384 MiB until the lower
-// number is confirmed on the #98 host (#178), then 256. Its Go process gets ControlPlaneGoMemLimitMB of that,
-// not a share of the limit: a Go memory limit of 85% of the container's was
-// measured to do nothing. Traefik shares the §4.1 budget line. Traefik
+// it; restic left it for task containers in #191): 256 MiB, where eight
+// concurrent backups peaked at 110 MiB (#178). Its Go process gets
+// ControlPlaneGoMemLimitMB of that, not a share of the limit: a Go memory
+// limit of 85% of the container's was measured to do nothing. Traefik shares the §4.1 budget line. Traefik
 // uses about 25 MiB idle, but about 50 MiB while it starts and while it
 // gets certificates; with 64 MiB
 // (a Go memory limit of 48 MiB) it spent its time collecting garbage and
@@ -52,7 +52,7 @@ const ProjectName = "pressfleet"
 // maintenance page service, which serves one static page.
 const (
 	DefaultMariaDBMemoryMB      = 768
-	DefaultControlPlaneMemoryMB = 384
+	DefaultControlPlaneMemoryMB = 256
 	DefaultTraefikMemoryMB      = 96
 	DefaultSocketProxyMemoryMB  = 24
 	MaintenanceMemoryMB         = 24
