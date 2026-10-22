@@ -12,6 +12,7 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/adminlogin"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository/repositorytest"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/statebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/cli"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
@@ -65,7 +66,7 @@ func oldHost(t *testing.T) (dataDir, siteID, loginKey string) {
 		layout := config.Layout{Root: dataDir}
 		// The group's local repository, with a backup of the site's files.
 		groupRepos, err := repository.New(repository.Options{
-			DB: db, Secrets: sec, Layout: layout, Logger: storetest.Logger(),
+			DB: db, Secrets: sec, Layout: layout, Tasks: repositorytest.NewLocalRunner(t), Logger: storetest.Logger(),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -83,7 +84,7 @@ func oldHost(t *testing.T) (dataDir, siteID, loginKey string) {
 			t.Fatal(err)
 		}
 		repo, err := repository.New(repository.Options{
-			Layout: layout, StatePassword: keys.StateBackupPassword(), Logger: storetest.Logger(),
+			Layout: layout, Tasks: repositorytest.NewLocalRunner(t), StatePassword: keys.StateBackupPassword(), Logger: storetest.Logger(),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -206,7 +207,7 @@ func checkRelocatedRepository(t *testing.T, db *store.DB, dataDir, oldDataDir st
 		t.Errorf("client group's backup_repository = %q, want %q", groups[0].BackupRepository, want)
 	}
 	repos, err := repository.New(repository.Options{
-		DB: db, Secrets: secrets.NewStore(db, secretstest.Keyring(t, 1)), Layout: layout, Logger: storetest.Logger(),
+		DB: db, Secrets: secrets.NewStore(db, secretstest.Keyring(t, 1)), Layout: layout, Tasks: repositorytest.NewLocalRunner(t), Logger: storetest.Logger(),
 	})
 	if err != nil {
 		t.Fatal(err)

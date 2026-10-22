@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +11,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/offboard"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repomaint"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository/repositorytest"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/export"
 	"github.com/rchouinard/pressfleet/control-plane/internal/id"
@@ -34,13 +34,9 @@ type env struct {
 // `pressfleet repository delete` does.
 func newEnv(t *testing.T, db *store.DB) *env {
 	t.Helper()
-	restic, err := exec.LookPath("restic")
-	if err != nil {
-		t.Fatal("restic is not on PATH; run the tests with `mise exec -- make test` after `mise install`")
-	}
 	repos, err := repository.New(repository.Options{
 		DB: db, Secrets: secrets.NewStore(db, secretstest.Keyring(t, 1)), Layout: config.Layout{Root: t.TempDir()},
-		Restic: restic, Logger: storetest.Logger(),
+		Tasks: repositorytest.NewLocalRunner(t), Logger: storetest.Logger(),
 		Created: repomaint.OnRepositoryCreated(repomaint.Timing{}), Deleted: repomaint.OnRepositoryDeleted,
 	})
 	if err != nil {

@@ -13,7 +13,11 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repomaint"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
+	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
+	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
@@ -46,7 +50,7 @@ func backupS3(cfg config.BackupConfig, keys *secrets.Keyring) (repository.S3Conf
 
 // backupRepositories returns the manager of client group backup
 // repositories.
-func (a *app) backupRepositories(db *store.DB, secretStore secrets.Store, keys *secrets.Keyring) (*repository.Manager, error) {
+func (a *app) backupRepositories(db *store.DB, secretStore secrets.Store, keys *secrets.Keyring, tasks provisioner.RepositoryTaskRunner) (*repository.Manager, error) {
 	s3, err := backupS3(a.cfg.Backup, keys)
 	if err != nil {
 		return nil, err
@@ -57,6 +61,10 @@ func (a *app) backupRepositories(db *store.DB, secretStore secrets.Store, keys *
 		Layout:  a.cfg.Layout(),
 		Backend: a.cfg.Backup.Backend,
 		S3:      s3,
+		// restic runs in tasks, not in this process (#178).
+		Tasks:     tasks,
+		TaskImage: a.cfg.TaskImage,
+		MaxTasks:  a.cfg.Jobs.Concurrency,
 		// The state repository's password comes from the master key, as a
 		// new host has nothing else to open it with.
 		StatePassword: keys.StateBackupPassword(),
@@ -94,6 +102,42 @@ func (a *app) backupRetention() backup.Retention {
 	}
 }
 
+// repositoryTasks returns a driver for the repository commands that run
+// outside the serving control plane (`pressfleet repository`, `state`),
+// which run restic in repository tasks like the control plane does. They run
+// in a control plane container, which has the Docker socket and the data
+// directory at the host's path. The driver is only asked for repository
+// tasks, so it has no sites to resolve.
+func (a *app) repositoryTasks() (provisioner.RepositoryTaskRunner, error) {
+	if a.opts.RepositoryTasks != nil {
+		return a.opts.RepositoryTasks, nil
+	}
+	return compose.NewProvisioner(compose.ProvisionerConfig{
+		Layout:           a.cfg.Layout(),
+		Secrets:          noSiteSecrets{},
+		Images:           noSiteImages{},
+		MariaDBContainer: platform.MariaDBContainer(a.cfg.PlatformProject),
+		PlatformProject:  a.cfg.PlatformProject,
+		BackupNetwork:    platform.BackupNetwork(a.cfg.PlatformProject),
+		TaskImage:        a.cfg.TaskImage,
+		TaskMemoryMB:     a.cfg.Backup.TaskMemoryMB,
+		Logger:           a.log.With("component", "provisioner"),
+	})
+}
+
+// errNoSites is what the site parts of a repository-only driver return.
+var errNoSites = errors.New("this driver only runs repository tasks")
+
+type noSiteSecrets struct{}
+
+func (noSiteSecrets) Get(context.Context, secrets.Ref) (redact.Secret, error) { return "", errNoSites }
+
+type noSiteImages struct{}
+
+func (noSiteImages) Images(string, string) (catalog.Images, error) {
+	return catalog.Images{}, errNoSites
+}
+
 // withRepositories opens the state database and runs fn with the
 // repository manager.
 func (a *app) withRepositories(ctx context.Context, fn func(*repository.Manager) error) error {
@@ -109,7 +153,11 @@ func (a *app) withRepositories(ctx context.Context, fn func(*repository.Manager)
 	if err := a.verifyMasterKey(ctx, db, keys); err != nil {
 		return err
 	}
-	m, err := a.backupRepositories(db, secrets.NewStore(db, keys), keys)
+	tasks, err := a.repositoryTasks()
+	if err != nil {
+		return err
+	}
+	m, err := a.backupRepositories(db, secrets.NewStore(db, keys), keys, tasks)
 	if err != nil {
 		return err
 	}

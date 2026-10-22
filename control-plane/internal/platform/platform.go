@@ -38,9 +38,9 @@ import (
 const ProjectName = "pressfleet"
 
 // Memory limits from the §4.1 capacity budget. The control plane's limit is
-// mostly for its children (docker, docker compose, and restic, which count
-// against it): 384 MiB until group-level restic leaves the control plane
-// (#178), then 256. Its Go process gets ControlPlaneGoMemLimitMB of that,
+// mostly for its children (docker and docker compose, which count against
+// it; restic left it for task containers in #191): 384 MiB until the lower
+// number is confirmed on the #98 host (#178), then 256. Its Go process gets ControlPlaneGoMemLimitMB of that,
 // not a share of the limit: a Go memory limit of 85% of the container's was
 // measured to do nothing. Traefik shares the §4.1 budget line. Traefik
 // uses about 25 MiB idle, but about 50 MiB while it starts and while it

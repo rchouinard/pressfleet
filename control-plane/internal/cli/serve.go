@@ -157,11 +157,6 @@ func (a *app) buildServer(ctx context.Context) (_ *server, err error) {
 		return nil, err
 	}
 	s.secretStore = secrets.NewStore(db, keys)
-	// Like the SMTP password, backup S3 credentials that don't decrypt
-	// stop the control plane now rather than at the first backup.
-	if s.repos, err = a.backupRepositories(db, s.secretStore, keys); err != nil {
-		return nil, err
-	}
 	// Before serving, so Traefik, which waits for them, starts as soon as
 	// possible.
 	if err := a.syncDNSCredentials(ctx, keys); err != nil {
@@ -172,6 +167,12 @@ func (a *app) buildServer(ctx context.Context) (_ *server, err error) {
 		return nil, err
 	}
 	if s.prov, s.siteDBs, err = a.siteRuntime(ctx, cat, s.secretStore, keys, db); err != nil {
+		return nil, err
+	}
+	// Like the SMTP password, backup S3 credentials that don't decrypt
+	// stop the control plane now rather than at the first backup. restic
+	// runs in the driver's repository tasks, never in this process.
+	if s.repos, err = a.backupRepositories(db, s.secretStore, keys, s.prov); err != nil {
 		return nil, err
 	}
 	// Before any task runs: a crash can leave the secret files of a task

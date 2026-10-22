@@ -45,11 +45,16 @@ type Options struct {
 	// scheduled, pre_restore, pre_update). It is recorded on the snapshot.
 	Kind string
 	// BackupID is the platform's ID of the backup (store.BackupRecord.ID),
-	// recorded on the snapshot. When set, Backup is idempotent: if the
-	// repository already has a snapshot of the site with this ID, from an
-	// attempt whose result was lost, Backup returns it instead of taking
-	// another.
+	// recorded on the snapshot. When set and Retry is true, Backup is
+	// idempotent: if the repository already has a snapshot of the site with
+	// this ID, from an attempt whose result was lost, Backup returns it
+	// instead of taking another.
 	BackupID string
+	// Retry says that an earlier attempt to take this backup may have got as
+	// far as creating the snapshot. Only then does Backup look for it, which
+	// costs a restic task; the first attempt can't have been preceded by
+	// one.
+	Retry bool
 }
 
 // Snapshot describes a snapshot of a site.

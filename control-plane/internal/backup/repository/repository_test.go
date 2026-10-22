@@ -14,9 +14,11 @@ import (
 	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository/repositorytest"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/id"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/provisionertest"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets/secretstest"
@@ -37,6 +39,7 @@ func resticBinary(t *testing.T) string {
 
 type fixture struct {
 	m       *repository.Manager
+	local   *repositorytest.LocalRunner
 	db      *store.DB
 	secrets secrets.Store
 	layout  config.Layout
@@ -49,14 +52,15 @@ func newFixture(t *testing.T, db *store.DB, opts repository.Options) fixture {
 	if opts.Layout.Root == "" {
 		opts.Layout = config.Layout{Root: t.TempDir()}
 	}
-	if opts.Restic == "" {
-		opts.Restic = resticBinary(t)
+	local := repositorytest.NewLocalRunner(t)
+	if opts.Tasks == nil {
+		opts.Tasks = local
 	}
 	m, err := repository.New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return fixture{m: m, db: db, secrets: st, layout: opts.Layout}
+	return fixture{m: m, local: local, db: db, secrets: st, layout: opts.Layout}
 }
 
 func (f fixture) group(t *testing.T, name string) string {
@@ -523,7 +527,7 @@ func TestExportRestoresWithPlainRestic(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		dest := filepath.Join(t.TempDir(), "acme-export")
+		dest := filepath.Join(f.layout.TmpDir(), "acme-export")
 		exp, err := f.m.Export(ctx, groupID, dest)
 		if err != nil {
 			t.Fatal(err)
@@ -540,6 +544,21 @@ func TestExportRestoresWithPlainRestic(t *testing.T) {
 		}
 		if entries, _ := os.ReadDir(filepath.Join(exp.RepositoryDir, "locks")); len(entries) != 0 {
 			t.Errorf("export has locks: %v", entries)
+		}
+		// The check ran in a repository task that sees the export and its
+		// password file, not in this process.
+		var checks int
+		for _, c := range f.local.Calls() {
+			if slices.Contains(c.Task.Command, "check") {
+				checks++
+				if c.Repository != groupID || c.Task.TransferDir != dest || c.Task.RepositoryDir != exp.RepositoryDir ||
+					c.Task.Env["RESTIC_PASSWORD_FILE"] != provisioner.TaskTransferPath+"/password.txt" || len(c.Task.SecretFiles) != 0 {
+					t.Errorf("export check task = %+v", c)
+				}
+			}
+		}
+		if checks != 1 {
+			t.Errorf("export ran %d check tasks, want 1", checks)
 		}
 
 		// Remove the original, then restore from the export with nothing
@@ -562,12 +581,12 @@ func TestExportRestoresWithPlainRestic(t *testing.T) {
 		if _, err := f.m.Ensure(ctx, other); err != nil {
 			t.Fatal(err)
 		}
-		for _, bad := range []string{dest, "relative/dir"} {
+		for _, bad := range []string{dest, "relative/dir", filepath.Join(t.TempDir(), "elsewhere"), f.layout.TmpDir()} {
 			if _, err := f.m.Export(ctx, other, bad); !errors.Is(err, repository.ErrExportDestination) {
 				t.Errorf("Export to %s: err = %v, want ErrExportDestination", bad, err)
 			}
 		}
-		if _, err := f.m.Export(ctx, groupID, t.TempDir()); !errors.Is(err, repository.ErrNoRepository) {
+		if _, err := f.m.Export(ctx, groupID, filepath.Join(f.layout.TmpDir(), "gone")); !errors.Is(err, repository.ErrNoRepository) {
 			t.Errorf("Export of a deleted repository: err = %v, want ErrNoRepository", err)
 		}
 	})
@@ -664,47 +683,58 @@ func TestRestic(t *testing.T) {
 	})
 }
 
-// restic sees the repository password only in its environment, and none of
-// the control plane's own environment beyond what it needs.
-func TestResticEnvironment(t *testing.T) {
+// A restic task gets the repository password in a secret file, never in the
+// environment or the arguments, and no part of the control plane's own
+// environment.
+func TestResticTaskSecrets(t *testing.T) {
 	t.Setenv("PRESSFLEET_MASTER_KEY", "pfmk1:do-not-leak")
 	t.Setenv("RESTIC_PASSWORD", "inherited")
-	dir := t.TempDir()
-	out := filepath.Join(dir, "calls")
-	fake := filepath.Join(dir, "restic")
-	// Records its calls, and acts like restic just enough for Ensure:
-	// "cat config" fails with "repository does not exist" until "init".
-	script := "#!/bin/sh\n{ echo \"ARGS $*\"; env; } >> " + out + "\n" +
-		"case \"$*\" in\n" +
-		"*init) touch \"$RESTIC_REPOSITORY/config\" ;;\n" +
-		"*cat\\ config) test -f \"$RESTIC_REPOSITORY/config\" || exit 10 ;;\n" +
-		"esac\n"
-	if err := os.WriteFile(fake, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
+	fake := provisionertest.New()
+	fake.RunRepositoryTaskFunc = func(string, provisioner.Task) (*provisioner.TaskResult, error) {
+		return &provisioner.TaskResult{}, nil
 	}
 	db := storetest.Open(t, store.SQLite)
-	f := newFixture(t, db, repository.Options{Restic: fake})
+	f := newFixture(t, db, repository.Options{Tasks: fake, TaskImage: "pressfleet/control-plane:test"})
 	groupID := f.group(t, "Acme")
 	r, err := f.m.Ensure(context.Background(), groupID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	calls, err := os.ReadFile(out)
-	if err != nil {
-		t.Fatal(err)
-	}
 	pw := f.password(t, r).Reveal()
-	s := string(calls)
-	if !strings.Contains(s, "RESTIC_PASSWORD="+pw+"\n") || !strings.Contains(s, "RESTIC_REPOSITORY="+r.Location+"\n") {
-		t.Errorf("restic environment lacks the repository or password:\n%s", s)
-	}
-	for _, line := range strings.Split(s, "\n") {
-		if strings.HasPrefix(line, "ARGS") && strings.Contains(line, pw) {
-			t.Errorf("password in arguments: %s", line)
+	var ran int
+	for _, c := range fake.Calls() {
+		if c.Op != "RunRepositoryTask" {
+			continue
+		}
+		ran++
+		task := *c.Task
+		if c.Repository != groupID || task.Image != "pressfleet/control-plane:test" {
+			t.Errorf("task for repository %q with image %q", c.Repository, task.Image)
+		}
+		if got := task.SecretFiles[repository.PasswordFile].Reveal(); got != pw {
+			t.Errorf("password file = %q, want the repository password", got)
+		}
+		if task.Env["RESTIC_PASSWORD_FILE"] != provisioner.TaskSecretPath(repository.PasswordFile) || task.Env["RESTIC_REPOSITORY"] != provisioner.TaskRepositoryPath {
+			t.Errorf("env = %v", task.Env)
+		}
+		if task.RepositoryDir != r.Location || task.BackupNetwork {
+			t.Errorf("repository dir %q, backup network %v; want %q, false", task.RepositoryDir, task.BackupNetwork, r.Location)
+		}
+		all := strings.Join(task.Command, "\n")
+		for k, v := range task.Env {
+			all += "\n" + k + "=" + v
+		}
+		for _, leak := range []string{pw, "do-not-leak", "inherited"} {
+			if strings.Contains(all, leak) {
+				t.Errorf("%q reaches the task's command or environment:\n%s", leak, all)
+			}
+		}
+		if task.Command[0] != "restic" || task.Command[1] != "--no-cache" || task.WPContent != provisioner.MountNone {
+			t.Errorf("command = %v, wp-content %v", task.Command, task.WPContent)
 		}
 	}
-	if strings.Contains(s, "PRESSFLEET_") || strings.Contains(s, "inherited") {
-		t.Errorf("restic inherited the control plane's environment:\n%s", s)
+	if ran == 0 {
+		t.Fatal("Ensure ran no repository task")
 	}
 }
 

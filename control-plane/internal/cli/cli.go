@@ -14,6 +14,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/doctor"
 	"github.com/rchouinard/pressfleet/control-plane/internal/logging"
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/releasecheck"
 )
 
@@ -57,6 +58,11 @@ type Options struct {
 	// ReleaseSource lists PressFleet releases for the control plane's
 	// release check; nil means GitHub. Tests inject fakes.
 	ReleaseSource releasecheck.Source
+	// RepositoryTasks runs the repository tasks of the commands that open
+	// backup repositories (`repository`, `state`); nil means the Compose
+	// driver on the local Docker daemon. Tests inject a runner that runs
+	// restic on the host.
+	RepositoryTasks provisioner.RepositoryTaskRunner
 	// DNSCredentialsDir overrides where the control plane writes DNS
 	// provider credentials for Traefik (ingress.DNSCredentialsDir), for
 	// tests.

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository/repositorytest"
 	"github.com/rchouinard/pressfleet/control-plane/internal/cli"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/doctor/doctortest"
@@ -114,6 +115,9 @@ func runOptions(t *testing.T, ctx context.Context, args []string, env map[string
 		stderr = &syncBuffer{}
 	}
 	opts.Version = "v1.2.3-test"
+	if opts.RepositoryTasks == nil {
+		opts.RepositoryTasks = repositorytest.NewLocalRunner(t)
+	}
 	opts.Stdout, opts.Stderr = &stdout, stderr
 	opts.Env = func(k string) (string, bool) {
 		v, ok := vars[k]

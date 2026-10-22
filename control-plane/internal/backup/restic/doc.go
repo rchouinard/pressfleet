@@ -84,10 +84,14 @@
 // # Idempotency
 //
 // A backup job step may run again after its result was lost (a crash, or a
-// database write that failed). With backup.Options.BackupID set, Backup first
+// database write that failed). With backup.Options.BackupID set and
+// backup.Options.Retry, which says that an earlier attempt ran, Backup first
 // looks for a snapshot tagged backup:<ID> and returns it instead of taking
-// another. The transfer directory's name comes from the same ID, so a retry
-// replaces what a crashed attempt left behind.
+// another. A first attempt skips the look, which is a restic task of its own
+// (#191): a backup of a group whose repository exists runs one restic
+// command, its task, and TaskAccess does not open the repository either.
+// The transfer directory's name comes from the same ID, so a retry replaces
+// what a crashed attempt left behind.
 //
 // # Locking and concurrency
 //
@@ -113,14 +117,13 @@
 // `restic prune` even if nothing was forgotten, so a retry finishes what a
 // failed attempt started. Check runs `restic check`, reading back
 // Options.CheckReadDataPercent of the data, and reports damage as
-// backup.ErrRepositoryDamaged. Both run in the control plane process
-// (repository.Manager.Restic), which reaches S3 endpoints on the platform
-// network too.
+// backup.ErrRepositoryDamaged. Both run in repository tasks
+// (repository.Manager.Restic), outside the control plane (#178, #191).
 //
 // # Listing
 //
 // ListSnapshots asks the repository (`restic snapshots --tag site:<id>`,
-// run in the control plane process): the repository, not the state
+// run in a repository task): the repository, not the state
 // database, says what can be restored, since retention (#54) removes
 // snapshots and a repository may have been exported and restored by hand.
 // The platform's history of backups, failures included, is in the

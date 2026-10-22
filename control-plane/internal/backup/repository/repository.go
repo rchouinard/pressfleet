@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -92,8 +93,16 @@ type Options struct {
 	// S3 is required for BackendS3, and for operations on repositories
 	// created on S3.
 	S3 S3Config
-	// Restic is the restic binary; empty means "restic" on PATH.
-	Restic string
+	// Tasks runs restic in repository tasks, outside the control plane
+	// (#178). Required.
+	Tasks provisioner.RepositoryTaskRunner
+	// TaskImage is the image repository tasks run; empty means the driver's
+	// task image, the control plane's own, which ships restic.
+	TaskImage string
+	// MaxTasks bounds how many repository tasks the Manager runs at once
+	// (jobs.concurrency); zero means DefaultMaxTasks. See the package
+	// documentation for why that, and not a driver-wide limit, bounds tasks.
+	MaxTasks int
 	// RepositoryGID owns local repositories; zero means
 	// provisioner.RepositoryGID, the group backup tasks run with. Root's
 	// group can't be chosen: repositories are shared with site tasks
@@ -124,7 +133,10 @@ type Manager struct {
 	layout  config.Layout
 	backend string
 	s3      S3Config
-	restic  string
+	tasks   provisioner.RepositoryTaskRunner
+	image   string
+	// slots holds a token for each running repository task.
+	slots   chan struct{}
 	gid     int
 	http    *http.Client
 	created func(ctx context.Context, q store.Querier, clientGroupID string) error
@@ -136,17 +148,23 @@ type Manager struct {
 	warnedChgrp atomic.Bool
 }
 
-// New returns a Manager. It doesn't run restic or contact S3.
+// New returns a Manager. It doesn't run a task or contact S3.
 func New(opts Options) (*Manager, error) {
 	if opts.Logger == nil {
 		return nil, errors.New("repository: Logger is required")
+	}
+	if opts.Tasks == nil {
+		return nil, errors.New("repository: Tasks is required")
+	}
+	if opts.MaxTasks < 0 {
+		return nil, fmt.Errorf("repository: MaxTasks must not be negative, got %d", opts.MaxTasks)
 	}
 	if !filepath.IsAbs(opts.Layout.Root) {
 		return nil, fmt.Errorf("repository: data directory must be an absolute path, got %q", opts.Layout.Root)
 	}
 	m := &Manager{
 		db: opts.DB, secrets: opts.Secrets, layout: opts.Layout, backend: opts.Backend, s3: opts.S3,
-		restic: opts.Restic, gid: opts.RepositoryGID, http: opts.HTTPClient, created: opts.Created, deleted: opts.Deleted, log: opts.Logger,
+		tasks: opts.Tasks, image: opts.TaskImage, gid: opts.RepositoryGID, http: opts.HTTPClient, created: opts.Created, deleted: opts.Deleted, log: opts.Logger,
 		statePassword: opts.StatePassword,
 	}
 	if m.gid == 0 {
@@ -171,9 +189,7 @@ func New(opts Options) (*Manager, error) {
 			return nil, fmt.Errorf("repository: %w", err)
 		}
 	}
-	if m.restic == "" {
-		m.restic = "restic"
-	}
+	m.slots = make(chan struct{}, cmp.Or(opts.MaxTasks, DefaultMaxTasks))
 	if m.http == nil {
 		m.http = &http.Client{}
 	}
@@ -208,28 +224,38 @@ func (m *Manager) Get(ctx context.Context, clientGroupID string) (Repository, er
 
 // Ensure returns the group's repository, creating it if needed: it stores
 // a new random password with the group's record, then runs restic init
-// unless the repository already exists. It is idempotent and safe to run
-// concurrently for the same group within a process: initialization is
-// serialized per repository (see initialize).
+// unless the repository already exists and opens with the password. It is
+// idempotent and safe to run concurrently for the same group within a
+// process: initialization is serialized per repository (see initialize).
 func (m *Manager) Ensure(ctx context.Context, clientGroupID string) (Repository, error) {
+	rec, password, err := m.open(ctx, clientGroupID)
+	if err != nil {
+		return Repository{}, err
+	}
+	if err := m.initialize(ctx, rec, password); err != nil {
+		return Repository{}, fmt.Errorf("ensure backup repository of client group %s: %w", clientGroupID, err)
+	}
+	return rec, nil
+}
+
+// open returns the group's repository record, creating it if needed, and
+// its password.
+func (m *Manager) open(ctx context.Context, clientGroupID string) (Repository, redact.Secret, error) {
 	if !id.Valid(clientGroupID) {
-		return Repository{}, fmt.Errorf("%w %q", ErrInvalidClientGroupID, clientGroupID)
+		return Repository{}, "", fmt.Errorf("%w %q", ErrInvalidClientGroupID, clientGroupID)
 	}
 	rec, err := getRecord(ctx, m.db, clientGroupID)
 	if errors.Is(err, store.ErrNotFound) {
 		rec, err = m.createRecord(ctx, clientGroupID)
 	}
 	if err != nil {
-		return Repository{}, fmt.Errorf("ensure backup repository of client group %s: %w", clientGroupID, err)
+		return Repository{}, "", fmt.Errorf("ensure backup repository of client group %s: %w", clientGroupID, err)
 	}
 	password, err := m.password(ctx, rec)
 	if err != nil {
-		return Repository{}, fmt.Errorf("ensure backup repository of client group %s: %w", clientGroupID, err)
+		return Repository{}, "", fmt.Errorf("ensure backup repository of client group %s: %w", clientGroupID, err)
 	}
-	if err := m.initialize(ctx, rec, password); err != nil {
-		return Repository{}, fmt.Errorf("ensure backup repository of client group %s: %w", clientGroupID, err)
-	}
-	return rec, nil
+	return rec, password, nil
 }
 
 // createRecord generates a password and stores it with the group's record,
@@ -418,33 +444,57 @@ func (m *Manager) ready(ctx context.Context, rec Repository, password redact.Sec
 // probe checks that the repository exists and opens with the password. It
 // returns errRepositoryMissing if there is no repository.
 func (m *Manager) probe(ctx context.Context, rec Repository, password redact.Secret) error {
-	if rec.Backend == BackendS3 {
-		// restic retries a missing bucket for many minutes instead of
-		// reporting that the repository doesn't exist.
-		obj, err := parseS3Location(rec.Location)
-		if err != nil {
-			return err
-		}
-		c, err := m.s3Client(obj)
-		if err != nil {
-			return err
-		}
-		ok, err := c.exists(ctx, obj.key+"/config")
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return errRepositoryMissing
-		}
+	if err := m.s3Exists(ctx, rec); err != nil {
+		return err
 	}
 	_, err := m.run(ctx, rec, password, "cat", "config")
 	return err
 }
 
+// s3Exists returns errRepositoryMissing if an S3 repository has no config
+// object. It asks S3 itself, because restic retries a missing bucket for many
+// minutes instead of reporting that the repository doesn't exist. Local
+// repositories pass: restic reports those correctly.
+func (m *Manager) s3Exists(ctx context.Context, rec Repository) error {
+	if rec.Backend != BackendS3 {
+		return nil
+	}
+	obj, err := parseS3Location(rec.Location)
+	if err != nil {
+		return err
+	}
+	c, err := m.s3Client(obj)
+	if err != nil {
+		return err
+	}
+	ok, err := c.exists(ctx, obj.key+"/config")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errRepositoryMissing
+	}
+	return nil
+}
+
+// initialized reports, without running restic, whether the repository has
+// been created and, if local, shared with the repository group: its config
+// exists. It is how a backup, which will find out soon enough if the
+// password is wrong, skips the `cat config` task that opening the
+// repository would cost on every run. Any doubt answers false, which sends
+// the caller to initialize.
+func (m *Manager) initialized(ctx context.Context, rec Repository) bool {
+	if rec.Backend == BackendLocal {
+		dir, err := m.localDir(rec)
+		return err == nil && isShared(dir)
+	}
+	return m.s3Exists(ctx, rec) == nil
+}
+
 // Restic runs a restic command (e.g. "snapshots", "--json") against the
-// group's existing repository in the control plane process and returns its
-// standard output. It is for group-level operations such as forget, prune,
-// and check; callers serialize operations that take an exclusive lock.
+// group's existing repository in a repository task and returns its standard
+// output. It is for group-level operations such as forget, prune, and check;
+// callers serialize operations that take an exclusive lock.
 func (m *Manager) Restic(ctx context.Context, clientGroupID string, args ...string) ([]byte, error) {
 	rec, err := m.Get(ctx, clientGroupID)
 	if err != nil {
@@ -600,24 +650,33 @@ type TaskAccess struct {
 	BackupNetwork bool
 }
 
-// TaskAccess ensures the group's repository exists (see Ensure) and returns
-// what a site task needs to use it.
+// TaskAccess returns what a site task needs to use the group's repository,
+// creating the repository if it doesn't exist (see Ensure). A repository
+// that exists is not opened first: that would cost a restic task on every
+// backup, and a wrong password or a damaged repository shows soon enough in
+// the backup itself, with the same errors.
 func (m *Manager) TaskAccess(ctx context.Context, clientGroupID string) (TaskAccess, error) {
-	rec, err := m.Ensure(ctx, clientGroupID)
+	rec, password, err := m.open(ctx, clientGroupID)
 	if err != nil {
 		return TaskAccess{}, err
 	}
-	password, err := m.password(ctx, rec)
-	if err != nil {
-		return TaskAccess{}, err
+	if !m.initialized(ctx, rec) {
+		if err := m.initialize(ctx, rec, password); err != nil {
+			return TaskAccess{}, fmt.Errorf("ensure backup repository of client group %s: %w", clientGroupID, err)
+		}
 	}
+	return m.taskAccess(rec, password)
+}
+
+// taskAccess returns what a task needs to run restic against rec.
+func (m *Manager) taskAccess(rec Repository, password redact.Secret) (TaskAccess, error) {
 	a := TaskAccess{
 		Env:         map[string]string{"RESTIC_PASSWORD_FILE": provisioner.TaskSecretPath(PasswordFile)},
 		SecretFiles: map[string]redact.Secret{PasswordFile: password},
 	}
 	switch rec.Backend {
 	case BackendLocal:
-		dir, err := m.localDir(rec)
+		dir, err := m.repositoryDir(rec)
 		if err != nil {
 			return TaskAccess{}, err
 		}

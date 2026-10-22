@@ -86,6 +86,8 @@ func TestCommands(t *testing.T) {
 			_, err := p.Exec(context.Background(), "control-plane", "pressfleet", "version")
 			return err
 		}, []string{"exec", "--no-TTY", "control-plane", "pressfleet", "version"}},
+		{"top", func(p compose.Project) error { _, err := p.Top(context.Background(), "control-plane"); return err },
+			[]string{"top", "control-plane"}},
 		{"logs", func(p compose.Project) error { _, err := p.Logs(context.Background()); return err },
 			[]string{"logs", "--no-color", "--timestamps"}},
 		{"pull", func(p compose.Project) error { return p.Pull(context.Background(), compose.PullOptions{}) },

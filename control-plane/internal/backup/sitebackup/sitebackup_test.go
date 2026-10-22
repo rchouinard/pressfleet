@@ -231,6 +231,10 @@ func TestScheduledBackupRetriesAndSucceeds(t *testing.T) {
 		if len(calls) != 2 || calls[0].Options.BackupID != recs[0].ID || calls[1].Options.BackupID != recs[0].ID {
 			t.Errorf("engine calls = %+v", calls)
 		}
+		// Only the retry looks for the first attempt's snapshot.
+		if len(calls) == 2 && (calls[0].Options.Retry || !calls[1].Options.Retry) {
+			t.Errorf("Retry = %v then %v, want false then true", calls[0].Options.Retry, calls[1].Options.Retry)
+		}
 	})
 }
 

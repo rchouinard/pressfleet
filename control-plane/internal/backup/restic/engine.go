@@ -63,8 +63,8 @@ type Repositories interface {
 	// TaskAccess ensures the group's repository exists and returns what a
 	// site task needs to use it.
 	TaskAccess(ctx context.Context, clientGroupID string) (repository.TaskAccess, error)
-	// Restic runs restic against the group's repository in the control
-	// plane process.
+	// Restic runs restic against the group's repository in a repository
+	// task (provisioner.RepositoryTaskRunner), outside the control plane.
 	Restic(ctx context.Context, clientGroupID string, args ...string) ([]byte, error)
 	// ResticTo is Restic for commands with large output, which it writes
 	// to stdout.
@@ -178,7 +178,7 @@ func (e *Engine) Backup(ctx context.Context, siteID string, opts backup.Options)
 	if err != nil {
 		return backup.Snapshot{}, fmt.Errorf("back up site %s: %w", siteID, err)
 	}
-	if opts.BackupID != "" {
+	if opts.BackupID != "" && opts.Retry {
 		snap, found, err := e.find(ctx, site.ClientGroupID, siteID, opts.BackupID)
 		if err != nil {
 			return backup.Snapshot{}, fmt.Errorf("back up site %s: looking for an earlier attempt's snapshot: %w", siteID, err)
