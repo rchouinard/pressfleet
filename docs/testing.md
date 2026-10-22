@@ -470,3 +470,23 @@ Left out of the dashboard on purpose, so not covered here (their own e2e or unit
 | `pressfleet repository create`, `export`, `check`, `prune` | Operator tools for a client group's backup repository; exports hand the client a copy on the host. The group page shows the commands; prune and check also run on a schedule |
 | `pressfleet state restore`, `key generate`, `metrics-access rotate` | Restoring the state database from a backup, making a master key, and replacing the public metrics password: platform administration on the host or in the control plane container (§4.7) |
 | SFTP and database tunnels themselves | They are SSH, not the dashboard; the dashboard manages the keys and sessions (`TestSFTPGateway`, `TestDatabaseSessions`) |
+
+## Capacity test
+
+The capacity test (#98) runs 50 sites on a real 8 GiB host under light traffic through a backup window, prune, and check, and records memory, pressure, restarts, and latency. Its scripts are in `scripts/capacity/`; they are not part of `go test ./...`. The results of the first run are in [Capacity test](capacity-test.md).
+
+It needs two Linux amd64 hosts in one private network:
+
+- **The host under test:** 8 GiB of memory and 4 vCPUs, cgroup v2, no other workloads, and a kernel whose `memory.peak` starts at zero for each container (reboot before a run: kernels before 6.12 can't reset it). Its ports 80 and 443 must be free.
+- **A load generator:** 2 vCPUs and 4 GiB is enough. It runs k6, and Pebble with its DNS server, so the host under test runs nothing but PressFleet.
+
+The domains can be `<dashed ip>.sslip.io` names (`fleet.138-197-126-181.sslip.io` and `preview.138-197-126-181.sslip.io`), which resolve without any DNS setup.
+
+1. **Prepare both hosts.** On the host under test, from a checkout of the tree (rsync it, including `.git`): `scripts/capacity/host-setup.sh` installs Docker with the address pools, builds the CLI, the control plane image, and the site images (`SITE_PHP="8.5 8.4"`). On the load generator: `HOST_IP=<host private ip> LOADGEN_IP=<own private ip> scripts/capacity/loadgen-setup.sh` installs k6 and starts Pebble. It writes `/root/pebble/ca.pem` and `roots.pem`; copy both to `/etc/pressfleet/` on the host.
+2. **Install.** `pressfleet init --non-interactive --confirm-key-stored --admin-password-stdin` with the two domains, `--admin-email`, `--acme-ca-server https://<loadgen private ip>:14000/dir`, and `--acme-ca-certificates /etc/pressfleet/pebble-ca.pem`. Then add a `compose.override.yaml` to `/var/lib/pressfleet/platform/` that mounts `pebble-roots.pem` into the control plane and sets `SSL_CERT_FILE` to it, and run `docker compose up -d` there.
+3. **Create and seed the sites.** `ADMIN_PASSWORD_FILE=<file> scripts/capacity/provision.sh` (5 groups of 10 by default; it creates an API token as well), then `scripts/capacity/seed.sh` (posts, media, a plugin, a login user), `scripts/capacity/urls.sh`, and `scripts/capacity/seed-backups.sh` for three snapshots per site.
+4. **Set the windows.** `scripts/capacity/windows.sh HH:MM` sets a one-hour backup window opening at that UTC time and daily checks. Choose a time 30 to 40 minutes after traffic will start. Reboot the host, and wait for the containers to be healthy.
+5. **Run.** `scripts/capacity/collect.sh start` on the host, then k6 on the load generator (`scripts/capacity/traffic.js`, with `-e SITES=… -e URLS=… -e HOST_IP=…`, the login password in the `LOGIN_PASS` environment variable, `-e DURATION=4h15m`, and `--out csv=…`). Prune and check start within about two hours after the window closes, so the run has to last that long. Add the window's close and the end of traffic to the timeline with `collect.sh mark`.
+6. **Collect.** `collect.sh stop` takes the final snapshot (container states, kernel OOM messages, versions). Copy the run directory and k6's summary and CSV off the hosts, then `scripts/capacity/report.py <run dir> --k6-summary … --k6-points …` prints the report's tables.
+
+The fail criteria are an OOM kill, a restart or failed healthcheck, a failed backup, prune, or check job, and a traffic error rate or latency over the thresholds (1% errors; p95 of 500 ms cached and 2 s uncached).
