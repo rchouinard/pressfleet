@@ -118,6 +118,11 @@ type Options struct {
 	// SFTPPort is the host port the SFTP gateway will be published on
 	// (sftp.port); zero skips its check.
 	SFTPPort int
+	// Installed says the platform is already installed on this host. Its
+	// Traefik and SFTP gateway then hold ports 80, 443, and the SFTP port,
+	// so the free-port checks are skipped rather than failed: they are for
+	// a host that doesn't run PressFleet yet.
+	Installed bool
 	// SkipHostOnly reports checks that need the host (Docker, ports, daemon
 	// configuration) as unavailable instead of running them. The control
 	// plane sets it: it must not shell out to docker (§4.2) and can't see the

@@ -208,6 +208,9 @@ func checkAddressPools(ctx context.Context, e *env) outcome {
 }
 
 func checkPorts(_ context.Context, e *env) outcome {
+	if e.Installed {
+		return skip("PressFleet is installed; its Traefik holds ports 80 and 443")
+	}
 	var busy, unknown []string
 	for _, port := range []int{80, 443} {
 		inUse, err := e.Host.PortInUse(port)
@@ -235,6 +238,9 @@ func checkPorts(_ context.Context, e *env) outcome {
 func checkSFTPPort(_ context.Context, e *env) outcome {
 	if e.SFTPPort == 0 {
 		return skip("sftp.port is not set")
+	}
+	if e.Installed {
+		return skip("PressFleet is installed; its SFTP gateway holds port %d", e.SFTPPort)
 	}
 	inUse, err := e.Host.PortInUse(e.SFTPPort)
 	switch {

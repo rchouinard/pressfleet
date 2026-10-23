@@ -5,12 +5,16 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
+	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/doctor"
+	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 )
 
@@ -62,6 +66,7 @@ func (a *app) doctorOptions() doctor.Options {
 		DashboardDomain:   strings.TrimSuffix(a.cfg.DashboardDomain, "."),
 		PreviewBaseDomain: strings.TrimSuffix(a.cfg.PreviewBaseDomain, "."),
 		SFTPPort:          a.cfg.SFTP.Port,
+		Installed:         platformInstalled(a.cfg.Layout()),
 	}
 	if opts.Host == nil {
 		opts.Host = doctor.System{}
@@ -119,4 +124,11 @@ func (a *app) preflight(ctx context.Context, skip bool) error {
 			"or pass --skip-preflight on a development machine)", strings.Join(names, ", "))
 	}
 	return nil
+}
+
+// platformInstalled reports whether init has rendered the platform project
+// into the data directory, which is what makes this host a PressFleet host.
+func platformInstalled(l config.Layout) bool {
+	_, err := os.Stat(filepath.Join(l.PlatformDir(), platform.ComposeFile))
+	return err == nil
 }

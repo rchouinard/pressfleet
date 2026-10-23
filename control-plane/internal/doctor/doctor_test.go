@@ -172,6 +172,9 @@ func TestPorts(t *testing.T) {
 			wantStatus: doctor.StatusFail, wantMessage: "80 and 443"},
 		{name: "cannot check", setup: func(f *fixture) { f.host.PortErr = errors.New("no /proc") },
 			wantStatus: doctor.StatusWarn, wantMessage: "could not check", wantFix: "ss -ltn"},
+		// Once installed, Traefik holds the ports: not a failure.
+		{name: "installed", setup: func(f *fixture) { f.opts.Installed = true; f.host.Ports = map[int]bool{80: true, 443: true} },
+			wantStatus: doctor.StatusSkip, wantMessage: "PressFleet is installed"},
 	})
 }
 
@@ -186,6 +189,8 @@ func TestSFTPPort(t *testing.T) {
 			wantStatus: doctor.StatusPass},
 		{name: "cannot check", setup: func(f *fixture) { port(f); f.host.PortErr = errors.New("no /proc") },
 			wantStatus: doctor.StatusWarn, wantMessage: "could not check"},
+		{name: "installed", setup: func(f *fixture) { port(f); f.opts.Installed = true; f.host.Ports = map[int]bool{2222: true} },
+			wantStatus: doctor.StatusSkip, wantMessage: "SFTP gateway holds port 2222"},
 	})
 }
 

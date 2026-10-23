@@ -282,6 +282,28 @@ func TestDoctorExitCodes(t *testing.T) {
 	}
 }
 
+// After init, Traefik and the SFTP gateway hold their ports; doctor on an
+// installed host must not fail for that.
+func TestDoctorOnInstalledHost(t *testing.T) {
+	host, docker := doctortest.Healthy(), doctortest.HealthyDocker()
+	host.Ports = map[int]bool{80: true, 443: true, 2222: true}
+	dataDir := t.TempDir()
+	r := runWith(t, context.Background(), []string{"doctor", "--data-dir", dataDir}, nil, host, docker)
+	if r.code != 1 || !strings.Contains(r.stdout, "FAIL  Ports 80 and 443 free") {
+		t.Fatalf("before install: exit %d, want 1 with the ports failing:\n%s", r.code, r.stdout)
+	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "platform"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "platform", "compose.yaml"), []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r = runWith(t, context.Background(), []string{"doctor", "--data-dir", dataDir}, nil, host, docker)
+	if r.code != 0 || !strings.Contains(r.stdout, "PressFleet is installed") {
+		t.Errorf("installed: exit %d, want 0 with the port checks skipped:\n%s\nstderr: %s", r.code, r.stdout, r.stderr)
+	}
+}
+
 func TestDoctorJSON(t *testing.T) {
 	host := doctortest.Healthy()
 	host.DNS["fleet.example.com"] = []netip.Addr{netip.MustParseAddr("203.0.113.10")}
