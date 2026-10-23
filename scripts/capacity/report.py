@@ -2,6 +2,7 @@
 """Turn a capacity test run (#98) into the tables of the report.
 
     scripts/capacity/report.py RUN_DIR --k6-summary summary.json [--k6-points points.csv]
+        [--limit pressfleet-traefik-1=192]
 
 RUN_DIR is a directory collect.sh wrote, copied off the host. The k6 files come
 from the load generator. The output is Markdown on stdout: the timeline, memory
@@ -236,7 +237,12 @@ def main():
     ap.add_argument("run")
     ap.add_argument("--k6-summary")
     ap.add_argument("--k6-points")
+    ap.add_argument("--limit", action="append", default=[], metavar="SERVICE=MIB",
+                    help="a limit that differs from the defaults, e.g. pressfleet-traefik-1=192")
     args = ap.parse_args()
+    for item in args.limit:
+        name, _, mib = item.partition("=")
+        LIMITS[name] = int(mib)
     marks = timeline(args.run)
     section_timeline(marks)
     section_containers(args.run)
