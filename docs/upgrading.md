@@ -6,9 +6,43 @@
 # pressfleet upgrade
 ```
 
-The control plane checks for new releases once a day, and `pressfleet version` and the dashboard say when one is available ([Release check](configuration.md#release-check)).
-
 Run it as root, like `init`. Upgrades are **forward-only**: there is no `--rollback`. If the upgraded platform doesn't come back healthy, `upgrade` prints the commands that return it to the previous release ([Recovering from a failed upgrade](#recovering-from-a-failed-upgrade)). Automatic rollback is planned after the MVP (#141).
+
+## Release check
+
+The control plane asks GitHub for new releases when it starts and once a day. When a newer stable release exists (not a draft or pre-release):
+
+- `pressfleet version` prints a notice under the control plane's version, saying to install the new release's CLI and run `pressfleet upgrade`;
+- the dashboard flags the version under the menu with "Update available", and the About dialog links to the release notes;
+- `GET /api/v1/platform` reports it as `release`.
+
+The request carries no credentials or details about your install, only a `User-Agent` of `PressFleet/<version>`. If the host shouldn't contact GitHub (an air-gapped install), set `updates.release_check: false` ([Release check](configuration.md#release-check)); then nothing reports a release, and you must watch the [releases page](https://github.com/rchouinard/pressfleet/releases) yourself. A failed check is silent and changes nothing. Development builds never report one.
+
+## Version skew
+
+The host CLI and the control plane must be compatible: patch versions of one minor version always are; before 1.0 the minor versions must match, and from 1.0 the CLI may be one minor version ahead of or behind the control plane in the same major version. Host commands (`init`, `recover`, `doctor`, `metrics-access`) refuse to run outside that, with no override. `version` and `upgrade` are exempt. Details: [CLI and control plane versions](installation.md#cli-and-control-plane-versions).
+
+In practice: install the new CLI, then run `pressfleet upgrade` straight away, so the pair is matched again. Don't downgrade the CLI below the control plane: the control plane can't be downgraded, and an older CLI may be unable to manage it.
+
+## Before you upgrade
+
+1. Read the release notes for the version, above all anything about renamed settings, the oldest release it upgrades from, and MariaDB.
+2. Take a state backup: run `pressfleet state backup` in the control plane container ([Operating](operating.md#commands-that-run-in-the-control-plane-container)). With PostgreSQL, take your own database backup ([below](#postgresql-state-databases)).
+3. Run `pressfleet doctor` and fix anything it fails other than the in-use ports.
+4. Pick a quiet time if the release recreates Traefik, MariaDB, or the object cache; `upgrade` tells you, and asks first. Sites go down for about a minute, usually less.
+5. Have the master key and config file safe off-host, as always.
+
+Then:
+
+```sh
+# install the new CLI (see Installation > Getting the CLI), then
+pressfleet version --client
+pressfleet upgrade
+pressfleet version            # both versions should now match
+pressfleet doctor
+```
+
+Afterwards, watch the **Jobs** page: the control plane moves sites to new site images and templates one at a time, in your maintenance window if you set `updates.window_start` ([Platform image updates](configuration.md#platform-image-updates), [Site template updates](configuration.md#site-template-updates)).
 
 ## What it does
 

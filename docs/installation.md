@@ -1,5 +1,20 @@
 # Installation
 
+This page installs PressFleet on a host that is already prepared. It is the second step of the [operator guide](README.md).
+
+> **⚠️ Master key warning.** `pressfleet init` generates a **master key** and shows it once. Every secret PressFleet stores is encrypted with it, including the password of every backup repository. **If the host is lost and you don't have the key, every backup is unreadable and every secret is gone.** Before you let `init` continue, copy the key into a password manager or other safe place that is *not* on this host and not in the backups. See [Master key](#master-key).
+
+## Install in order
+
+1. **[Prepare the host](host-preparation.md):** Docker Engine 28+ with Compose v2, cgroup v2, Docker address pools and log rotation, free ports, and DNS records for the dashboard and the preview wildcard.
+2. **[Get the CLI](#getting-the-cli)** and run `pressfleet doctor` to see what is still missing.
+3. **Run `pressfleet init`**, [interactively](#interactive-install) or [automated](#automated-install). Store the master key when it is printed.
+4. **[Check the result](#after-the-install)** with `pressfleet doctor`, `pressfleet version`, and `docker compose ps`.
+5. **[Take the first steps](first-steps.md):** log in, create users, a client group, and a site.
+6. **Set up [backups](backups.md) and [monitoring](operating.md#monitoring-and-alerts)** before real client sites arrive, and rehearse the [disaster recovery drill](disaster-recovery.md#rehearsing) once.
+
+## What init does
+
 `pressfleet init` takes a host from nothing to a running platform. It:
 
 1. Collects the install settings (below), by prompting or from flags.
@@ -8,7 +23,7 @@
 4. Generates the platform master key, prints it once with the warning below, and waits for you to confirm that you have stored it off-host.
 5. Writes the master key file (mode `0600`) and the config file.
 6. Renders the platform Compose project into `<data_dir>/platform/` and starts it, waiting until MariaDB, the object cache (Valkey), the control plane, and Traefik report healthy. The first start pulls the images and can take a few minutes. Traefik takes ports 80 and 443 and gets a certificate for the dashboard domain (see [Edge router and certificates](configuration.md#edge-router-and-certificates)); the dashboard and API are then served at `https://<dashboard domain>/`.
-7. Creates the first admin user by running `pressfleet user create` inside the control plane container, and prints the generated password once. The host CLI never touches the state database itself.
+7. Creates the first admin user by running `pressfleet user create` inside the control plane container, and prints the generated password once (unless you gave one with `--admin-password-stdin`). The host CLI never touches the state database itself.
 
 Run it as root (or a user in the `docker` group who can write `/etc/pressfleet` and the data directory).
 
@@ -26,9 +41,22 @@ The binary carries the release's platform templates and pinned image list, and i
 
 ## Master key
 
-> **⚠️ Master key warning:** The master key is required to decrypt backup repository keys. If the host is lost and the master key was not saved elsewhere, **all backups are unrecoverable**. Setup requires the operator to download the key and confirm it has been stored somewhere safe (e.g. a password manager), separate from the host and its backups.
+The master key is a single secret, `pfmk1:` followed by 48 characters. It encrypts everything sensitive that PressFleet keeps: the password of every client group's backup repository (and of the state backup repository), the sites' database and object cache passwords, the S3 credentials, the SMTP password, the DNS provider's credentials, authenticator app secrets, and the key that signs one-click logins to WordPress.
 
-`init` prints the key and its key ID, then asks you to type `yes` or the key ID once the key is stored somewhere safe (`no` aborts). Nothing is written until you confirm. The key file must be outside the data directory, because the data directory is backed up. See [Master key](configuration.md#master-key) for how the control plane uses it, and [Disaster recovery](disaster-recovery.md) for rebuilding a lost host from the key and the backups; keep a copy of the config file with the key.
+> **⚠️ Without the master key, no backup can be read and no secret can be recovered.** The backups are encrypted, and their passwords are stored encrypted with this key. A lost host with a saved key and backups can be rebuilt ([Disaster recovery](disaster-recovery.md)). A lost host without the key cannot, whatever else you saved. Nobody can recover the key for you, and there is no reset.
+
+**Where it lives.** `init` writes it to the master key file, `/etc/pressfleet/master.key` unless you chose another path with `--master-key-file`. The file is mode `0600` and must be outside the data directory, because the data directory is backed up. The control plane gets it as a Compose secret. It also holds a copy of the key's checksum, so a wrong or mistyped key is refused at startup (`master key does not match this installation`) rather than silently producing unreadable data. `init` prints the key and its 16-character key ID once; the key ID is safe to share and appears in logs.
+
+**Storing it off-host.** `init` stops and asks you to type `yes` (or the key ID) once the key is stored. Do it properly:
+
+1. Copy the printed key, or read the file as root (`cat /etc/pressfleet/master.key`), into a password manager your team shares, or onto paper in a safe. Use more than one place: the point is to survive losing the host *and* one of the places.
+2. Save the config file (`/etc/pressfleet/pressfleet.yaml`) beside it. It holds the answers `init` needs to rebuild the platform, and its secrets are encrypted with the key, so it is safe to keep next to the key.
+3. Don't keep the key on the PressFleet host only, in the data directory, in the S3 bucket or other place where the backups are, or in a ticket or chat. Anyone who has both the key and the backups can read the backups.
+4. Check that you can get it back. Read the copy and compare its key ID with the one on the host: `init` shows it, and so does the line `Master key file: ... (key ID ...)` at the end.
+
+**Rotation.** Master key rotation isn't supported. If the key may have been exposed, treat the platform as exposed: see [Security](security.md#if-a-secret-leaks).
+
+How the control plane uses the key: [Master key](configuration.md#master-key) in the reference.
 
 ## Settings
 
@@ -60,7 +88,7 @@ The binary carries the release's platform templates and pinned image list, and i
 
 The config file is written to `--config`, else `$PRESSFLEET_CONFIG`, else `/etc/pressfleet/pressfleet.yaml`. It holds the settings above; everything else keeps its [default](configuration.md#settings). The control plane reads the same file. To change a setting after installing, see [Changing settings](configuration.md#changing-settings).
 
-The dashboard and preview domains must already resolve to this host: the preflight checks look up the dashboard domain and a random name under the preview base domain. Ports 80 and 443 must be free, and reachable from the internet for Let's Encrypt. So must the SFTP gateway's port, 2222 unless `PRESSFLEET_SFTP_PORT` names another, for developers (see [SFTP gateway](configuration.md#sftp-gateway)); init generates the gateway's SSH host key and keeps it when reinstalling.
+The dashboard and preview domains must already resolve to this host ([DNS](host-preparation.md#dns)): the preflight checks look up the dashboard domain and a random name under the preview base domain. Ports 80 and 443 must be free, and reachable from the internet for Let's Encrypt. So must the SFTP gateway's port, 2222 unless `PRESSFLEET_SFTP_PORT` names another, for developers (see [SFTP gateway](configuration.md#sftp-gateway)); init generates the gateway's SSH host key and keeps it when reinstalling.
 
 The SMTP settings are optional; see [Outbound email](configuration.md#outbound-email). In interactive mode the other SMTP questions are only asked once a relay host is given. `init` reads the relay password from the first line of `--smtp-password-file`, encrypts it with the master key, and writes only the encrypted value to the config file.
 
@@ -81,6 +109,8 @@ Other flags:
 
 ## Interactive install
 
+The questions come in this order. Some are only asked when an earlier answer needs them: the SMTP details after a relay host, the S3 details after `s3`, the DNS credentials file after a provider. A setting you gave as a flag or environment variable is not asked again. Nothing is written until you confirm the master key.
+
 ```console
 # pressfleet init
 PressFleet setup. Press Enter to accept the value in brackets.
@@ -92,6 +122,9 @@ Data directory for sites, state, and rendered projects [/var/lib/pressfleet]:
 Master key file, outside the data directory [/etc/pressfleet/master.key]:
 Email address of the first admin user: admin@agency.example
 Contact email address for Let's Encrypt (optional): ops@agency.example
+SMTP relay host sites send email through, e.g. smtp.mailgun.org (optional; without one sites send no email):
+Backup repositories: local (in the data directory) or s3 (an S3-compatible bucket such as Amazon S3 or MinIO) [local]:
+DNS provider for a wildcard preview certificate, a lego code like cloudflare or route53 (optional; without one, each preview domain gets its own certificate):
 
 Running preflight checks...
 
@@ -132,6 +165,83 @@ pressfleet init --non-interactive --confirm-key-stored \
 
 The master key is printed on standard output (the line starting with `pfmk1:`); capture it and store it off-host. The key file stays on the host at the chosen path.
 
+## After the install
+
+1. **Check the services.** All seven platform services should be `healthy`:
+
+   ```console
+   # docker compose --project-name pressfleet --project-directory /var/lib/pressfleet/platform ps
+   SERVICE            STATUS                    PORTS
+   control-plane      Up 16 seconds (healthy)   0.0.0.0:2222->2222/tcp
+   maintenance        Up 16 seconds (healthy)
+   mariadb            Up 16 seconds (healthy)   3306/tcp
+   redis              Up 16 seconds (healthy)   6379/tcp
+   socket-proxy       Up 15 seconds (healthy)   2375/tcp
+   traefik            Up 14 seconds (healthy)   0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp, 0.0.0.0:443->443/udp
+   victoria-metrics   Up 15 seconds (healthy)   8428/tcp
+   ```
+
+   This is the command to remember for the platform's containers; [Operating](operating.md#the-platform-project) shows a shorter way to type it.
+
+2. **Check the versions.** `pressfleet version` prints the CLI's and the control plane's versions, and says if they are incompatible ([CLI and control plane versions](#cli-and-control-plane-versions)).
+
+3. **Run `pressfleet doctor`** and read [what it says](#what-doctor-checks).
+
+4. **Open the dashboard** at `https://<dashboard domain>/` and log in as the first admin. If the browser warns about the certificate, Traefik hasn't got one yet: see [Troubleshooting](troubleshooting.md#certificates-and-acme).
+
+5. **Write down the admin password** `init` printed (it is shown once), or reset it from the control plane container ([Operating](operating.md#commands-that-run-in-the-control-plane-container)). With `--admin-password-stdin` nothing is printed, because you chose the password.
+
+6. **Save the master key and the config file** if you haven't ([Master key](#master-key)).
+
+## What doctor checks
+
+`pressfleet doctor` is read-only. It checks the host against the requirements in [Preparing the host](host-preparation.md), and prints a fix beneath each problem. A healthy host before installing looks like this (the addresses and sizes will be yours):
+
+```console
+# pressfleet doctor
+PASS  Linux on amd64               linux/amd64
+PASS  Docker Engine                Docker Engine 29.9.2 (linux/x86_64)
+PASS  Docker Compose v2            Docker Compose 5.6.1
+PASS  cgroup v2                    Docker uses cgroup v2
+PASS  Docker address pools         address pools provide 256 networks
+PASS  Ports 80 and 443 free        ports 80 and 443 are free
+PASS  SFTP gateway port free       port 2222 is free
+PASS  Dashboard DNS                fleet.agency.example resolves to 203.0.113.7 (public_ip)
+PASS  Wildcard preview DNS         *.preview.agency.example resolves to 203.0.113.7 (public_ip)
+PASS  Container log rotation*      json-file logs rotate at 10m (3 files)
+PASS  Free disk space*             112.4 GiB free for /var/lib/pressfleet
+PASS  Host memory*                 7.8 GiB of memory fits about 45 sites at the 128 MiB baseline
+SKIP  Site memory reservations*    site reservations are not available yet
+UNAVAILABLE  Security keys and passkeys*  needs the state database; the dashboard's platform overview (GET /api/v1/platform/doctor) shows this check
+
+* recommended
+12 passed, 0 failed, 0 warned, 1 skipped
+1 unavailable
+```
+
+Statuses: `PASS`; `FAIL` (a required check failed); `WARN` (a recommended check failed, or `doctor` couldn't confirm something); `SKIP` (not applicable yet); `UNAVAILABLE` (can't be checked from here). The exit status is `0` when everything passed or was skipped, `1` when a required check failed, and `2` when only recommended checks failed or something warned. Add `--json` for scripts.
+
+| Check | What it means | If it fails |
+| --- | --- | --- |
+| Linux on amd64 | The host is a supported platform. | Use an amd64 Linux host. |
+| Docker Engine | Docker answers, and is version 28 or later (needed for network gateway priorities: without them, a site's network can become Traefik's default route and ports 80 and 443 stop answering). | Install or upgrade Docker Engine; make sure your user can reach the daemon. |
+| Docker Compose v2 | `docker compose` works. | Install the Compose plugin. |
+| cgroup v2 | Docker uses cgroup v2, so site memory limits work. | Boot with the unified cgroup hierarchy ([Preparing the host](host-preparation.md#requirements)). |
+| Docker address pools | `default-address-pools` gives enough site networks. | Add the pool to `/etc/docker/daemon.json` and restart Docker ([Docker settings](host-preparation.md#docker-settings)). |
+| Ports 80 and 443 free | Nothing else listens there. | Stop the web server using them (`ss -ltnp 'sport = :80 or sport = :443'`). |
+| SFTP gateway port free | The SFTP port (2222) is free. | Stop what uses it, or set `sftp.port`. |
+| Dashboard DNS | The dashboard domain resolves to this host. | Create the record ([DNS](host-preparation.md#dns)). |
+| Wildcard preview DNS | A random name under the preview base domain resolves to this host. | Create the wildcard record. |
+| Container log rotation (recommended) | Docker's `json-file` logs rotate. | Add `log-opts` to `daemon.json`. |
+| Free disk space (recommended) | At least 20 GiB free where the data directory is. | Free space or grow the filesystem. |
+| Host memory (recommended) | The host has about 8 GiB; shows how many sites fit at the 128 MiB baseline ([Sizing](host-preparation.md#sizing)). | Use a bigger host or plan for fewer sites. |
+| Site memory reservations (recommended) | The sites' reservations plus the platform fit in memory. Only the running control plane can check it. | Add memory or reduce sites. |
+| Security keys and passkeys (recommended) | Warns if keys are registered for another dashboard domain. Needs the state database. | Users register keys again ([Preflight checks](configuration.md#preflight-checks)). |
+
+**After the install, `doctor` fails two checks, and that is expected.** Ports 80 and 443, and the SFTP port, are held by PressFleet's own Traefik and control plane, so `doctor` reports them in use (the message says so) and exits `1`. Everything else should still pass. The checks that need the state database are on the dashboard's **Platform overview** page, which shows the control plane's own report (`GET /api/v1/platform/doctor`); there the host-only checks read `UNAVAILABLE`, because the control plane runs in a container.
+
+`init` runs the same checks first and stops on a required failure. `--skip-preflight` installs anyway; it is for development machines.
+
 ## Reinstalling
 
 `init` treats any of these as an existing installation and refuses to run: the config file, the master key file, `<data_dir>/platform/compose.yaml`, or the SQLite state database. With `--force` it runs anyway and:
@@ -171,9 +281,7 @@ The CLI asks the control plane for its version through a small admin interface: 
 
 ## DNS for custom domains
 
-Sites start on their preview domain. To go live on a client's own domain (`POST /api/v1/sites/{id}/go-live`, see [Custom domains](configuration.md#custom-domains)), the client's DNS must point the domain, and every alias, at this host first: A records to its public IPv4 address and, if it has one, AAAA records to its IPv6 address, and no records pointing anywhere else. A CNAME to the dashboard domain works too. Lower the records' TTL a day ahead to make the switch quick.
-
-The control plane checks this before it changes anything, against `public_ip` and the addresses the dashboard domain resolves to, and refuses a domain that points elsewhere with an explanation; send the request again once the change has propagated. Behind NAT, give `--public-ip` so the check knows the host's public address. Behind a CDN or load balancer, domains resolve to it rather than to this host; skip the check per request with `skip_dns_check`, and make sure plain-HTTP requests for `/.well-known/acme-challenge/` reach this host's port 80, where Traefik gets each domain's certificate.
+Sites start on their preview domain. Pointing a client's own domain at a site is a later step with its own checks: see [Go live on a custom domain](first-steps.md#7-go-live-on-a-custom-domain). Behind NAT, give `--public-ip` at install so the go-live DNS check knows the host's public address; behind a CDN or load balancer, see [skipping the check](first-steps.md#behind-a-cdn-or-load-balancer).
 
 ## Not yet collected
 

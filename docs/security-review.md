@@ -4,7 +4,7 @@
 **Date:** 2026-10-20, against `main` at `34dbb7e` (after #160)
 **Scope:** design doc §6 and §6.2, and [the dashboard two-factor plan](dashboard-two-factor-plan.md): tenant isolation, the Docker socket proxy, secrets handling, authentication, CSRF and sessions, dashboard two-factor, and known-vulnerability scanning in CI.
 
-This is the record #97 asks for. It says what was checked, how, what came out, and what happened to each finding. Severities are this review's own. **Critical** means a remote compromise without credentials. **High** means a compromise from a low-privilege position. **Medium** means escalation or denial of service with a realistic precondition. **Low** means limited disclosure or a precondition that is already a serious compromise. Only findings with a concrete path are listed. Things that were checked and hold are under [Checked and holding](#checked-and-holding).
+This is the record #97 asks for. It says what was checked, how, what came out, and what happened to each finding. Severities are this review's own. **Critical** means a remote compromise without credentials. **High** means a compromise from a low-privilege position. **Medium** means escalation or denial of service with a realistic precondition. **Low** means limited disclosure or a precondition that is already a serious compromise. Only findings with a concrete path are listed. Things that were checked and hold are under [Checked and holding](#what-was-checked-and-how).
 
 ## Findings
 
