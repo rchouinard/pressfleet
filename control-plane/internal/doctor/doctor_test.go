@@ -287,11 +287,15 @@ func TestDisk(t *testing.T) {
 
 func TestMemory(t *testing.T) {
 	runCases(t, "memory", []checkCase{
-		{name: "16 GiB", wantStatus: doctor.StatusPass, wantMessage: "fits about 114 sites"},
-		{name: "8 GiB machine reporting less", setup: func(f *fixture) { f.host.Mem = 7_800 << 20 },
-			wantStatus: doctor.StatusPass},
+		// The platform's budget is the sum of its services' limits and the
+		// OS reserve: 2,096 MiB with Traefik at 192 MiB (#98).
+		{name: "16 GiB", wantStatus: doctor.StatusPass, wantMessage: "fits about 111 sites"},
+		{name: "8 GiB", setup: func(f *fixture) { f.host.Mem = 8 * gib },
+			wantStatus: doctor.StatusPass, wantMessage: "fits about 47 sites"},
+		{name: "8 GiB machine reporting less", setup: func(f *fixture) { f.host.Mem = 7_936 << 20 },
+			wantStatus: doctor.StatusPass, wantMessage: "fits about 45 sites"},
 		{name: "4 GiB", setup: func(f *fixture) { f.host.Mem = 4 * gib },
-			wantStatus: doctor.StatusWarn, wantMessage: "about 18 sites", wantFix: "8 GiB"},
+			wantStatus: doctor.StatusWarn, wantMessage: "about 15 sites", wantFix: "8 GiB"},
 		{name: "tiny", setup: func(f *fixture) { f.host.Mem = gib },
 			wantStatus: doctor.StatusWarn, wantMessage: "about 0 sites"},
 		{name: "error", setup: func(f *fixture) { f.host.MemErr = errors.New("no /proc") },

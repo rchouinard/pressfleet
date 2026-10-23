@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
 )
 
 // Capacity plan figures from design doc §4.1.
@@ -22,9 +24,23 @@ const (
 	// memTolerance allows for memory the kernel and firmware reserve: an
 	// 8 GiB machine reports less than 8 GiB in /proc/meminfo.
 	memTolerance = gib / 2
-	// platformMemory is the budget for MariaDB, Redis, VictoriaMetrics,
-	// Traefik, the control plane, and OS headroom.
-	platformMemory = 1792 * mib
+	// platformMemory is the budget for the platform's services, at the
+	// memory limits platform sets for them, and the OS. It is derived from
+	// the limits rather than copied, so a changed limit can't leave it
+	// stale (#98 raised Traefik's). Counted this way, an 8 GiB host fits
+	// about 47 sites at the 128 MiB baseline: the §4.1 target of 50 relies
+	// on limits being caps rather than reservations.
+	platformMemory = (platform.DefaultMariaDBMemoryMB +
+		platform.DefaultRedisMaxMemoryMB + platform.RedisOverheadMB +
+		platform.DefaultVictoriaMetricsMemoryMB +
+		platform.DefaultControlPlaneMemoryMB +
+		platform.DefaultTraefikMemoryMB +
+		platform.DefaultSocketProxyMemoryMB +
+		platform.MaintenanceMemoryMB +
+		osReserveMB) * mib
+	// osReserveMB is what the plan leaves for the OS, dockerd, and
+	// containerd.
+	osReserveMB = 256
 	// siteReservation is each site's guaranteed memory baseline.
 	siteReservation = 128 * mib
 
@@ -365,8 +381,8 @@ func checkMemory(_ context.Context, e *env) outcome {
 		return warn("Make sure the host has at least 8 GiB of memory.", "could not read host memory: %v", err)
 	}
 	if total+memTolerance < planMemory {
-		return warn("Use a host with at least 8 GiB of memory to run 50 sites, or plan for fewer sites.",
-			"%s of memory is below the capacity plan (8 GiB for 50 sites); plan for about %d sites",
+		return warn("Use a host with at least 8 GiB of memory, or plan for fewer sites.",
+			"%s of memory is below the capacity plan's 8 GiB; plan for about %d sites",
 			formatGiB(total), sitesFor(total))
 	}
 	return pass("%s of memory fits about %d sites at the 128 MiB baseline", formatGiB(total), sitesFor(total))
