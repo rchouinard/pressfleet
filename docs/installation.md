@@ -41,6 +41,10 @@ The binary carries the release's platform templates and pinned image list, and i
 
 ## Master key
 
+> **⚠️ Master key warning:** The master key is required to decrypt backup repository keys. If the host is lost and the master key was not saved elsewhere, all backups are unrecoverable. Setup requires the operator to download the key and confirm it has been stored somewhere safe (e.g. a password manager), separate from the host and its backups.
+
+This is the warning `pressfleet init` prints, word for word (a test keeps the two in sync).
+
 The master key is a single secret, `pfmk1:` followed by 48 characters. It encrypts everything sensitive that PressFleet keeps: the password of every client group's backup repository (and of the state backup repository), the sites' database and object cache passwords, the S3 credentials, the SMTP password, the DNS provider's credentials, authenticator app secrets, and the key that signs one-click logins to WordPress.
 
 > **⚠️ Without the master key, no backup can be read and no secret can be recovered.** The backups are encrypted, and their passwords are stored encrypted with this key. A lost host with a saved key and backups can be rebuilt ([Disaster recovery](disaster-recovery.md)). A lost host without the key cannot, whatever else you saved. Nobody can recover the key for you, and there is no reset.
@@ -238,7 +242,7 @@ Statuses: `PASS`; `FAIL` (a required check failed); `WARN` (a recommended check 
 | Site memory reservations (recommended) | The sites' reservations plus the platform fit in memory. Only the running control plane can check it. | Add memory or reduce sites. |
 | Security keys and passkeys (recommended) | Warns if keys are registered for another dashboard domain. Needs the state database. | Users register keys again ([Preflight checks](configuration.md#preflight-checks)). |
 
-**After the install, `doctor` fails two checks, and that is expected.** Ports 80 and 443, and the SFTP port, are held by PressFleet's own Traefik and control plane, so `doctor` reports them in use (the message says so) and exits `1`. Everything else should still pass. The checks that need the state database are on the dashboard's **Platform overview** page, which shows the control plane's own report (`GET /api/v1/platform/doctor`); there the host-only checks read `UNAVAILABLE`, because the control plane runs in a container.
+**After the install, `doctor` skips the two port checks.** Ports 80 and 443, and the SFTP port, are held by PressFleet's own Traefik and SFTP gateway, so once the platform project exists in the data directory `doctor` reports those checks as skipped ("PressFleet is installed") instead of failing them. Everything else should still pass. The checks that need the state database are on the dashboard's **Platform overview** page, which shows the control plane's own report (`GET /api/v1/platform/doctor`); there the host-only checks read `UNAVAILABLE`, because the control plane runs in a container.
 
 `init` runs the same checks first and stops on a required failure. `--skip-preflight` installs anyway; it is for development machines.
 
