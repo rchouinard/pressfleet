@@ -10,17 +10,20 @@ describe('navigation registry', () => {
   })
 
   it('covers every M5 area', () => {
-    for (const id of ['sites', 'client-groups', 'backups', 'metrics', 'logs', 'alerts', 'overview', 'account', 'users', 'audit', 'jobs']) {
+    for (const id of ['sites', 'client-groups', 'metrics', 'logs', 'alerts', 'overview', 'account', 'users', 'audit', 'jobs']) {
       expect(ids([...navRegistry])).toContain(id)
     }
   })
 
-  it('links only entries with a route; the rest are "soon"', () => {
-    const live = ids(navRegistry.filter(isLive))
-    expect(live).toContain('dashboard')
-    expect(live).toContain('jobs')
-    expect(live).toContain('sites')
-    expect(live).not.toContain('backups')
+  it('ships no "soon" entries: every area has its page', () => {
+    // Backups have no page of their own; they are under each site and
+    // client group.
+    expect(navRegistry.filter(i => !isLive(i))).toEqual([])
+  })
+
+  it('links only entries with a route', () => {
+    expect(isLive({ id: 'x', label: 'X', icon: 'i-lucide-x', minRole: 'viewer', section: 'main' })).toBe(false)
+    expect(isLive({ id: 'x', label: 'X', icon: 'i-lucide-x', route: '/x', minRole: 'viewer', section: 'main' })).toBe(true)
   })
 })
 
@@ -57,7 +60,7 @@ describe('navFor', () => {
 describe('isActive', () => {
   const jobs = navRegistry.find(i => i.id === 'jobs')!
   const dashboard = navRegistry.find(i => i.id === 'dashboard')!
-  const backups = navRegistry.find(i => i.id === 'backups')!
+  const soon: NavItem = { id: 'soon', label: 'Soon', icon: 'i-lucide-x', minRole: 'viewer', section: 'main' }
 
   it('matches the page and what is below it, not siblings with a shared prefix', () => {
     expect(isActive(jobs, '/jobs')).toBe(true)
@@ -72,7 +75,7 @@ describe('isActive', () => {
   })
 
   it('never marks a not-yet-built entry active', () => {
-    expect(isActive(backups, '/backups')).toBe(false)
+    expect(isActive(soon, '/soon')).toBe(false)
   })
 })
 
