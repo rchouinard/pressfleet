@@ -219,7 +219,7 @@ services:
     environment:
       # Lets the Go runtime collect garbage harder before the memory limit
       # is reached instead of being killed at it.
-      GOMEMLIMIT: "72MiB"
+      GOMEMLIMIT: "144MiB"
     volumes:
       - type: bind
         source: ./traefik/traefik.yaml
@@ -248,7 +248,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 96M
+          memory: 192M
     healthcheck:
       test: ["CMD", "traefik", "healthcheck", "--configFile=/etc/traefik/traefik.yaml"]
       interval: 10s

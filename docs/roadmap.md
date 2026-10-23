@@ -101,7 +101,7 @@ Done when: a new site is reachable over HTTPS on its preview domain within secon
 Follow-ups carried out of M2:
 
 - Rebuild and publish the site images from main: e2e pulls them from GHCR unless `images/` changed, and the published images predate the bundled plugins (#43).
-- Refresh the §4.1 memory budget: Traefik now needs 96 MiB, the socket proxy 24 MiB, the maintenance page 24 MiB, and Valkey 64 MiB of overhead above `maxmemory`; `pressfleet doctor`'s budget doesn't include them yet.
+- Refresh the §4.1 memory budget: Traefik now needs 192 MiB (#98), the socket proxy 24 MiB, the maintenance page 24 MiB, and Valkey 64 MiB of overhead above `maxmemory`; `pressfleet doctor`'s budget doesn't include them yet.
 - Watch the Traefik container (like the object cache manager does for Valkey) so a recreated Traefik rejoins site networks without a control plane restart; MariaDB has the same limitation.
 - Enforce domain uniqueness across primary domains and aliases in the database (a shared domains table); today it's checked in the application only.
 - Let operators change DNS provider credentials and SMTP settings without `pressfleet init --force` (with `pressfleet upgrade`, #95).

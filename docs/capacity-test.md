@@ -25,7 +25,7 @@ The test follows the plan in the handoff for #98: 50 sites, light traffic, and t
 | Deviation | A `compose.override.yaml` makes the control plane trust Pebble's root (`SSL_CERT_FILE`), as the end-to-end harness does, since the control plane checks its sites over HTTPS. |
 | Load generator | `s-2vcpu-4gb` in the same VPC, running k6 v2.3.0. |
 | Config | Defaults, except the backup window (`window_hours: 1`, opening at 18:55 UTC in run 1 and 00:30 in run 2) and `backup.check.interval_days: 1`. |
-| Run 2 only | The same override file sets Traefik's memory limit to 192 MiB and its `GOMEMLIMIT` to 144 MiB, the 75% ratio the rendered file uses (72 of 96 MiB). Test host only; no product default was changed. |
+| Run 2 only | The same override file sets Traefik's memory limit to 192 MiB and its `GOMEMLIMIT` to 144 MiB, the 75% ratio the rendered file uses (72 of 96 MiB). Set on the test host by an override file; the product default followed in the commit after the report. |
 
 ### Workload
 
@@ -111,12 +111,12 @@ Peaks are the cgroup's `memory.peak` since the container started. They include p
 | First Traefik kill | 19:50:06 (38 kills until 22:25:11) | None |
 | Traffic ends | 22:26:25 | 03:56:04 |
 
-## Proposed changes (not applied)
+## Changes
 
-Nothing in `platform.go`, the config defaults, or §4.1 has been changed; each change needs the owner's approval.
+1. **Done:** Traefik's default is now 192 MiB with `GOMEMLIMIT` 144 MiB (`DefaultTraefikMemoryMB` in `platform.go`; the Go limit is 75% of it), and §4.1 shows 192 MiB.
 
-1. **Raise Traefik's limit to 192 MiB and `GOMEMLIMIT` to 144 MiB** (the same 75% ratio). At 192 MiB, 50 sites at 5 requests per second held steady for 4h15m with anonymous memory peaking at 139 MiB, 72% of the limit. 96 MiB was not enough. Whether something between (for example 160 MiB) would do wasn't tested; the anonymous peak leaves only 21 MiB under 160 MiB, so I wouldn't go lower without another run. More sites' routes or more traffic may need more.
-2. **§4.1 arithmetic:** the table's limits sum to 8,192 MiB (50 × 128 for sites, 768, 320, 256, 256, 96, 24, 24, and 48 for the OS). Traefik at 192 MiB makes it 8,288 MiB, 96 MiB over 8 GiB. The measured use is far below either, so this is a presentation question: how the table should show caps that exceed the host. That is for the owner.
+   Basis: at 192 MiB, 50 sites at 5 requests per second held steady for 4h15m with anonymous memory peaking at 139 MiB, 72% of the limit. 96 MiB was not enough. Whether something between (for example 160 MiB) would do wasn't tested; the anonymous peak leaves only 21 MiB under 160 MiB, so I wouldn't go lower without another run. More sites' routes or more traffic may need more.
+2. **§4.1 arithmetic:** the table's limits summed to 8,192 MiB (50 × 128 for sites, 768, 320, 256, 256, 96, 24, 24, and 48 for the OS). With Traefik at 192 MiB they sum to 8,288 MiB, so the "left of 8 GiB" line is now −48 MiB. The measured use is far below either, so the table now says the limits exceed 8 GiB by 48 MiB and that they are caps, not reservations. `pressfleet doctor`'s `platformMemory` budget (1792 MiB in `doctor/checks.go`) is a hand-summed copy of the same limits and still counts Traefik at 96 MiB; it was not changed. Updating it would make an 8 GiB host report 47 sites instead of 48.
 3. **Keep the control plane at 256 MiB.** It held, but with about 100 MiB of margin on anonymous memory, mostly because of the `docker` and `compose` children. A longer run or a heavier site count could narrow it, and `GOMEMLIMIT` can't help with the children. This closes #192's cgroup v2 check with that caveat.
 4. **No change** for the socket proxy and maintenance page (24 MiB; anonymous memory 10 to 15 MiB), MariaDB (269 of 768 MiB), Redis (33 of 320), or VictoriaMetrics (160 of 256).
 

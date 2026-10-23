@@ -42,18 +42,19 @@ const ProjectName = "pressfleet"
 // it; restic left it for task containers in #191): 256 MiB, where eight
 // concurrent backups peaked at 110 MiB (#178). Its Go process gets
 // ControlPlaneGoMemLimitMB of that, not a share of the limit: a Go memory
-// limit of 85% of the container's was measured to do nothing. Traefik shares the §4.1 budget line. Traefik
-// uses about 25 MiB idle, but about 50 MiB while it starts and while it
-// gets certificates; with 64 MiB
-// (a Go memory limit of 48 MiB) it spent its time collecting garbage and
-// failed its healthcheck, so it gets 96 MiB, the extra 32 MiB out of the
-// headroom line. The socket proxy, a small Go program serving one client,
+// limit of 85% of the container's was measured to do nothing. Traefik shares
+// the §4.1 budget line. It uses about 25 MiB idle, about 50 MiB while it
+// starts and while it gets certificates, and, serving 50 sites at 5 requests
+// per second, 125–139 MiB of anonymous memory (#98). With 64 MiB (a Go memory
+// limit of 48 MiB) it spent its time collecting garbage and failed its
+// healthcheck, and with 96 MiB the kernel killed it 38 times in 2½ hours, so
+// it gets 192 MiB. The socket proxy, a small Go program serving one client,
 // uses about 11 MiB and comes on top, out of the headroom line, as does the
 // maintenance page service, which serves one static page.
 const (
 	DefaultMariaDBMemoryMB      = 768
 	DefaultControlPlaneMemoryMB = 256
-	DefaultTraefikMemoryMB      = 96
+	DefaultTraefikMemoryMB      = 192
 	DefaultSocketProxyMemoryMB  = 24
 	MaintenanceMemoryMB         = 24
 
