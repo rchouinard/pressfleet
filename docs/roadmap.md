@@ -348,11 +348,26 @@ Automatic rollback of a failed platform upgrade, automating the manual recovery 
 
 ### Post-MVP: MCP Server
 
-Built-in Model Context Protocol server exposing the dashboard's operations to agentic clients (§1.1, §8). Its open questions (authentication, secrets in model context, destructive operations, uploads) are listed in the tracking issue. Do not implement before MVP ships.
+Goal: agentic clients (Claude Code, Claude Desktop, IDE and CI agents) can perform the dashboard's operations through a built-in MCP server, with the same authorization, validation, and audit log as the HTTP API.
+
+Done when: with `mcp.enabled`, an MCP client authenticated with an API token lists exactly the tools its scope and role allow; creates a site, backs it up, reads its metrics and logs, and manages alerts through those tools; and follows jobs to completion with progress. Every call goes through the API's single authorization check, state-changing calls are audited as coming through MCP, no tool returns a secret, and CI keeps the tool catalog in step with the OpenAPI spec. (Design doc §1.1, §8)
 
 | # | Issue | Priority | Size | Depends on |
 | --- | --- | --- | --- | --- |
 | [#132](https://github.com/rchouinard/pressfleet/issues/132) | Built-in MCP server (tracking) | P2 | XL | #11, #103, #104 |
+| [#232](https://github.com/rchouinard/pressfleet/issues/232) | Decision: MCP server design | P0 | S | — |
+| [#233](https://github.com/rchouinard/pressfleet/issues/233) | MCP: tool catalog generated from the OpenAPI spec | P0 | M | #232 |
+| [#234](https://github.com/rchouinard/pressfleet/issues/234) | MCP: Streamable HTTP endpoint, sessions, and configuration | P0 | M | #232 |
+| [#235](https://github.com/rchouinard/pressfleet/issues/235) | MCP: tool calls through the API handler | P0 | L | #233, #234 |
+| [#236](https://github.com/rchouinard/pressfleet/issues/236) | MCP: wait for jobs with progress notifications | P0 | S | #235 |
+| [#237](https://github.com/rchouinard/pressfleet/issues/237) | Dashboard: connect an MCP client | P1 | M | #234 |
+| [#238](https://github.com/rchouinard/pressfleet/issues/238) | E2E: MCP server acceptance tests | P0 | M | #235, #236 |
+| [#239](https://github.com/rchouinard/pressfleet/issues/239) | Security review: MCP server | P0 | M | #238 |
+| [#240](https://github.com/rchouinard/pressfleet/issues/240) | Docs: MCP server guide | P1 | S | #235, #236, #237 |
+| [#241](https://github.com/rchouinard/pressfleet/issues/241) | MCP: OAuth 2.1 sign-in for MCP clients | P2 | L | #235, #237 |
+| [#242](https://github.com/rchouinard/pressfleet/issues/242) | MCP: irreversible operations behind elicitation | P2 | M | #235 |
+
+**Plan (2026-10-28):** [mcp-server-plan.md](mcp-server-plan.md). Tools are generated from the OpenAPI spec and an overlay file (`api/mcp-tools.yaml`), and every tool call is dispatched in-process through the API handler, so it gets the API's authentication, authorization, validation, and audit. No tool returns a secret, and irreversible deletions and privilege changes are left out of the first release. #232 settles the open decisions, answering #132's questions. #241 (OAuth) and #242 (elicitation) are P2 follow-ups outside the done-when. From 1.0, each issue is worked on its own branch and merged through a pull request.
 
 ### Post-MVP: Passwordless Sign-In
 
@@ -382,6 +397,7 @@ These must be resolved before the work they block.
 | [#94](https://github.com/rchouinard/pressfleet/issues/94) | ~~platform upgrade process~~ **Resolved:** forward-only migrations, CLI upgrades control plane to its own version, kubectl-style version skew (design doc §4.7). **Revised 2026-10-03:** MVP upgrades are forward-only with a tested manual recovery procedure (#142); automatic rollback is post-MVP (#141); MariaDB series changes are refused | MVP Release Gate | P0 |
 | [#196](https://github.com/rchouinard/pressfleet/issues/196) | staging site behavior and defaults: shape, copy mechanism, push scope and guards, staging defaults, alerts, permissions, rollouts ([plan](staging-clones-plan.md)) | Post-MVP: Staging Clones | P0 |
 | [#212](https://github.com/rchouinard/pressfleet/issues/212) | Kubernetes deployment model: scope, client library, packaging and lifecycle, platform services, storage, isolation, ingress, metrics, supported clusters, capacity ([plan](kubernetes-driver-plan.md)) | Post-MVP: Kubernetes Driver | P0 |
+| [#232](https://github.com/rchouinard/pressfleet/issues/232) | MCP server design: authentication, secrets, destructive operations, uploads, local clients, library, tool shape, jobs, endpoint, audit ([plan](mcp-server-plan.md)) | Post-MVP: MCP Server | P0 |
 
 ## Gaps in the design document
 
