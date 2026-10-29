@@ -282,11 +282,30 @@ Done when: 50 sites on an 8 GiB host stay healthy under light traffic (§4.1), a
 
 ### Post-MVP: Staging Clones
 
-Highest-priority follow-up after MVP (§1.1, §8). Do not implement before MVP ships.
+Goal: an Operator can clone a production site to a linked staging site on a preview domain, refresh it from production, and push tested changes (plugins and themes, all files, or the database) back to production, with a pre-push backup and automatic rollback.
+
+Done when: a staging site created from a live production site serves production's content on its own preview domain, isolated from production and with outbound email off; a plugin deployed to staging can be pushed to production without touching production's database; database pushes and refreshes converge in both directions; and a push that fails rolls production back on its own. (Design doc §1.1, §8)
 
 | # | Issue | Priority | Size | Depends on |
 | --- | --- | --- | --- | --- |
 | [#101](https://github.com/rchouinard/pressfleet/issues/101) | Staging clones (tracking) | P2 | XL | #55 |
+| [#196](https://github.com/rchouinard/pressfleet/issues/196) | Decision: staging site behavior and defaults | P0 | S | — |
+| [#197](https://github.com/rchouinard/pressfleet/issues/197) | Jobs: run a job after another job finishes | P0 | M | — |
+| [#198](https://github.com/rchouinard/pressfleet/issues/198) | Driver: render a site's environment type and outbound mail switch | P1 | S | #196 |
+| [#199](https://github.com/rchouinard/pressfleet/issues/199) | Sites: staging site model, API fields, and guards | P0 | M | #196, #198 |
+| [#200](https://github.com/rchouinard/pressfleet/issues/200) | Backup engine: restore part of a snapshot, and the sync backup kind | P0 | M | #196 |
+| [#201](https://github.com/rchouinard/pressfleet/issues/201) | Site images: outbound mail switch and environment badge | P1 | S | #196 |
+| [#202](https://github.com/rchouinard/pressfleet/issues/202) | Create a staging site from a production site | P0 | L | #197, #199 |
+| [#203](https://github.com/rchouinard/pressfleet/issues/203) | Refresh a staging site from production | P0 | M | #202, #200 |
+| [#204](https://github.com/rchouinard/pressfleet/issues/204) | Push a staging site to production | P0 | L | #203 |
+| [#205](https://github.com/rchouinard/pressfleet/issues/205) | Alerts and metrics: staging sites | P1 | S | #199 |
+| [#206](https://github.com/rchouinard/pressfleet/issues/206) | Disaster recovery and rollouts: staging sites | P1 | M | #202 |
+| [#207](https://github.com/rchouinard/pressfleet/issues/207) | Dashboard: create and manage staging sites | P0 | M | #202 |
+| [#208](https://github.com/rchouinard/pressfleet/issues/208) | Dashboard: refresh and push staging sites | P0 | M | #207, #203, #204 |
+| [#209](https://github.com/rchouinard/pressfleet/issues/209) | E2E: staging clones acceptance tests | P0 | L | #201, #204, #208 |
+| [#210](https://github.com/rchouinard/pressfleet/issues/210) | Docs: staging sites operator guide and release notes | P1 | S | #204, #208 |
+
+**Plan (2026-10-28):** [staging-clones-plan.md](staging-clones-plan.md). Clones, refreshes, and pushes all go through the backup engine and the restore pipeline (§5.4), so every copy has a pre-restore backup and rolls back on failure. The source is backed up under its own lock key, and the copy job waits for that backup (#197). #196 settles the open decisions before the rest starts; #197 can start now. From 1.0, each issue is worked on its own branch and merged through a pull request.
 
 ### Post-MVP: Kubernetes Driver
 
@@ -338,6 +357,7 @@ These must be resolved before the work they block.
 | [#65](https://github.com/rchouinard/pressfleet/issues/65) | ~~metrics retention period~~ **Resolved:** configurable, default 90 days (design doc §7) | M4: Monitoring & Alerting | P1 |
 | [#92](https://github.com/rchouinard/pressfleet/issues/92) | ~~plugin/theme update visibility~~ **Resolved:** report only; pending plugin and theme updates count towards site health and show in the dashboard, and the platform never runs them or backs up around them (design doc §5.6, §9 Q2). Implemented in M5 ([#125](https://github.com/rchouinard/pressfleet/issues/125)) | M5: Dashboard | P2 |
 | [#94](https://github.com/rchouinard/pressfleet/issues/94) | ~~platform upgrade process~~ **Resolved:** forward-only migrations, CLI upgrades control plane to its own version, kubectl-style version skew (design doc §4.7). **Revised 2026-10-03:** MVP upgrades are forward-only with a tested manual recovery procedure (#142); automatic rollback is post-MVP (#141); MariaDB series changes are refused | MVP Release Gate | P0 |
+| [#196](https://github.com/rchouinard/pressfleet/issues/196) | staging site behavior and defaults: shape, copy mechanism, push scope and guards, staging defaults, alerts, permissions, rollouts ([plan](staging-clones-plan.md)) | Post-MVP: Staging Clones | P0 |
 
 ## Gaps in the design document
 
