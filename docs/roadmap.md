@@ -309,11 +309,34 @@ Done when: a staging site created from a live production site serves production'
 
 ### Post-MVP: Kubernetes Driver
 
-KubernetesProvisioner using client-go (§4.2, §8). Do not implement before MVP ships.
+Goal: PressFleet installs on a Kubernetes cluster with a Helm chart and runs every site operation through a Kubernetes driver, with the same isolation, backups, and dashboard as the Docker Compose target.
+
+Done when: on a kind cluster installed from the chart, a site can be provisioned, reached over HTTPS on its preview domain, taken live on a custom domain, backed up and restored (with automatic rollback on failure), reached over SFTP, and deleted with nothing left behind; two sites cannot reach each other or the cluster's API; the driver passes the same conformance suite as the Compose driver; and an upgrade between two releases and a disaster recovery drill succeed. (Design doc §4.2, §8)
 
 | # | Issue | Priority | Size | Depends on |
 | --- | --- | --- | --- | --- |
 | [#102](https://github.com/rchouinard/pressfleet/issues/102) | Kubernetes driver (tracking) | P2 | XL | #3 |
+| [#212](https://github.com/rchouinard/pressfleet/issues/212) | Decision: Kubernetes deployment model | P0 | S | — |
+| [#213](https://github.com/rchouinard/pressfleet/issues/213) | Control plane: build the site driver from configuration | P0 | M | — |
+| [#214](https://github.com/rchouinard/pressfleet/issues/214) | Driver conformance test suite | P0 | M | — |
+| [#215](https://github.com/rchouinard/pressfleet/issues/215) | Kubernetes driver: configuration, client, and manifest rendering | P0 | M | #212, #213 |
+| [#216](https://github.com/rchouinard/pressfleet/issues/216) | Kubernetes driver: site lifecycle | P0 | L | #215 |
+| [#217](https://github.com/rchouinard/pressfleet/issues/217) | Kubernetes driver: routing, TLS, and maintenance mode | P0 | M | #216 |
+| [#218](https://github.com/rchouinard/pressfleet/issues/218) | Kubernetes driver: WP-CLI and other exec operations | P0 | M | #216 |
+| [#219](https://github.com/rchouinard/pressfleet/issues/219) | Kubernetes driver: site and repository tasks | P0 | L | #216 |
+| [#220](https://github.com/rchouinard/pressfleet/issues/220) | Kubernetes driver: SFTP sessions | P1 | M | #219 |
+| [#221](https://github.com/rchouinard/pressfleet/issues/221) | Kubernetes driver: logs and stats | P1 | M | #216 |
+| [#222](https://github.com/rchouinard/pressfleet/issues/222) | Images: run under Kubernetes | P0 | S | #212 |
+| [#223](https://github.com/rchouinard/pressfleet/issues/223) | Helm chart: platform services and control plane | P0 | L | #212, #215 |
+| [#224](https://github.com/rchouinard/pressfleet/issues/224) | Install, upgrade, and recover on Kubernetes | P0 | L | #223 |
+| [#225](https://github.com/rchouinard/pressfleet/issues/225) | Doctor: Kubernetes cluster checks | P0 | M | #212, #215 |
+| [#226](https://github.com/rchouinard/pressfleet/issues/226) | Metrics, uptime, and dashboard on Kubernetes | P1 | M | #218, #219, #221 |
+| [#227](https://github.com/rchouinard/pressfleet/issues/227) | Release pipeline: publish the Helm chart | P1 | S | #223 |
+| [#228](https://github.com/rchouinard/pressfleet/issues/228) | E2E: Kubernetes acceptance tests on kind | P0 | L | #214, #217, #218, #220, #222, #224, #225, #226 |
+| [#229](https://github.com/rchouinard/pressfleet/issues/229) | Security review: Kubernetes target | P0 | M | #228 |
+| [#230](https://github.com/rchouinard/pressfleet/issues/230) | Docs: Kubernetes installation and operations | P1 | M | #224, #228 |
+
+**Plan (2026-10-28):** [kubernetes-driver-plan.md](kubernetes-driver-plan.md). A Helm chart installs the platform, and a driver behind the existing `provisioner` interfaces runs each site in its own namespace: a single-replica Deployment, a ReadWriteOnce PVC, Traefik IngressRoutes, and default-deny NetworkPolicies. The control plane's data directory is a ReadWriteMany volume, so the task contract doesn't change. #212 settles the open decisions. #213 (driver wiring) and #214 (conformance suite) can start now. From 1.0, each issue is worked on its own branch and merged through a pull request.
 
 ### Post-MVP: Upgrade Rollback
 
@@ -358,6 +381,7 @@ These must be resolved before the work they block.
 | [#92](https://github.com/rchouinard/pressfleet/issues/92) | ~~plugin/theme update visibility~~ **Resolved:** report only; pending plugin and theme updates count towards site health and show in the dashboard, and the platform never runs them or backs up around them (design doc §5.6, §9 Q2). Implemented in M5 ([#125](https://github.com/rchouinard/pressfleet/issues/125)) | M5: Dashboard | P2 |
 | [#94](https://github.com/rchouinard/pressfleet/issues/94) | ~~platform upgrade process~~ **Resolved:** forward-only migrations, CLI upgrades control plane to its own version, kubectl-style version skew (design doc §4.7). **Revised 2026-10-03:** MVP upgrades are forward-only with a tested manual recovery procedure (#142); automatic rollback is post-MVP (#141); MariaDB series changes are refused | MVP Release Gate | P0 |
 | [#196](https://github.com/rchouinard/pressfleet/issues/196) | staging site behavior and defaults: shape, copy mechanism, push scope and guards, staging defaults, alerts, permissions, rollouts ([plan](staging-clones-plan.md)) | Post-MVP: Staging Clones | P0 |
+| [#212](https://github.com/rchouinard/pressfleet/issues/212) | Kubernetes deployment model: scope, client library, packaging and lifecycle, platform services, storage, isolation, ingress, metrics, supported clusters, capacity ([plan](kubernetes-driver-plan.md)) | Post-MVP: Kubernetes Driver | P0 |
 
 ## Gaps in the design document
 
