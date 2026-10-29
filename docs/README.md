@@ -32,7 +32,7 @@ PressFleet is a self-hostable WordPress application platform for agencies. These
 
 ## For contributors
 
-[Contributing](../CONTRIBUTING.md), [Testing](testing.md), [Releasing](releasing.md), [Dashboard two-factor plan](dashboard-two-factor-plan.md), [Staging clones plan](staging-clones-plan.md), and the [decision records](decisions/).
+[Contributing](../CONTRIBUTING.md), [Testing](testing.md), [Releasing](releasing.md), [Dashboard two-factor plan](dashboard-two-factor-plan.md), [Staging clones plan](staging-clones-plan.md), [Kubernetes driver plan](kubernetes-driver-plan.md), and the [decision records](decisions/).
 
 ## Not in this release
 
