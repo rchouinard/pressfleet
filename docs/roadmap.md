@@ -340,11 +340,23 @@ Done when: on a kind cluster installed from the chart, a site can be provisioned
 
 ### Post-MVP: Upgrade Rollback
 
-Automatic rollback of a failed platform upgrade, automating the manual recovery procedure that MVP upgrades rely on (§4.7, revised from #94). Do not implement before MVP ships.
+Goal: a failed platform upgrade rolls back on its own, without the operator following the manual recovery procedure, and a regretted upgrade can be rolled back on demand.
+
+Done when: an upgrade whose health checks fail restores the previous platform and state automatically; `pressfleet upgrade --rollback` does the same on demand, and refuses (without `--force`) when changes since the upgrade would leave sites broken or orphaned; rollouts are held while an upgrade is unconfirmed; and the manual recovery steps keep working as the fallback (#142). (Design doc §4.7)
 
 | # | Issue | Priority | Size | Depends on |
 | --- | --- | --- | --- | --- |
 | [#141](https://github.com/rchouinard/pressfleet/issues/141) | Automatic upgrade rollback and `pressfleet upgrade --rollback` | P2 | M | #95 |
+| [#245](https://github.com/rchouinard/pressfleet/issues/245) | Decision: upgrade rollback behavior | P0 | S | — |
+| [#246](https://github.com/rchouinard/pressfleet/issues/246) | Control plane: record state database migrations in a marker file | P0 | S | #245 |
+| [#247](https://github.com/rchouinard/pressfleet/issues/247) | Control plane: hold rollouts while an upgrade is unconfirmed | P1 | S | #245 |
+| [#248](https://github.com/rchouinard/pressfleet/issues/248) | Admin interface: what changed since an upgrade | P1 | S | #245 |
+| [#249](https://github.com/rchouinard/pressfleet/issues/249) | Upgrade: roll back a failed upgrade automatically | P0 | L | #245, #246 |
+| [#250](https://github.com/rchouinard/pressfleet/issues/250) | Upgrade: `pressfleet upgrade --rollback` | P0 | M | #248, #249 |
+| [#251](https://github.com/rchouinard/pressfleet/issues/251) | E2E: automatic and on-demand upgrade rollback | P0 | M | #247, #250 |
+| [#252](https://github.com/rchouinard/pressfleet/issues/252) | Docs: upgrade rollback | P1 | S | #250 |
+
+**Plan (2026-10-29):** [upgrade-rollback-plan.md](upgrade-rollback-plan.md). Automatic rollback and `--rollback` run one idempotent sequence: the manual recovery steps, automated. A marker file tells the CLI whether a migration ran, for SQLite and PostgreSQL alike, without it reading the state database. Rollouts are held while an upgrade is unconfirmed. Before `--rollback` restores the state database, the control plane reports what changed since the upgrade, so the rollback can refuse changes that would leave sites broken or orphaned. #245 settles the open decisions. From 1.0, each issue is worked on its own branch and merged through a pull request.
 
 ### Post-MVP: MCP Server
 
@@ -398,6 +410,7 @@ These must be resolved before the work they block.
 | [#196](https://github.com/rchouinard/pressfleet/issues/196) | staging site behavior and defaults: shape, copy mechanism, push scope and guards, staging defaults, alerts, permissions, rollouts ([plan](staging-clones-plan.md)) | Post-MVP: Staging Clones | P0 |
 | [#212](https://github.com/rchouinard/pressfleet/issues/212) | Kubernetes deployment model: scope, client library, packaging and lifecycle, platform services, storage, isolation, ingress, metrics, supported clusters, capacity ([plan](kubernetes-driver-plan.md)) | Post-MVP: Kubernetes Driver | P0 |
 | [#232](https://github.com/rchouinard/pressfleet/issues/232) | MCP server design: authentication, secrets, destructive operations, uploads, local clients, library, tool shape, jobs, endpoint, audit ([plan](mcp-server-plan.md)) | Post-MVP: MCP Server | P0 |
+| [#245](https://github.com/rchouinard/pressfleet/issues/245) | upgrade rollback behavior: default and exit codes, triggers, state database, `--rollback` guards, rollout hold, platform project, MariaDB, Kubernetes ([plan](upgrade-rollback-plan.md)) | Post-MVP: Upgrade Rollback | P0 |
 
 ## Gaps in the design document
 
