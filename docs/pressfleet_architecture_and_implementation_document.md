@@ -2,7 +2,7 @@
 
 **Project Codename:** PressFleet  
 **Status:** Draft  
-**Last Updated:** 2026-10-18  
+**Last Updated:** 2026-10-29  
 **Target Audience:** Agencies specializing in WordPress development and management  
 **Core Vision:** A self-hostable, containerized application server for WordPress—a smaller-scale, open-source alternative to WP Engine featuring one-click deployments, automatic TLS, page/object caching, built-in monitoring, file management, and automated backup/restore routines.
 
@@ -25,7 +25,7 @@ PressFleet aims to simplify WordPress management for agencies by delivering:
 * **Multi-agency / PaaS hosting.** One install serves one agency. A multi-agency PaaS may be considered in the future.
 * **Client-group-scoped user access.** MVP roles apply platform-wide; restricting users to specific client groups is a future consideration that §4.6 keeps possible.
 * **Client access to the platform.** Only agency staff use the dashboard and API. Exposing platform features to clients (e.g. via WordPress plugins that call the platform API) is a future consideration (§4.2).
-* **Staging clones.** Post-MVP, but the **highest-priority** follow-up (§8). The MVP data model and restore pipeline should anticipate it.
+* **Staging clones.** Not in the MVP, which reserved room for them in its data model and restore pipeline. They are the first post-MVP feature (§5.11, §8; decided 2026-10-29, #196).
 * **Kubernetes deployment.** Planned for a later release; the MVP only has to keep the door open (§4.2).
 * **MCP server.** A built-in Model Context Protocol server that gives agentic clients the dashboard's operations is planned for after the MVP (§8). It goes through the same API authorization and audit log (§4.6), so the MVP needs nothing extra for it.
 * **WordPress Multisite.**
@@ -199,7 +199,8 @@ Kubernetes and client-facing integrations are out of scope for the MVP. To keep 
 * Site containers must be stateless apart from declared volumes (`wp-content`) so they can later run as Pods with PVCs.
 * API tokens carry a scope so that site-scoped tokens for future client-facing WordPress plugins can be added without redesigning authentication. A token can never do more than its owner's role allows (§4.6).
 * Authorization checks resolve every target to its client group, so client-group-scoped user access can be added later without redesigning authorization (§4.6).
-* The site model supports a parent/child relationship between sites so a staging clone can later be linked to its production site.
+* The site model supports a parent/child relationship between sites, which links a staging site to its production site (§5.11).
+* A staging site's environment type and outbound mail switch are `SiteConfig` data (`Environment`, `DisableMail`) rendered into the generated `wp-config.php`, so a Kubernetes driver needs nothing staging-specific (§5.11).
 
 ### 4.3. Domain Model (MVP)
 
@@ -207,10 +208,10 @@ Kubernetes and client-facing integrations are out of scope for the MVP. To keep 
 | :--- | :--- |
 | **User** | Email, password hash, role (Admin, Operator, or Viewer; §4.6), API tokens, SSH public keys (§5.8). |
 | **ClientGroup** | Name, notes, backup repository reference. Has many Sites. |
-| **Site** | Client group, slug, preview domain, primary domain (nullable until go-live), aliases, PHP version, WordPress core version, core branch hold and major release approval (§5.5), resource limits, preview password protection (off by default; §5.1), status, parent site (nullable, reserved for staging). |
-| **Job** | Type, target, state, step log, timestamps. |
-| **BackupRecord** | Site, snapshot ID, WordPress core version at backup time, size, status, timestamp. |
-| **AlertRule / Alert** | Condition, target, channel; firing and resolved events. |
+| **Site** | Client group, slug, preview domain, primary domain (nullable until go-live), aliases, PHP version, WordPress core version, core branch hold and major release approval (§5.5), resource limits, preview password protection (off by default; §5.1), status, parent site (nullable; set on staging sites, §5.11), outbound mail switch, and on staging sites the snapshot and time of the last clone or refresh and the time of the last push. |
+| **Job** | Type, target, state, step log, timestamps, and optionally a job it waits for (§5.11). |
+| **BackupRecord** | Site, snapshot ID, kind (`scheduled`, `manual`, `pre_restore`, `pre_update`, or `sync`, the source of a staging copy; §5.11), WordPress core version at backup time, size, status, timestamp. |
+| **AlertRule / Alert** | Condition, target, channel, whether site-scoped rules include staging sites (§7.3); firing and resolved events. |
 | **AuditEvent** | Actor (user and token), action, target, result, source IP, timestamp (§4.6). |
 
 ### 4.4. Adapter Contracts
@@ -380,8 +381,9 @@ Each user has one platform-wide role. The roles are fixed in the MVP; there are 
 | Log in to a site's WordPress admin from the dashboard (§5.9) | ✓ | ✓ | |
 | Open read-write database sessions | ✓ | | |
 | Take backups, restore, and approve core updates | ✓ | ✓ | |
+| Create, refresh, push, and delete staging sites (§5.11) | ✓ | ✓ | |
 | Create and edit client groups; manage alert rules | ✓ | ✓ | |
-| Delete sites, optionally with their backups (snapshots and backup records) | ✓ | | |
+| Delete production sites, and delete any site together with its backups (snapshots and backup records) | ✓ | | |
 | Delete or offboard client groups (export or delete the backup repository and its key) | ✓ | | |
 | Manage users, roles, and other users' API tokens; reset other users' second factors; view the audit log | ✓ | | |
 | Change platform settings (DNS and S3 credentials, SMTP, alert channels, backup location, retention, WordPress security set) | ✓ | | |
@@ -498,6 +500,8 @@ The control plane process never runs restic (#178, #191). restic derives the rep
 6. Purges the FastCGI page cache and the site's object cache, then disables maintenance mode.
 7. On failure at any step, restores the pre-restore snapshot and leaves the site in maintenance mode with an error on the job.
 
+Refreshing a staging site and pushing it to production (§5.11) run these same steps, with the other site's snapshot as the source and a **scope**. `files` is `all` (all of `wp-content`), `code` (`plugins`, `themes`, `mu-plugins`, and `languages`), or `none`, and `database` is yes or no; at least one of the two is copied. A copied scope ends up identical to the snapshot's: a code directory the snapshot lacks is removed, and everything outside the scope is left alone. Without the database, steps 4 and 5 are skipped. `site.restore`, `site.refresh`, and `site.push` share the steps, and `site.restore` keeps its step names so a restore queued before an upgrade resumes after it.
+
 ### 5.5. Runtime Management (PHP & WordPress Core)
 
 #### Site Image & Filesystem Layout
@@ -537,7 +541,7 @@ The control plane process never runs restic (#178, #191). restic derives the rep
 * **Plugin and theme updates:** Handled natively by WordPress (auto-updates or wp-admin), writing to the `wp-content` volume. The platform only reports pending updates, as part of site health (§9 Q2); it never runs them. The control plane checks each site twice a day (`wp plugin list --update=available`, and the same for themes, staggered across sites like WP-Cron) and keeps the latest result; the dashboard shows the count on the site list and the updates on the site's page, and can check a site again on demand. Pending updates make a site's health a warning, never a failure: the default alert rule *plugin or theme updates pending* (warning) fires once they have been pending for 3 days, which leaves WordPress's own auto-updates time to apply them first.
 * **WP-Cron:** `DISABLE_WP_CRON` is set; cron is triggered by the control plane scheduler so it runs reliably on low-traffic sites.
 * **Cache purging:** Nginx Helper purges the FastCGI cache using file-based purging against the per-site cache volume shared between the `nginx` and `php` containers. Both containers run as the site's UID so the cache files can be deleted. The platform configures it that way at provisioning and whenever it reconciles the site. A full purge (`POST /api/v1/sites/{id}/cache/purge`, and the purges in go-live and restore) runs as a job in the control plane rather than inside WordPress, so it works on stopped or broken sites: it flushes the site's object cache database as the object cache admin, then deletes the page cache files through the driver (`Provisioner.PurgeCache`).
-* **Outbound email:** Sites send mail through a configurable SMTP relay.
+* **Outbound email:** Sites send mail through a configurable SMTP relay. When `PRESSFLEET_DISABLE_MAIL` is set (staging sites, §5.11), the must-use plugin short-circuits `wp_mail()` and logs one line per suppressed message, without addresses.
 
 ### 5.7. Site Import Workflow
 
@@ -601,6 +605,22 @@ The client group repositories (§5.3) and the master key aren't enough to rebuil
 * **Restore:** `pressfleet init --force` on the new host, with the saved master key file and the same answers, installs an empty platform; `pressfleet recover` then stops the control plane and runs `pressfleet state recover` in a one-off control plane container (the host CLI never touches the state database, §4.7), and starts the control plane again. Before committing, the restore checks that the backup's master key check value matches and that the login key decrypts (an unusable one is discarded), fails the jobs the old host hadn't finished, and queues a `site.recover` job for every site that was running, stopped, or being updated. A site comes back stopped if it was stopped, including before the update in progress (the store records the status a site had when it went to `updating`), or if an unfinished stop job asked for it. It refuses to replace a state database that already has client groups or sites unless forced.
 * **Site recovery:** `site.recover` recreates a site's database and object cache user with the restored credentials, renders and starts its containers with the current configuration, restores the newest snapshot in the site's client group repository (which may be newer than the state backup), and runs `wp core update-db`. The login key reaches the site through that render: a restored key keeps every site's public key, and a key generated because the backup had none (or an unusable one) is pushed to every site as it is recreated, so one-click login recovers on its own. Sites that were being provisioned or deleted are marked failed for the operator.
 * Whatever the platform recorded after the last state backup is lost; metrics, uploads, and pending exports aren't backed up. An end-to-end test runs the whole drill: install, back up, delete everything but the backup location and the master key, reinstall, recover.
+* **Staging sites** (§5.11) have no scheduled backups by default. A staging site without a snapshot of its own is recovered from its production site's newest snapshot, with its URLs rewritten to its preview domain, and the job carries a warning. If neither site has one, the staging site is marked failed.
+
+### 5.11. Staging Sites
+
+A staging site is a copy of a production site on its own preview domain, linked to it, for testing heavier changes (plugins, a theme, a PHP upgrade, a WordPress major release) before they reach production. It can be refreshed from production, and its changes can be pushed back (decided 2026-10-29, #196; plan: [staging-clones-plan.md](staging-clones-plan.md)).
+
+* **Shape:** a staging site is a site whose parent is its production site. It belongs to the production site's client group, because copies go through the group's backup repository. Staging sites can't be nested, and a production site can have any number of them, limited only by host capacity (§4.1).
+* **Copies go through the backup engine.** The source is backed up (kind `sync`) and the snapshot is restored into the target with the restore pipeline (§5.4), so every copy has an undo point and rolls back on failure. A clone or refresh can start from an existing backup of the production site instead. A job holds one lock key, so each copy is two jobs queued together: the source's backup under the source's lock key, and the copy under the target's, which waits for the backup to finish and fails, changing nothing, if the backup failed. A queued job that is waiting for another job doesn't block its lock key, so two copies in opposite directions can't deadlock.
+* **Create** (`POST /api/v1/sites/{id}/staging-sites`): allocates the staging site like an import (§5.7), with a slug derived from production's (`acme-staging`), and the copy job then creates its database, object cache user, and stack, restores the snapshot, runs `wp core update-db`, rewrites production's URL to the staging preview URL, and configures the default plugins. It inherits production's PHP version, core, table prefix (the dump is imported verbatim), resources (which can be overridden), and initial admin user; no admin password is generated, because production's users come with the copy. A clone that fails rolls back like provisioning and leaves the staging site marked failed.
+* **Refresh** (`POST /api/v1/sites/{id}/refresh`) copies production into the staging site with a scope (§5.4). The staging site gets a pre-refresh backup.
+* **Push** (`POST /api/v1/sites/{id}/push`) copies the staging site into production with a scope. Production gets a pre-push backup, which the job result names so the push can be undone by restoring it, is in maintenance mode during the push, and is rolled back automatically if the push fails. URLs are rewritten to production's primary domain (or preview domain before go-live), and the default plugin stack is converged afterwards. A database push replaces everything production recorded since the staging snapshot (orders, comments, form entries, users); the dashboard shows the last refresh and asks for the production site's slug before one starts. A database push from a staging site on a newer WordPress major branch than production's core policy allows is refused, because it would bypass the hold or approval (§5.5); a newer release of the same branch moves production up, as a restore does. Settings are never pushed: production keeps its PHP version, resources, domains, preview protection, and mail switch. Plugin activation lives in the database, so a code-only push updates active plugins and brings new ones in inactive.
+* **Defaults:** a staging site has only its preview domain (go-live and aliases are refused), `WP_ENVIRONMENT_TYPE` is `staging`, preview password protection is on, outbound email is off (it can be turned on per staging site), WP-Cron runs as on production, and scheduled backups are off (the site's backup schedule can turn them on; manual backups work). The admin bar shows a badge naming the environment. `blog_public` is left alone, since a database push would carry it to production; the preview domain's `noindex` header keeps staging out of search engines.
+* **Everything else** works as on any site: restore, export, SFTP, the deploy API, database sessions, one-click login, plugin update checks, and core, image, and template rollouts under the staging site's own core policy. Updating staging sites before their production sites (a canary) is left for later.
+* **Deletion:** deleting a staging site is an Operator action that keeps its backups; deleting its backups too stays Admin (§4.6). A production site with staging sites can't be deleted; the request is refused before anything is removed.
+* **What a copy carries along:** production's users and passwords, customer data, plugin settings with live API keys, licenses, webhooks, and scheduled events. PressFleet turns off mail through `wp_mail()` and keeps the site behind preview protection, but can't make every plugin safe; the operator guide lists what to check.
+* **Not supported:** copying selected tables or merging database changes, promoting a staging site to production or detaching it, custom domains on staging sites, staging sites in another client group, and pushing settings.
 
 ---
 
@@ -708,6 +728,7 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
 ### 7.3. Alerting
 * **Default alert rules:** site down, elevated 5xx rate, certificate expiring or failed to renew, backup failed or stale, disk nearly full, container restart loop, PHP-FPM worker saturation, Redis eviction spikes, plugin or theme updates pending (§5.6).
 * **Channels (MVP):** email (SMTP) and generic webhook (covers Slack, Teams, etc. via incoming webhooks).
+* **Staging sites (§5.11):** built-in site-scoped rules skip staging sites, which are disposable and often idle or stopped; a rule can include them (`include_staging`). Backup alerts already skip sites whose backup schedule is off. `pressfleet_site_info` carries `environment` and `parent_site_id` labels.
 * **Limitation:** Uptime checks run from the PressFleet host itself and cannot detect a full host outage. External uptime checking is a future consideration.
 
 ### 7.4. Logs
@@ -765,7 +786,7 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
   * Capacity test: 50 sites on an 8 GiB host stay healthy under light traffic (§4.1).
   * Forward-only `pressfleet upgrade` with a documented, tested manual recovery procedure, and enforcement of the version skew policy between the host CLI and the control plane (§4.7).
 * **Post-MVP (High Priority): Staging Clones**
-  * Clone a production site to a linked staging site (on a preview domain), and push staging changes back to production.
+  * Clone a production site to a linked staging site on a preview domain, refresh it from production, and push its code, files, or database back to production with a pre-push backup and automatic rollback (§5.11).
 * **Post-MVP: Kubernetes Driver**
   * Implement `KubernetesProvisioner` using `client-go`, with templates in `/templates/k8s`.
   * Test against kind or k3d.
@@ -798,4 +819,4 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
 1. **Repository Setup:** Initialize a monorepo following the conventions in §3.1, containing `/api` (OpenAPI spec), `/control-plane` (Go backend), `/ui` (Nuxt frontend), `/images` (`site-nginx` and `site-php` images), and `/templates/compose` (site Compose templates). Reserve `/templates/k8s` for the future Kubernetes driver.
 2. **Interface Implementation:** Write the OpenAPI spec for Phase 1 endpoints (§4.5), the core Go interfaces from §4.4 (`Provisioner`, `DatabaseManager`, `BackupEngine`), the domain model from §4.3, and the job queue.
 3. **Integration Test Suite:** Build an integration test framework using Docker-in-Docker (dind) to validate site creation, WP-CLI execution, and teardown against the Compose driver.
-4. **Scope Discipline:** Do not implement Kubernetes support, staging clones, or any feature listed under Non-Goals (§1.1). Raise items in Open Questions (§9) before building features that depend on them.
+4. **Scope Discipline:** Build what the current milestone's issues and accepted plan describe (§8). Features listed under Non-Goals (§1.1) stay out until a milestone takes them on, as staging clones now have (§5.11). Raise open questions, and resolve the milestone's decision issues, before building features that depend on them.
