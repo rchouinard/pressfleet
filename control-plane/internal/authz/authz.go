@@ -147,6 +147,11 @@ const (
 	UploadForImport Action = "upload.site_import"
 	UploadForDeploy Action = "upload.site_deploy"
 
+	// CreateStagingSite is creating a staging site of a production site
+	// (§5.11). It is checked against the production site, whose client
+	// group the staging site joins.
+	CreateStagingSite Action = "site.staging.create"
+
 	// Take backups, restore, and approve core updates.
 	CreateBackup      Action = "backup.create"
 	RestoreBackup     Action = "backup.restore"
@@ -377,6 +382,8 @@ var rules = map[Action]rule{
 
 	OpenReadWriteDatabaseSession: {store.RoleAdmin, true},
 	TunnelDatabaseReadWrite:      {store.RoleAdmin, true},
+
+	CreateStagingSite: {store.RoleOperator, true},
 
 	CreateBackup:      {store.RoleOperator, true},
 	RestoreBackup:     {store.RoleOperator, true},

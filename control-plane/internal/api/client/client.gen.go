@@ -3887,6 +3887,20 @@ type SSHKeyList struct {
 	NextCursor *NextCursor `json:"next_cursor"`
 }
 
+// StagingSiteCreate defines model for StagingSiteCreate.
+type StagingSiteCreate struct {
+	// Name Display name. Defaults to the production site's name followed by "(staging)".
+	Name *string `json:"name,omitempty"`
+
+	// Resources Partial resource limits. Omitted fields keep their current value, or the platform default when creating a site.
+	Resources *ResourceLimitsUpdate `json:"resources,omitempty"`
+
+	// SnapshotID An existing snapshot of the production site to copy (a backup's
+	// `snapshot_id`, or a prefix of it of at least 8 characters),
+	// instead of a fresh `sync` backup.
+	SnapshotID *string `json:"snapshot_id,omitempty"`
+}
+
 // StagingState What a staging site keeps about its production site and its mail.
 type StagingState struct {
 	// LastPushedAt When the site was last pushed to production; null if it never was.
@@ -4931,6 +4945,9 @@ type SetSiteMaintenanceJSONRequestBody = SiteMaintenance
 
 // RestoreSiteJSONRequestBody defines body for RestoreSite for application/json ContentType.
 type RestoreSiteJSONRequestBody = SiteRestore
+
+// CreateStagingSiteJSONRequestBody defines body for CreateStagingSite for application/json ContentType.
+type CreateStagingSiteJSONRequestBody = StagingSiteCreate
 
 // CreateUploadJSONRequestBody defines body for CreateUpload for application/json ContentType.
 type CreateUploadJSONRequestBody = UploadCreate
@@ -7029,6 +7046,90 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/restore (the `RestoreSite` operationId).
 	RestoreSite(ctx context.Context, siteID SiteID, body RestoreSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateStagingSiteWithBody Create a staging site
+	//
+	// Creates a staging site: a copy of this production site on its own
+	// preview domain, linked to it (design doc §5.11). Needs the
+	// `site.staging.create` permission (Operator).
+	//
+	// The staging site is created at once with status `provisioning`. It
+	// gets a slug derived from the production site's (`acme-staging`,
+	// then `acme-staging-2`, ...), its own database, object cache user,
+	// and credentials, and the production site's PHP version, WordPress
+	// core, table prefix, resources (unless `resources` overrides them),
+	// and initial administrator, but no generated admin password: the
+	// production site's users come with the copy. Its preview domain is
+	// password protected, with credentials returned in
+	// `preview_credentials` this once; outbound email is off, and it has
+	// no scheduled backups.
+	//
+	// Unless `snapshot_id` names an existing backup of the production
+	// site, a backup of kind `sync` of the production site is queued
+	// first, and the returned job (`site.clone`) waits for it
+	// (`after_job_id`). The job creates the staging site's database,
+	// object cache user, and containers, restores the snapshot into it,
+	// runs `wp core update-db`, rewrites the production site's URLs to
+	// the staging site's preview URL, installs the default plugins, and
+	// purges the caches. Its result holds `site_id`, `snapshot_id`,
+	// `backup_id` (for a fresh backup), and the preview login
+	// (`preview_username`, and `preview_password` as a `secret_ref`). If
+	// the backup or the job fails, the job removes what it created and
+	// the staging site stays, `failed`, with the reason in
+	// `status_message`; delete it to clean up. The production site is
+	// never changed.
+	//
+	// A staging site as the source, or a `snapshot_id` that isn't one of
+	// the production site's snapshots, returns `422`. A production site
+	// that isn't `running` or `stopped` (a job is working on it, it is
+	// being deleted, or it failed) returns `409`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/staging-sites (the `CreateStagingSite` operationId).
+	CreateStagingSiteWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateStagingSite Create a staging site
+	//
+	// Creates a staging site: a copy of this production site on its own
+	// preview domain, linked to it (design doc §5.11). Needs the
+	// `site.staging.create` permission (Operator).
+	//
+	// The staging site is created at once with status `provisioning`. It
+	// gets a slug derived from the production site's (`acme-staging`,
+	// then `acme-staging-2`, ...), its own database, object cache user,
+	// and credentials, and the production site's PHP version, WordPress
+	// core, table prefix, resources (unless `resources` overrides them),
+	// and initial administrator, but no generated admin password: the
+	// production site's users come with the copy. Its preview domain is
+	// password protected, with credentials returned in
+	// `preview_credentials` this once; outbound email is off, and it has
+	// no scheduled backups.
+	//
+	// Unless `snapshot_id` names an existing backup of the production
+	// site, a backup of kind `sync` of the production site is queued
+	// first, and the returned job (`site.clone`) waits for it
+	// (`after_job_id`). The job creates the staging site's database,
+	// object cache user, and containers, restores the snapshot into it,
+	// runs `wp core update-db`, rewrites the production site's URLs to
+	// the staging site's preview URL, installs the default plugins, and
+	// purges the caches. Its result holds `site_id`, `snapshot_id`,
+	// `backup_id` (for a fresh backup), and the preview login
+	// (`preview_username`, and `preview_password` as a `secret_ref`). If
+	// the backup or the job fails, the job removes what it created and
+	// the staging site stays, `failed`, with the reason in
+	// `status_message`; delete it to clean up. The production site is
+	// never changed.
+	//
+	// A staging site as the source, or a `snapshot_id` that isn't one of
+	// the production site's snapshots, returns `422`. A production site
+	// that isn't `running` or `stopped` (a job is working on it, it is
+	// being deleted, or it failed) returns `409`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/staging-sites (the `CreateStagingSite` operationId).
+	CreateStagingSite(ctx context.Context, siteID SiteID, body CreateStagingSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// StartSite Start a stopped site
 	//
@@ -10755,6 +10856,110 @@ func (c *Client) RestoreSiteWithBody(ctx context.Context, siteID SiteID, content
 // Corresponds with POST /api/v1/sites/{site_id}/restore (the `RestoreSite` operationId).
 func (c *Client) RestoreSite(ctx context.Context, siteID SiteID, body RestoreSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRestoreSiteRequest(c.Server, siteID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateStagingSiteWithBody Create a staging site
+//
+// Creates a staging site: a copy of this production site on its own
+// preview domain, linked to it (design doc §5.11). Needs the
+// `site.staging.create` permission (Operator).
+//
+// The staging site is created at once with status `provisioning`. It
+// gets a slug derived from the production site's (`acme-staging`,
+// then `acme-staging-2`, ...), its own database, object cache user,
+// and credentials, and the production site's PHP version, WordPress
+// core, table prefix, resources (unless `resources` overrides them),
+// and initial administrator, but no generated admin password: the
+// production site's users come with the copy. Its preview domain is
+// password protected, with credentials returned in
+// `preview_credentials` this once; outbound email is off, and it has
+// no scheduled backups.
+//
+// Unless `snapshot_id` names an existing backup of the production
+// site, a backup of kind `sync` of the production site is queued
+// first, and the returned job (`site.clone`) waits for it
+// (`after_job_id`). The job creates the staging site's database,
+// object cache user, and containers, restores the snapshot into it,
+// runs `wp core update-db`, rewrites the production site's URLs to
+// the staging site's preview URL, installs the default plugins, and
+// purges the caches. Its result holds `site_id`, `snapshot_id`,
+// `backup_id` (for a fresh backup), and the preview login
+// (`preview_username`, and `preview_password` as a `secret_ref`). If
+// the backup or the job fails, the job removes what it created and
+// the staging site stays, `failed`, with the reason in
+// `status_message`; delete it to clean up. The production site is
+// never changed.
+//
+// A staging site as the source, or a `snapshot_id` that isn't one of
+// the production site's snapshots, returns `422`. A production site
+// that isn't `running` or `stopped` (a job is working on it, it is
+// being deleted, or it failed) returns `409`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/staging-sites (the `CreateStagingSite` operationId).
+func (c *Client) CreateStagingSiteWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateStagingSiteRequestWithBody(c.Server, siteID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateStagingSite Create a staging site
+//
+// Creates a staging site: a copy of this production site on its own
+// preview domain, linked to it (design doc §5.11). Needs the
+// `site.staging.create` permission (Operator).
+//
+// The staging site is created at once with status `provisioning`. It
+// gets a slug derived from the production site's (`acme-staging`,
+// then `acme-staging-2`, ...), its own database, object cache user,
+// and credentials, and the production site's PHP version, WordPress
+// core, table prefix, resources (unless `resources` overrides them),
+// and initial administrator, but no generated admin password: the
+// production site's users come with the copy. Its preview domain is
+// password protected, with credentials returned in
+// `preview_credentials` this once; outbound email is off, and it has
+// no scheduled backups.
+//
+// Unless `snapshot_id` names an existing backup of the production
+// site, a backup of kind `sync` of the production site is queued
+// first, and the returned job (`site.clone`) waits for it
+// (`after_job_id`). The job creates the staging site's database,
+// object cache user, and containers, restores the snapshot into it,
+// runs `wp core update-db`, rewrites the production site's URLs to
+// the staging site's preview URL, installs the default plugins, and
+// purges the caches. Its result holds `site_id`, `snapshot_id`,
+// `backup_id` (for a fresh backup), and the preview login
+// (`preview_username`, and `preview_password` as a `secret_ref`). If
+// the backup or the job fails, the job removes what it created and
+// the staging site stays, `failed`, with the reason in
+// `status_message`; delete it to clean up. The production site is
+// never changed.
+//
+// A staging site as the source, or a `snapshot_id` that isn't one of
+// the production site's snapshots, returns `422`. A production site
+// that isn't `running` or `stopped` (a job is working on it, it is
+// being deleted, or it failed) returns `409`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/staging-sites (the `CreateStagingSite` operationId).
+func (c *Client) CreateStagingSite(ctx context.Context, siteID SiteID, body CreateStagingSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateStagingSiteRequest(c.Server, siteID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -16481,6 +16686,53 @@ func NewRestoreSiteRequestWithBody(server string, siteID SiteID, contentType str
 	return req, nil
 }
 
+// NewCreateStagingSiteRequest calls the generic CreateStagingSite builder with application/json body
+func NewCreateStagingSiteRequest(server string, siteID SiteID, body CreateStagingSiteJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateStagingSiteRequestWithBody(server, siteID, "application/json", bodyReader)
+}
+
+// NewCreateStagingSiteRequestWithBody constructs an http.Request for the CreateStagingSite method, with any body, and a specified content type
+func NewCreateStagingSiteRequestWithBody(server string, siteID SiteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/staging-sites", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewStartSiteRequest constructs an http.Request for the StartSite method
 func NewStartSiteRequest(server string, siteID SiteID) (*http.Request, error) {
 	var err error
@@ -20038,6 +20290,90 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/restore (the `RestoreSite` operationId).
 	RestoreSiteWithResponse(ctx context.Context, siteID SiteID, body RestoreSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*RestoreSiteResponse, error)
+
+	// CreateStagingSiteWithBodyWithResponse Create a staging site
+	//
+	// Creates a staging site: a copy of this production site on its own
+	// preview domain, linked to it (design doc §5.11). Needs the
+	// `site.staging.create` permission (Operator).
+	//
+	// The staging site is created at once with status `provisioning`. It
+	// gets a slug derived from the production site's (`acme-staging`,
+	// then `acme-staging-2`, ...), its own database, object cache user,
+	// and credentials, and the production site's PHP version, WordPress
+	// core, table prefix, resources (unless `resources` overrides them),
+	// and initial administrator, but no generated admin password: the
+	// production site's users come with the copy. Its preview domain is
+	// password protected, with credentials returned in
+	// `preview_credentials` this once; outbound email is off, and it has
+	// no scheduled backups.
+	//
+	// Unless `snapshot_id` names an existing backup of the production
+	// site, a backup of kind `sync` of the production site is queued
+	// first, and the returned job (`site.clone`) waits for it
+	// (`after_job_id`). The job creates the staging site's database,
+	// object cache user, and containers, restores the snapshot into it,
+	// runs `wp core update-db`, rewrites the production site's URLs to
+	// the staging site's preview URL, installs the default plugins, and
+	// purges the caches. Its result holds `site_id`, `snapshot_id`,
+	// `backup_id` (for a fresh backup), and the preview login
+	// (`preview_username`, and `preview_password` as a `secret_ref`). If
+	// the backup or the job fails, the job removes what it created and
+	// the staging site stays, `failed`, with the reason in
+	// `status_message`; delete it to clean up. The production site is
+	// never changed.
+	//
+	// A staging site as the source, or a `snapshot_id` that isn't one of
+	// the production site's snapshots, returns `422`. A production site
+	// that isn't `running` or `stopped` (a job is working on it, it is
+	// being deleted, or it failed) returns `409`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/staging-sites (the `CreateStagingSite` operationId).
+	CreateStagingSiteWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateStagingSiteResponse, error)
+
+	// CreateStagingSiteWithResponse Create a staging site
+	//
+	// Creates a staging site: a copy of this production site on its own
+	// preview domain, linked to it (design doc §5.11). Needs the
+	// `site.staging.create` permission (Operator).
+	//
+	// The staging site is created at once with status `provisioning`. It
+	// gets a slug derived from the production site's (`acme-staging`,
+	// then `acme-staging-2`, ...), its own database, object cache user,
+	// and credentials, and the production site's PHP version, WordPress
+	// core, table prefix, resources (unless `resources` overrides them),
+	// and initial administrator, but no generated admin password: the
+	// production site's users come with the copy. Its preview domain is
+	// password protected, with credentials returned in
+	// `preview_credentials` this once; outbound email is off, and it has
+	// no scheduled backups.
+	//
+	// Unless `snapshot_id` names an existing backup of the production
+	// site, a backup of kind `sync` of the production site is queued
+	// first, and the returned job (`site.clone`) waits for it
+	// (`after_job_id`). The job creates the staging site's database,
+	// object cache user, and containers, restores the snapshot into it,
+	// runs `wp core update-db`, rewrites the production site's URLs to
+	// the staging site's preview URL, installs the default plugins, and
+	// purges the caches. Its result holds `site_id`, `snapshot_id`,
+	// `backup_id` (for a fresh backup), and the preview login
+	// (`preview_username`, and `preview_password` as a `secret_ref`). If
+	// the backup or the job fails, the job removes what it created and
+	// the staging site stays, `failed`, with the reason in
+	// `status_message`; delete it to clean up. The production site is
+	// never changed.
+	//
+	// A staging site as the source, or a `snapshot_id` that isn't one of
+	// the production site's snapshots, returns `422`. A production site
+	// that isn't `running` or `stopped` (a job is working on it, it is
+	// being deleted, or it failed) returns `409`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/staging-sites (the `CreateStagingSite` operationId).
+	CreateStagingSiteWithResponse(ctx context.Context, siteID SiteID, body CreateStagingSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateStagingSiteResponse, error)
 
 	// StartSiteWithResponse Start a stopped site
 	//
@@ -27782,6 +28118,103 @@ func (r RestoreSiteResponse) ContentType() string {
 	return ""
 }
 
+// CreateStagingSiteResponse202Headers the declared response headers of an HTTP 202 response for CreateStagingSite
+type CreateStagingSiteResponse202Headers struct {
+	Location *string
+}
+
+type CreateStagingSiteResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *SiteAccepted
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *CreateStagingSiteResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r CreateStagingSiteResponse) GetJSON202() *SiteAccepted {
+	return r.JSON202
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CreateStagingSiteResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CreateStagingSiteResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CreateStagingSiteResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r CreateStagingSiteResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CreateStagingSiteResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r CreateStagingSiteResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r CreateStagingSiteResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateStagingSiteResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateStagingSiteResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateStagingSiteResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateStagingSiteResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // StartSiteResponse202Headers the declared response headers of an HTTP 202 response for StartSite
 type StartSiteResponse202Headers struct {
 	Location *string
@@ -33279,6 +33712,102 @@ func (c *ClientWithResponses) RestoreSiteWithResponse(ctx context.Context, siteI
 		return nil, err
 	}
 	return ParseRestoreSiteResponse(rsp)
+}
+
+// CreateStagingSiteWithBodyWithResponse Create a staging site
+//
+// Creates a staging site: a copy of this production site on its own
+// preview domain, linked to it (design doc §5.11). Needs the
+// `site.staging.create` permission (Operator).
+//
+// The staging site is created at once with status `provisioning`. It
+// gets a slug derived from the production site's (`acme-staging`,
+// then `acme-staging-2`, ...), its own database, object cache user,
+// and credentials, and the production site's PHP version, WordPress
+// core, table prefix, resources (unless `resources` overrides them),
+// and initial administrator, but no generated admin password: the
+// production site's users come with the copy. Its preview domain is
+// password protected, with credentials returned in
+// `preview_credentials` this once; outbound email is off, and it has
+// no scheduled backups.
+//
+// Unless `snapshot_id` names an existing backup of the production
+// site, a backup of kind `sync` of the production site is queued
+// first, and the returned job (`site.clone`) waits for it
+// (`after_job_id`). The job creates the staging site's database,
+// object cache user, and containers, restores the snapshot into it,
+// runs `wp core update-db`, rewrites the production site's URLs to
+// the staging site's preview URL, installs the default plugins, and
+// purges the caches. Its result holds `site_id`, `snapshot_id`,
+// `backup_id` (for a fresh backup), and the preview login
+// (`preview_username`, and `preview_password` as a `secret_ref`). If
+// the backup or the job fails, the job removes what it created and
+// the staging site stays, `failed`, with the reason in
+// `status_message`; delete it to clean up. The production site is
+// never changed.
+//
+// A staging site as the source, or a `snapshot_id` that isn't one of
+// the production site's snapshots, returns `422`. A production site
+// that isn't `running` or `stopped` (a job is working on it, it is
+// being deleted, or it failed) returns `409`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/staging-sites (the `CreateStagingSite` operationId).
+func (c *ClientWithResponses) CreateStagingSiteWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateStagingSiteResponse, error) {
+	rsp, err := c.CreateStagingSiteWithBody(ctx, siteID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateStagingSiteResponse(rsp)
+}
+
+// CreateStagingSiteWithResponse Create a staging site
+//
+// Creates a staging site: a copy of this production site on its own
+// preview domain, linked to it (design doc §5.11). Needs the
+// `site.staging.create` permission (Operator).
+//
+// The staging site is created at once with status `provisioning`. It
+// gets a slug derived from the production site's (`acme-staging`,
+// then `acme-staging-2`, ...), its own database, object cache user,
+// and credentials, and the production site's PHP version, WordPress
+// core, table prefix, resources (unless `resources` overrides them),
+// and initial administrator, but no generated admin password: the
+// production site's users come with the copy. Its preview domain is
+// password protected, with credentials returned in
+// `preview_credentials` this once; outbound email is off, and it has
+// no scheduled backups.
+//
+// Unless `snapshot_id` names an existing backup of the production
+// site, a backup of kind `sync` of the production site is queued
+// first, and the returned job (`site.clone`) waits for it
+// (`after_job_id`). The job creates the staging site's database,
+// object cache user, and containers, restores the snapshot into it,
+// runs `wp core update-db`, rewrites the production site's URLs to
+// the staging site's preview URL, installs the default plugins, and
+// purges the caches. Its result holds `site_id`, `snapshot_id`,
+// `backup_id` (for a fresh backup), and the preview login
+// (`preview_username`, and `preview_password` as a `secret_ref`). If
+// the backup or the job fails, the job removes what it created and
+// the staging site stays, `failed`, with the reason in
+// `status_message`; delete it to clean up. The production site is
+// never changed.
+//
+// A staging site as the source, or a `snapshot_id` that isn't one of
+// the production site's snapshots, returns `422`. A production site
+// that isn't `running` or `stopped` (a job is working on it, it is
+// being deleted, or it failed) returns `409`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/staging-sites (the `CreateStagingSite` operationId).
+func (c *ClientWithResponses) CreateStagingSiteWithResponse(ctx context.Context, siteID SiteID, body CreateStagingSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateStagingSiteResponse, error) {
+	rsp, err := c.CreateStagingSite(ctx, siteID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateStagingSiteResponse(rsp)
 }
 
 // StartSiteWithResponse Start a stopped site
@@ -40209,6 +40738,94 @@ func ParseRestoreSiteResponse(rsp *http.Response) (*RestoreSiteResponse, error) 
 	switch {
 	case rsp.StatusCode == 202:
 		var headers RestoreSiteResponse202Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCreateStagingSiteResponse parses an HTTP response from a CreateStagingSiteWithResponse call
+func ParseCreateStagingSiteResponse(rsp *http.Response) (*CreateStagingSiteResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateStagingSiteResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest SiteAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers CreateStagingSiteResponse202Headers
 		if values := rsp.Header.Values("Location"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {

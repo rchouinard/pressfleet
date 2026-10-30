@@ -925,6 +925,61 @@ export interface paths {
         patch: operations["updateSite"];
         trace?: never;
     };
+    "/api/v1/sites/{site_id}/staging-sites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a staging site
+         * @description Creates a staging site: a copy of this production site on its own
+         *     preview domain, linked to it (design doc §5.11). Needs the
+         *     `site.staging.create` permission (Operator).
+         *
+         *     The staging site is created at once with status `provisioning`. It
+         *     gets a slug derived from the production site's (`acme-staging`,
+         *     then `acme-staging-2`, ...), its own database, object cache user,
+         *     and credentials, and the production site's PHP version, WordPress
+         *     core, table prefix, resources (unless `resources` overrides them),
+         *     and initial administrator, but no generated admin password: the
+         *     production site's users come with the copy. Its preview domain is
+         *     password protected, with credentials returned in
+         *     `preview_credentials` this once; outbound email is off, and it has
+         *     no scheduled backups.
+         *
+         *     Unless `snapshot_id` names an existing backup of the production
+         *     site, a backup of kind `sync` of the production site is queued
+         *     first, and the returned job (`site.clone`) waits for it
+         *     (`after_job_id`). The job creates the staging site's database,
+         *     object cache user, and containers, restores the snapshot into it,
+         *     runs `wp core update-db`, rewrites the production site's URLs to
+         *     the staging site's preview URL, installs the default plugins, and
+         *     purges the caches. Its result holds `site_id`, `snapshot_id`,
+         *     `backup_id` (for a fresh backup), and the preview login
+         *     (`preview_username`, and `preview_password` as a `secret_ref`). If
+         *     the backup or the job fails, the job removes what it created and
+         *     the staging site stays, `failed`, with the reason in
+         *     `status_message`; delete it to clean up. The production site is
+         *     never changed.
+         *
+         *     A staging site as the source, or a `snapshot_id` that isn't one of
+         *     the production site's snapshots, returns `422`. A production site
+         *     that isn't `running` or `stopped` (a job is working on it, it is
+         *     being deleted, or it failed) returns `409`.
+         */
+        post: operations["createStagingSite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sites/{site_id}/start": {
         parameters: {
             query?: never;
@@ -4502,6 +4557,17 @@ export interface components {
             php_version?: components["schemas"]["PHPVersion"];
             resources?: components["schemas"]["ResourceLimitsUpdate"];
         };
+        StagingSiteCreate: {
+            /** @description Display name. Defaults to the production site's name followed by "(staging)". */
+            name?: string;
+            resources?: components["schemas"]["ResourceLimitsUpdate"];
+            /**
+             * @description An existing snapshot of the production site to copy (a backup's
+             *     `snapshot_id`, or a prefix of it of at least 8 characters),
+             *     instead of a fresh `sync` backup.
+             */
+            snapshot_id?: string;
+        };
         SiteImportAccepted: {
             site_id: components["schemas"]["ID"];
             job: components["schemas"]["Job"];
@@ -6887,6 +6953,40 @@ export interface operations {
         };
         responses: {
             /** @description Update job queued. */
+            202: {
+                headers: {
+                    Location: components["headers"]["JobLocation"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteAccepted"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableContent"];
+            default: components["responses"]["Error"];
+        };
+    };
+    createStagingSite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["StagingSiteCreate"];
+            };
+        };
+        responses: {
+            /** @description The staging site, now provisioning, and the clone job. */
             202: {
                 headers: {
                     Location: components["headers"]["JobLocation"];

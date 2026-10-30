@@ -67,6 +67,8 @@ var designTable = map[authz.Action]struct {
 	authz.DeleteSite: {true, false, false, true},
 	// Delete a site with its backups: deleting backups is Admin-only.
 	authz.DeleteSiteBackups: {true, false, false, true},
+	// Create a staging site (§5.11).
+	authz.CreateStagingSite: {true, true, false, true},
 	// Delete a staging site (§5.11): the Operator-level delete.
 	authz.DeleteStagingSite: {true, true, false, true},
 	// Delete or offboard client groups.

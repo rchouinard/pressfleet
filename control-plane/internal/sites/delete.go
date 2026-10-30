@@ -64,7 +64,10 @@ func (s *Service) Delete(ctx context.Context, siteID, createdByUserID string, op
 	var job store.Job
 	err := s.db.InTx(ctx, func(q store.Querier) error {
 		sites := store.NewSites(q)
-		site, err := sites.Get(ctx, siteID)
+		// Locked before its staging sites are listed: CreateStaging locks
+		// it too, so a staging site created concurrently is either in the
+		// list below or is refused for the deleting status set here.
+		site, err := sites.Lock(ctx, siteID)
 		if errors.Is(err, store.ErrNotFound) {
 			return fmt.Errorf("site %s: %w", siteID, ErrNotFound)
 		}
