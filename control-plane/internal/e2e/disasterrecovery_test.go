@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -215,8 +216,13 @@ func TestDisasterRecovery(t *testing.T) {
 		t.Errorf("the site's login public key changed: %q, was %q", got, publicKey)
 	}
 	list, err := p.Client.ListSiteBackupsWithResponse(ctx, site.ID, &client.ListSiteBackupsParams{})
-	if err != nil || list.JSON200 == nil || len(list.JSON200.Items) == 0 || deref(list.JSON200.Items[0].SnapshotID) != snapshot {
-		t.Errorf("the site's backups after recovery: %v %s", err, list.Body)
+	if err != nil || list.JSON200 == nil {
+		t.Fatalf("the site's backups after recovery: %v %s", err, list.Body)
+	}
+	// Not necessarily the newest: creating the staging site took a sync
+	// backup of the site after it.
+	if !slices.ContainsFunc(list.JSON200.Items, func(b client.Backup) bool { return deref(b.SnapshotID) == snapshot }) {
+		t.Errorf("the site's backups after recovery don't include snapshot %s: %s", snapshot, list.Body)
 	}
 
 	// The staging site has production's content at its own preview host,
