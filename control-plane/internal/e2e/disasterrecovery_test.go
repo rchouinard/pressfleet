@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/http/cookiejar"
@@ -32,6 +33,11 @@ import (
 // bring the platform back: the old admin logs in, the site is recreated from
 // its backup with its files and database, and the restored login key still
 // opens wp-admin, because the site's public key didn't change.
+//
+// A staging site of that site takes part: it is created before the state
+// backup and has no backup of its own, because its scheduled backups are off
+// (#196). After recovery it comes back from its production site's newest
+// snapshot, at its own preview host (#206).
 func TestDisasterRecovery(t *testing.T) {
 	image := e2e.Image(t)
 	root := t.TempDir()
@@ -41,19 +47,21 @@ func TestDisasterRecovery(t *testing.T) {
 		Name: "pfdr-" + strings.ToLower(rand.Text())[:10],
 		Dir:  filepath.Join(dataDir, "platform"),
 	}
-	var siteProject compose.Project
+	var siteProject, stagingProject compose.Project
 	// Registered before Adopt, so it runs after the platform teardown: see
 	// TestSiteCreateDelete.
 	t.Cleanup(func() {
-		if siteProject.Name == "" {
-			return
-		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		if res, err := siteProject.Resources(ctx); err == nil && !res.Empty() {
-			t.Logf("removing leftover site project %s", siteProject.Name)
-			if err := siteProject.Down(ctx, compose.DownOptions{Volumes: true}); err != nil {
-				t.Errorf("removing leftover site project %s: %v", siteProject.Name, err)
+		for _, proj := range []compose.Project{stagingProject, siteProject} {
+			if proj.Name == "" {
+				continue
+			}
+			if res, err := proj.Resources(ctx); err == nil && !res.Empty() {
+				t.Logf("removing leftover site project %s", proj.Name)
+				if err := proj.Down(ctx, compose.DownOptions{Volumes: true}); err != nil {
+					t.Errorf("removing leftover site project %s: %v", proj.Name, err)
+				}
 			}
 		}
 	})
@@ -122,6 +130,21 @@ func TestDisasterRecovery(t *testing.T) {
 	siteWP(t, siteProject, "option", "update", "pf_restore_marker", "before")
 	snapshot := backupSite(t, p, site.ID)
 	publicKey := siteWP(t, siteProject, "config", "get", "PRESSFLEET_LOGIN_PUBLIC_KEY")
+	// The staging site is cloned from a fresh backup of the site, taken
+	// after the one above; it has no backup of its own.
+	stagingResp, err := p.Client.CreateStagingSiteWithResponse(ctx, site.ID, client.CreateStagingSiteJSONRequestBody{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stagingResp.JSON202 == nil || stagingResp.JSON202.PreviewCredentials == nil {
+		t.Fatalf("create staging site: status %d: %s", stagingResp.StatusCode(), stagingResp.Body)
+	}
+	staging, creds := stagingResp.JSON202.Site, *stagingResp.JSON202.PreviewCredentials
+	stagingProject = compose.Project{Name: compose.SiteProjectName(staging.ID), Dir: filepath.Join(dataDir, "sites", staging.ID)}
+	waitJob(t, p, stagingResp.JSON202.Job.ID)
+	if n := backupCount(t, p, staging.ID); n != 0 {
+		t.Fatalf("the staging site has %d backups of its own before the drill", n)
+	}
 	out, err := project.ExecService(ctx, e2e.Service, "pressfleet", "state", "backup")
 	if err != nil {
 		t.Fatalf("state backup: %v: %s", err, out)
@@ -144,6 +167,9 @@ func TestDisasterRecovery(t *testing.T) {
 	if err := siteProject.Down(ctx, compose.DownOptions{Volumes: true}); err != nil {
 		t.Fatal(err)
 	}
+	if err := stagingProject.Down(ctx, compose.DownOptions{Volumes: true}); err != nil {
+		t.Fatal(err)
+	}
 	entries, err := os.ReadDir(dataDir)
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +184,7 @@ func TestDisasterRecovery(t *testing.T) {
 	if err := os.Remove(configPath); err != nil {
 		t.Fatal(err)
 	}
-	for _, proj := range []compose.Project{siteProject, project} {
+	for _, proj := range []compose.Project{stagingProject, siteProject, project} {
 		if res, err := proj.Resources(ctx); err != nil || !res.Empty() {
 			t.Fatalf("project %s left resources behind: %+v, %v", proj.Name, res, err)
 		}
@@ -170,7 +196,7 @@ func TestDisasterRecovery(t *testing.T) {
 	install(redact.Secret(strings.ToLower(rand.Text())), "--force")
 	if code, out := pressfleet("", "recover", "--config", configPath); code != 0 ||
 		!strings.Contains(out, "login key was restored and decrypts with the master key") ||
-		!strings.Contains(out, "1 sites will be recovered") {
+		!strings.Contains(out, "2 sites will be recovered") {
 		t.Fatalf("recover exited %d: %s", code, out)
 	}
 	p.Connect(ctx, t)
@@ -178,6 +204,7 @@ func TestDisasterRecovery(t *testing.T) {
 
 	// 4. The site comes back from its backup.
 	waitRecovered(ctx, t, p, site.ID)
+	waitRecovered(ctx, t, p, staging.ID)
 	if got := siteWP(t, siteProject, "option", "get", "pf_restore_marker"); got != "before" {
 		t.Errorf("pf_restore_marker = %q", got)
 	}
@@ -190,6 +217,28 @@ func TestDisasterRecovery(t *testing.T) {
 	list, err := p.Client.ListSiteBackupsWithResponse(ctx, site.ID, &client.ListSiteBackupsParams{})
 	if err != nil || list.JSON200 == nil || len(list.JSON200.Items) == 0 || deref(list.JSON200.Items[0].SnapshotID) != snapshot {
 		t.Errorf("the site's backups after recovery: %v %s", err, list.Body)
+	}
+
+	// The staging site has production's content at its own preview host,
+	// and still no backup of its own.
+	if got := siteWP(t, stagingProject, "option", "get", "pf_restore_marker"); got != "before" {
+		t.Errorf("the staging site's pf_restore_marker = %q", got)
+	}
+	if got := siteSh(t, stagingProject, "cat "+wpContent+"/uploads/pf/keep.txt"); got != restoreKeep {
+		t.Errorf("the staging site's keep.txt = %q", got)
+	}
+	stagingURL := "https://" + staging.PreviewDomain
+	for _, option := range []string{"home", "siteurl"} {
+		if got := siteWP(t, stagingProject, "option", "get", option); got != stagingURL {
+			t.Errorf("the staging site's %s = %q, want %q", option, got, stagingURL)
+		}
+	}
+	basic := http.Header{"Authorization": {"Basic " + base64.StdEncoding.EncodeToString([]byte(creds.Username+":"+creds.Password))}}
+	if resp, body := waitIngress(t, p.IngressClient(t), stagingURL+"/", basic, http.StatusOK); strings.Contains(body, site.PreviewDomain) {
+		t.Errorf("the staging site (%s) links to the production site's host %s", resp.Status, site.PreviewDomain)
+	}
+	if n := backupCount(t, p, staging.ID); n != 0 {
+		t.Errorf("the staging site has %d backups of its own after recovery", n)
 	}
 
 	// 5. One-click login works with the restored key.
@@ -243,4 +292,14 @@ func waitRecovered(ctx context.Context, t *testing.T, p *e2e.Platform, siteID st
 		case <-time.After(3 * time.Second):
 		}
 	}
+}
+
+// backupCount returns how many backups the site has.
+func backupCount(t *testing.T, p *e2e.Platform, siteID string) int {
+	t.Helper()
+	list, err := p.Client.ListSiteBackupsWithResponse(t.Context(), siteID, &client.ListSiteBackupsParams{})
+	if err != nil || list.JSON200 == nil {
+		t.Fatalf("list backups of %s: %v %s", siteID, err, list.Body)
+	}
+	return len(list.JSON200.Items)
 }
