@@ -80,6 +80,7 @@ const jobTypeLabels: Record<string, string> = {
   'site.deploy': 'Deploy code',
   'site.database_export': 'Export database',
   'site.export': 'Export site',
+  'site.clone': 'Create staging site',
   'site.update_check': 'Check plugin and theme updates',
   'backup.export': 'Export site from backup',
   'backup.repository_delete': 'Delete backup repository',
@@ -88,6 +89,16 @@ const jobTypeLabels: Record<string, string> = {
 /** A readable job type. Unknown types are opaque (spec): shown as sent. */
 export function jobTypeLabel(type: string): string {
   return jobTypeLabels[type] ?? type
+}
+
+/**
+ * The job a job waits for (`after_job_id`, design doc §5.11): a staging
+ * clone waits for the backup it copies. A queued job is still waiting; one
+ * that has started ran after it.
+ */
+export function waitsFor(job: Pick<Job, 'after_job_id' | 'state'>): { jobId: string, label: string } | undefined {
+  if (!job.after_job_id) return undefined
+  return { jobId: job.after_job_id, label: job.state === 'queued' ? 'Waiting for job' : 'Ran after job' }
 }
 
 /** `create_database` -> `Create database`. */

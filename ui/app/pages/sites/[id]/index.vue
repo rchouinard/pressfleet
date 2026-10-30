@@ -1,13 +1,16 @@
 <script setup lang="ts">
 // One site: status, domains, settings, start/stop, delete with confirmation,
 // the one-time admin credentials, the job that is working on it (live), and
-// its recent jobs. The logs are on /sites/<id>/logs.
+// its recent jobs. The logs are on /sites/<id>/logs. A production site also
+// lists its staging sites; a staging site names its production site and has
+// no domains or go-live.
 import { toApiError, type ApiError } from '../../../utils/api-error'
 import { createEndedJobs, followedJob, type Job } from '../../../utils/job'
 import {
-  canDeleteSite, canStartSite, canStopSite, groupLabel, showCredentialsAction,
+  canDeleteSite, canStartSite, canStopSite, groupLabel, isStaging, productionIdOf, showCredentialsAction,
   type Site, type SiteAdminCredentials,
 } from '../../../utils/site'
+import { deleteBlockers } from '../../../utils/staging'
 import { countSnapshots, deleteSiteQuery, type SnapshotCount } from '../../../utils/site-delete'
 
 definePageMeta({ requires: 'site.view' })
@@ -36,9 +39,59 @@ const { data: loaded, refresh: refreshSite } = await useAsyncData(
 const site = computed<Site | undefined>(() => loaded.value?.site ?? undefined)
 const loadError = computed(() => loaded.value?.error ?? undefined)
 const name = computed(() => site.value?.name ?? id.value.slice(0, 8))
+const staging = computed(() => (site.value ? isStaging(site.value) : false))
+const productionId = computed(() => (site.value && staging.value ? productionIdOf(site.value) : undefined))
+
+// A staging site names its production site. A failed lookup only leaves the
+// link generic; the page doesn't depend on it.
+const { data: production } = await useAsyncData(
+  () => `site-production-${productionId.value ?? 'none'}`,
+  async () => {
+    if (!productionId.value) return null
+    try {
+      const { data } = await api.GET('/api/v1/sites/{site_id}', { params: { path: { site_id: productionId.value } } })
+      return data ?? null
+    } catch {
+      return null
+    }
+  },
+  { watch: [productionId] },
+)
 
 useHead({ title: computed(() => `Site: ${name.value}`) })
-useBreadcrumbs(() => [{ label: 'Sites', to: '/sites' }, { label: name.value }])
+useBreadcrumbs(() => [
+  { label: 'Sites', to: '/sites' },
+  ...(productionId.value ? [{ label: production.value?.name ?? 'Production site', to: `/sites/${productionId.value}` }] : []),
+  { label: name.value },
+])
+
+// A production site's staging sites (all pages: the delete dialog names them).
+// A page of results is enough to show; more than 100 is not expected.
+const { data: stagingLoaded, refresh: refreshStaging } = await useAsyncData(
+  () => `site-staging-${id.value}`,
+  async () => {
+    if (!site.value || isStaging(site.value)) return { items: [] as Site[], error: null as ApiError | null }
+    try {
+      const { data } = await api.GET('/api/v1/sites', { params: { query: { parent_site_id: id.value, limit: 100 } } })
+      return { items: data?.items ?? [], error: null as ApiError | null }
+    } catch (e) {
+      return { items: [] as Site[], error: toApiError(e) }
+    }
+  },
+  { watch: [id] },
+)
+const stagingSites = computed(() => stagingLoaded.value?.items ?? [])
+const blockers = computed(() => deleteBlockers(stagingSites.value))
+
+// While a staging site is being built or deleted its status changes under
+// the card, so reload the list until it settles.
+const stagingBusy = computed(() => stagingSites.value.some(s => ['provisioning', 'updating', 'deleting'].includes(s.status)))
+let stagingTimer: ReturnType<typeof setInterval> | undefined
+watch(stagingBusy, (busy) => {
+  clearInterval(stagingTimer)
+  stagingTimer = busy ? setInterval(() => void refreshStaging(), 5000) : undefined
+}, { immediate: true })
+onBeforeUnmount(() => clearInterval(stagingTimer))
 
 // Jobs: the newest ones for this site. A running one is followed live.
 const { data: jobs, refresh: refreshJobs } = await useAsyncData(
@@ -85,10 +138,10 @@ async function onJobUpdate(job: Job) {
   if (!ended.add(job)) return
   if (job.type === 'site.delete' && job.state === 'succeeded') {
     notify.success('Site deleted', name.value)
-    await navigateTo('/sites')
+    await navigateTo(productionId.value ? `/sites/${productionId.value}` : '/sites')
     return
   }
-  await Promise.all([refreshSite(), refreshJobs()])
+  await Promise.all([refreshSite(), refreshJobs(), refreshStaging()])
 }
 
 // Start / stop.
@@ -155,7 +208,10 @@ async function confirmDelete() {
     if (data) notify.jobStarted(data.job)
     await Promise.all([refreshSite(), refreshJobs()])
   } catch (e) {
+    // 409 for a production site that still has staging sites: the server's
+    // wording names them, and the dialog says what to do about it.
     deleteError.value = toApiError(e)
+    await refreshStaging()
   } finally {
     deleteBusy.value = false
   }
@@ -205,6 +261,9 @@ async function listAdministrators() {
 async function onDomainsChanged() {
   await Promise.all([refreshSite(), refreshJobs()])
 }
+async function onStagingChanged() {
+  await Promise.all([refreshSite(), refreshJobs(), refreshStaging()])
+}
 
 // Where the SFTP gateway is, as configured. A failed lookup only hides the
 // card; the rest of the page doesn't depend on it.
@@ -225,6 +284,7 @@ function when(iso: string): string {
         <div class="min-w-0 space-y-1">
           <h1 class="break-words text-2xl font-semibold tracking-tight">{{ site.name }}</h1>
           <p class="flex flex-wrap items-center gap-2 text-sm text-muted">
+            <SiteEnvironmentBadge :environment="site.environment" />
             <SiteStatusBadge :status="site.status" />
             <SiteUpdatesBadge :counts="site.pending_updates" />
             <a v-if="site.url" :href="site.url" target="_blank" rel="noopener noreferrer" class="break-all text-primary underline">{{ site.url }}</a>
@@ -251,11 +311,16 @@ function when(iso: string): string {
           <IfCan action="site.database.export">
             <UButton :to="`/sites/${site.id}/database`" icon="i-lucide-database" color="neutral" variant="outline">Database</UButton>
           </IfCan>
-          <IfCan action="site.delete">
+          <IfCan :action="staging ? 'site.staging.delete' : 'site.delete'">
             <UButton v-if="canDeleteSite(site)" icon="i-lucide-trash-2" color="error" variant="outline" @click="askDelete()">Delete</UButton>
           </IfCan>
         </div>
       </header>
+
+      <SiteStagingBanner v-if="staging" :site="site" :production-name="production?.name">
+        <!-- #208: the refresh and push buttons go in this slot. -->
+        <template #actions />
+      </SiteStagingBanner>
 
       <div
         v-if="site.status === 'failed' && site.status_message"
@@ -283,9 +348,18 @@ function when(iso: string): string {
         <UButton icon="i-lucide-key-round" color="neutral" variant="outline" :loading="credentialsBusy" @click="reveal()">Reveal admin credentials</UButton>
       </section>
 
-      <SiteDomains :site="site" @changed="onDomainsChanged" />
+      <SiteDomains v-if="!staging" :site="site" @changed="onDomainsChanged" />
 
       <SiteSettings :site="site" @changed="onDomainsChanged" />
+
+      <SiteStagingCard
+        v-if="!staging && site.status !== 'deleting'"
+        :site="site"
+        :staging-sites="stagingSites"
+        :loading="!stagingLoaded"
+        :error="stagingLoaded?.error ?? undefined"
+        @changed="onStagingChanged"
+      />
 
       <SiteCoreCard :site="site" @changed="onDomainsChanged" />
       <SiteUpdatesCard v-if="site.status !== 'deleting'" :site="site" @changed="onDomainsChanged" />
@@ -302,6 +376,10 @@ function when(iso: string): string {
             <dd><NuxtLink :to="`/client-groups`" class="text-primary underline">{{ groupLabel(groupNames, site.client_group_id) }}</NuxtLink></dd>
           </div>
           <div>
+            <dt class="text-muted">Environment</dt>
+            <dd>{{ staging ? 'Staging' : 'Production' }}</dd>
+          </div>
+          <div v-if="!staging">
             <dt class="text-muted">Domain</dt>
             <dd class="break-all">{{ site.primary_domain ?? 'Not live yet' }}</dd>
           </div>
@@ -309,7 +387,7 @@ function when(iso: string): string {
             <dt class="text-muted">Preview domain</dt>
             <dd class="break-all">{{ site.preview_domain }}</dd>
           </div>
-          <div v-if="site.aliases.length > 0">
+          <div v-if="!staging && site.aliases.length > 0">
             <dt class="text-muted">Aliases</dt>
             <dd class="break-all">{{ site.aliases.join(', ') }}</dd>
           </div>
@@ -343,8 +421,19 @@ function when(iso: string): string {
         confirm-label="Delete site"
         :busy="deleteBusy"
         :error="deleteError"
+        :confirm-disabled="blockers.length > 0"
         @confirm="confirmDelete()"
       >
+        <div v-if="blockers.length > 0" class="mb-3 rounded-md border border-default bg-elevated p-3 text-sm" role="alert" data-testid="delete-blockers">
+          <p class="font-medium">This site has staging sites, so it can't be deleted yet.</p>
+          <p class="mt-1 text-muted">A staging site is a copy of this one. Delete these first, then delete this site:</p>
+          <ul class="mt-1 list-disc pl-5">
+            <li v-for="s in blockers" :key="s.id">
+              <NuxtLink :to="`/sites/${s.id}`" class="text-primary underline">{{ s.name }}</NuxtLink>
+              <span class="text-muted"> ({{ s.slug }})</span>
+            </li>
+          </ul>
+        </div>
         <p class="text-sm">
           This removes the site's containers, database, files and secrets. It can't be undone, so make sure you have what you need from it first.
         </p>

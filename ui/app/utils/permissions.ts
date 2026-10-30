@@ -55,6 +55,11 @@ export const permissions = {
   'client_group.update': 'operator',
   'alert_rule.manage': 'operator',
 
+  // Create a staging site of a production site, and delete one (§5.11). Deleting
+  // a staging site keeps its backups; deleting them too stays `site.delete_with_backups`.
+  'site.staging.create': 'operator',
+  'site.staging.delete': 'operator',
+
   // Destructive actions.
   'site.delete': 'admin',
   // Delete a site together with its backups (#138).

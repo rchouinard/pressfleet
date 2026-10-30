@@ -14,6 +14,7 @@ import {
   stepStateView,
   type Job,
   type JobStep,
+  waitsFor,
 } from '../../utils/job'
 import JobStateBadge from './JobStateBadge.vue'
 import JobStepLog from './JobStepLog.vue'
@@ -41,6 +42,8 @@ onMounted(() => {
   }, 1000)
 })
 onBeforeUnmount(() => clearInterval(ticker))
+
+const waiting = computed(() => waitsFor(props.job))
 
 const duration = computed(() => formatDuration(props.job.started_at ?? props.job.created_at, props.job.finished_at, now.value))
 
@@ -91,6 +94,15 @@ const hasResult = computed(() => Object.keys(props.job.result ?? {}).length > 0)
           <!-- The wrapper fills the slot with a router link when the target's page exists. -->
           <slot name="target" :target="job.target">
             <span class="break-all">{{ job.target.type }} <span class="font-mono text-xs">{{ job.target.id }}</span></span>
+          </slot>
+        </dd>
+      </div>
+      <div v-if="waiting" data-testid="waits-for">
+        <dt class="text-muted">{{ waiting.label }}</dt>
+        <dd>
+          <!-- The wrapper fills the slot with a router link. -->
+          <slot name="waits-for" :job-id="waiting.jobId">
+            <span class="break-all font-mono text-xs">{{ waiting.jobId }}</span>
           </slot>
         </dd>
       </div>

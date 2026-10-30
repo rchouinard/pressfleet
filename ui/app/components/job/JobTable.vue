@@ -2,7 +2,7 @@
 // Jobs as a table: type (a link to the progress page), target, state,
 // created, duration. Used by the jobs list and the dashboard. The table
 // scrolls sideways inside its own region on narrow screens.
-import { formatDuration, jobStateView, jobTypeLabel, type Job } from '../../utils/job'
+import { formatDuration, jobStateView, jobTypeLabel, waitsFor, type Job } from '../../utils/job'
 
 defineProps<{ jobs: readonly Job[], caption: string }>()
 
@@ -36,7 +36,13 @@ function created(iso: string): string {
             {{ job.target.type }}
             <span class="font-mono text-xs text-muted">{{ job.target.id.slice(0, 8) }}</span>
           </td>
-          <td class="px-3 py-2"><JobStateBadge :view="jobStateView(job)" /></td>
+          <td class="px-3 py-2">
+            <JobStateBadge :view="jobStateView(job)" />
+            <span v-if="waitsFor(job)" class="mt-1 block text-xs text-muted" data-testid="waits-for">
+              {{ waitsFor(job)!.label }}
+              <NuxtLink :to="`/jobs/${waitsFor(job)!.jobId}`" class="font-mono text-primary underline-offset-2 hover:underline">{{ waitsFor(job)!.jobId.slice(0, 8) }}</NuxtLink>
+            </span>
+          </td>
           <td class="whitespace-nowrap px-3 py-2"><time :datetime="job.created_at">{{ created(job.created_at) }}</time></td>
           <td class="whitespace-nowrap px-3 py-2">{{ formatDuration(job.started_at, job.finished_at) ?? '-' }}</td>
         </tr>

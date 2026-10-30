@@ -25,6 +25,8 @@ const matrix: Record<Role, Action[]> = {
     'site.code.deploy', 'site.database.export', 'site.database.session.create',
     // §5.7: export a site, live or from a backup
     'site.export',
+    // §5.11: create and delete staging sites
+    'site.staging.create', 'site.staging.delete',
     // "Take backups, restore, and approve core updates"
     'backup.create', 'backup.restore', 'core_update.approve',
     // "Create and edit client groups; manage alert rules"

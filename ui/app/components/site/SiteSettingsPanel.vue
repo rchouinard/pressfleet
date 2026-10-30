@@ -4,7 +4,8 @@
 // and callbacks (no Nuxt runtime) so it is testable; SiteSettings.vue wires
 // them to the API. Each callback does its request and resolves when the job is
 // queued; a throw is shown in that section. Controls need `canUpdate` (and the
-// operator-level maintenance and purge flags), and explain themselves instead
+// operator-level maintenance and purge flags; a staging site also gets the
+// outbound email switch), and explain themselves instead
 // when the site's state would make the API answer 409.
 import { computed, reactive, ref, watch } from 'vue'
 import { toApiError, type ApiError } from '../../utils/api-error'
@@ -13,10 +14,11 @@ import {
   phpPayload, previewProtectionPayload, resourceFormValues, resourcesPayload, settingsBlockedReason,
   validateResources, type ResourceFormErrors, type SiteUpdate,
 } from '../../utils/site-settings'
+import { outboundMailPayload } from '../../utils/staging'
 import type { Site } from '../../utils/site'
 
 const props = defineProps<{
-  site: Pick<Site, 'status' | 'php_version' | 'resources' | 'maintenance' | 'preview_protection' | 'preview_domain'>
+  site: Pick<Site, 'status' | 'php_version' | 'resources' | 'maintenance' | 'preview_protection' | 'preview_domain'> & Partial<Pick<Site, 'staging'>>
   /** `site.update` for the signed-in role. */
   canUpdate: boolean
   /** `site.maintenance.set`. */
@@ -31,7 +33,7 @@ const props = defineProps<{
   regeneratePassword: () => Promise<void>
 }>()
 
-type Section = 'php' | 'resources' | 'maintenance' | 'cache' | 'preview'
+type Section = 'php' | 'resources' | 'maintenance' | 'cache' | 'preview' | 'mail'
 const busy = ref<Section>()
 const failures = reactive<Partial<Record<Section, ApiError>>>({})
 
@@ -99,6 +101,13 @@ const confirmRegenerate = ref(false)
 const previewOn = computed(() => props.site.preview_protection.enabled)
 async function toggleProtection() {
   await run('preview', () => props.update(previewProtectionPayload(!previewOn.value)))
+}
+
+// Outbound email of a staging site. The update is a job like the others; the
+// state shown changes when the page reloads the site after it.
+const mailOn = computed(() => props.site.staging?.outbound_mail === true)
+async function toggleMail() {
+  await run('mail', () => props.update(outboundMailPayload(!mailOn.value)))
 }
 async function regenerate() {
   confirmRegenerate.value = false
@@ -235,6 +244,28 @@ async function regenerate() {
           <UButton color="neutral" variant="ghost" @click="confirmRegenerate = false">Cancel</UButton>
         </template>
       </div>
+    </div>
+
+    <!-- Outbound email (staging sites only) -->
+    <div v-if="site.staging" class="space-y-2" aria-labelledby="set-mail-heading">
+      <h3 id="set-mail-heading" class="font-medium">Outbound email</h3>
+      <p class="text-sm" data-testid="mail-state">
+        {{ mailOn ? 'On: this site sends email through WordPress, so test messages can reach real addresses.' : 'Off: the site\'s email is suppressed and logged instead of sent.' }}
+      </p>
+      <p class="text-sm text-muted">Plugins that send email without WordPress's mail function aren't covered by this switch.</p>
+      <ProblemAlert v-if="failures.mail" :error="failures.mail" />
+      <UButton
+        v-if="canUpdate && !blocked"
+        :icon="mailOn ? 'i-lucide-mail-x' : 'i-lucide-mail'"
+        color="neutral"
+        variant="outline"
+        :loading="busy === 'mail'"
+        :disabled="!idle"
+        data-testid="toggle-mail"
+        @click="toggleMail()"
+      >
+        {{ mailOn ? 'Turn outbound email off' : 'Turn outbound email on' }}
+      </UButton>
     </div>
   </section>
 </template>
