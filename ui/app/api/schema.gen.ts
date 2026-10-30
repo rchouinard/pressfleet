@@ -1042,6 +1042,81 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sites/{site_id}/push": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Push a staging site to its production site
+         * @description Copies this staging site into its production site with a scope (design
+         *     doc §5.4, §5.11). `site_id` is the staging site; the response returns
+         *     the **production** site. Needs the `site.staging.push` permission
+         *     (Operator), which is checked against both sites.
+         *
+         *     A backup of kind `sync` of the staging site is queued first, always:
+         *     pushing an older snapshot isn't supported. The returned job
+         *     (`site.push`), on the production site, waits for it (`after_job_id`).
+         *     The job runs the restore pipeline on the production site (see
+         *     `restoreSite`): it takes a pre-push backup (kind `pre_restore`), puts
+         *     the site in maintenance mode, restores the scope, purges the object
+         *     cache and the page cache, and puts maintenance mode back as it was (a
+         *     site already in maintenance mode stays in it). Restored files also
+         *     restart the site's containers.
+         *
+         *     A push with `database` also moves the site to a WordPress core at
+         *     least as new as the snapshot's, runs `wp core update-db`, rewrites the
+         *     staging site's URLs to the production site's (its primary domain once
+         *     live, otherwise its preview domain), and makes sure the default plugins
+         *     are installed and active. It **replaces everything production recorded
+         *     since the staging site's copy was made**: orders, comments, form
+         *     entries, users.
+         *
+         *     A push without it doesn't change the database's content. It reinstalls
+         *     a default plugin that the pushed files removed, since the platform
+         *     depends on it. Plugin activation is in the database, so active plugins
+         *     get new code, and new plugins arrive inactive. If WordPress can't load
+         *     the pushed code, the push rolls back.
+         *
+         *     A database push is refused with `422` on `/database` if it would move
+         *     production to a WordPress major branch its core policy doesn't allow
+         *     (a hold, or a release that isn't approved): approve the branch for the
+         *     production site first. A newer release of the same branch is allowed.
+         *     This is checked again against the snapshot before the job changes
+         *     anything, and the job fails if it no longer holds.
+         *
+         *     The production site keeps its settings: PHP version, resources, domains,
+         *     preview protection, and outbound email.
+         *
+         *     The response contains the production site with status `updating`, and
+         *     the job, whose result holds `snapshot_id`, `backup_id`, and
+         *     `pre_push_backup_id`: the backup to restore to undo the push. On
+         *     success, the staging site's `staging` object records the time. If the
+         *     staging site's backup fails, or the staging site is deleted or marked
+         *     failed before the job starts, the job fails without touching the
+         *     production site, which goes back to `running`, with the reason in
+         *     `status_message`. If the job fails once the site's data was touched, it
+         *     restores the pre-push backup in full, and the site **stays in
+         *     maintenance mode** with `status_message` saying what happened.
+         *
+         *     A production site as `site_id`, or a scope that copies nothing, returns
+         *     `422`. A staging site that a job is working on or that is marked failed
+         *     (a stopped one can be pushed), or a production site that isn't
+         *     `running`, returns `409`.
+         */
+        post: operations["pushStagingSite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sites/{site_id}/start": {
         parameters: {
             query?: never;
@@ -4653,6 +4728,15 @@ export interface components {
              */
             snapshot_id?: string;
         };
+        StagingPush: {
+            files: components["schemas"]["StagingCopyFiles"];
+            /**
+             * @description Replace the production site's database with the staging site's,
+             *     with production's URLs. With `files: none`, this must be true: a
+             *     push copies something.
+             */
+            database: boolean;
+        };
         SiteImportAccepted: {
             site_id: components["schemas"]["ID"];
             job: components["schemas"]["Job"];
@@ -7125,6 +7209,40 @@ export interface operations {
         };
         responses: {
             /** @description The staging site, now updating, and the refresh job. */
+            202: {
+                headers: {
+                    Location: components["headers"]["JobLocation"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SiteAccepted"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableContent"];
+            default: components["responses"]["Error"];
+        };
+    };
+    pushStagingSite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                site_id: components["parameters"]["SiteID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StagingPush"];
+            };
+        };
+        responses: {
+            /** @description The production site, now updating, and the push job. */
             202: {
                 headers: {
                     Location: components["headers"]["JobLocation"];

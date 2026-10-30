@@ -3930,6 +3930,21 @@ type SSHKeyList struct {
 // alone. `none` leaves `wp-content` alone.
 type StagingCopyFiles string
 
+// StagingPush defines model for StagingPush.
+type StagingPush struct {
+	// Database Replace the production site's database with the staging site's,
+	// with production's URLs. With `files: none`, this must be true: a
+	// push copies something.
+	Database bool `json:"database"`
+
+	// Files How much of `wp-content` a staging copy restores from the snapshot.
+	// `all` makes all of it match the snapshot. `code` makes `plugins`,
+	// `themes`, `mu-plugins`, and `languages` match it (a directory the
+	// snapshot lacks is removed), and leaves `uploads` and everything else
+	// alone. `none` leaves `wp-content` alone.
+	Files StagingCopyFiles `json:"files"`
+}
+
 // StagingRefresh defines model for StagingRefresh.
 type StagingRefresh struct {
 	// Database Replace the staging site's database with the snapshot's. With
@@ -5004,6 +5019,9 @@ type GoLiveSiteJSONRequestBody = SiteGoLive
 
 // SetSiteMaintenanceJSONRequestBody defines body for SetSiteMaintenance for application/json ContentType.
 type SetSiteMaintenanceJSONRequestBody = SiteMaintenance
+
+// PushStagingSiteJSONRequestBody defines body for PushStagingSite for application/json ContentType.
+type PushStagingSiteJSONRequestBody = StagingPush
 
 // RefreshStagingSiteJSONRequestBody defines body for RefreshStagingSite for application/json ContentType.
 type RefreshStagingSiteJSONRequestBody = StagingRefresh
@@ -7017,6 +7035,130 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/preview-password (the `RegenerateSitePreviewPassword` operationId).
 	RegenerateSitePreviewPassword(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PushStagingSiteWithBody Push a staging site to its production site
+	//
+	// Copies this staging site into its production site with a scope (design
+	// doc §5.4, §5.11). `site_id` is the staging site; the response returns
+	// the **production** site. Needs the `site.staging.push` permission
+	// (Operator), which is checked against both sites.
+	//
+	// A backup of kind `sync` of the staging site is queued first, always:
+	// pushing an older snapshot isn't supported. The returned job
+	// (`site.push`), on the production site, waits for it (`after_job_id`).
+	// The job runs the restore pipeline on the production site (see
+	// `restoreSite`): it takes a pre-push backup (kind `pre_restore`), puts
+	// the site in maintenance mode, restores the scope, purges the object
+	// cache and the page cache, and puts maintenance mode back as it was (a
+	// site already in maintenance mode stays in it). Restored files also
+	// restart the site's containers.
+	//
+	// A push with `database` also moves the site to a WordPress core at
+	// least as new as the snapshot's, runs `wp core update-db`, rewrites the
+	// staging site's URLs to the production site's (its primary domain once
+	// live, otherwise its preview domain), and makes sure the default plugins
+	// are installed and active. It **replaces everything production recorded
+	// since the staging site's copy was made**: orders, comments, form
+	// entries, users.
+	//
+	// A push without it doesn't change the database's content. It reinstalls
+	// a default plugin that the pushed files removed, since the platform
+	// depends on it. Plugin activation is in the database, so active plugins
+	// get new code, and new plugins arrive inactive. If WordPress can't load
+	// the pushed code, the push rolls back.
+	//
+	// A database push is refused with `422` on `/database` if it would move
+	// production to a WordPress major branch its core policy doesn't allow
+	// (a hold, or a release that isn't approved): approve the branch for the
+	// production site first. A newer release of the same branch is allowed.
+	// This is checked again against the snapshot before the job changes
+	// anything, and the job fails if it no longer holds.
+	//
+	// The production site keeps its settings: PHP version, resources, domains,
+	// preview protection, and outbound email.
+	//
+	// The response contains the production site with status `updating`, and
+	// the job, whose result holds `snapshot_id`, `backup_id`, and
+	// `pre_push_backup_id`: the backup to restore to undo the push. On
+	// success, the staging site's `staging` object records the time. If the
+	// staging site's backup fails, or the staging site is deleted or marked
+	// failed before the job starts, the job fails without touching the
+	// production site, which goes back to `running`, with the reason in
+	// `status_message`. If the job fails once the site's data was touched, it
+	// restores the pre-push backup in full, and the site **stays in
+	// maintenance mode** with `status_message` saying what happened.
+	//
+	// A production site as `site_id`, or a scope that copies nothing, returns
+	// `422`. A staging site that a job is working on or that is marked failed
+	// (a stopped one can be pushed), or a production site that isn't
+	// `running`, returns `409`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/push (the `PushStagingSite` operationId).
+	PushStagingSiteWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PushStagingSite Push a staging site to its production site
+	//
+	// Copies this staging site into its production site with a scope (design
+	// doc §5.4, §5.11). `site_id` is the staging site; the response returns
+	// the **production** site. Needs the `site.staging.push` permission
+	// (Operator), which is checked against both sites.
+	//
+	// A backup of kind `sync` of the staging site is queued first, always:
+	// pushing an older snapshot isn't supported. The returned job
+	// (`site.push`), on the production site, waits for it (`after_job_id`).
+	// The job runs the restore pipeline on the production site (see
+	// `restoreSite`): it takes a pre-push backup (kind `pre_restore`), puts
+	// the site in maintenance mode, restores the scope, purges the object
+	// cache and the page cache, and puts maintenance mode back as it was (a
+	// site already in maintenance mode stays in it). Restored files also
+	// restart the site's containers.
+	//
+	// A push with `database` also moves the site to a WordPress core at
+	// least as new as the snapshot's, runs `wp core update-db`, rewrites the
+	// staging site's URLs to the production site's (its primary domain once
+	// live, otherwise its preview domain), and makes sure the default plugins
+	// are installed and active. It **replaces everything production recorded
+	// since the staging site's copy was made**: orders, comments, form
+	// entries, users.
+	//
+	// A push without it doesn't change the database's content. It reinstalls
+	// a default plugin that the pushed files removed, since the platform
+	// depends on it. Plugin activation is in the database, so active plugins
+	// get new code, and new plugins arrive inactive. If WordPress can't load
+	// the pushed code, the push rolls back.
+	//
+	// A database push is refused with `422` on `/database` if it would move
+	// production to a WordPress major branch its core policy doesn't allow
+	// (a hold, or a release that isn't approved): approve the branch for the
+	// production site first. A newer release of the same branch is allowed.
+	// This is checked again against the snapshot before the job changes
+	// anything, and the job fails if it no longer holds.
+	//
+	// The production site keeps its settings: PHP version, resources, domains,
+	// preview protection, and outbound email.
+	//
+	// The response contains the production site with status `updating`, and
+	// the job, whose result holds `snapshot_id`, `backup_id`, and
+	// `pre_push_backup_id`: the backup to restore to undo the push. On
+	// success, the staging site's `staging` object records the time. If the
+	// staging site's backup fails, or the staging site is deleted or marked
+	// failed before the job starts, the job fails without touching the
+	// production site, which goes back to `running`, with the reason in
+	// `status_message`. If the job fails once the site's data was touched, it
+	// restores the pre-push backup in full, and the site **stays in
+	// maintenance mode** with `status_message` saying what happened.
+	//
+	// A production site as `site_id`, or a scope that copies nothing, returns
+	// `422`. A staging site that a job is working on or that is marked failed
+	// (a stopped one can be pushed), or a production site that isn't
+	// `running`, returns `409`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/push (the `PushStagingSite` operationId).
+	PushStagingSite(ctx context.Context, siteID SiteID, body PushStagingSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RefreshStagingSiteWithBody Refresh a staging site from its production site
 	//
@@ -10905,6 +11047,150 @@ func (c *Client) GetSiteMetricsSummary(ctx context.Context, siteID SiteID, param
 // Corresponds with POST /api/v1/sites/{site_id}/preview-password (the `RegenerateSitePreviewPassword` operationId).
 func (c *Client) RegenerateSitePreviewPassword(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRegenerateSitePreviewPasswordRequest(c.Server, siteID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PushStagingSiteWithBody Push a staging site to its production site
+//
+// Copies this staging site into its production site with a scope (design
+// doc §5.4, §5.11). `site_id` is the staging site; the response returns
+// the **production** site. Needs the `site.staging.push` permission
+// (Operator), which is checked against both sites.
+//
+// A backup of kind `sync` of the staging site is queued first, always:
+// pushing an older snapshot isn't supported. The returned job
+// (`site.push`), on the production site, waits for it (`after_job_id`).
+// The job runs the restore pipeline on the production site (see
+// `restoreSite`): it takes a pre-push backup (kind `pre_restore`), puts
+// the site in maintenance mode, restores the scope, purges the object
+// cache and the page cache, and puts maintenance mode back as it was (a
+// site already in maintenance mode stays in it). Restored files also
+// restart the site's containers.
+//
+// A push with `database` also moves the site to a WordPress core at
+// least as new as the snapshot's, runs `wp core update-db`, rewrites the
+// staging site's URLs to the production site's (its primary domain once
+// live, otherwise its preview domain), and makes sure the default plugins
+// are installed and active. It **replaces everything production recorded
+// since the staging site's copy was made**: orders, comments, form
+// entries, users.
+//
+// A push without it doesn't change the database's content. It reinstalls
+// a default plugin that the pushed files removed, since the platform
+// depends on it. Plugin activation is in the database, so active plugins
+// get new code, and new plugins arrive inactive. If WordPress can't load
+// the pushed code, the push rolls back.
+//
+// A database push is refused with `422` on `/database` if it would move
+// production to a WordPress major branch its core policy doesn't allow
+// (a hold, or a release that isn't approved): approve the branch for the
+// production site first. A newer release of the same branch is allowed.
+// This is checked again against the snapshot before the job changes
+// anything, and the job fails if it no longer holds.
+//
+// The production site keeps its settings: PHP version, resources, domains,
+// preview protection, and outbound email.
+//
+// The response contains the production site with status `updating`, and
+// the job, whose result holds `snapshot_id`, `backup_id`, and
+// `pre_push_backup_id`: the backup to restore to undo the push. On
+// success, the staging site's `staging` object records the time. If the
+// staging site's backup fails, or the staging site is deleted or marked
+// failed before the job starts, the job fails without touching the
+// production site, which goes back to `running`, with the reason in
+// `status_message`. If the job fails once the site's data was touched, it
+// restores the pre-push backup in full, and the site **stays in
+// maintenance mode** with `status_message` saying what happened.
+//
+// A production site as `site_id`, or a scope that copies nothing, returns
+// `422`. A staging site that a job is working on or that is marked failed
+// (a stopped one can be pushed), or a production site that isn't
+// `running`, returns `409`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/push (the `PushStagingSite` operationId).
+func (c *Client) PushStagingSiteWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPushStagingSiteRequestWithBody(c.Server, siteID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PushStagingSite Push a staging site to its production site
+//
+// Copies this staging site into its production site with a scope (design
+// doc §5.4, §5.11). `site_id` is the staging site; the response returns
+// the **production** site. Needs the `site.staging.push` permission
+// (Operator), which is checked against both sites.
+//
+// A backup of kind `sync` of the staging site is queued first, always:
+// pushing an older snapshot isn't supported. The returned job
+// (`site.push`), on the production site, waits for it (`after_job_id`).
+// The job runs the restore pipeline on the production site (see
+// `restoreSite`): it takes a pre-push backup (kind `pre_restore`), puts
+// the site in maintenance mode, restores the scope, purges the object
+// cache and the page cache, and puts maintenance mode back as it was (a
+// site already in maintenance mode stays in it). Restored files also
+// restart the site's containers.
+//
+// A push with `database` also moves the site to a WordPress core at
+// least as new as the snapshot's, runs `wp core update-db`, rewrites the
+// staging site's URLs to the production site's (its primary domain once
+// live, otherwise its preview domain), and makes sure the default plugins
+// are installed and active. It **replaces everything production recorded
+// since the staging site's copy was made**: orders, comments, form
+// entries, users.
+//
+// A push without it doesn't change the database's content. It reinstalls
+// a default plugin that the pushed files removed, since the platform
+// depends on it. Plugin activation is in the database, so active plugins
+// get new code, and new plugins arrive inactive. If WordPress can't load
+// the pushed code, the push rolls back.
+//
+// A database push is refused with `422` on `/database` if it would move
+// production to a WordPress major branch its core policy doesn't allow
+// (a hold, or a release that isn't approved): approve the branch for the
+// production site first. A newer release of the same branch is allowed.
+// This is checked again against the snapshot before the job changes
+// anything, and the job fails if it no longer holds.
+//
+// The production site keeps its settings: PHP version, resources, domains,
+// preview protection, and outbound email.
+//
+// The response contains the production site with status `updating`, and
+// the job, whose result holds `snapshot_id`, `backup_id`, and
+// `pre_push_backup_id`: the backup to restore to undo the push. On
+// success, the staging site's `staging` object records the time. If the
+// staging site's backup fails, or the staging site is deleted or marked
+// failed before the job starts, the job fails without touching the
+// production site, which goes back to `running`, with the reason in
+// `status_message`. If the job fails once the site's data was touched, it
+// restores the pre-push backup in full, and the site **stays in
+// maintenance mode** with `status_message` saying what happened.
+//
+// A production site as `site_id`, or a scope that copies nothing, returns
+// `422`. A staging site that a job is working on or that is marked failed
+// (a stopped one can be pushed), or a production site that isn't
+// `running`, returns `409`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/push (the `PushStagingSite` operationId).
+func (c *Client) PushStagingSite(ctx context.Context, siteID SiteID, body PushStagingSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPushStagingSiteRequest(c.Server, siteID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -16920,6 +17206,53 @@ func NewRegenerateSitePreviewPasswordRequest(server string, siteID SiteID) (*htt
 	return req, nil
 }
 
+// NewPushStagingSiteRequest calls the generic PushStagingSite builder with application/json body
+func NewPushStagingSiteRequest(server string, siteID SiteID, body PushStagingSiteJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPushStagingSiteRequestWithBody(server, siteID, "application/json", bodyReader)
+}
+
+// NewPushStagingSiteRequestWithBody constructs an http.Request for the PushStagingSite method, with any body, and a specified content type
+func NewPushStagingSiteRequestWithBody(server string, siteID SiteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/push", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewRefreshStagingSiteRequest calls the generic RefreshStagingSite builder with application/json body
 func NewRefreshStagingSiteRequest(server string, siteID SiteID, body RefreshStagingSiteJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -20524,6 +20857,130 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/preview-password (the `RegenerateSitePreviewPassword` operationId).
 	RegenerateSitePreviewPasswordWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*RegenerateSitePreviewPasswordResponse, error)
+
+	// PushStagingSiteWithBodyWithResponse Push a staging site to its production site
+	//
+	// Copies this staging site into its production site with a scope (design
+	// doc §5.4, §5.11). `site_id` is the staging site; the response returns
+	// the **production** site. Needs the `site.staging.push` permission
+	// (Operator), which is checked against both sites.
+	//
+	// A backup of kind `sync` of the staging site is queued first, always:
+	// pushing an older snapshot isn't supported. The returned job
+	// (`site.push`), on the production site, waits for it (`after_job_id`).
+	// The job runs the restore pipeline on the production site (see
+	// `restoreSite`): it takes a pre-push backup (kind `pre_restore`), puts
+	// the site in maintenance mode, restores the scope, purges the object
+	// cache and the page cache, and puts maintenance mode back as it was (a
+	// site already in maintenance mode stays in it). Restored files also
+	// restart the site's containers.
+	//
+	// A push with `database` also moves the site to a WordPress core at
+	// least as new as the snapshot's, runs `wp core update-db`, rewrites the
+	// staging site's URLs to the production site's (its primary domain once
+	// live, otherwise its preview domain), and makes sure the default plugins
+	// are installed and active. It **replaces everything production recorded
+	// since the staging site's copy was made**: orders, comments, form
+	// entries, users.
+	//
+	// A push without it doesn't change the database's content. It reinstalls
+	// a default plugin that the pushed files removed, since the platform
+	// depends on it. Plugin activation is in the database, so active plugins
+	// get new code, and new plugins arrive inactive. If WordPress can't load
+	// the pushed code, the push rolls back.
+	//
+	// A database push is refused with `422` on `/database` if it would move
+	// production to a WordPress major branch its core policy doesn't allow
+	// (a hold, or a release that isn't approved): approve the branch for the
+	// production site first. A newer release of the same branch is allowed.
+	// This is checked again against the snapshot before the job changes
+	// anything, and the job fails if it no longer holds.
+	//
+	// The production site keeps its settings: PHP version, resources, domains,
+	// preview protection, and outbound email.
+	//
+	// The response contains the production site with status `updating`, and
+	// the job, whose result holds `snapshot_id`, `backup_id`, and
+	// `pre_push_backup_id`: the backup to restore to undo the push. On
+	// success, the staging site's `staging` object records the time. If the
+	// staging site's backup fails, or the staging site is deleted or marked
+	// failed before the job starts, the job fails without touching the
+	// production site, which goes back to `running`, with the reason in
+	// `status_message`. If the job fails once the site's data was touched, it
+	// restores the pre-push backup in full, and the site **stays in
+	// maintenance mode** with `status_message` saying what happened.
+	//
+	// A production site as `site_id`, or a scope that copies nothing, returns
+	// `422`. A staging site that a job is working on or that is marked failed
+	// (a stopped one can be pushed), or a production site that isn't
+	// `running`, returns `409`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/push (the `PushStagingSite` operationId).
+	PushStagingSiteWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PushStagingSiteResponse, error)
+
+	// PushStagingSiteWithResponse Push a staging site to its production site
+	//
+	// Copies this staging site into its production site with a scope (design
+	// doc §5.4, §5.11). `site_id` is the staging site; the response returns
+	// the **production** site. Needs the `site.staging.push` permission
+	// (Operator), which is checked against both sites.
+	//
+	// A backup of kind `sync` of the staging site is queued first, always:
+	// pushing an older snapshot isn't supported. The returned job
+	// (`site.push`), on the production site, waits for it (`after_job_id`).
+	// The job runs the restore pipeline on the production site (see
+	// `restoreSite`): it takes a pre-push backup (kind `pre_restore`), puts
+	// the site in maintenance mode, restores the scope, purges the object
+	// cache and the page cache, and puts maintenance mode back as it was (a
+	// site already in maintenance mode stays in it). Restored files also
+	// restart the site's containers.
+	//
+	// A push with `database` also moves the site to a WordPress core at
+	// least as new as the snapshot's, runs `wp core update-db`, rewrites the
+	// staging site's URLs to the production site's (its primary domain once
+	// live, otherwise its preview domain), and makes sure the default plugins
+	// are installed and active. It **replaces everything production recorded
+	// since the staging site's copy was made**: orders, comments, form
+	// entries, users.
+	//
+	// A push without it doesn't change the database's content. It reinstalls
+	// a default plugin that the pushed files removed, since the platform
+	// depends on it. Plugin activation is in the database, so active plugins
+	// get new code, and new plugins arrive inactive. If WordPress can't load
+	// the pushed code, the push rolls back.
+	//
+	// A database push is refused with `422` on `/database` if it would move
+	// production to a WordPress major branch its core policy doesn't allow
+	// (a hold, or a release that isn't approved): approve the branch for the
+	// production site first. A newer release of the same branch is allowed.
+	// This is checked again against the snapshot before the job changes
+	// anything, and the job fails if it no longer holds.
+	//
+	// The production site keeps its settings: PHP version, resources, domains,
+	// preview protection, and outbound email.
+	//
+	// The response contains the production site with status `updating`, and
+	// the job, whose result holds `snapshot_id`, `backup_id`, and
+	// `pre_push_backup_id`: the backup to restore to undo the push. On
+	// success, the staging site's `staging` object records the time. If the
+	// staging site's backup fails, or the staging site is deleted or marked
+	// failed before the job starts, the job fails without touching the
+	// production site, which goes back to `running`, with the reason in
+	// `status_message`. If the job fails once the site's data was touched, it
+	// restores the pre-push backup in full, and the site **stays in
+	// maintenance mode** with `status_message` saying what happened.
+	//
+	// A production site as `site_id`, or a scope that copies nothing, returns
+	// `422`. A staging site that a job is working on or that is marked failed
+	// (a stopped one can be pushed), or a production site that isn't
+	// `running`, returns `409`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/push (the `PushStagingSite` operationId).
+	PushStagingSiteWithResponse(ctx context.Context, siteID SiteID, body PushStagingSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*PushStagingSiteResponse, error)
 
 	// RefreshStagingSiteWithBodyWithResponse Refresh a staging site from its production site
 	//
@@ -28447,6 +28904,103 @@ func (r RegenerateSitePreviewPasswordResponse) ContentType() string {
 	return ""
 }
 
+// PushStagingSiteResponse202Headers the declared response headers of an HTTP 202 response for PushStagingSite
+type PushStagingSiteResponse202Headers struct {
+	Location *string
+}
+
+type PushStagingSiteResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *SiteAccepted
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *PushStagingSiteResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r PushStagingSiteResponse) GetJSON202() *SiteAccepted {
+	return r.JSON202
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r PushStagingSiteResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r PushStagingSiteResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r PushStagingSiteResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r PushStagingSiteResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r PushStagingSiteResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r PushStagingSiteResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r PushStagingSiteResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r PushStagingSiteResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PushStagingSiteResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PushStagingSiteResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PushStagingSiteResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // RefreshStagingSiteResponse202Headers the declared response headers of an HTTP 202 response for RefreshStagingSite
 type RefreshStagingSiteResponse202Headers struct {
 	Location *string
@@ -34129,6 +34683,142 @@ func (c *ClientWithResponses) RegenerateSitePreviewPasswordWithResponse(ctx cont
 		return nil, err
 	}
 	return ParseRegenerateSitePreviewPasswordResponse(rsp)
+}
+
+// PushStagingSiteWithBodyWithResponse Push a staging site to its production site
+//
+// Copies this staging site into its production site with a scope (design
+// doc §5.4, §5.11). `site_id` is the staging site; the response returns
+// the **production** site. Needs the `site.staging.push` permission
+// (Operator), which is checked against both sites.
+//
+// A backup of kind `sync` of the staging site is queued first, always:
+// pushing an older snapshot isn't supported. The returned job
+// (`site.push`), on the production site, waits for it (`after_job_id`).
+// The job runs the restore pipeline on the production site (see
+// `restoreSite`): it takes a pre-push backup (kind `pre_restore`), puts
+// the site in maintenance mode, restores the scope, purges the object
+// cache and the page cache, and puts maintenance mode back as it was (a
+// site already in maintenance mode stays in it). Restored files also
+// restart the site's containers.
+//
+// A push with `database` also moves the site to a WordPress core at
+// least as new as the snapshot's, runs `wp core update-db`, rewrites the
+// staging site's URLs to the production site's (its primary domain once
+// live, otherwise its preview domain), and makes sure the default plugins
+// are installed and active. It **replaces everything production recorded
+// since the staging site's copy was made**: orders, comments, form
+// entries, users.
+//
+// A push without it doesn't change the database's content. It reinstalls
+// a default plugin that the pushed files removed, since the platform
+// depends on it. Plugin activation is in the database, so active plugins
+// get new code, and new plugins arrive inactive. If WordPress can't load
+// the pushed code, the push rolls back.
+//
+// A database push is refused with `422` on `/database` if it would move
+// production to a WordPress major branch its core policy doesn't allow
+// (a hold, or a release that isn't approved): approve the branch for the
+// production site first. A newer release of the same branch is allowed.
+// This is checked again against the snapshot before the job changes
+// anything, and the job fails if it no longer holds.
+//
+// The production site keeps its settings: PHP version, resources, domains,
+// preview protection, and outbound email.
+//
+// The response contains the production site with status `updating`, and
+// the job, whose result holds `snapshot_id`, `backup_id`, and
+// `pre_push_backup_id`: the backup to restore to undo the push. On
+// success, the staging site's `staging` object records the time. If the
+// staging site's backup fails, or the staging site is deleted or marked
+// failed before the job starts, the job fails without touching the
+// production site, which goes back to `running`, with the reason in
+// `status_message`. If the job fails once the site's data was touched, it
+// restores the pre-push backup in full, and the site **stays in
+// maintenance mode** with `status_message` saying what happened.
+//
+// A production site as `site_id`, or a scope that copies nothing, returns
+// `422`. A staging site that a job is working on or that is marked failed
+// (a stopped one can be pushed), or a production site that isn't
+// `running`, returns `409`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/push (the `PushStagingSite` operationId).
+func (c *ClientWithResponses) PushStagingSiteWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PushStagingSiteResponse, error) {
+	rsp, err := c.PushStagingSiteWithBody(ctx, siteID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePushStagingSiteResponse(rsp)
+}
+
+// PushStagingSiteWithResponse Push a staging site to its production site
+//
+// Copies this staging site into its production site with a scope (design
+// doc §5.4, §5.11). `site_id` is the staging site; the response returns
+// the **production** site. Needs the `site.staging.push` permission
+// (Operator), which is checked against both sites.
+//
+// A backup of kind `sync` of the staging site is queued first, always:
+// pushing an older snapshot isn't supported. The returned job
+// (`site.push`), on the production site, waits for it (`after_job_id`).
+// The job runs the restore pipeline on the production site (see
+// `restoreSite`): it takes a pre-push backup (kind `pre_restore`), puts
+// the site in maintenance mode, restores the scope, purges the object
+// cache and the page cache, and puts maintenance mode back as it was (a
+// site already in maintenance mode stays in it). Restored files also
+// restart the site's containers.
+//
+// A push with `database` also moves the site to a WordPress core at
+// least as new as the snapshot's, runs `wp core update-db`, rewrites the
+// staging site's URLs to the production site's (its primary domain once
+// live, otherwise its preview domain), and makes sure the default plugins
+// are installed and active. It **replaces everything production recorded
+// since the staging site's copy was made**: orders, comments, form
+// entries, users.
+//
+// A push without it doesn't change the database's content. It reinstalls
+// a default plugin that the pushed files removed, since the platform
+// depends on it. Plugin activation is in the database, so active plugins
+// get new code, and new plugins arrive inactive. If WordPress can't load
+// the pushed code, the push rolls back.
+//
+// A database push is refused with `422` on `/database` if it would move
+// production to a WordPress major branch its core policy doesn't allow
+// (a hold, or a release that isn't approved): approve the branch for the
+// production site first. A newer release of the same branch is allowed.
+// This is checked again against the snapshot before the job changes
+// anything, and the job fails if it no longer holds.
+//
+// The production site keeps its settings: PHP version, resources, domains,
+// preview protection, and outbound email.
+//
+// The response contains the production site with status `updating`, and
+// the job, whose result holds `snapshot_id`, `backup_id`, and
+// `pre_push_backup_id`: the backup to restore to undo the push. On
+// success, the staging site's `staging` object records the time. If the
+// staging site's backup fails, or the staging site is deleted or marked
+// failed before the job starts, the job fails without touching the
+// production site, which goes back to `running`, with the reason in
+// `status_message`. If the job fails once the site's data was touched, it
+// restores the pre-push backup in full, and the site **stays in
+// maintenance mode** with `status_message` saying what happened.
+//
+// A production site as `site_id`, or a scope that copies nothing, returns
+// `422`. A staging site that a job is working on or that is marked failed
+// (a stopped one can be pushed), or a production site that isn't
+// `running`, returns `409`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/push (the `PushStagingSite` operationId).
+func (c *ClientWithResponses) PushStagingSiteWithResponse(ctx context.Context, siteID SiteID, body PushStagingSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*PushStagingSiteResponse, error) {
+	rsp, err := c.PushStagingSite(ctx, siteID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePushStagingSiteResponse(rsp)
 }
 
 // RefreshStagingSiteWithBodyWithResponse Refresh a staging site from its production site
@@ -41283,6 +41973,94 @@ func ParseRegenerateSitePreviewPasswordResponse(rsp *http.Response) (*Regenerate
 			}
 			headers.CacheControl = &value
 		}
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
+// ParsePushStagingSiteResponse parses an HTTP response from a PushStagingSiteWithResponse call
+func ParsePushStagingSiteResponse(rsp *http.Response) (*PushStagingSiteResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PushStagingSiteResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest SiteAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers PushStagingSiteResponse202Headers
 		if values := rsp.Header.Values("Location"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {

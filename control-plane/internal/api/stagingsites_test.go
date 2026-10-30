@@ -313,6 +313,101 @@ func TestRefreshStagingSite(t *testing.T) {
 	})
 }
 
+func TestPushStagingSite(t *testing.T) {
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		e := newStagingEnv(t, db)
+		target := "/api/v1/sites/" + e.stg.ID + "/push"
+		scope := `{"files":"code","database":false}`
+		setStatus := func(siteID string, status store.SiteStatus) {
+			t.Helper()
+			if _, err := db.ExecContext(ctx, "UPDATE sites SET status = ? WHERE id = ?", status, siteID); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		// A Viewer is refused, and the denial is on the record.
+		w := e.request(t, e.as(store.RoleViewer), http.MethodPost, target, scope)
+		expectStatus(t, w, http.StatusForbidden, "viewer pushing")
+		ev := allEvents(t, db)[0]
+		if ev.Action != "site.staging.push" || ev.Result != store.AuditDenied || ev.TargetID != e.stg.ID {
+			t.Errorf("audit event = %+v", ev)
+		}
+
+		// Refused requests change nothing.
+		for _, tc := range []struct {
+			name, target, body string
+			want               int
+		}{
+			{"a production site", "/api/v1/sites/" + e.prod.ID + "/push", scope, http.StatusUnprocessableEntity},
+			{"a scope that copies nothing", target, `{"files":"none","database":false}`, http.StatusUnprocessableEntity},
+			{"an unknown files scope", target, `{"files":"some","database":true}`, http.StatusUnprocessableEntity},
+			{"no scope", target, `{}`, http.StatusUnprocessableEntity},
+			{"a snapshot, which a push doesn't take", target, `{"files":"all","database":true,"snapshot_id":"deadbeef00"}`, http.StatusUnprocessableEntity},
+			{"a missing site", "/api/v1/sites/" + strings.Repeat("0", 26) + "/push", scope, http.StatusNotFound},
+		} {
+			w := e.request(t, e.admin, http.MethodPost, tc.target, tc.body)
+			expectStatus(t, w, tc.want, tc.name)
+		}
+
+		// The core guard says which field and what to do about it. The staging
+		// site is on the newest release; production is on an older branch.
+		if _, err := db.ExecContext(ctx, "UPDATE sites SET wp_core_version = ? WHERE id = ?", "6.8.1", e.prod.ID); err != nil {
+			t.Fatal(err)
+		}
+		w = e.request(t, e.admin, http.MethodPost, target, `{"files":"none","database":true}`)
+		expectStatus(t, w, http.StatusUnprocessableEntity, "database push past the core policy")
+		if body := w.Body.String(); !strings.Contains(body, "/database") || !strings.Contains(body, "for the production site first") {
+			t.Errorf("core guard response = %s", body)
+		}
+
+		// Busy either side, and a failed staging site.
+		for _, tc := range []struct {
+			name   string
+			siteID string
+			status store.SiteStatus
+		}{
+			{"staging site updating", e.stg.ID, store.SiteUpdating},
+			{"staging site failed", e.stg.ID, store.SiteFailed},
+			{"production site updating", e.prod.ID, store.SiteUpdating},
+			{"production site stopped", e.prod.ID, store.SiteStopped},
+		} {
+			setStatus(tc.siteID, tc.status)
+			w := e.request(t, e.admin, http.MethodPost, target, scope)
+			expectStatus(t, w, http.StatusConflict, tc.name)
+			setStatus(tc.siteID, store.SiteRunning)
+		}
+
+		// An Operator pushes. The response is about production; the job waits for
+		// a sync backup of the staging site.
+		w = e.request(t, e.operator, http.MethodPost, target, scope)
+		expectStatus(t, w, http.StatusAccepted, "push")
+		acc := decodeJSON[gen.SiteAccepted](t, w.Body.Bytes())
+		if acc.Site.ID != e.prod.ID || acc.Site.Status != gen.SiteStatusUpdating || acc.PreviewCredentials != nil {
+			t.Errorf("site = %s", w.Body)
+		}
+		if acc.Job.Type != sites.PushJobType || acc.Job.AfterJobID == nil || w.Header().Get("Location") != "/api/v1/jobs/"+acc.Job.ID {
+			t.Fatalf("job = %+v, Location %q", acc.Job, w.Header().Get("Location"))
+		}
+		backupJob, err := store.NewJobs(db).Get(ctx, *acc.Job.AfterJobID)
+		if err != nil || backupJob.TargetID != e.stg.ID || backupJob.LockKey != store.SiteLockKey(e.stg.ID) ||
+			!strings.Contains(string(backupJob.Payload), `"sync"`) {
+			t.Errorf("awaited job = %+v, %v", backupJob, err)
+		}
+		// The event names both sites and the scope.
+		ev = allEvents(t, db)[0]
+		if ev.Action != "site.staging.push" || ev.Result != store.AuditSuccess || ev.TargetID != e.stg.ID ||
+			ev.Details["production_site_id"] != e.prod.ID || ev.Details["files"] != "code" || ev.Details["database"] != "false" ||
+			ev.Details["job_id"] != acc.Job.ID || ev.Details["backup_job_id"] != backupJob.ID {
+			t.Errorf("audit event = %+v", ev)
+		}
+
+		// Busy: that push is queued.
+		w = e.request(t, e.admin, http.MethodPost, target, scope)
+		expectStatus(t, w, http.StatusConflict, "push while one is queued")
+	})
+}
+
 func TestCreateStagingSite(t *testing.T) {
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
 		ctx := context.Background()

@@ -232,6 +232,48 @@ func TestDecidePlanDetails(t *testing.T) {
 	}
 }
 
+func TestPlanAllowsBranch(t *testing.T) {
+	cat := mustCatalog(t, manifest)
+	at := day("2026-09-10")
+	hold := coreupdate.Policy{Hold: true, HoldSince: day("2026-08-01")}
+	approve := func(branch string) coreupdate.Policy { return coreupdate.Policy{ApprovedBranch: branch} }
+	auto := coreupdate.Settings{MajorAutoApproveAfter: 5 * 24 * time.Hour}
+	for _, tt := range []struct {
+		name        string
+		site, group coreupdate.Policy
+		settings    coreupdate.Settings
+		branch      string
+		want        bool
+	}{
+		{name: "its own branch", branch: "7.1", want: true},
+		{name: "its own branch, held", site: hold, branch: "7.1", want: true},
+		{name: "an older branch", branch: "6.9", want: true},
+		{name: "a newer branch, without approval", branch: "7.2"},
+		{name: "a newer branch, approved", site: approve("7.2"), branch: "7.2", want: true},
+		{name: "a newer branch, approved by its group", group: approve("7.2"), branch: "7.2", want: true},
+		{name: "a newer branch, past the approval", site: approve("7.1"), branch: "7.2"},
+		{name: "a newer branch, held", site: hold, branch: "7.2"},
+		{name: "a newer branch, its group held", group: hold, branch: "7.2"},
+		{name: "the site's hold beats its group's approval", site: hold, group: approve("7.2"), branch: "7.2"},
+		{name: "the site's approval beats its group's hold", site: approve("7.2"), group: hold, branch: "7.2", want: true},
+		{name: "approved automatically", settings: auto, branch: "7.2", want: true},
+		{name: "not yet approved automatically", settings: coreupdate.Settings{MajorAutoApproveAfter: 30 * 24 * time.Hour}, branch: "7.2"},
+		{name: "a hold beats automatic approval", site: hold, settings: auto, branch: "7.2"},
+		{name: "an explicit approval beats automatic approval", site: approve("7.1"), settings: auto, branch: "7.2"},
+		{name: "a malformed branch", site: approve("7.2"), branch: "seven"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := coreupdate.Decide(cat, "7.1.2", tt.site, tt.group, tt.settings, at)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := p.AllowsBranch(tt.branch); got != tt.want {
+				t.Errorf("AllowsBranch(%q) = %v, want %v (plan %+v)", tt.branch, got, tt.want, p)
+			}
+		})
+	}
+}
+
 func TestDecideErrors(t *testing.T) {
 	cat := mustCatalog(t, manifest)
 	if _, err := coreupdate.Decide(cat, "latest", coreupdate.Policy{}, coreupdate.Policy{}, coreupdate.Settings{}, time.Now()); !errors.Is(err, catalog.ErrInvalidVersion) {
