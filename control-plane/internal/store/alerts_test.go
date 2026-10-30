@@ -40,6 +40,7 @@ func TestAlertRules(t *testing.T) {
 
 		down := sampleRule("Site down")
 		down.ClientGroupID = group.ID
+		down.IncludeStaging = true // must round trip; false is the default
 		if err := rules.Create(ctx, &down); err != nil {
 			t.Fatal(err)
 		}
@@ -112,6 +113,7 @@ func TestAlertRules(t *testing.T) {
 			t.Fatal(err)
 		}
 		edited.Name, edited.Threshold, edited.For, edited.Enabled, edited.ClientGroupID = "Site is down", 0.5, 0, false, ""
+		edited.IncludeStaging = false
 		edited.Labels = map[string]string{"a": "b"}
 		if err := rules.Update(ctx, &edited); err != nil {
 			t.Fatal(err)

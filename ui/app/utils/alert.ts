@@ -100,6 +100,8 @@ export interface RuleFormState {
   operator: AlertOperator
   threshold: string
   forSeconds: string
+  /** Site rules only: also apply to staging sites. */
+  includeStaging: boolean
 }
 
 export function ruleFormFrom(rule: AlertRule): RuleFormState {
@@ -110,6 +112,7 @@ export function ruleFormFrom(rule: AlertRule): RuleFormState {
     operator: rule.operator ?? 'gt',
     threshold: rule.threshold == null ? '' : String(rule.threshold),
     forSeconds: String(rule.for_seconds),
+    includeStaging: rule.include_staging,
   }
 }
 
@@ -138,6 +141,7 @@ export function ruleUpdateBody(rule: AlertRule, f: RuleFormState): AlertRuleUpda
     if (Number(f.threshold) !== rule.threshold) body.threshold = Number(f.threshold)
   }
   if (Number(f.forSeconds) !== rule.for_seconds) body.for_seconds = Number(f.forSeconds)
+  if (rule.scope === 'site' && f.includeStaging !== rule.include_staging) body.include_staging = f.includeStaging
   return body
 }
 
@@ -161,6 +165,7 @@ export function emptyNewRuleForm(): NewRuleFormState {
     operator: 'gt',
     threshold: '',
     forSeconds: '0',
+    includeStaging: false,
     scope: 'site',
     kind: 'threshold',
     expr: '',
@@ -175,7 +180,7 @@ export function validateNewRuleForm(f: NewRuleFormState): Record<string, string>
   return errors
 }
 
-/** The POST body. A threshold only goes with a threshold rule, a client group only with a site rule. */
+/** The POST body. A threshold only goes with a threshold rule, a client group only with a site rule, and the staging switch is off for a platform rule. */
 export function ruleCreateBody(f: NewRuleFormState): AlertRuleCreate {
   const body: AlertRuleCreate = {
     name: f.name.trim(),
@@ -186,6 +191,7 @@ export function ruleCreateBody(f: NewRuleFormState): AlertRuleCreate {
     severity: f.severity,
     for_seconds: Number(f.forSeconds),
     enabled: true,
+    include_staging: f.scope === 'site' && f.includeStaging,
   }
   if (f.kind === 'threshold') {
     body.operator = f.operator

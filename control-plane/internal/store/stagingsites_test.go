@@ -47,6 +47,14 @@ func TestStagingSites(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		staged, err := sites.StagingIDs(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(staged) != 2 || !staged[stg.ID] || !staged[bare.ID] || staged[prod.ID] || staged[other.ID] {
+			t.Errorf("StagingIDs = %v, want only %s and %s", staged, stg.ID, bare.ID)
+		}
+
 		got, err := sites.Get(ctx, stg.ID)
 		if err != nil {
 			t.Fatal(err)

@@ -261,6 +261,29 @@ func (r Sites) Aliases(ctx context.Context, siteID string) ([]string, error) {
 	return out, nil
 }
 
+// StagingIDs returns the IDs of all staging sites. The alert engine uses it
+// to tell staging series from production ones with one query per
+// evaluation instead of one per site.
+func (r Sites) StagingIDs(ctx context.Context) (map[string]bool, error) {
+	rows, err := r.q.QueryContext(ctx, "SELECT id FROM sites WHERE parent_site_id IS NOT NULL")
+	if err != nil {
+		return nil, fmt.Errorf("staging site IDs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]bool{}
+	for rows.Next() {
+		var siteID string
+		if err := rows.Scan(&siteID); err != nil {
+			return nil, fmt.Errorf("staging site IDs: %w", err)
+		}
+		out[siteID] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("staging site IDs: %w", err)
+	}
+	return out, nil
+}
+
 // SiteFilter selects sites for List. Zero fields don't filter.
 type SiteFilter struct {
 	ClientGroupID string

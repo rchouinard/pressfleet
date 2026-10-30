@@ -8471,6 +8471,7 @@ components:
         - for_seconds
         - severity
         - enabled
+        - include_staging
         - labels
         - annotations
         - builtin
@@ -8520,6 +8521,12 @@ components:
           $ref: "#/components/schemas/AlertSeverity"
         enabled:
           type: boolean
+        include_staging:
+          type: boolean
+          description: |
+            Whether a `site` rule also applies to staging sites. Staging
+            sites are disposable and often idle or stopped, so rules skip
+            them by default. Platform rules ignore it.
         labels:
           type: object
           description: Labels added to every alert the rule raises.
@@ -8592,6 +8599,13 @@ components:
         enabled:
           type: boolean
           default: true
+        include_staging:
+          type: boolean
+          default: false
+          description: |
+            Whether a `site` rule also applies to staging sites. Staging
+            sites are disposable and often idle or stopped, so rules skip
+            them by default. Platform rules ignore it.
         labels:
           type: object
           description: |
@@ -8643,6 +8657,12 @@ components:
           maximum: 604800
         severity:
           $ref: "#/components/schemas/AlertSeverity"
+        include_staging:
+          type: boolean
+          description: |
+            Whether a `site` rule also applies to staging sites. Staging
+            sites are disposable and often idle or stopped, so rules skip
+            them by default. Platform rules ignore it.
         labels:
           type: object
           additionalProperties:

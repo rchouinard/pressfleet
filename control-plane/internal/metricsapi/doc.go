@@ -77,6 +77,10 @@
 //
 // Conventions the queries rely on, which a collector must follow:
 //
+//   - pressfleet_site_info (value 1, not read by the catalog) tells staging
+//     sites from production ones with its environment label ("production"
+//     or "staging") and parent_site_id label (the production site a staging
+//     site was cloned from, empty otherwise).
 //   - pressfleet_site_up is 1 or 0 per check. The page cache's cache_status
 //     is "hit", "miss", or "bypass"; status_class is "1xx" to "5xx".
 //   - pressfleet_site_http_check_status_code is 0 when the check got no

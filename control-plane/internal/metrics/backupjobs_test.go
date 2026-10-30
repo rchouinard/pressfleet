@@ -133,6 +133,46 @@ func TestBackupJobsCollector(t *testing.T) {
 	})
 }
 
+// A staging site has no backup schedule by default, so it emits no backup
+// health series, and the built-in backup alerts never see it. One that
+// turns its schedule on is reported like any other site.
+func TestBackupJobsCollectorSkipsStagingSites(t *testing.T) {
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		base := time.Now().Add(-time.Hour).Truncate(time.Second).UTC()
+		prod, _ := addSite(t, db, store.SiteRunning)
+		staging, stagingGroup := addSite(t, db, store.SiteRunning)
+		scheduled, scheduledGroup := addSite(t, db, store.SiteRunning)
+		makeStaging(t, db, staging, prod)
+		makeStaging(t, db, scheduled, prod)
+		addBackup(t, db, staging, stagingGroup, store.BackupFailed, base, base.Add(time.Minute), 0)
+		addBackup(t, db, scheduled, scheduledGroup, store.BackupSucceeded, base, base.Add(time.Minute), 1)
+		for _, siteID := range []string{staging, scheduled} {
+			enabled := siteID == scheduled
+			if _, err := db.ExecContext(ctx, "UPDATE sites SET backup_schedule_enabled = ? WHERE id = ?", enabled, siteID); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		targets, err := metrics.NewSiteTargets(db).Targets(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		samples, err := metrics.BackupJobsCollector{DB: db}.Collect(ctx, targets)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range samples {
+			if s.Labels["site_id"] == staging {
+				t.Errorf("sample %s emitted for a staging site with its backup schedule off", s.Name)
+			}
+		}
+		if v, ok := findSample(samples, "pressfleet_site_backup_last_run_success", "site_id", scheduled); !ok || v != 1 {
+			t.Errorf("last_run_success of a staging site with a schedule = %v (found %v), want 1", v, ok)
+		}
+	})
+}
+
 func TestBackupJobsCollectorMetadata(t *testing.T) {
 	var c metrics.Collector = metrics.BackupJobsCollector{Every: time.Minute}
 	if c.Name() != "backup_jobs" || c.Interval() != time.Minute {

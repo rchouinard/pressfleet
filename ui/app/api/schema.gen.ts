@@ -5074,6 +5074,12 @@ export interface components {
             for_seconds: number;
             severity: components["schemas"]["AlertSeverity"];
             enabled: boolean;
+            /**
+             * @description Whether a `site` rule also applies to staging sites. Staging
+             *     sites are disposable and often idle or stopped, so rules skip
+             *     them by default. Platform rules ignore it.
+             */
+            include_staging: boolean;
             /** @description Labels added to every alert the rule raises. */
             labels: {
                 [key: string]: string;
@@ -5120,6 +5126,13 @@ export interface components {
             /** @default true */
             enabled: boolean;
             /**
+             * @description Whether a `site` rule also applies to staging sites. Staging
+             *     sites are disposable and often idle or stopped, so rules skip
+             *     them by default. Platform rules ignore it.
+             * @default false
+             */
+            include_staging: boolean;
+            /**
              * @description Labels to add to every alert. `site_id`, `client_group_id`,
              *     `alertname`, and `severity` are set by the platform and can't be
              *     used.
@@ -5147,6 +5160,12 @@ export interface components {
             threshold?: number;
             for_seconds?: number;
             severity?: components["schemas"]["AlertSeverity"];
+            /**
+             * @description Whether a `site` rule also applies to staging sites. Staging
+             *     sites are disposable and often idle or stopped, so rules skip
+             *     them by default. Platform rules ignore it.
+             */
+            include_staging?: boolean;
             labels?: {
                 [key: string]: string;
             };

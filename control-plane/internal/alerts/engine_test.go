@@ -257,6 +257,95 @@ func TestThresholdScopeAndClientGroup(t *testing.T) {
 	})
 }
 
+// addSites inserts a production site and a staging clone of it, and returns
+// their IDs. Rows are inserted directly because the engine reads nothing
+// from a site but whether it has a parent.
+func addSites(t *testing.T, db *store.DB) (prod, staging string) {
+	t.Helper()
+	ctx := context.Background()
+	group := &store.ClientGroup{Name: "group-" + id.New()}
+	if err := store.NewClientGroups(db).Create(ctx, group); err != nil {
+		t.Fatal(err)
+	}
+	prod, staging = id.New(), id.New()
+	for _, s := range []struct{ id, parent string }{{prod, ""}, {staging, prod}} {
+		uid, err := store.AllocateSiteUID(ctx, db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		now := time.Now()
+		parent := any(nil)
+		if s.parent != "" {
+			parent = s.parent
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO sites
+			(id, client_group_id, parent_site_id, name, slug, status, preview_domain, php_version, wp_core_version, uid, created_at, updated_at)
+			VALUES (?, ?, ?, 'Site', ?, 'running', ?, '8.4', '7.1.2', ?, ?, ?)`,
+			s.id, group.ID, parent, s.id, s.id+".preview.example", uid, now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return prod, staging
+}
+
+func TestStagingSitesAreSkippedUnlessIncluded(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		h := newHarness(t, db)
+		prod, staging := addSites(t, db)
+		plain := h.addRule(siteDownRule(0))
+		plain.Name = "Down, production only"
+		optIn := siteDownRule(0)
+		optIn.Name, optIn.IncludeStaging = "Down, with staging", true
+		optIn = h.addRule(optIn)
+		plain, err := store.NewAlertRules(db).Get(ctx, plain.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		platform := h.addRule(store.AlertRule{
+			Name: "Platform", Scope: store.AlertScopePlatform, Kind: store.AlertKindExpression, Expr: "host", Enabled: true,
+		})
+
+		h.querier.Set("up == 0", alertstest.Sample(0, "site_id", prod), alertstest.Sample(0, "site_id", staging))
+		// A platform series that happens to name a staging site is not filtered.
+		h.querier.Set("host", alertstest.Sample(1, "site_id", staging))
+		h.evaluate(time.Minute)
+
+		byRule := map[string][]string{}
+		for _, a := range h.alerts(store.AlertFilter{}) {
+			byRule[a.RuleID] = append(byRule[a.RuleID], a.SiteID)
+		}
+		for _, ids := range byRule {
+			slices.Sort(ids)
+		}
+		want := map[string][]string{
+			plain.ID:    {prod},
+			optIn.ID:    sortedIDs(prod, staging),
+			platform.ID: {staging},
+		}
+		if fmt.Sprint(byRule) != fmt.Sprint(want) {
+			t.Errorf("alerts by rule = %v, want %v", byRule, want)
+		}
+
+		// Editing the opt-in rule to exclude staging resolves the staging
+		// site's alert, as if its series had disappeared.
+		optIn.IncludeStaging = false
+		if err := store.NewAlertRules(db).Update(ctx, &optIn); err != nil {
+			t.Fatal(err)
+		}
+		h.evaluate(time.Minute)
+		resolved := h.alerts(store.AlertFilter{State: store.AlertResolved})
+		if len(resolved) != 1 || resolved[0].SiteID != staging || resolved[0].RuleID != optIn.ID {
+			t.Errorf("resolved alerts = %+v, want the staging alert of the edited rule", resolved)
+		}
+	})
+}
+
+func sortedIDs(ids ...string) []string {
+	slices.Sort(ids)
+	return ids
+}
+
 func TestPlatformScope(t *testing.T) {
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
 		h := newHarness(t, db)

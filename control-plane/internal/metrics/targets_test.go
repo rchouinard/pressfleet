@@ -36,6 +36,14 @@ func addSite(t *testing.T, db *store.DB, status store.SiteStatus) (siteID, group
 	return siteID, group.ID
 }
 
+// makeStaging turns a site into a staging clone of parent.
+func makeStaging(t *testing.T, db *store.DB, siteID, parent string) {
+	t.Helper()
+	if _, err := db.ExecContext(context.Background(), "UPDATE sites SET parent_site_id = ? WHERE id = ?", parent, siteID); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func siteIDs(ts []metrics.Target) []string {
 	var out []string
 	for _, t := range ts {
@@ -101,7 +109,8 @@ func TestNewSitesAreCollectedWithoutRestart(t *testing.T) {
 		eventually(t, "site created after start", func() bool { return siteInfoCount(w, second) > 0 })
 		for _, s := range w.Named("pressfleet_site_info") {
 			want := map[string]string{first: firstGroup, second: secondGroup}[s.Labels["site_id"]]
-			if s.Labels["client_group_id"] != want || s.Labels["status"] != "running" {
+			if s.Labels["client_group_id"] != want || s.Labels["status"] != "running" ||
+				s.Labels["environment"] != "production" || s.Labels["parent_site_id"] != "" {
 				t.Errorf("sample labels = %v, want client_group_id %s", s.Labels, want)
 			}
 		}

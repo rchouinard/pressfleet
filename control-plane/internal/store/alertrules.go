@@ -122,6 +122,10 @@ type AlertRule struct {
 	For      time.Duration
 	Severity AlertSeverity
 	Enabled  bool
+	// IncludeStaging makes a site-scoped rule apply to staging sites too.
+	// Staging sites are disposable and often idle or stopped, so by default
+	// a rule skips them (design doc §7.3). Platform-scoped rules ignore it.
+	IncludeStaging bool
 	// Labels are added to every alert the rule raises.
 	Labels map[string]string
 	// Annotations hold the summary and description templates, keyed
@@ -148,7 +152,7 @@ func NewAlertRules(q Querier) AlertRules {
 }
 
 const alertRuleColumns = "id, name, description, scope, client_group_id, kind, expr, operator, threshold, for_seconds, " +
-	"severity, enabled, labels, annotations, builtin_key, created_at, updated_at"
+	"severity, enabled, include_staging, labels, annotations, builtin_key, created_at, updated_at"
 
 func scanAlertRule(s scanner) (AlertRule, error) {
 	var (
@@ -159,7 +163,7 @@ func scanAlertRule(s scanner) (AlertRule, error) {
 		scope, kind, op, severe string
 	)
 	err := s.Scan(&r.ID, &r.Name, &r.Description, &scope, &group, &kind, &r.Expr, &op, &r.Threshold, &forSeconds,
-		&severe, &r.Enabled, &labels, &annotations, &builtin, &r.CreatedAt, &r.UpdatedAt)
+		&severe, &r.Enabled, &r.IncludeStaging, &labels, &annotations, &builtin, &r.CreatedAt, &r.UpdatedAt)
 	if err != nil {
 		return AlertRule{}, err
 	}
@@ -226,10 +230,10 @@ func (r AlertRules) insert(ctx context.Context, rule AlertRule) error {
 		return err
 	}
 	_, err = r.q.ExecContext(ctx,
-		"INSERT INTO alert_rules ("+alertRuleColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO alert_rules ("+alertRuleColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		rule.ID, rule.Name, rule.Description, string(rule.Scope), nullString(rule.ClientGroupID), string(rule.Kind),
 		rule.Expr, string(rule.Operator), rule.Threshold, int64(rule.For/time.Second), string(rule.Severity),
-		rule.Enabled, labels, annotations, nullString(rule.BuiltinKey), rule.CreatedAt, rule.UpdatedAt)
+		rule.Enabled, rule.IncludeStaging, labels, annotations, nullString(rule.BuiltinKey), rule.CreatedAt, rule.UpdatedAt)
 	return err
 }
 
@@ -353,11 +357,11 @@ func (r AlertRules) Update(ctx context.Context, rule *AlertRule) error {
 	)
 	err = r.q.QueryRowContext(ctx,
 		"UPDATE alert_rules SET name = ?, description = ?, scope = ?, client_group_id = ?, kind = ?, expr = ?, operator = ?, "+
-			"threshold = ?, for_seconds = ?, severity = ?, enabled = ?, labels = ?, annotations = ?, updated_at = ? "+
+			"threshold = ?, for_seconds = ?, severity = ?, enabled = ?, include_staging = ?, labels = ?, annotations = ?, updated_at = ? "+
 			"WHERE id = ? RETURNING created_at, builtin_key",
 		rule.Name, rule.Description, string(rule.Scope), nullString(rule.ClientGroupID), string(rule.Kind), rule.Expr,
 		string(rule.Operator), rule.Threshold, int64(rule.For/time.Second), string(rule.Severity), rule.Enabled,
-		labels, annotations, updated, rule.ID).Scan(&createdAt, &builtin)
+		rule.IncludeStaging, labels, annotations, updated, rule.ID).Scan(&createdAt, &builtin)
 	if err != nil {
 		return fmt.Errorf("update alert rule %s: %w", rule.ID, err)
 	}
