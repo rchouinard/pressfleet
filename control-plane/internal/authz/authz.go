@@ -164,6 +164,10 @@ const (
 	// below (deleting the backup repository), which is Admin-only too; it
 	// is its own action so the audit log tells the two deletions apart.
 	DeleteSiteBackups Action = "site.delete_with_backups"
+	// DeleteStagingSite is deleting a staging site (§5.11), which is only
+	// a copy and keeps its backups. It is the Operator-level delete; the
+	// API picks it from the target.
+	DeleteStagingSite Action = "site.staging.delete"
 
 	// Delete or offboard client groups (export or delete the backup
 	// repository and its key).
@@ -384,6 +388,7 @@ var rules = map[Action]rule{
 
 	DeleteSite:        {store.RoleAdmin, true},
 	DeleteSiteBackups: {store.RoleAdmin, true},
+	DeleteStagingSite: {store.RoleOperator, true},
 
 	DeleteClientGroup:   {store.RoleAdmin, true},
 	OffboardClientGroup: {store.RoleAdmin, true},

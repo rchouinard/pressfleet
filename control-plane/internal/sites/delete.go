@@ -53,8 +53,10 @@ var unfinished = []store.JobState{store.JobQueued, store.JobRunning, store.JobRo
 // it runs once provisioning has finished or rolled back, and provisioning
 // stops at its next step when it sees the site is being deleted. It returns
 // ErrNotFound if the site doesn't exist, including once it has been
-// deleted, and ErrNoBackupEngine if opts.DeleteBackups is set but the
-// service can't reach backups.
+// deleted, ErrNoBackupEngine if opts.DeleteBackups is set but the
+// service can't reach backups, and a *StagingSitesError (ErrHasStagingSites)
+// for a production site with staging sites that aren't being deleted.
+// Nothing is changed then.
 func (s *Service) Delete(ctx context.Context, siteID, createdByUserID string, opts DeleteOptions) (store.Job, error) {
 	if opts.DeleteBackups && s.engine == nil {
 		return store.Job{}, ErrNoBackupEngine
@@ -81,6 +83,21 @@ func (s *Service) Delete(ctx context.Context, siteID, createdByUserID string, op
 				return nil
 			}
 			// The last deletion job gave up; try again.
+		}
+		// Refuse here rather than leave it to the foreign key at the job's
+		// last step, which would fail after everything else was removed.
+		children, err := sites.Children(ctx, siteID)
+		if err != nil {
+			return err
+		}
+		var blocking []store.Site
+		for _, c := range children {
+			if c.Status != store.SiteDeleting {
+				blocking = append(blocking, c)
+			}
+		}
+		if len(blocking) > 0 {
+			return &StagingSitesError{Sites: blocking}
 		}
 		if _, err := sites.SetStatus(ctx, siteID, store.SiteDeleting, ""); err != nil {
 			return err

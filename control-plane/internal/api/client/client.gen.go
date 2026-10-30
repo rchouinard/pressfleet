@@ -936,6 +936,24 @@ func (e SiteDeploymentKind) Valid() bool {
 	}
 }
 
+// Defines values for SiteEnvironment.
+const (
+	Production SiteEnvironment = "production"
+	Staging    SiteEnvironment = "staging"
+)
+
+// Valid indicates whether the value is a known member of the SiteEnvironment enum.
+func (e SiteEnvironment) Valid() bool {
+	switch e {
+	case Production:
+		return true
+	case Staging:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SiteJobLogEntryLevel.
 const (
 	SiteJobLogEntryLevelError SiteJobLogEntryLevel = "error"
@@ -3342,6 +3360,10 @@ type Site struct {
 	// CreatedAt Examples: 2026-09-26T17:25:00Z
 	CreatedAt Timestamp `json:"created_at"`
 
+	// Environment `production` for a site that has no parent, `staging` for a clone of
+	// a production site (design doc §5.11).
+	Environment SiteEnvironment `json:"environment"`
+
 	// ID Opaque, server-assigned identifier.
 	//
 	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
@@ -3354,7 +3376,7 @@ type Site struct {
 	// Name Examples: Acme marketing site
 	Name string `json:"name"`
 
-	// ParentSiteID Reserved for staging clones; always null in the MVP.
+	// ParentSiteID The production site a staging site was cloned from; null on production sites.
 	ParentSiteID *ID `json:"parent_site_id"`
 
 	// PendingUpdates How many plugins and themes of the site had an update available at
@@ -3393,6 +3415,9 @@ type Site struct {
 	//
 	// Examples: acme-marketing
 	Slug string `json:"slug"`
+
+	// Staging The state of a staging site (design doc §5.11); null on production sites.
+	Staging *StagingState `json:"staging"`
 
 	// Status Recorded lifecycle status of a site. `provisioning`, `updating`, and
 	// `deleting` mean a job is working on the site; `failed` means the last
@@ -3551,6 +3576,10 @@ type SiteDeployment struct {
 // SiteDeploymentKind Where the package goes: `theme` (`wp-content/themes`), `plugin`
 // (`wp-content/plugins`), or `mu-plugin` (`wp-content/mu-plugins`).
 type SiteDeploymentKind string
+
+// SiteEnvironment `production` for a site that has no parent, `staging` for a clone of
+// a production site (design doc §5.11).
+type SiteEnvironment string
 
 // SiteGoLive defines model for SiteGoLive.
 type SiteGoLive struct {
@@ -3769,6 +3798,10 @@ type SiteStatus string
 
 // SiteUpdate Only the fields present are changed.
 type SiteUpdate struct {
+	// OutboundMail Turns the site's outbound email on or off. Staging sites only
+	// (design doc §5.11); a validation error on a production site.
+	OutboundMail *bool `json:"outbound_mail,omitempty"`
+
 	// PhpVersion A PHP version the platform publishes site images for.
 	//
 	// Examples: 8.4
@@ -3847,6 +3880,26 @@ type SSHKeyList struct {
 
 	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
 	NextCursor *NextCursor `json:"next_cursor"`
+}
+
+// StagingState What a staging site keeps about its production site and its mail.
+type StagingState struct {
+	// LastPushedAt When the site was last pushed to production; null if it never was.
+	LastPushedAt *Timestamp `json:"last_pushed_at"`
+
+	// LastRefreshedAt When the site was last cloned or refreshed from production; null before the first copy finished.
+	LastRefreshedAt *Timestamp `json:"last_refreshed_at"`
+
+	// LastSnapshotID The production snapshot the site was last cloned or refreshed from; null before the first copy finished.
+	LastSnapshotID *string `json:"last_snapshot_id"`
+
+	// OutboundMail Whether the site sends email. Off by default on staging sites.
+	OutboundMail bool `json:"outbound_mail"`
+
+	// ProductionSiteID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ProductionSiteID ID `json:"production_site_id"`
 }
 
 // TemplateRollout defines model for TemplateRollout.
@@ -4645,6 +4698,13 @@ type ListSitesParams struct {
 
 	// Status Only return sites with this status.
 	Status *SiteStatus `form:"status,omitempty" json:"status,omitempty"`
+
+	// ParentSiteID Only return the staging sites of this production site.
+	ParentSiteID *ID `form:"parent_site_id,omitempty" json:"parent_site_id,omitempty"`
+
+	// Environment Only return production sites (no parent) or staging sites (with
+	// one).
+	Environment *SiteEnvironment `form:"environment,omitempty" json:"environment,omitempty"`
 }
 
 // DeleteSiteParams defines parameters for DeleteSite.
@@ -5952,6 +6012,12 @@ type ClientInterface interface {
 	// them all in place. If a deletion job is already queued or running, it
 	// is returned with the choice it was queued with.
 	//
+	// Deleting a staging site needs the `site.staging.delete` permission
+	// (Operator), unless `delete_backups` is `true`. A production site
+	// that has staging sites can't be deleted until they are, or are being:
+	// the request is refused with `409`, which names them, before anything
+	// is removed.
+	//
 	// Corresponds with DELETE /api/v1/sites/{site_id} (the `DeleteSite` operationId).
 	DeleteSite(ctx context.Context, siteID SiteID, params *DeleteSiteParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -5989,6 +6055,9 @@ type ClientInterface interface {
 	// and `status_message` says why the update failed. Only if reverting
 	// fails too is the site marked `failed`.
 	//
+	// `outbound_mail` turns the outbound email of a staging site on or off
+	// (design doc §5.11). It is a validation error on a production site.
+	//
 	// A site that is `provisioning`, `updating`, or `deleting`, or whose
 	// provisioning failed, can't be changed (`409`). The PHP version is
 	// only validated when it changes, so a site on a PHP version past end
@@ -6022,6 +6091,9 @@ type ClientInterface interface {
 	// saved again, the status returns to what the containers are doing,
 	// and `status_message` says why the update failed. Only if reverting
 	// fails too is the site marked `failed`.
+	//
+	// `outbound_mail` turns the outbound email of a staging site on or off
+	// (design doc §5.11). It is a validation error on a production site.
 	//
 	// A site that is `provisioning`, `updating`, or `deleting`, or whose
 	// provisioning failed, can't be changed (`409`). The PHP version is
@@ -6113,7 +6185,7 @@ type ClientInterface interface {
 
 	// SetSiteAliasesWithBody Replace a live site's aliases
 	//
-	// Replaces the aliases of a site that has gone live and queues a job
+	// Staging sites (design doc §5.11) can't have aliases (`422`). Replaces the aliases of a site that has gone live and queues a job
 	// that routes them (design doc §5.2). Each alias gets a certificate
 	// of its own with the ACME HTTP-01 challenge and answers with a
 	// permanent redirect (`301`) to the primary domain, keeping the path
@@ -6140,7 +6212,7 @@ type ClientInterface interface {
 
 	// SetSiteAliases Replace a live site's aliases
 	//
-	// Replaces the aliases of a site that has gone live and queues a job
+	// Staging sites (design doc §5.11) can't have aliases (`422`). Replaces the aliases of a site that has gone live and queues a job
 	// that routes them (design doc §5.2). Each alias gets a certificate
 	// of its own with the ACME HTTP-01 challenge and answers with a
 	// permanent redirect (`301`) to the primary domain, keeping the path
@@ -6579,7 +6651,8 @@ type ClientInterface interface {
 
 	// GoLiveSiteWithBody Switch a site to its primary domain
 	//
-	// Sets the site's primary domain and aliases and queues a job that
+	// Staging sites (design doc §5.11) only have a preview domain: for them
+	// this is a validation error (`422`). Sets the site's primary domain and aliases and queues a job that
 	// switches the site to them (design doc §5.2):
 	//
 	// 1. The edge router routes the primary domain and each alias, and
@@ -6635,7 +6708,8 @@ type ClientInterface interface {
 
 	// GoLiveSite Switch a site to its primary domain
 	//
-	// Sets the site's primary domain and aliases and queues a job that
+	// Staging sites (design doc §5.11) only have a preview domain: for them
+	// this is a validation error (`422`). Sets the site's primary domain and aliases and queues a job that
 	// switches the site to them (design doc §5.2):
 	//
 	// 1. The edge router routes the primary domain and each alias, and
@@ -9253,6 +9327,12 @@ func (c *Client) ImportSite(ctx context.Context, body ImportSiteJSONRequestBody,
 // them all in place. If a deletion job is already queued or running, it
 // is returned with the choice it was queued with.
 //
+// Deleting a staging site needs the `site.staging.delete` permission
+// (Operator), unless `delete_backups` is `true`. A production site
+// that has staging sites can't be deleted until they are, or are being:
+// the request is refused with `409`, which names them, before anything
+// is removed.
+//
 // Corresponds with DELETE /api/v1/sites/{site_id} (the `DeleteSite` operationId).
 func (c *Client) DeleteSite(ctx context.Context, siteID SiteID, params *DeleteSiteParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteSiteRequest(c.Server, siteID, params)
@@ -9310,6 +9390,9 @@ func (c *Client) GetSite(ctx context.Context, siteID SiteID, reqEditors ...Reque
 // and `status_message` says why the update failed. Only if reverting
 // fails too is the site marked `failed`.
 //
+// `outbound_mail` turns the outbound email of a staging site on or off
+// (design doc §5.11). It is a validation error on a production site.
+//
 // A site that is `provisioning`, `updating`, or `deleting`, or whose
 // provisioning failed, can't be changed (`409`). The PHP version is
 // only validated when it changes, so a site on a PHP version past end
@@ -9353,6 +9436,9 @@ func (c *Client) UpdateSiteWithBody(ctx context.Context, siteID SiteID, contentT
 // saved again, the status returns to what the containers are doing,
 // and `status_message` says why the update failed. Only if reverting
 // fails too is the site marked `failed`.
+//
+// `outbound_mail` turns the outbound email of a staging site on or off
+// (design doc §5.11). It is a validation error on a production site.
 //
 // A site that is `provisioning`, `updating`, or `deleting`, or whose
 // provisioning failed, can't be changed (`409`). The PHP version is
@@ -9494,7 +9580,7 @@ func (c *Client) ListSiteAdministrators(ctx context.Context, siteID SiteID, reqE
 
 // SetSiteAliasesWithBody Replace a live site's aliases
 //
-// Replaces the aliases of a site that has gone live and queues a job
+// Staging sites (design doc §5.11) can't have aliases (`422`). Replaces the aliases of a site that has gone live and queues a job
 // that routes them (design doc §5.2). Each alias gets a certificate
 // of its own with the ACME HTTP-01 challenge and answers with a
 // permanent redirect (`301`) to the primary domain, keeping the path
@@ -9531,7 +9617,7 @@ func (c *Client) SetSiteAliasesWithBody(ctx context.Context, siteID SiteID, cont
 
 // SetSiteAliases Replace a live site's aliases
 //
-// Replaces the aliases of a site that has gone live and queues a job
+// Staging sites (design doc §5.11) can't have aliases (`422`). Replaces the aliases of a site that has gone live and queues a job
 // that routes them (design doc §5.2). Each alias gets a certificate
 // of its own with the ACME HTTP-01 challenge and answers with a
 // permanent redirect (`301`) to the primary domain, keeping the path
@@ -10180,7 +10266,8 @@ func (c *Client) ExportSite(ctx context.Context, siteID SiteID, reqEditors ...Re
 
 // GoLiveSiteWithBody Switch a site to its primary domain
 //
-// Sets the site's primary domain and aliases and queues a job that
+// Staging sites (design doc §5.11) only have a preview domain: for them
+// this is a validation error (`422`). Sets the site's primary domain and aliases and queues a job that
 // switches the site to them (design doc §5.2):
 //
 //  1. The edge router routes the primary domain and each alias, and
@@ -10246,7 +10333,8 @@ func (c *Client) GoLiveSiteWithBody(ctx context.Context, siteID SiteID, contentT
 
 // GoLiveSite Switch a site to its primary domain
 //
-// Sets the site's primary domain and aliases and queues a job that
+// Staging sites (design doc §5.11) only have a preview domain: for them
+// this is a validation error (`422`). Sets the site's primary domain and aliases and queues a job that
 // switches the site to them (design doc §5.2):
 //
 //  1. The edge router routes the primary domain and each alias, and
@@ -14623,6 +14711,30 @@ func NewListSitesRequest(server string, params *ListSitesParams) (*http.Request,
 
 		}
 
+		if params.ParentSiteID != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "parent_site_id", *params.ParentSiteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Environment != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "environment", *params.Environment, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -18865,6 +18977,12 @@ type ClientWithResponsesInterface interface {
 	// them all in place. If a deletion job is already queued or running, it
 	// is returned with the choice it was queued with.
 	//
+	// Deleting a staging site needs the `site.staging.delete` permission
+	// (Operator), unless `delete_backups` is `true`. A production site
+	// that has staging sites can't be deleted until they are, or are being:
+	// the request is refused with `409`, which names them, before anything
+	// is removed.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /api/v1/sites/{site_id} (the `DeleteSite` operationId).
@@ -18906,6 +19024,9 @@ type ClientWithResponsesInterface interface {
 	// and `status_message` says why the update failed. Only if reverting
 	// fails too is the site marked `failed`.
 	//
+	// `outbound_mail` turns the outbound email of a staging site on or off
+	// (design doc §5.11). It is a validation error on a production site.
+	//
 	// A site that is `provisioning`, `updating`, or `deleting`, or whose
 	// provisioning failed, can't be changed (`409`). The PHP version is
 	// only validated when it changes, so a site on a PHP version past end
@@ -18939,6 +19060,9 @@ type ClientWithResponsesInterface interface {
 	// saved again, the status returns to what the containers are doing,
 	// and `status_message` says why the update failed. Only if reverting
 	// fails too is the site marked `failed`.
+	//
+	// `outbound_mail` turns the outbound email of a staging site on or off
+	// (design doc §5.11). It is a validation error on a production site.
 	//
 	// A site that is `provisioning`, `updating`, or `deleting`, or whose
 	// provisioning failed, can't be changed (`409`). The PHP version is
@@ -19034,7 +19158,7 @@ type ClientWithResponsesInterface interface {
 
 	// SetSiteAliasesWithBodyWithResponse Replace a live site's aliases
 	//
-	// Replaces the aliases of a site that has gone live and queues a job
+	// Staging sites (design doc §5.11) can't have aliases (`422`). Replaces the aliases of a site that has gone live and queues a job
 	// that routes them (design doc §5.2). Each alias gets a certificate
 	// of its own with the ACME HTTP-01 challenge and answers with a
 	// permanent redirect (`301`) to the primary domain, keeping the path
@@ -19061,7 +19185,7 @@ type ClientWithResponsesInterface interface {
 
 	// SetSiteAliasesWithResponse Replace a live site's aliases
 	//
-	// Replaces the aliases of a site that has gone live and queues a job
+	// Staging sites (design doc §5.11) can't have aliases (`422`). Replaces the aliases of a site that has gone live and queues a job
 	// that routes them (design doc §5.2). Each alias gets a certificate
 	// of its own with the ACME HTTP-01 challenge and answers with a
 	// permanent redirect (`301`) to the primary domain, keeping the path
@@ -19524,7 +19648,8 @@ type ClientWithResponsesInterface interface {
 
 	// GoLiveSiteWithBodyWithResponse Switch a site to its primary domain
 	//
-	// Sets the site's primary domain and aliases and queues a job that
+	// Staging sites (design doc §5.11) only have a preview domain: for them
+	// this is a validation error (`422`). Sets the site's primary domain and aliases and queues a job that
 	// switches the site to them (design doc §5.2):
 	//
 	// 1. The edge router routes the primary domain and each alias, and
@@ -19580,7 +19705,8 @@ type ClientWithResponsesInterface interface {
 
 	// GoLiveSiteWithResponse Switch a site to its primary domain
 	//
-	// Sets the site's primary domain and aliases and queues a job that
+	// Staging sites (design doc §5.11) only have a preview domain: for them
+	// this is a validation error (`422`). Sets the site's primary domain and aliases and queues a job that
 	// switches the site to them (design doc §5.2):
 	//
 	// 1. The edge router routes the primary domain and each alias, and
@@ -31841,6 +31967,12 @@ func (c *ClientWithResponses) ImportSiteWithResponse(ctx context.Context, body I
 // them all in place. If a deletion job is already queued or running, it
 // is returned with the choice it was queued with.
 //
+// Deleting a staging site needs the `site.staging.delete` permission
+// (Operator), unless `delete_backups` is `true`. A production site
+// that has staging sites can't be deleted until they are, or are being:
+// the request is refused with `409`, which names them, before anything
+// is removed.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /api/v1/sites/{site_id} (the `DeleteSite` operationId).
@@ -31894,6 +32026,9 @@ func (c *ClientWithResponses) GetSiteWithResponse(ctx context.Context, siteID Si
 // and `status_message` says why the update failed. Only if reverting
 // fails too is the site marked `failed`.
 //
+// `outbound_mail` turns the outbound email of a staging site on or off
+// (design doc §5.11). It is a validation error on a production site.
+//
 // A site that is `provisioning`, `updating`, or `deleting`, or whose
 // provisioning failed, can't be changed (`409`). The PHP version is
 // only validated when it changes, so a site on a PHP version past end
@@ -31933,6 +32068,9 @@ func (c *ClientWithResponses) UpdateSiteWithBodyWithResponse(ctx context.Context
 // saved again, the status returns to what the containers are doing,
 // and `status_message` says why the update failed. Only if reverting
 // fails too is the site marked `failed`.
+//
+// `outbound_mail` turns the outbound email of a staging site on or off
+// (design doc §5.11). It is a validation error on a production site.
 //
 // A site that is `provisioning`, `updating`, or `deleting`, or whose
 // provisioning failed, can't be changed (`409`). The PHP version is
@@ -32058,7 +32196,7 @@ func (c *ClientWithResponses) ListSiteAdministratorsWithResponse(ctx context.Con
 
 // SetSiteAliasesWithBodyWithResponse Replace a live site's aliases
 //
-// Replaces the aliases of a site that has gone live and queues a job
+// Staging sites (design doc §5.11) can't have aliases (`422`). Replaces the aliases of a site that has gone live and queues a job
 // that routes them (design doc §5.2). Each alias gets a certificate
 // of its own with the ACME HTTP-01 challenge and answers with a
 // permanent redirect (`301`) to the primary domain, keeping the path
@@ -32091,7 +32229,7 @@ func (c *ClientWithResponses) SetSiteAliasesWithBodyWithResponse(ctx context.Con
 
 // SetSiteAliasesWithResponse Replace a live site's aliases
 //
-// Replaces the aliases of a site that has gone live and queues a job
+// Staging sites (design doc §5.11) can't have aliases (`422`). Replaces the aliases of a site that has gone live and queues a job
 // that routes them (design doc §5.2). Each alias gets a certificate
 // of its own with the ACME HTTP-01 challenge and answers with a
 // permanent redirect (`301`) to the primary domain, keeping the path
@@ -32680,7 +32818,8 @@ func (c *ClientWithResponses) ExportSiteWithResponse(ctx context.Context, siteID
 
 // GoLiveSiteWithBodyWithResponse Switch a site to its primary domain
 //
-// Sets the site's primary domain and aliases and queues a job that
+// Staging sites (design doc §5.11) only have a preview domain: for them
+// this is a validation error (`422`). Sets the site's primary domain and aliases and queues a job that
 // switches the site to them (design doc §5.2):
 //
 //  1. The edge router routes the primary domain and each alias, and
@@ -32742,7 +32881,8 @@ func (c *ClientWithResponses) GoLiveSiteWithBodyWithResponse(ctx context.Context
 
 // GoLiveSiteWithResponse Switch a site to its primary domain
 //
-// Sets the site's primary domain and aliases and queues a job that
+// Staging sites (design doc §5.11) only have a preview domain: for them
+// this is a validation error (`422`). Sets the site's primary domain and aliases and queues a job that
 // switches the site to them (design doc §5.2):
 //
 //  1. The edge router routes the primary domain and each alias, and

@@ -157,6 +157,9 @@ func (s *Service) GoLive(ctx context.Context, siteID string, req GoLive) (store.
 	if err != nil {
 		return store.Site{}, nil, store.Job{}, err
 	}
+	if site.IsStaging() {
+		return store.Site{}, nil, store.Job{}, &ValidationError{Fields: []FieldError{{"/primary_domain", "staging sites only have a preview domain"}}}
+	}
 	if site.Status != store.SiteRunning {
 		return store.Site{}, nil, store.Job{}, fmt.Errorf("%w (it is %s)", ErrNotRunning, site.Status)
 	}
