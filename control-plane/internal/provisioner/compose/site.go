@@ -349,8 +349,17 @@ const (
 //	php memory limit         = limit - nginx memory limit
 //	nginx memory reservation = max(clamp(reservation/8, 8, 32), reservation - php memory limit) MiB
 //	php memory reservation   = reservation - nginx memory reservation
-//	nginx CPU                = clamp(cpu/4, 0.1, 0.5)
+//	nginx CPU                = clamp(floor(cpu/4, 0.01), 0.1, 0.5)
 //	php CPU                  = cpu - nginx CPU
+//
+// nginx's CPU is a whole number of hundredths because Docker's systemd cgroup
+// driver (the default on most hosts) can only express a CPU limit in
+// multiples of 10 ms per second and rounds every container's limit up to the
+// next one. A share like 0.187 would run as 0.19, and 0.563 as 0.57: a site
+// set to 0.75 CPUs would get 0.76. With nginx on a multiple of 0.01, php's
+// share is one too whenever the site's total is, so the site gets exactly
+// what was set. A total that is not a multiple of 0.01 (0.333) still gets
+// rounded up by up to 0.01, in php's share alone.
 //
 // The second term of the nginx reservation only matters when the reservation
 // is close to the limit; it keeps php's reservation within php's limit. The
@@ -397,7 +406,7 @@ func splitResources(r provisioner.ResourceLimits) (resourceSplit, error) {
 	s.Nginx.MemoryReservationMB = max(clamp(r.MemoryReservationMB/8, 8, 32), r.MemoryReservationMB-s.PHP.MemoryLimitMB)
 	s.PHP.MemoryReservationMB = r.MemoryReservationMB - s.Nginx.MemoryReservationMB
 
-	nginxCPU := clamp(cpu/4, 100, 500)
+	nginxCPU := clamp(cpu/4/cpuQuotaStepMillis*cpuQuotaStepMillis, 100, 500)
 	s.Nginx.CPUs = formatCPUMillis(nginxCPU)
 	s.PHP.CPUs = formatCPUMillis(cpu - nginxCPU)
 
@@ -407,6 +416,11 @@ func splitResources(r provisioner.ResourceLimits) (resourceSplit, error) {
 	s.PHPMaxChildren = clamp(workerBudget/perWorker, minPHPMaxChildren, maxPHPMaxChildren)
 	return s, nil
 }
+
+// cpuQuotaStepMillis is the granularity, in thousandths of a CPU, of the CPU
+// limits that Docker's systemd cgroup driver applies exactly (10 ms of CPU
+// time per second).
+const cpuQuotaStepMillis = 10
 
 func clamp(v, lo, hi int) int { return min(max(v, lo), hi) }
 

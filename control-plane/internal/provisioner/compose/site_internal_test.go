@@ -32,13 +32,18 @@ func TestSplitResources(t *testing.T) {
 		},
 		{
 			name: "1 GiB", cpu: "1.5", reservation: 256, limit: 1024,
-			nginx: containerResources{"0.375", 128, 32}, php: containerResources{"1.125", 896, 224},
+			nginx: containerResources{"0.37", 128, 32}, php: containerResources{"1.13", 896, 224},
 			phpMemoryMB: 256, workers: 13,
 		},
 		{
 			name: "large site hits the caps", cpu: "4", reservation: 1024, limit: 4096,
 			nginx: containerResources{"0.5", 128, 32}, php: containerResources{"3.5", 3968, 992},
 			phpMemoryMB: 256, workers: 32,
+		},
+		{
+			name: "0.75 CPUs", cpu: "0.75", reservation: 192, limit: 640,
+			nginx: containerResources{"0.18", 80, 24}, php: containerResources{"0.57", 560, 168},
+			phpMemoryMB: 256, workers: 7,
 		},
 		{
 			name: "odd sizes", cpu: "0.333", reservation: 100, limit: 300,
@@ -84,6 +89,11 @@ func TestSplitResourcesInvariants(t *testing.T) {
 		}
 		n, _ := parseCPUMillis(s.Nginx.CPUs)
 		p, _ := parseCPUMillis(s.PHP.CPUs)
+		// Systemd rounds each container's limit up to a multiple of 10 ms:
+		// together they must not get more than the site's total rounded up.
+		if up := func(m int) int { return (m + 9) / 10 * 10 }; up(n)+up(p) != up(cpu) {
+			t.Errorf("cpu %d: nginx %s + php %s are rounded up to more than the site's limit", cpu, s.Nginx.CPUs, s.PHP.CPUs)
+		}
 		if n+p != cpu || n < 100 || p < n/2 {
 			t.Errorf("cpu %d: nginx %s + php %s", cpu, s.Nginx.CPUs, s.PHP.CPUs)
 		}
