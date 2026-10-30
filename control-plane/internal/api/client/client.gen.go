@@ -255,6 +255,7 @@ const (
 	PreRestore BackupKind = "pre_restore"
 	PreUpdate  BackupKind = "pre_update"
 	Scheduled  BackupKind = "scheduled"
+	Sync       BackupKind = "sync"
 )
 
 // Valid indicates whether the value is a known member of the BackupKind enum.
@@ -267,6 +268,8 @@ func (e BackupKind) Valid() bool {
 	case PreUpdate:
 		return true
 	case Scheduled:
+		return true
+	case Sync:
 		return true
 	default:
 		return false
@@ -1975,7 +1978,8 @@ type Backup struct {
 	// schedule (`scheduled`), or a restore, which backs up its target site
 	// first so the restore can be undone (`pre_restore`), or a WordPress
 	// core update, which backs up its site first so a failed update can
-	// be reverted (`pre_update`).
+	// be reverted (`pre_update`), or the snapshot taken as the source of a
+	// staging clone, refresh, or push (`sync`).
 	Kind BackupKind `json:"kind"`
 
 	// Message Why the backup failed, or a warning about a backup that succeeded
@@ -2028,7 +2032,8 @@ type BackupIntervalHours = int
 // schedule (`scheduled`), or a restore, which backs up its target site
 // first so the restore can be undone (`pre_restore`), or a WordPress
 // core update, which backs up its site first so a failed update can
-// be reverted (`pre_update`).
+// be reverted (`pre_update`), or the snapshot taken as the source of a
+// staging clone, refresh, or push (`sync`).
 type BackupKind string
 
 // BackupList defines model for BackupList.

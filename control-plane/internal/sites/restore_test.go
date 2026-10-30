@@ -72,12 +72,12 @@ func (d *dataEngine) ListSnapshots(ctx context.Context, siteID string) ([]backup
 	return snaps, err
 }
 
-func (d *dataEngine) Restore(ctx context.Context, siteID string, snap backup.SnapshotID, target string) error {
+func (d *dataEngine) Restore(ctx context.Context, siteID string, snap backup.SnapshotID, target string, opts backup.RestoreOptions) error {
 	d.mu.Lock()
 	d.restores++
 	n, fail := d.restores, d.restoreErr
 	d.mu.Unlock()
-	if err := d.Fake.Restore(ctx, siteID, snap, target); err != nil {
+	if err := d.Fake.Restore(ctx, siteID, snap, target, opts); err != nil {
 		return err
 	}
 	if fail != nil {

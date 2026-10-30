@@ -18,6 +18,7 @@ type Call struct {
 	Options       backup.Options // Backup options
 	Snapshot      backup.SnapshotID
 	TargetSiteID  string
+	Restore       backup.RestoreOptions // Restore scope
 	ClientGroupID string
 }
 
@@ -121,10 +122,13 @@ func (f *Fake) ListSnapshots(_ context.Context, siteID string) ([]backup.Snapsho
 }
 
 // Restore implements backup.Engine.
-func (f *Fake) Restore(_ context.Context, siteID string, snap backup.SnapshotID, targetSiteID string) error {
+func (f *Fake) Restore(_ context.Context, siteID string, snap backup.SnapshotID, targetSiteID string, opts backup.RestoreOptions) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err := f.begin(Call{Op: "Restore", SiteID: siteID, Snapshot: snap, TargetSiteID: targetSiteID}); err != nil {
+	if err := f.begin(Call{Op: "Restore", SiteID: siteID, Snapshot: snap, TargetSiteID: targetSiteID, Restore: opts}); err != nil {
+		return err
+	}
+	if err := opts.Validate(); err != nil {
 		return err
 	}
 	if !slices.ContainsFunc(f.snapshots[siteID], func(s backup.Snapshot) bool { return s.ID == snap }) {

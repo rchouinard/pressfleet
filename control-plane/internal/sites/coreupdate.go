@@ -449,7 +449,7 @@ func (rt *Rollouts) restoreJobBackup(ctx context.Context, r *jobs.Run, what stri
 	if !found || rec.Status != store.BackupSucceeded || rec.SnapshotID == "" {
 		return giveUp(fmt.Errorf("the job has no %s snapshot", what))
 	}
-	if err := rt.s.engine.Restore(ctx, siteID, backup.SnapshotID(rec.SnapshotID), siteID); err != nil {
+	if err := rt.s.engine.Restore(ctx, siteID, backup.SnapshotID(rec.SnapshotID), siteID, backup.FullRestore()); err != nil {
 		err = permanentRestoreError(err)
 		if !lastAttempt(r, err) {
 			return err

@@ -2,11 +2,14 @@ package restic
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -25,7 +28,10 @@ var ErrRestoreFailed = errors.New("restic restore failed")
 var snapshotIDPattern = regexp.MustCompile(`^[0-9a-f]{8,64}$`)
 
 // Restore implements backup.Engine; see the package documentation.
-func (e *Engine) Restore(ctx context.Context, siteID string, snap backup.SnapshotID, targetSiteID string) error {
+func (e *Engine) Restore(ctx context.Context, siteID string, snap backup.SnapshotID, targetSiteID string, opts backup.RestoreOptions) error {
+	if err := opts.Validate(); err != nil {
+		return fmt.Errorf("restore snapshot %s of site %q into site %q: %w", snap, siteID, targetSiteID, err)
+	}
 	if !id.Valid(siteID) || !id.Valid(targetSiteID) {
 		return fmt.Errorf("restore snapshot %s of site %q into site %q: invalid site ID", snap, siteID, targetSiteID)
 	}
@@ -51,9 +57,18 @@ func (e *Engine) Restore(ctx context.Context, siteID string, snap backup.Snapsho
 	if err != nil {
 		return fmt.Errorf("%s: %w", what, err)
 	}
-	full, err := e.resolveSnapshot(ctx, groupID, siteID, snap)
+	found, err := e.findSnapshot(ctx, groupID, siteID, snap)
 	if err != nil {
 		return fmt.Errorf("%s: %w", what, err)
+	}
+	full := found.ID
+	// Which code directories the snapshot has, found before anything is
+	// touched, since a restic restore of a missing one fails.
+	var codeDirs map[string]bool
+	if opts.Files == backup.RestoreFilesCode {
+		if codeDirs, err = e.snapshotCodeDirs(ctx, groupID, found); err != nil {
+			return fmt.Errorf("%s: %w", what, err)
+		}
 	}
 
 	start := time.Now()
@@ -78,37 +93,88 @@ func (e *Engine) Restore(ctx context.Context, siteID string, snap backup.Snapsho
 
 	// The dump first: it changes nothing, so a snapshot without one fails
 	// before the site is touched.
-	dumpTask := task
-	dumpTask.Command = restoreDumpCommand(full)
-	dumpTask.TransferDir = transfer
-	if _, err := restoreResult(e.tasks.RunTask(ctx, targetSiteID, dumpTask)); err != nil {
-		return fmt.Errorf("%s: extracting the database dump: %w", what, err)
-	}
-	dump := filepath.Join(transfer, DatabaseDumpName)
-	if fi, err := os.Stat(dump); err != nil || !fi.Mode().IsRegular() {
-		return fmt.Errorf("%s: %w: the snapshot has no database dump", what, ErrRestoreFailed)
+	var dump string
+	if opts.Database {
+		dumpTask := task
+		dumpTask.Command = restoreDumpCommand(full)
+		dumpTask.TransferDir = transfer
+		if _, err := restoreResult(e.tasks.RunTask(ctx, targetSiteID, dumpTask)); err != nil {
+			return fmt.Errorf("%s: extracting the database dump: %w", what, err)
+		}
+		dump = filepath.Join(transfer, DatabaseDumpName)
+		if fi, err := os.Stat(dump); err != nil || !fi.Mode().IsRegular() {
+			return fmt.Errorf("%s: %w: the snapshot has no database dump", what, ErrRestoreFailed)
+		}
 	}
 
-	filesTask := task
-	filesTask.Command = restoreFilesCommand(full)
-	filesTask.WPContent = provisioner.MountReadWrite
-	summary, err := restoreResult(e.tasks.RunTask(ctx, targetSiteID, filesTask))
-	if err != nil {
-		return fmt.Errorf("%s: restoring wp-content: %w", what, err)
+	var summary message
+	// run runs one wp-content task and adds up what restic restored and
+	// deleted.
+	run := func(command []string) error {
+		t := task
+		t.Command = command
+		t.WPContent = provisioner.MountReadWrite
+		s, err := restoreResult(e.tasks.RunTask(ctx, targetSiteID, t))
+		if err != nil {
+			return err
+		}
+		summary.FilesRestored += s.FilesRestored
+		summary.FilesDeleted += s.FilesDeleted
+		return nil
 	}
-	if err := e.dbs.Import(ctx, targetSiteID, dump); err != nil {
-		return fmt.Errorf("%s: importing the database: %w", what, err)
+	switch opts.Files {
+	case backup.RestoreFilesAll:
+		if err := run(restoreFilesCommand(full)); err != nil {
+			return fmt.Errorf("%s: restoring wp-content: %w", what, err)
+		}
+	case backup.RestoreFilesCode:
+		for _, dir := range backup.CodeDirs {
+			command := restoreCodeDirCommand(full, dir)
+			if !codeDirs[dir] {
+				command = removeCodeDirCommand(dir)
+			}
+			if err := run(command); err != nil {
+				return fmt.Errorf("%s: restoring wp-content/%s: %w", what, dir, err)
+			}
+		}
+	}
+	if opts.Database {
+		if err := e.dbs.Import(ctx, targetSiteID, dump); err != nil {
+			return fmt.Errorf("%s: importing the database: %w", what, err)
+		}
 	}
 	e.log.InfoContext(ctx, "snapshot restored", "site_id", siteID, "target_site_id", targetSiteID, "client_group_id", groupID,
-		"snapshot_id", full, "files_restored", summary.FilesRestored, "files_deleted", summary.FilesDeleted, "duration", time.Since(start))
+		"snapshot_id", full, "files_scope", opts.Files, "database", opts.Database,
+		"files_restored", summary.FilesRestored, "files_deleted", summary.FilesDeleted, "duration", time.Since(start))
 	return nil
 }
 
-// resolveSnapshot returns the full ID of the site's snapshot snap, which
-// may be a unique prefix, or ErrSnapshotNotFound.
-func (e *Engine) resolveSnapshot(ctx context.Context, groupID, siteID string, snap backup.SnapshotID) (backup.SnapshotID, error) {
-	s, err := e.findSnapshot(ctx, groupID, siteID, snap)
-	return s.ID, err
+// snapshotCodeDirs reports which of the code directories the snapshot's
+// wp-content holds. It lists the snapshot's wp-content, one level deep, in
+// a repository task.
+func (e *Engine) snapshotCodeDirs(ctx context.Context, groupID string, s backup.Snapshot) (map[string]bool, error) {
+	wp, ok := snapshotPath(s, path.Base(WPContentPath))
+	if !ok {
+		return nil, fmt.Errorf("%w: the snapshot has no wp-content", ErrRestoreFailed)
+	}
+	out, err := e.repos.Restic(ctx, groupID, "ls", "--json", "--quiet", "--retry-lock", LockWait.String(), string(s.ID), wp)
+	if err != nil {
+		return nil, fmt.Errorf("listing the snapshot's wp-content: %w: %w", ErrRestoreFailed, err)
+	}
+	dirs := map[string]bool{}
+	for line := range strings.Lines(string(out)) {
+		var n struct {
+			Type string `json:"type"`
+			Path string `json:"path"`
+		}
+		if json.Unmarshal([]byte(line), &n) != nil || n.Type != "dir" {
+			continue
+		}
+		if name, ok := strings.CutPrefix(n.Path, wp+"/"); ok && slices.Contains(backup.CodeDirs, name) {
+			dirs[name] = true
+		}
+	}
+	return dirs, nil
 }
 
 // findSnapshot returns the site's snapshot snap, whose ID may be a unique
@@ -160,6 +226,28 @@ func restoreFilesCommand(snap backup.SnapshotID) []string {
 		"--target", WPContentPath,
 		"--delete",
 	}
+}
+
+// restoreCodeDirCommand makes one code directory of wp-content match the
+// snapshot's, like restoreFilesCommand does for all of wp-content but with
+// the directory as both source and target, so nothing else in wp-content is
+// read or deleted. The directory must exist in the snapshot.
+func restoreCodeDirCommand(snap backup.SnapshotID, dir string) []string {
+	p := WPContentPath + "/" + dir
+	return []string{
+		"restic", "restore", "--json", "--quiet", "--retry-lock", LockWait.String(),
+		string(snap) + ":" + p,
+		"--target", p,
+		"--delete",
+	}
+}
+
+// removeCodeDirCommand removes a code directory the snapshot doesn't have,
+// since a restore of a directory missing from the snapshot would fail. The
+// output isn't restic's, so restoreResult finds no summary and counts
+// nothing.
+func removeCodeDirCommand(dir string) []string {
+	return []string{"rm", "-rf", "--", WPContentPath + "/" + dir}
 }
 
 // shortID is the short form restic shows snapshot IDs in.

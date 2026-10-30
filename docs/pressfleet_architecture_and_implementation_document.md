@@ -302,7 +302,7 @@ type BackupOptions struct { /* ... */ }
 type BackupEngine interface {
     Backup(ctx context.Context, siteID string, opts BackupOptions) (Snapshot, error)
     ListSnapshots(ctx context.Context, siteID string) ([]Snapshot, error)
-    Restore(ctx context.Context, siteID string, snap SnapshotID, targetSiteID string) error
+    Restore(ctx context.Context, siteID string, snap SnapshotID, targetSiteID string, opts RestoreOptions) error
     // Prune applies the retention policy (restic forget --prune); Check
     // verifies the repository (restic check). Both take an exclusive
     // repository lock.

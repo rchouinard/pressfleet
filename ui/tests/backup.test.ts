@@ -39,6 +39,7 @@ describe('backup status and kind', () => {
 
   it('names every kind', () => {
     expect(backupKindLabel('pre_restore')).toBe('Before a restore')
+    expect(backupKindLabel('sync')).toBe('Staging sync')
     expect(backupKindLabel('scheduled')).toBe('Scheduled')
   })
 })

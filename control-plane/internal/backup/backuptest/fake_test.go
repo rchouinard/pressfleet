@@ -36,10 +36,10 @@ func TestFakeBackupAndRestore(t *testing.T) {
 		t.Fatalf("ListSnapshots = %v, %v; want [%s %s]", ids, err, s1.ID, s2.ID)
 	}
 
-	if err := f.Restore(ctx, "a", s1.ID, "a-staging"); err != nil {
+	if err := f.Restore(ctx, "a", s1.ID, "a-staging", backup.FullRestore()); err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
-	if err := f.Restore(ctx, "a", other.ID, "a"); !errors.Is(err, backup.ErrSnapshotNotFound) {
+	if err := f.Restore(ctx, "a", other.ID, "a", backup.FullRestore()); !errors.Is(err, backup.ErrSnapshotNotFound) {
 		t.Errorf("Restore of another site's snapshot err = %v, want ErrSnapshotNotFound", err)
 	}
 

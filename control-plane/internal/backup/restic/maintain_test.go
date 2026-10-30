@@ -86,10 +86,10 @@ func TestPrune(t *testing.T) {
 	if err := f.engine.Check(ctx, groupID); err != nil {
 		t.Errorf("Check after pruning = %v", err)
 	}
-	if err := f.engine.Restore(ctx, site.ID, taken[2], site.ID); err != nil {
+	if err := f.engine.Restore(ctx, site.ID, taken[2], site.ID, backup.FullRestore()); err != nil {
 		t.Errorf("Restore of a kept snapshot = %v", err)
 	}
-	if err := f.engine.Restore(ctx, site.ID, taken[0], site.ID); !errors.Is(err, backup.ErrSnapshotNotFound) {
+	if err := f.engine.Restore(ctx, site.ID, taken[0], site.ID, backup.FullRestore()); !errors.Is(err, backup.ErrSnapshotNotFound) {
 		t.Errorf("Restore of a forgotten snapshot = %v, want ErrSnapshotNotFound", err)
 	}
 }
