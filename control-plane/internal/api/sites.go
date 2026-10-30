@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
@@ -36,6 +37,12 @@ func (h *Handlers) ListSites(ctx context.Context, req gen.ListSitesRequestObject
 	}
 	if p.Status != nil {
 		f.Status = store.SiteStatus(*p.Status)
+	}
+	if p.ParentSiteID != nil {
+		f.ParentSiteID = *p.ParentSiteID
+	}
+	if p.Environment != nil {
+		f.Environment = store.SiteEnvironment(*p.Environment)
 	}
 	page, aliases, err := h.sites.List(ctx, f)
 	if err != nil {
@@ -161,7 +168,7 @@ func (h *Handlers) UpdateSite(ctx context.Context, req gen.UpdateSiteRequestObje
 		return nil, err
 	}
 	b := deref(req.Body)
-	in := sites.SiteUpdate{PHPVersion: b.PhpVersion, CreatedByUserID: p.UserID}
+	in := sites.SiteUpdate{PHPVersion: b.PhpVersion, OutboundMail: b.OutboundMail, CreatedByUserID: p.UserID}
 	if r := b.Resources; r != nil {
 		in.CPU, in.MemoryReservationMB, in.MemoryLimitMB = r.CPU, r.MemoryReservationMb, r.MemoryLimitMb
 	}
@@ -319,14 +326,28 @@ func (h *Handlers) RegenerateSitePreviewPassword(ctx context.Context, req gen.Re
 }
 
 // DeleteSite queues the site deletion job, or returns the one already
-// queued. Deleting the site's backups too needs authz.DeleteSiteBackups,
-// which the audit event records instead of authz.DeleteSite, with the
+// queued. The action depends on the target: deleting a staging site needs
+// authz.DeleteStagingSite (Operator), a production site authz.DeleteSite
+// (Admin), and deleting the site's backups too authz.DeleteSiteBackups
+// (Admin) for either. The audit event records the action checked, with the
 // choice in its details.
 func (h *Handlers) DeleteSite(ctx context.Context, req gen.DeleteSiteRequestObject) (gen.DeleteSiteResponseObject, error) {
 	deleteBackups := req.Params.DeleteBackups != nil && *req.Params.DeleteBackups
 	action := authz.DeleteSite
-	if deleteBackups {
+	switch {
+	case deleteBackups:
 		action = authz.DeleteSiteBackups
+	default:
+		// A site that doesn't exist is checked as a production site, so
+		// callers who may only delete staging sites can't tell it from
+		// one they may not delete.
+		site, err := store.NewSites(h.db).Get(ctx, req.SiteID)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return nil, siteError(err)
+		}
+		if err == nil && site.IsStaging() {
+			action = authz.DeleteStagingSite
+		}
 	}
 	p, err := h.authorize(ctx, action, authz.Site(req.SiteID))
 	if err != nil {
@@ -463,13 +484,29 @@ func siteError(err error) error {
 		}
 	}
 	// The wrapping says what the site is doing.
-	if errors.Is(err, sites.ErrBusy) {
+	if errors.Is(err, sites.ErrBusy) || errors.Is(err, sites.ErrHasStagingSites) {
 		return fmt.Errorf("%w: %w", ErrConflict, err)
 	}
 	return err
 }
 
 func jobLocation(j store.Job) string { return "/api/v1/jobs/" + j.ID }
+
+// optTime is nil for the zero time, for nullable timestamps.
+func optTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return timePtr(t)
+}
+
+// optString is nil for the empty string, for nullable strings.
+func optString(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
 
 func siteResponse(s store.Site, aliases []string) gen.Site {
 	if aliases == nil {
@@ -502,6 +539,18 @@ func siteResponse(s store.Site, aliases []string) gen.Site {
 	}
 	if s.StatusMessage != "" {
 		out.StatusMessage = &s.StatusMessage
+	}
+	out.Environment = gen.Production
+	if s.IsStaging() {
+		out.Environment = gen.Staging
+		out.ParentSiteID = &s.ParentSiteID
+		out.Staging = &gen.StagingState{
+			ProductionSiteID: s.ParentSiteID,
+			LastRefreshedAt:  optTime(s.StagingRefreshedAt),
+			LastSnapshotID:   optString(s.StagingSnapshotID),
+			LastPushedAt:     optTime(s.StagingPushedAt),
+			OutboundMail:     !s.MailDisabled,
+		}
 	}
 	return out
 }

@@ -937,6 +937,24 @@ func (e SiteDeploymentKind) Valid() bool {
 	}
 }
 
+// Defines values for SiteEnvironment.
+const (
+	Production SiteEnvironment = "production"
+	Staging    SiteEnvironment = "staging"
+)
+
+// Valid indicates whether the value is a known member of the SiteEnvironment enum.
+func (e SiteEnvironment) Valid() bool {
+	switch e {
+	case Production:
+		return true
+	case Staging:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SiteJobLogEntryLevel.
 const (
 	SiteJobLogEntryLevelError SiteJobLogEntryLevel = "error"
@@ -3343,6 +3361,10 @@ type Site struct {
 	// CreatedAt Examples: 2026-09-26T17:25:00Z
 	CreatedAt Timestamp `json:"created_at"`
 
+	// Environment `production` for a site that has no parent, `staging` for a clone of
+	// a production site (design doc §5.11).
+	Environment SiteEnvironment `json:"environment"`
+
 	// ID Opaque, server-assigned identifier.
 	//
 	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
@@ -3355,7 +3377,7 @@ type Site struct {
 	// Name Examples: Acme marketing site
 	Name string `json:"name"`
 
-	// ParentSiteID Reserved for staging clones; always null in the MVP.
+	// ParentSiteID The production site a staging site was cloned from; null on production sites.
 	ParentSiteID *ID `json:"parent_site_id"`
 
 	// PendingUpdates How many plugins and themes of the site had an update available at
@@ -3394,6 +3416,9 @@ type Site struct {
 	//
 	// Examples: acme-marketing
 	Slug string `json:"slug"`
+
+	// Staging The state of a staging site (design doc §5.11); null on production sites.
+	Staging *StagingState `json:"staging"`
 
 	// Status Recorded lifecycle status of a site. `provisioning`, `updating`, and
 	// `deleting` mean a job is working on the site; `failed` means the last
@@ -3552,6 +3577,10 @@ type SiteDeployment struct {
 // SiteDeploymentKind Where the package goes: `theme` (`wp-content/themes`), `plugin`
 // (`wp-content/plugins`), or `mu-plugin` (`wp-content/mu-plugins`).
 type SiteDeploymentKind string
+
+// SiteEnvironment `production` for a site that has no parent, `staging` for a clone of
+// a production site (design doc §5.11).
+type SiteEnvironment string
 
 // SiteGoLive defines model for SiteGoLive.
 type SiteGoLive struct {
@@ -3770,6 +3799,10 @@ type SiteStatus string
 
 // SiteUpdate Only the fields present are changed.
 type SiteUpdate struct {
+	// OutboundMail Turns the site's outbound email on or off. Staging sites only
+	// (design doc §5.11); a validation error on a production site.
+	OutboundMail *bool `json:"outbound_mail,omitempty"`
+
 	// PhpVersion A PHP version the platform publishes site images for.
 	//
 	// Examples: 8.4
@@ -3848,6 +3881,26 @@ type SSHKeyList struct {
 
 	// NextCursor Pass as `cursor` to get the next page. Null on the last page.
 	NextCursor *NextCursor `json:"next_cursor"`
+}
+
+// StagingState What a staging site keeps about its production site and its mail.
+type StagingState struct {
+	// LastPushedAt When the site was last pushed to production; null if it never was.
+	LastPushedAt *Timestamp `json:"last_pushed_at"`
+
+	// LastRefreshedAt When the site was last cloned or refreshed from production; null before the first copy finished.
+	LastRefreshedAt *Timestamp `json:"last_refreshed_at"`
+
+	// LastSnapshotID The production snapshot the site was last cloned or refreshed from; null before the first copy finished.
+	LastSnapshotID *string `json:"last_snapshot_id"`
+
+	// OutboundMail Whether the site sends email. Off by default on staging sites.
+	OutboundMail bool `json:"outbound_mail"`
+
+	// ProductionSiteID Opaque, server-assigned identifier.
+	//
+	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
+	ProductionSiteID ID `json:"production_site_id"`
 }
 
 // TemplateRollout defines model for TemplateRollout.
@@ -4646,6 +4699,13 @@ type ListSitesParams struct {
 
 	// Status Only return sites with this status.
 	Status *SiteStatus `form:"status,omitempty" json:"status,omitempty"`
+
+	// ParentSiteID Only return the staging sites of this production site.
+	ParentSiteID *ID `form:"parent_site_id,omitempty" json:"parent_site_id,omitempty"`
+
+	// Environment Only return production sites (no parent) or staging sites (with
+	// one).
+	Environment *SiteEnvironment `form:"environment,omitempty" json:"environment,omitempty"`
 }
 
 // DeleteSiteParams defines parameters for DeleteSite.
@@ -7392,6 +7452,32 @@ func (siw *ServerInterfaceWrapper) ListSites(w http.ResponseWriter, r *http.Requ
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "status"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "parent_site_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "parent_site_id", r.URL.Query(), &params.ParentSiteID, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "parent_site_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "parent_site_id", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "environment" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "environment", r.URL.Query(), &params.Environment, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "environment"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "environment", Err: err})
 		}
 		return
 	}

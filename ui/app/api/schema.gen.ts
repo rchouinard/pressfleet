@@ -880,6 +880,12 @@ export interface paths {
          *     the site's other resources, so a deletion that fails earlier leaves
          *     them all in place. If a deletion job is already queued or running, it
          *     is returned with the choice it was queued with.
+         *
+         *     Deleting a staging site needs the `site.staging.delete` permission
+         *     (Operator), unless `delete_backups` is `true`. A production site
+         *     that has staging sites can't be deleted until they are, or are being:
+         *     the request is refused with `409`, which names them, before anything
+         *     is removed.
          */
         delete: operations["deleteSite"];
         options?: never;
@@ -907,6 +913,9 @@ export interface paths {
          *     saved again, the status returns to what the containers are doing,
          *     and `status_message` says why the update failed. Only if reverting
          *     fails too is the site marked `failed`.
+         *
+         *     `outbound_mail` turns the outbound email of a staging site on or off
+         *     (design doc §5.11). It is a validation error on a production site.
          *
          *     A site that is `provisioning`, `updating`, or `deleting`, or whose
          *     provisioning failed, can't be changed (`409`). The PHP version is
@@ -1138,7 +1147,8 @@ export interface paths {
         put?: never;
         /**
          * Switch a site to its primary domain
-         * @description Sets the site's primary domain and aliases and queues a job that
+         * @description Staging sites (design doc §5.11) only have a preview domain: for them
+         *     this is a validation error (`422`). Sets the site's primary domain and aliases and queues a job that
          *     switches the site to them (design doc §5.2):
          *
          *     1. The edge router routes the primary domain and each alias, and
@@ -1206,7 +1216,7 @@ export interface paths {
         get?: never;
         /**
          * Replace a live site's aliases
-         * @description Replaces the aliases of a site that has gone live and queues a job
+         * @description Staging sites (design doc §5.11) can't have aliases (`422`). Replaces the aliases of a site that has gone live and queues a job
          *     that routes them (design doc §5.2). Each alias gets a certificate
          *     of its own with the ACME HTTP-01 challenge and answers with a
          *     permanent redirect (`301`) to the primary domain, keeping the path
@@ -4163,13 +4173,34 @@ export interface components {
              * @example https://acme-marketing.preview.agency.example
              */
             url?: string;
-            /** @description Reserved for staging clones; always null in the MVP. */
+            environment: components["schemas"]["SiteEnvironment"];
+            /** @description The production site a staging site was cloned from; null on production sites. */
             parent_site_id: components["schemas"]["ID"] | null;
+            /** @description The state of a staging site (design doc §5.11); null on production sites. */
+            staging: components["schemas"]["StagingState"] | null;
             /** @description Whether the initial WordPress admin credentials can still be retrieved. */
             admin_credentials_available: boolean;
             pending_updates?: components["schemas"]["PendingUpdateCounts"];
             created_at: components["schemas"]["Timestamp"];
             updated_at: components["schemas"]["Timestamp"];
+        };
+        /**
+         * @description `production` for a site that has no parent, `staging` for a clone of
+         *     a production site (design doc §5.11).
+         * @enum {string}
+         */
+        SiteEnvironment: "production" | "staging";
+        /** @description What a staging site keeps about its production site and its mail. */
+        StagingState: {
+            production_site_id: components["schemas"]["ID"];
+            /** @description When the site was last cloned or refreshed from production; null before the first copy finished. */
+            last_refreshed_at: components["schemas"]["Timestamp"] | null;
+            /** @description The production snapshot the site was last cloned or refreshed from; null before the first copy finished. */
+            last_snapshot_id: string | null;
+            /** @description When the site was last pushed to production; null if it never was. */
+            last_pushed_at: components["schemas"]["Timestamp"] | null;
+            /** @description Whether the site sends email. Off by default on staging sites. */
+            outbound_mail: boolean;
         };
         /**
          * @description How many plugins and themes of the site had an update available at
@@ -4479,6 +4510,11 @@ export interface components {
             php_version?: components["schemas"]["PHPVersion"];
             resources?: components["schemas"]["ResourceLimitsUpdate"];
             preview_protection?: components["schemas"]["PreviewProtectionUpdate"];
+            /**
+             * @description Turns the site's outbound email on or off. Staging sites only
+             *     (design doc §5.11); a validation error on a production site.
+             */
+            outbound_mail?: boolean;
         };
         SiteAccepted: {
             site: components["schemas"]["Site"];
@@ -6686,6 +6722,13 @@ export interface operations {
                 client_group_id?: components["schemas"]["ID"];
                 /** @description Only return sites with this status. */
                 status?: components["schemas"]["SiteStatus"];
+                /** @description Only return the staging sites of this production site. */
+                parent_site_id?: components["schemas"]["ID"];
+                /**
+                 * @description Only return production sites (no parent) or staging sites (with
+                 *     one).
+                 */
+                environment?: components["schemas"]["SiteEnvironment"];
             };
             header?: never;
             path?: never;

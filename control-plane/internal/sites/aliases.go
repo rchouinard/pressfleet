@@ -58,6 +58,9 @@ func (s *Service) SetAliases(ctx context.Context, siteID string, req SetAliases)
 	if err != nil {
 		return store.Site{}, nil, store.Job{}, err
 	}
+	if site.IsStaging() {
+		return store.Site{}, nil, store.Job{}, &ValidationError{Fields: []FieldError{{"/aliases", "staging sites only have a preview domain"}}}
+	}
 	if site.PrimaryDomain == "" {
 		return store.Site{}, nil, store.Job{}, ErrNotLive
 	}

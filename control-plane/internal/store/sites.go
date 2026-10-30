@@ -38,7 +38,10 @@ func (s SiteStatus) Valid() bool {
 type Site struct {
 	ID            string
 	ClientGroupID string
-	Name          string
+	// ParentSiteID is the production site a staging site was cloned from
+	// (§5.11); empty for a production site.
+	ParentSiteID string
+	Name         string
 	// Slug is unique and forms the preview domain.
 	Slug          string
 	Status        SiteStatus
@@ -87,9 +90,23 @@ type Site struct {
 	// rendered with (provisioner.TemplateFingerprinter); empty if unknown,
 	// such as for a site rendered before fingerprints were recorded.
 	TemplateFingerprint string
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	// MailDisabled means the site sends no outbound mail (§5.11). Only
+	// staging sites turn it off.
+	MailDisabled bool
+	// StagingRefreshedAt is when a staging site was last cloned or
+	// refreshed from production, StagingSnapshotID the production snapshot
+	// it came from, and StagingPushedAt when it was last pushed to
+	// production. The times are zero until then.
+	StagingRefreshedAt time.Time
+	StagingSnapshotID  string
+	StagingPushedAt    time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
+
+// IsStaging reports whether the site is a staging site: a clone of a
+// production site.
+func (s Site) IsStaging() bool { return s.ParentSiteID != "" }
 
 // Sites reads and writes sites.
 type Sites struct {
@@ -102,11 +119,12 @@ func NewSites(q Querier) Sites {
 }
 
 // siteColumns lists columns in the order scanSite expects.
-const siteColumns = "id, client_group_id, name, slug, status, status_message, preview_domain, primary_domain, " +
+const siteColumns = "id, client_group_id, parent_site_id, name, slug, status, status_message, preview_domain, primary_domain, " +
 	"php_version, wp_core_version, enable_cache, cpu_limit, memory_reservation_mb, memory_limit_mb, " +
 	"uid, wp_salts_secret_ref, admin_username, admin_email, admin_password_secret_ref, " +
 	"preview_protection, preview_username, preview_password_hash, preview_password_secret_ref, maintenance, url_rewrite_from, " +
-	"table_prefix, template_fingerprint, created_at, updated_at"
+	"table_prefix, template_fingerprint, mail_disabled, staging_refreshed_at, staging_snapshot_id, staging_pushed_at, " +
+	"created_at, updated_at"
 
 // siteColumnCount is the number of siteColumns, so the INSERT's
 // placeholders follow the column list.
@@ -116,15 +134,26 @@ func scanSite(s scanner) (Site, error) {
 	var (
 		site    Site
 		primary sql.NullString
+		parent  sql.NullString
+		snap    sql.NullString
 		rewrite string
+		refresh sql.NullTime
+		pushed  sql.NullTime
 	)
-	err := s.Scan(&site.ID, &site.ClientGroupID, &site.Name, &site.Slug, &site.Status, &site.StatusMessage,
+	err := s.Scan(&site.ID, &site.ClientGroupID, &parent, &site.Name, &site.Slug, &site.Status, &site.StatusMessage,
 		&site.PreviewDomain, &primary, &site.PHPVersion, &site.WPCoreVersion, &site.EnableCache,
 		&site.CPULimit, &site.MemoryReservationMB, &site.MemoryLimitMB, &site.UID, &site.WPSaltsSecretRef,
 		&site.AdminUsername, &site.AdminEmail, &site.AdminPasswordSecretRef,
 		&site.PreviewProtection, &site.PreviewUsername, &site.PreviewPasswordHash, &site.PreviewPasswordSecretRef,
-		&site.Maintenance, &rewrite, &site.TablePrefix, &site.TemplateFingerprint, &site.CreatedAt, &site.UpdatedAt)
-	site.PrimaryDomain = primary.String
+		&site.Maintenance, &rewrite, &site.TablePrefix, &site.TemplateFingerprint,
+		&site.MailDisabled, &refresh, &snap, &pushed, &site.CreatedAt, &site.UpdatedAt)
+	site.PrimaryDomain, site.ParentSiteID, site.StagingSnapshotID = primary.String, parent.String, snap.String
+	if refresh.Valid {
+		site.StagingRefreshedAt = refresh.Time
+	}
+	if pushed.Valid {
+		site.StagingPushedAt = pushed.Time
+	}
 	if rewrite != "" {
 		site.URLRewriteFrom = strings.Fields(rewrite)
 	}
@@ -157,13 +186,14 @@ func (r Sites) Create(ctx context.Context, s *Site) error {
 	created.UpdatedAt = created.CreatedAt
 	_, err := r.q.ExecContext(ctx, "INSERT INTO sites ("+siteColumns+") VALUES "+
 		"("+placeholders(siteColumnCount)+")",
-		created.ID, created.ClientGroupID, created.Name, created.Slug, string(created.Status), created.StatusMessage,
+		created.ID, created.ClientGroupID, nullString(created.ParentSiteID), created.Name, created.Slug, string(created.Status), created.StatusMessage,
 		created.PreviewDomain, nullString(created.PrimaryDomain), created.PHPVersion, created.WPCoreVersion,
 		created.EnableCache, created.CPULimit, created.MemoryReservationMB, created.MemoryLimitMB,
 		created.UID, created.WPSaltsSecretRef, created.AdminUsername, created.AdminEmail, created.AdminPasswordSecretRef,
 		created.PreviewProtection, created.PreviewUsername, created.PreviewPasswordHash, created.PreviewPasswordSecretRef,
 		created.Maintenance, strings.Join(created.URLRewriteFrom, " "), created.TablePrefix, created.TemplateFingerprint,
-		created.CreatedAt, created.UpdatedAt)
+		created.MailDisabled, nullTime(utc(created.StagingRefreshedAt)), nullString(created.StagingSnapshotID),
+		nullTime(utc(created.StagingPushedAt)), created.CreatedAt, created.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create site: %w", err)
 	}
@@ -215,12 +245,29 @@ func (r Sites) Aliases(ctx context.Context, siteID string) ([]string, error) {
 type SiteFilter struct {
 	ClientGroupID string
 	Status        SiteStatus
+	// ParentSiteID selects the staging sites of one production site.
+	ParentSiteID string
+	// Environment selects production sites (no parent) or staging sites
+	// (with one).
+	Environment SiteEnvironment
 	// Before is a cursor: only sites with a smaller ID (older ones) are
 	// returned. Pass the previous page's NextCursor.
 	Before string
 	// Limit is the page size: default 50, at most 200.
 	Limit int
 }
+
+// SiteEnvironment tells production sites from staging sites in a filter.
+type SiteEnvironment string
+
+// Site environments.
+const (
+	EnvProduction SiteEnvironment = "production"
+	EnvStaging    SiteEnvironment = "staging"
+)
+
+// Valid reports whether e is a known environment.
+func (e SiteEnvironment) Valid() bool { return e == EnvProduction || e == EnvStaging }
 
 // SitePage is one page of List results, newest first.
 type SitePage struct {
@@ -252,6 +299,16 @@ func (r Sites) List(ctx context.Context, f SiteFilter) (SitePage, error) {
 	if f.Status != "" {
 		where = append(where, "status = ?")
 		args = append(args, string(f.Status))
+	}
+	if f.ParentSiteID != "" {
+		where = append(where, "parent_site_id = ?")
+		args = append(args, f.ParentSiteID)
+	}
+	switch f.Environment {
+	case EnvProduction:
+		where = append(where, "parent_site_id IS NULL")
+	case EnvStaging:
+		where = append(where, "parent_site_id IS NOT NULL")
 	}
 	if f.Before != "" {
 		where = append(where, "id < ?")
@@ -285,6 +342,28 @@ func (r Sites) List(ctx context.Context, f SiteFilter) (SitePage, error) {
 		page.NextCursor = page.Sites[limit-1].ID
 	}
 	return page, nil
+}
+
+// Children returns the staging sites cloned from the production site, oldest
+// first. Deleting the parent has to wait for them, so this isn't paged.
+func (r Sites) Children(ctx context.Context, parentID string) ([]Site, error) {
+	rows, err := r.q.QueryContext(ctx, "SELECT "+siteColumns+" FROM sites WHERE parent_site_id = ? ORDER BY id", parentID)
+	if err != nil {
+		return nil, fmt.Errorf("children of site %s: %w", parentID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := []Site{}
+	for rows.Next() {
+		s, err := scanSite(rows)
+		if err != nil {
+			return nil, fmt.Errorf("children of site %s: %w", parentID, err)
+		}
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("children of site %s: %w", parentID, err)
+	}
+	return out, nil
 }
 
 // AliasesForSites returns the alias domains of several sites, sorted and
@@ -328,6 +407,9 @@ type SiteSettings struct {
 	MemoryLimitMB       int    `json:"memory_limit_mb"`
 	PreviewProtection   bool   `json:"preview_protection"`
 	PreviewUsername     string `json:"preview_username"`
+	// MailDisabled is the outbound mail switch of a staging site; it
+	// travels with the settings so a failed update puts it back.
+	MailDisabled bool `json:"mail_disabled"`
 }
 
 // Settings returns the site's current settings.
@@ -339,6 +421,7 @@ func (s Site) Settings() SiteSettings {
 		MemoryLimitMB:       s.MemoryLimitMB,
 		PreviewProtection:   s.PreviewProtection,
 		PreviewUsername:     s.PreviewUsername,
+		MailDisabled:        s.MailDisabled,
 	}
 }
 
@@ -347,6 +430,7 @@ func (s Site) WithSettings(set SiteSettings) Site {
 	s.PHPVersion, s.CPULimit = set.PHPVersion, set.CPULimit
 	s.MemoryReservationMB, s.MemoryLimitMB = set.MemoryReservationMB, set.MemoryLimitMB
 	s.PreviewProtection, s.PreviewUsername = set.PreviewProtection, set.PreviewUsername
+	s.MailDisabled = set.MailDisabled
 	return s
 }
 
@@ -355,9 +439,9 @@ func (s Site) WithSettings(set SiteSettings) Site {
 func (r Sites) SetSettings(ctx context.Context, siteID string, s SiteSettings) (bool, error) {
 	return r.exec(ctx, "set settings of site "+siteID,
 		"UPDATE sites SET php_version = ?, cpu_limit = ?, memory_reservation_mb = ?, memory_limit_mb = ?, "+
-			"preview_protection = ?, preview_username = ?, updated_at = ? WHERE id = ?",
+			"preview_protection = ?, preview_username = ?, mail_disabled = ?, updated_at = ? WHERE id = ?",
 		s.PHPVersion, s.CPULimit, s.MemoryReservationMB, s.MemoryLimitMB,
-		s.PreviewProtection, s.PreviewUsername, now(), siteID)
+		s.PreviewProtection, s.PreviewUsername, s.MailDisabled, now(), siteID)
 }
 
 // SetPreviewPassword records the site's preview password: the reference to

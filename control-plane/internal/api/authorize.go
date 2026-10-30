@@ -203,7 +203,7 @@ var operationAltActions = map[string][]authz.Action{
 
 	// Deleting a site's backups with it needs the permission to delete
 	// backups.
-	"deleteSite": {authz.DeleteSiteBackups},
+	"deleteSite": {authz.DeleteSiteBackups, authz.DeleteStagingSite},
 
 	// Deleting the group's backups with it is offboarding.
 	"deleteClientGroup": {authz.OffboardClientGroup},

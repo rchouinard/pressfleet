@@ -1479,6 +1479,18 @@ paths:
           description: Only return sites with this status.
           schema:
             $ref: "#/components/schemas/SiteStatus"
+        - name: parent_site_id
+          in: query
+          description: Only return the staging sites of this production site.
+          schema:
+            $ref: "#/components/schemas/ID"
+        - name: environment
+          in: query
+          description: |
+            Only return production sites (no parent) or staging sites (with
+            one).
+          schema:
+            $ref: "#/components/schemas/SiteEnvironment"
       responses:
         "200":
           description: A page of sites.
@@ -1667,6 +1679,9 @@ paths:
         and `status_message` says why the update failed. Only if reverting
         fails too is the site marked `failed`.
 
+        `outbound_mail` turns the outbound email of a staging site on or off
+        (design doc §5.11). It is a validation error on a production site.
+
         A site that is `provisioning`, `updating`, or `deleting`, or whose
         provisioning failed, can't be changed (`409`). The PHP version is
         only validated when it changes, so a site on a PHP version past end
@@ -1722,6 +1737,12 @@ paths:
         the site's other resources, so a deletion that fails earlier leaves
         them all in place. If a deletion job is already queued or running, it
         is returned with the choice it was queued with.
+
+        Deleting a staging site needs the `site.staging.delete` permission
+        (Operator), unless `delete_backups` is `true`. A production site
+        that has staging sites can't be deleted until they are, or are being:
+        the request is refused with `409`, which names them, before anything
+        is removed.
       parameters:
         - name: delete_backups
           in: query
@@ -2054,7 +2075,8 @@ paths:
       tags: [sites]
       summary: Switch a site to its primary domain
       description: |
-        Sets the site's primary domain and aliases and queues a job that
+        Staging sites (design doc §5.11) only have a preview domain: for them
+        this is a validation error (`422`). Sets the site's primary domain and aliases and queues a job that
         switches the site to them (design doc §5.2):
 
         1. The edge router routes the primary domain and each alias, and
@@ -2141,7 +2163,7 @@ paths:
       tags: [sites]
       summary: Replace a live site's aliases
       description: |
-        Replaces the aliases of a site that has gone live and queues a job
+        Staging sites (design doc §5.11) can't have aliases (`422`). Replaces the aliases of a site that has gone live and queues a job
         that routes them (design doc §5.2). Each alias gets a certificate
         of its own with the ACME HTTP-01 challenge and answers with a
         permanent redirect (`301`) to the primary domain, keeping the path
@@ -7003,7 +7025,9 @@ components:
         - preview_protection
         - maintenance
         - status
+        - environment
         - parent_site_id
+        - staging
         - admin_credentials_available
         - created_at
         - updated_at
@@ -7061,10 +7085,17 @@ components:
           format: uri
           description: The site's current public URL (primary domain if live, else preview domain).
           examples: ["https://acme-marketing.preview.agency.example"]
+        environment:
+          $ref: "#/components/schemas/SiteEnvironment"
         parent_site_id:
-          description: Reserved for staging clones; always null in the MVP.
+          description: The production site a staging site was cloned from; null on production sites.
           oneOf:
             - $ref: "#/components/schemas/ID"
+            - type: "null"
+        staging:
+          description: The state of a staging site (design doc §5.11); null on production sites.
+          oneOf:
+            - $ref: "#/components/schemas/StagingState"
             - type: "null"
         admin_credentials_available:
           type: boolean
@@ -7075,6 +7106,44 @@ components:
           $ref: "#/components/schemas/Timestamp"
         updated_at:
           $ref: "#/components/schemas/Timestamp"
+
+    SiteEnvironment:
+      type: string
+      description: |
+        `production` for a site that has no parent, `staging` for a clone of
+        a production site (design doc §5.11).
+      enum: [production, staging]
+
+    StagingState:
+      type: object
+      description: What a staging site keeps about its production site and its mail.
+      required:
+        - production_site_id
+        - last_refreshed_at
+        - last_snapshot_id
+        - last_pushed_at
+        - outbound_mail
+      properties:
+        production_site_id:
+          $ref: "#/components/schemas/ID"
+        last_refreshed_at:
+          description: When the site was last cloned or refreshed from production; null before the first copy finished.
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        last_snapshot_id:
+          description: The production snapshot the site was last cloned or refreshed from; null before the first copy finished.
+          oneOf:
+            - type: string
+            - type: "null"
+        last_pushed_at:
+          description: When the site was last pushed to production; null if it never was.
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        outbound_mail:
+          type: boolean
+          description: Whether the site sends email. Off by default on staging sites.
 
     PendingUpdateCounts:
       type: object
@@ -7583,6 +7652,11 @@ components:
           $ref: "#/components/schemas/ResourceLimitsUpdate"
         preview_protection:
           $ref: "#/components/schemas/PreviewProtectionUpdate"
+        outbound_mail:
+          type: boolean
+          description: |
+            Turns the site's outbound email on or off. Staging sites only
+            (design doc §5.11); a validation error on a production site.
 
     SiteAccepted:
       type: object

@@ -238,7 +238,29 @@ var (
 	// ErrNotProvisioned means the site's provisioning failed, so it has
 	// nothing to update, start, or stop; it can only be deleted.
 	ErrNotProvisioned = errors.New("the site was never provisioned; delete it and create it again")
+	// ErrHasStagingSites means a production site can't be deleted while it
+	// has staging sites that aren't being deleted (§5.11). The error names
+	// them: see StagingSitesError.
+	ErrHasStagingSites = errors.New("the site has staging sites; delete them first")
 )
+
+// StagingSitesError is the ErrHasStagingSites of one site, naming the
+// staging sites in the way.
+type StagingSitesError struct {
+	// Sites are the staging sites that aren't being deleted.
+	Sites []store.Site
+}
+
+func (e *StagingSitesError) Error() string {
+	names := make([]string, len(e.Sites))
+	for i, s := range e.Sites {
+		names[i] = s.Slug + " (" + s.ID + ")"
+	}
+	return ErrHasStagingSites.Error() + ": " + strings.Join(names, ", ")
+}
+
+// Is makes the error match ErrHasStagingSites.
+func (e *StagingSitesError) Is(target error) bool { return target == ErrHasStagingSites }
 
 // FieldError is a problem with one field of a request, named by its JSON
 // Pointer, e.g. "/php_version".

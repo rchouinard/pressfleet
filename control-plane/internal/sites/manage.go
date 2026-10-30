@@ -92,6 +92,9 @@ type SiteUpdate struct {
 	// PreviewUsername changes its username (see preview.go).
 	PreviewProtection *bool
 	PreviewUsername   *string
+	// OutboundMail turns a staging site's outbound email on or off. It is
+	// a validation error on a production site.
+	OutboundMail *bool
 	// CreatedByUserID is the user starting the job.
 	CreatedByUserID string
 }
@@ -221,6 +224,12 @@ func (s *Service) validateUpdate(site store.Site, req SiteUpdate) (store.SiteSet
 		}
 		next.PreviewUsername = *req.PreviewUsername
 	}
+	if req.OutboundMail != nil {
+		if !site.IsStaging() {
+			fields = append(fields, FieldError{"/outbound_mail", "only staging sites have an outbound mail switch"})
+		}
+		next.MailDisabled = !*req.OutboundMail
+	}
 	if next.PreviewProtection && next.PreviewUsername == "" {
 		// The slug is a valid username, and no secret: it is in the
 		// preview domain.
@@ -343,6 +352,9 @@ func (s *Service) prepareUpdate(ctx context.Context, r *jobs.Run) error {
 	}
 	r.Logf("Applying PHP %s, resources of %s CPU, %d MiB reserved, %d MiB limit, and preview password protection %s.",
 		site.PHPVersion, site.CPULimit, site.MemoryReservationMB, site.MemoryLimitMB, protection)
+	if site.IsStaging() {
+		r.Logf("Outbound email is %s.", map[bool]string{true: "off", false: "on"}[site.MailDisabled])
+	}
 	return nil
 }
 

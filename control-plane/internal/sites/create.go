@@ -229,7 +229,18 @@ func SiteConfig(site store.Site, aliases []string, dbSecretRef, cacheSecretRef s
 		TablePrefix:      site.TablePrefix,
 		PreviewAuth:      previewAuth(site),
 		Maintenance:      site.Maintenance,
+		Environment:      environmentOf(site),
+		DisableMail:      site.MailDisabled,
 	}
+}
+
+// environmentOf is the environment type the site is rendered with: staging
+// for a site with a parent (§5.11).
+func environmentOf(site store.Site) provisioner.Environment {
+	if site.IsStaging() {
+		return provisioner.EnvironmentStaging
+	}
+	return provisioner.EnvironmentProduction
 }
 
 func (s *Service) startStack(ctx context.Context, r *jobs.Run) error {
