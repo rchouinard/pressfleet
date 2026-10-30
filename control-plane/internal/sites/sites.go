@@ -146,7 +146,9 @@
 // [Service.CreateStaging] allocates a staging site of a production site
 // (§5.11) and queues a sync backup of the production site and a
 // [CloneJobType] job that waits for it, provisions the staging site, and
-// restores the backup into it; see staging.go.
+// restores the backup into it; see staging.go. [Service.RefreshStaging]
+// copies production into an existing staging site through the restore
+// pipeline, with a scope; see refresh.go.
 //
 // # Startup reconciliation
 //
@@ -786,7 +788,7 @@ func (s *Service) Handlers() []jobs.Handler {
 		s.reconcileHandler(), s.purgeCacheHandler(), s.maintenanceHandler(), s.goLiveHandler(), s.aliasesHandler(),
 	}
 	if s.restores() {
-		handlers = append(handlers, s.restoreHandler(), s.recoverHandler(), s.cloneHandler())
+		handlers = append(handlers, s.restoreHandler(), s.recoverHandler(), s.cloneHandler(), s.refreshHandler())
 	}
 	if s.imports() {
 		handlers = append(handlers, s.importHandler())

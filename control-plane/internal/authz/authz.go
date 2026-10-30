@@ -151,6 +151,10 @@ const (
 	// (§5.11). It is checked against the production site, whose client
 	// group the staging site joins.
 	CreateStagingSite Action = "site.staging.create"
+	// RefreshStagingSite is copying a production site into its staging site
+	// (§5.11). It is checked against the staging site, whose client group
+	// its production site shares.
+	RefreshStagingSite Action = "site.staging.refresh"
 
 	// Take backups, restore, and approve core updates.
 	CreateBackup      Action = "backup.create"
@@ -383,7 +387,8 @@ var rules = map[Action]rule{
 	OpenReadWriteDatabaseSession: {store.RoleAdmin, true},
 	TunnelDatabaseReadWrite:      {store.RoleAdmin, true},
 
-	CreateStagingSite: {store.RoleOperator, true},
+	CreateStagingSite:  {store.RoleOperator, true},
+	RefreshStagingSite: {store.RoleOperator, true},
 
 	CreateBackup:      {store.RoleOperator, true},
 	RestoreBackup:     {store.RoleOperator, true},

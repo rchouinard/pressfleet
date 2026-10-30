@@ -85,9 +85,10 @@ const (
 	dataCloneBackupID = "clone_backup_id"
 )
 
-// ErrSourceFailed means a staging site can't be created from a production
-// site that is marked failed: it has nothing reliable to copy.
-var ErrSourceFailed = errors.New("the production site is marked failed; restore or fix it before creating a staging site from it")
+// ErrSourceFailed means a staging site can't be created or refreshed from a
+// fresh backup of a production site that is marked failed: it has nothing
+// reliable to copy.
+var ErrSourceFailed = errors.New("the production site is marked failed; restore or fix it before copying it to a staging site")
 
 // Limits of a staging site's name and slug.
 const (
@@ -210,7 +211,8 @@ func (s *Service) CreateStaging(ctx context.Context, productionID string, req Ne
 }
 
 // checkStagingSource checks that a staging site can be created from the
-// site: a production site that is running or stopped.
+// site, or refreshed from a fresh backup of it: a production site that is
+// running or stopped.
 func checkStagingSource(prod store.Site) error {
 	if prod.IsStaging() {
 		return &ValidationError{Fields: []FieldError{{"/site_id", "is a staging site; staging sites are created from their production site"}}}
@@ -456,36 +458,14 @@ func (s *Service) prepareClone(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
-	snapID := p.SnapshotID
-	if snapID == "" {
-		aw, err := r.Awaited(ctx)
-		if err != nil {
-			return err
-		}
-		if err := aw.Err(); err != nil {
-			return err
-		}
-		var backupID string
-		if aw.Type == sitebackup.JobType {
-			if _, err := aw.GetResult("snapshot_id", &snapID); err != nil {
-				return jobs.Permanent(err)
-			}
-			if _, err := aw.GetResult("backup_id", &backupID); err != nil {
-				return jobs.Permanent(err)
-			}
-		}
-		if snapID == "" {
-			return jobs.Permanent(fmt.Errorf("the %s job %s took no snapshot", aw.Type, aw.ID))
-		}
+	snap, backupID, err := s.copySnapshot(ctx, r, p.SourceSiteID, p.SnapshotID)
+	if err != nil {
+		return err
+	}
+	if backupID != "" {
 		if err := r.Set(dataCloneBackupID, backupID); err != nil {
 			return err
 		}
-	}
-	// Retention may have removed a snapshot that was named, and a fresh
-	// one must be in the repository too before anything is created.
-	snap, err := s.findSnapshot(ctx, p.SourceSiteID, snapID)
-	if err != nil {
-		return permanentRestoreError(err)
 	}
 	if err := r.Set(dataCloneSnapshot, string(snap.ID)); err != nil {
 		return err
@@ -506,6 +486,40 @@ func (s *Service) prepareClone(ctx context.Context, r *jobs.Run) error {
 	r.Logf("Creating %s from snapshot %s of site %s (PHP %s, WordPress %s).",
 		site.PreviewDomain, shortSnapshot(string(snap.ID)), p.SourceSiteID, site.PHPVersion, site.WPCoreVersion)
 	return nil
+}
+
+// copySnapshot returns the snapshot a job that copies a site works from: the
+// one named, or the one the backup job it waited for took, with that backup's
+// ID. It fails permanently if the awaited backup failed, or if the snapshot
+// isn't in the repository: retention may have removed one that was named, and
+// a fresh one must be there too before the job changes anything.
+func (s *Service) copySnapshot(ctx context.Context, r *jobs.Run, sourceID, snapID string) (backup.Snapshot, string, error) {
+	var backupID string
+	if snapID == "" {
+		aw, err := r.Awaited(ctx)
+		if err != nil {
+			return backup.Snapshot{}, "", err
+		}
+		if err := aw.Err(); err != nil {
+			return backup.Snapshot{}, "", err
+		}
+		if aw.Type == sitebackup.JobType {
+			if _, err := aw.GetResult("snapshot_id", &snapID); err != nil {
+				return backup.Snapshot{}, "", jobs.Permanent(err)
+			}
+			if _, err := aw.GetResult("backup_id", &backupID); err != nil {
+				return backup.Snapshot{}, "", jobs.Permanent(err)
+			}
+		}
+		if snapID == "" {
+			return backup.Snapshot{}, "", jobs.Permanent(fmt.Errorf("the %s job %s took no snapshot", aw.Type, aw.ID))
+		}
+	}
+	snap, err := s.findSnapshot(ctx, sourceID, snapID)
+	if err != nil {
+		return backup.Snapshot{}, "", permanentRestoreError(err)
+	}
+	return snap, backupID, nil
 }
 
 // failClone is the last Undo of a failed site.clone job, as
@@ -547,12 +561,8 @@ func (s *Service) rewriteClonedURLs(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
-	var also []string
-	prod, err := store.NewSites(s.db).Get(ctx, p.SourceSiteID)
-	switch {
-	case err == nil:
-		also = append(also, strings.TrimPrefix(URL(prod), "https://"))
-	case !errors.Is(err, store.ErrNotFound):
+	also, err := s.sourceSiteHost(ctx, restoreSource{SiteID: p.SourceSiteID})
+	if err != nil {
 		return err
 	}
 	return s.rewriteRestoredHosts(ctx, r, site, also...)

@@ -1122,6 +1122,27 @@ func (e SiteStatus) Valid() bool {
 	}
 }
 
+// Defines values for StagingCopyFiles.
+const (
+	StagingCopyFilesAll  StagingCopyFiles = "all"
+	StagingCopyFilesCode StagingCopyFiles = "code"
+	StagingCopyFilesNone StagingCopyFiles = "none"
+)
+
+// Valid indicates whether the value is a known member of the StagingCopyFiles enum.
+func (e StagingCopyFiles) Valid() bool {
+	switch e {
+	case StagingCopyFilesAll:
+		return true
+	case StagingCopyFilesCode:
+		return true
+	case StagingCopyFilesNone:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TokenScope.
 const (
 	TokenScopeFull     TokenScope = "full"
@@ -3902,6 +3923,32 @@ type SSHKeyList struct {
 	NextCursor *NextCursor `json:"next_cursor"`
 }
 
+// StagingCopyFiles How much of `wp-content` a staging copy restores from the snapshot.
+// `all` makes all of it match the snapshot. `code` makes `plugins`,
+// `themes`, `mu-plugins`, and `languages` match it (a directory the
+// snapshot lacks is removed), and leaves `uploads` and everything else
+// alone. `none` leaves `wp-content` alone.
+type StagingCopyFiles string
+
+// StagingRefresh defines model for StagingRefresh.
+type StagingRefresh struct {
+	// Database Replace the staging site's database with the snapshot's. With
+	// `files: none`, this must be true: a refresh copies something.
+	Database bool `json:"database"`
+
+	// Files How much of `wp-content` a staging copy restores from the snapshot.
+	// `all` makes all of it match the snapshot. `code` makes `plugins`,
+	// `themes`, `mu-plugins`, and `languages` match it (a directory the
+	// snapshot lacks is removed), and leaves `uploads` and everything else
+	// alone. `none` leaves `wp-content` alone.
+	Files StagingCopyFiles `json:"files"`
+
+	// SnapshotID An existing snapshot of the production site to copy (a backup's
+	// `snapshot_id`, or a prefix of it of at least 8 characters),
+	// instead of a fresh `sync` backup.
+	SnapshotID *string `json:"snapshot_id,omitempty"`
+}
+
 // StagingSiteCreate defines model for StagingSiteCreate.
 type StagingSiteCreate struct {
 	// Name Display name. Defaults to the production site's name followed by "(staging)".
@@ -4957,6 +5004,9 @@ type GoLiveSiteJSONRequestBody = SiteGoLive
 
 // SetSiteMaintenanceJSONRequestBody defines body for SetSiteMaintenance for application/json ContentType.
 type SetSiteMaintenanceJSONRequestBody = SiteMaintenance
+
+// RefreshStagingSiteJSONRequestBody defines body for RefreshStagingSite for application/json ContentType.
+type RefreshStagingSiteJSONRequestBody = StagingRefresh
 
 // RestoreSiteJSONRequestBody defines body for RestoreSite for application/json ContentType.
 type RestoreSiteJSONRequestBody = SiteRestore
@@ -6967,6 +7017,104 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/preview-password (the `RegenerateSitePreviewPassword` operationId).
 	RegenerateSitePreviewPassword(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RefreshStagingSiteWithBody Refresh a staging site from its production site
+	//
+	// Copies the production site into this staging site with a scope
+	// (design doc §5.4, §5.11). Needs the `site.staging.refresh` permission
+	// (Operator).
+	//
+	// Unless `snapshot_id` names an existing backup of the production
+	// site, a backup of kind `sync` of the production site is queued first,
+	// and the returned job (`site.refresh`) waits for it (`after_job_id`).
+	// The job runs the restore pipeline on the staging site (see
+	// `restoreSite`): it takes a pre-refresh backup (kind `pre_restore`),
+	// puts the site in maintenance mode, restores the scope, purges the
+	// object cache and the page cache, and takes the site out of
+	// maintenance mode. Restored files also restart the site's containers.
+	//
+	// A refresh with `database` also moves the site to a WordPress core at
+	// least as new as the snapshot's, runs `wp core update-db`, rewrites the
+	// production site's URLs to the staging site's preview URL, and makes
+	// sure the default plugins are installed and active. A refresh without
+	// it doesn't touch the database. `database: true` with `files: none`
+	// gives the staging site the production site's current content and
+	// keeps its own plugins and themes; since which plugins are active is
+	// in the database, that list comes from production.
+	//
+	// The staging site keeps its settings: outbound email, preview
+	// protection, domain, credentials, and environment.
+	//
+	// The response contains the site with status `updating`, and the job,
+	// whose result holds `snapshot_id`, `pre_restore_backup_id`, and
+	// `backup_id` (for a fresh backup). On success, the site's `staging`
+	// object records the snapshot and the time. If the production site's
+	// backup fails, the job fails without touching the staging site, which
+	// goes back to `running`, with the reason in `status_message`. If the
+	// job fails once the site's data was touched, it restores the pre-refresh
+	// backup in full, and the site **stays in maintenance mode** with
+	// `status_message` saying what happened.
+	//
+	// A production site, a scope that copies nothing, a `snapshot_id` that
+	// isn't one of the production site's snapshots, or a database snapshot
+	// from a WordPress core newer than any site image returns `422`. A
+	// staging site that isn't `running` returns `409`, and so does, when a
+	// fresh backup is needed, a production site that isn't `running` or
+	// `stopped`.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/refresh (the `RefreshStagingSite` operationId).
+	RefreshStagingSiteWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RefreshStagingSite Refresh a staging site from its production site
+	//
+	// Copies the production site into this staging site with a scope
+	// (design doc §5.4, §5.11). Needs the `site.staging.refresh` permission
+	// (Operator).
+	//
+	// Unless `snapshot_id` names an existing backup of the production
+	// site, a backup of kind `sync` of the production site is queued first,
+	// and the returned job (`site.refresh`) waits for it (`after_job_id`).
+	// The job runs the restore pipeline on the staging site (see
+	// `restoreSite`): it takes a pre-refresh backup (kind `pre_restore`),
+	// puts the site in maintenance mode, restores the scope, purges the
+	// object cache and the page cache, and takes the site out of
+	// maintenance mode. Restored files also restart the site's containers.
+	//
+	// A refresh with `database` also moves the site to a WordPress core at
+	// least as new as the snapshot's, runs `wp core update-db`, rewrites the
+	// production site's URLs to the staging site's preview URL, and makes
+	// sure the default plugins are installed and active. A refresh without
+	// it doesn't touch the database. `database: true` with `files: none`
+	// gives the staging site the production site's current content and
+	// keeps its own plugins and themes; since which plugins are active is
+	// in the database, that list comes from production.
+	//
+	// The staging site keeps its settings: outbound email, preview
+	// protection, domain, credentials, and environment.
+	//
+	// The response contains the site with status `updating`, and the job,
+	// whose result holds `snapshot_id`, `pre_restore_backup_id`, and
+	// `backup_id` (for a fresh backup). On success, the site's `staging`
+	// object records the snapshot and the time. If the production site's
+	// backup fails, the job fails without touching the staging site, which
+	// goes back to `running`, with the reason in `status_message`. If the
+	// job fails once the site's data was touched, it restores the pre-refresh
+	// backup in full, and the site **stays in maintenance mode** with
+	// `status_message` saying what happened.
+	//
+	// A production site, a scope that copies nothing, a `snapshot_id` that
+	// isn't one of the production site's snapshots, or a database snapshot
+	// from a WordPress core newer than any site image returns `422`. A
+	// staging site that isn't `running` returns `409`, and so does, when a
+	// fresh backup is needed, a production site that isn't `running` or
+	// `stopped`.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/refresh (the `RefreshStagingSite` operationId).
+	RefreshStagingSite(ctx context.Context, siteID SiteID, body RefreshStagingSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RestoreSiteWithBody Restore a site from a snapshot
 	//
@@ -10757,6 +10905,124 @@ func (c *Client) GetSiteMetricsSummary(ctx context.Context, siteID SiteID, param
 // Corresponds with POST /api/v1/sites/{site_id}/preview-password (the `RegenerateSitePreviewPassword` operationId).
 func (c *Client) RegenerateSitePreviewPassword(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRegenerateSitePreviewPasswordRequest(c.Server, siteID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RefreshStagingSiteWithBody Refresh a staging site from its production site
+//
+// Copies the production site into this staging site with a scope
+// (design doc §5.4, §5.11). Needs the `site.staging.refresh` permission
+// (Operator).
+//
+// Unless `snapshot_id` names an existing backup of the production
+// site, a backup of kind `sync` of the production site is queued first,
+// and the returned job (`site.refresh`) waits for it (`after_job_id`).
+// The job runs the restore pipeline on the staging site (see
+// `restoreSite`): it takes a pre-refresh backup (kind `pre_restore`),
+// puts the site in maintenance mode, restores the scope, purges the
+// object cache and the page cache, and takes the site out of
+// maintenance mode. Restored files also restart the site's containers.
+//
+// A refresh with `database` also moves the site to a WordPress core at
+// least as new as the snapshot's, runs `wp core update-db`, rewrites the
+// production site's URLs to the staging site's preview URL, and makes
+// sure the default plugins are installed and active. A refresh without
+// it doesn't touch the database. `database: true` with `files: none`
+// gives the staging site the production site's current content and
+// keeps its own plugins and themes; since which plugins are active is
+// in the database, that list comes from production.
+//
+// The staging site keeps its settings: outbound email, preview
+// protection, domain, credentials, and environment.
+//
+// The response contains the site with status `updating`, and the job,
+// whose result holds `snapshot_id`, `pre_restore_backup_id`, and
+// `backup_id` (for a fresh backup). On success, the site's `staging`
+// object records the snapshot and the time. If the production site's
+// backup fails, the job fails without touching the staging site, which
+// goes back to `running`, with the reason in `status_message`. If the
+// job fails once the site's data was touched, it restores the pre-refresh
+// backup in full, and the site **stays in maintenance mode** with
+// `status_message` saying what happened.
+//
+// A production site, a scope that copies nothing, a `snapshot_id` that
+// isn't one of the production site's snapshots, or a database snapshot
+// from a WordPress core newer than any site image returns `422`. A
+// staging site that isn't `running` returns `409`, and so does, when a
+// fresh backup is needed, a production site that isn't `running` or
+// `stopped`.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/refresh (the `RefreshStagingSite` operationId).
+func (c *Client) RefreshStagingSiteWithBody(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRefreshStagingSiteRequestWithBody(c.Server, siteID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RefreshStagingSite Refresh a staging site from its production site
+//
+// Copies the production site into this staging site with a scope
+// (design doc §5.4, §5.11). Needs the `site.staging.refresh` permission
+// (Operator).
+//
+// Unless `snapshot_id` names an existing backup of the production
+// site, a backup of kind `sync` of the production site is queued first,
+// and the returned job (`site.refresh`) waits for it (`after_job_id`).
+// The job runs the restore pipeline on the staging site (see
+// `restoreSite`): it takes a pre-refresh backup (kind `pre_restore`),
+// puts the site in maintenance mode, restores the scope, purges the
+// object cache and the page cache, and takes the site out of
+// maintenance mode. Restored files also restart the site's containers.
+//
+// A refresh with `database` also moves the site to a WordPress core at
+// least as new as the snapshot's, runs `wp core update-db`, rewrites the
+// production site's URLs to the staging site's preview URL, and makes
+// sure the default plugins are installed and active. A refresh without
+// it doesn't touch the database. `database: true` with `files: none`
+// gives the staging site the production site's current content and
+// keeps its own plugins and themes; since which plugins are active is
+// in the database, that list comes from production.
+//
+// The staging site keeps its settings: outbound email, preview
+// protection, domain, credentials, and environment.
+//
+// The response contains the site with status `updating`, and the job,
+// whose result holds `snapshot_id`, `pre_restore_backup_id`, and
+// `backup_id` (for a fresh backup). On success, the site's `staging`
+// object records the snapshot and the time. If the production site's
+// backup fails, the job fails without touching the staging site, which
+// goes back to `running`, with the reason in `status_message`. If the
+// job fails once the site's data was touched, it restores the pre-refresh
+// backup in full, and the site **stays in maintenance mode** with
+// `status_message` saying what happened.
+//
+// A production site, a scope that copies nothing, a `snapshot_id` that
+// isn't one of the production site's snapshots, or a database snapshot
+// from a WordPress core newer than any site image returns `422`. A
+// staging site that isn't `running` returns `409`, and so does, when a
+// fresh backup is needed, a production site that isn't `running` or
+// `stopped`.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/sites/{site_id}/refresh (the `RefreshStagingSite` operationId).
+func (c *Client) RefreshStagingSite(ctx context.Context, siteID SiteID, body RefreshStagingSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRefreshStagingSiteRequest(c.Server, siteID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -16654,6 +16920,53 @@ func NewRegenerateSitePreviewPasswordRequest(server string, siteID SiteID) (*htt
 	return req, nil
 }
 
+// NewRefreshStagingSiteRequest calls the generic RefreshStagingSite builder with application/json body
+func NewRefreshStagingSiteRequest(server string, siteID SiteID, body RefreshStagingSiteJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRefreshStagingSiteRequestWithBody(server, siteID, "application/json", bodyReader)
+}
+
+// NewRefreshStagingSiteRequestWithBody constructs an http.Request for the RefreshStagingSite method, with any body, and a specified content type
+func NewRefreshStagingSiteRequestWithBody(server string, siteID SiteID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "site_id", siteID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/sites/%s/refresh", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewRestoreSiteRequest calls the generic RestoreSite builder with application/json body
 func NewRestoreSiteRequest(server string, siteID SiteID, body RestoreSiteJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -20211,6 +20524,104 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/sites/{site_id}/preview-password (the `RegenerateSitePreviewPassword` operationId).
 	RegenerateSitePreviewPasswordWithResponse(ctx context.Context, siteID SiteID, reqEditors ...RequestEditorFn) (*RegenerateSitePreviewPasswordResponse, error)
+
+	// RefreshStagingSiteWithBodyWithResponse Refresh a staging site from its production site
+	//
+	// Copies the production site into this staging site with a scope
+	// (design doc §5.4, §5.11). Needs the `site.staging.refresh` permission
+	// (Operator).
+	//
+	// Unless `snapshot_id` names an existing backup of the production
+	// site, a backup of kind `sync` of the production site is queued first,
+	// and the returned job (`site.refresh`) waits for it (`after_job_id`).
+	// The job runs the restore pipeline on the staging site (see
+	// `restoreSite`): it takes a pre-refresh backup (kind `pre_restore`),
+	// puts the site in maintenance mode, restores the scope, purges the
+	// object cache and the page cache, and takes the site out of
+	// maintenance mode. Restored files also restart the site's containers.
+	//
+	// A refresh with `database` also moves the site to a WordPress core at
+	// least as new as the snapshot's, runs `wp core update-db`, rewrites the
+	// production site's URLs to the staging site's preview URL, and makes
+	// sure the default plugins are installed and active. A refresh without
+	// it doesn't touch the database. `database: true` with `files: none`
+	// gives the staging site the production site's current content and
+	// keeps its own plugins and themes; since which plugins are active is
+	// in the database, that list comes from production.
+	//
+	// The staging site keeps its settings: outbound email, preview
+	// protection, domain, credentials, and environment.
+	//
+	// The response contains the site with status `updating`, and the job,
+	// whose result holds `snapshot_id`, `pre_restore_backup_id`, and
+	// `backup_id` (for a fresh backup). On success, the site's `staging`
+	// object records the snapshot and the time. If the production site's
+	// backup fails, the job fails without touching the staging site, which
+	// goes back to `running`, with the reason in `status_message`. If the
+	// job fails once the site's data was touched, it restores the pre-refresh
+	// backup in full, and the site **stays in maintenance mode** with
+	// `status_message` saying what happened.
+	//
+	// A production site, a scope that copies nothing, a `snapshot_id` that
+	// isn't one of the production site's snapshots, or a database snapshot
+	// from a WordPress core newer than any site image returns `422`. A
+	// staging site that isn't `running` returns `409`, and so does, when a
+	// fresh backup is needed, a production site that isn't `running` or
+	// `stopped`.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/refresh (the `RefreshStagingSite` operationId).
+	RefreshStagingSiteWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RefreshStagingSiteResponse, error)
+
+	// RefreshStagingSiteWithResponse Refresh a staging site from its production site
+	//
+	// Copies the production site into this staging site with a scope
+	// (design doc §5.4, §5.11). Needs the `site.staging.refresh` permission
+	// (Operator).
+	//
+	// Unless `snapshot_id` names an existing backup of the production
+	// site, a backup of kind `sync` of the production site is queued first,
+	// and the returned job (`site.refresh`) waits for it (`after_job_id`).
+	// The job runs the restore pipeline on the staging site (see
+	// `restoreSite`): it takes a pre-refresh backup (kind `pre_restore`),
+	// puts the site in maintenance mode, restores the scope, purges the
+	// object cache and the page cache, and takes the site out of
+	// maintenance mode. Restored files also restart the site's containers.
+	//
+	// A refresh with `database` also moves the site to a WordPress core at
+	// least as new as the snapshot's, runs `wp core update-db`, rewrites the
+	// production site's URLs to the staging site's preview URL, and makes
+	// sure the default plugins are installed and active. A refresh without
+	// it doesn't touch the database. `database: true` with `files: none`
+	// gives the staging site the production site's current content and
+	// keeps its own plugins and themes; since which plugins are active is
+	// in the database, that list comes from production.
+	//
+	// The staging site keeps its settings: outbound email, preview
+	// protection, domain, credentials, and environment.
+	//
+	// The response contains the site with status `updating`, and the job,
+	// whose result holds `snapshot_id`, `pre_restore_backup_id`, and
+	// `backup_id` (for a fresh backup). On success, the site's `staging`
+	// object records the snapshot and the time. If the production site's
+	// backup fails, the job fails without touching the staging site, which
+	// goes back to `running`, with the reason in `status_message`. If the
+	// job fails once the site's data was touched, it restores the pre-refresh
+	// backup in full, and the site **stays in maintenance mode** with
+	// `status_message` saying what happened.
+	//
+	// A production site, a scope that copies nothing, a `snapshot_id` that
+	// isn't one of the production site's snapshots, or a database snapshot
+	// from a WordPress core newer than any site image returns `422`. A
+	// staging site that isn't `running` returns `409`, and so does, when a
+	// fresh backup is needed, a production site that isn't `running` or
+	// `stopped`.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/sites/{site_id}/refresh (the `RefreshStagingSite` operationId).
+	RefreshStagingSiteWithResponse(ctx context.Context, siteID SiteID, body RefreshStagingSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*RefreshStagingSiteResponse, error)
 
 	// RestoreSiteWithBodyWithResponse Restore a site from a snapshot
 	//
@@ -28036,6 +28447,103 @@ func (r RegenerateSitePreviewPasswordResponse) ContentType() string {
 	return ""
 }
 
+// RefreshStagingSiteResponse202Headers the declared response headers of an HTTP 202 response for RefreshStagingSite
+type RefreshStagingSiteResponse202Headers struct {
+	Location *string
+}
+
+type RefreshStagingSiteResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *SiteAccepted
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *BadRequest
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthorized
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *NotFound
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Conflict
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *UnprocessableContent
+	// ApplicationProblemJSONDefault the response for an HTTP default `application/problem+json` response
+	ApplicationProblemJSONDefault *Error
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *RefreshStagingSiteResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r RefreshStagingSiteResponse) GetJSON202() *SiteAccepted {
+	return r.JSON202
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RefreshStagingSiteResponse) GetApplicationProblemJSON400() *BadRequest {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RefreshStagingSiteResponse) GetApplicationProblemJSON401() *Unauthorized {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RefreshStagingSiteResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RefreshStagingSiteResponse) GetApplicationProblemJSON404() *NotFound {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RefreshStagingSiteResponse) GetApplicationProblemJSON409() *Conflict {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r RefreshStagingSiteResponse) GetApplicationProblemJSON422() *UnprocessableContent {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSONDefault returns the response for an HTTP default `application/problem+json` response
+func (r RefreshStagingSiteResponse) GetApplicationProblemJSONDefault() *Error {
+	return r.ApplicationProblemJSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r RefreshStagingSiteResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RefreshStagingSiteResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RefreshStagingSiteResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RefreshStagingSiteResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // RestoreSiteResponse202Headers the declared response headers of an HTTP 202 response for RestoreSite
 type RestoreSiteResponse202Headers struct {
 	Location *string
@@ -33621,6 +34129,116 @@ func (c *ClientWithResponses) RegenerateSitePreviewPasswordWithResponse(ctx cont
 		return nil, err
 	}
 	return ParseRegenerateSitePreviewPasswordResponse(rsp)
+}
+
+// RefreshStagingSiteWithBodyWithResponse Refresh a staging site from its production site
+//
+// Copies the production site into this staging site with a scope
+// (design doc §5.4, §5.11). Needs the `site.staging.refresh` permission
+// (Operator).
+//
+// Unless `snapshot_id` names an existing backup of the production
+// site, a backup of kind `sync` of the production site is queued first,
+// and the returned job (`site.refresh`) waits for it (`after_job_id`).
+// The job runs the restore pipeline on the staging site (see
+// `restoreSite`): it takes a pre-refresh backup (kind `pre_restore`),
+// puts the site in maintenance mode, restores the scope, purges the
+// object cache and the page cache, and takes the site out of
+// maintenance mode. Restored files also restart the site's containers.
+//
+// A refresh with `database` also moves the site to a WordPress core at
+// least as new as the snapshot's, runs `wp core update-db`, rewrites the
+// production site's URLs to the staging site's preview URL, and makes
+// sure the default plugins are installed and active. A refresh without
+// it doesn't touch the database. `database: true` with `files: none`
+// gives the staging site the production site's current content and
+// keeps its own plugins and themes; since which plugins are active is
+// in the database, that list comes from production.
+//
+// The staging site keeps its settings: outbound email, preview
+// protection, domain, credentials, and environment.
+//
+// The response contains the site with status `updating`, and the job,
+// whose result holds `snapshot_id`, `pre_restore_backup_id`, and
+// `backup_id` (for a fresh backup). On success, the site's `staging`
+// object records the snapshot and the time. If the production site's
+// backup fails, the job fails without touching the staging site, which
+// goes back to `running`, with the reason in `status_message`. If the
+// job fails once the site's data was touched, it restores the pre-refresh
+// backup in full, and the site **stays in maintenance mode** with
+// `status_message` saying what happened.
+//
+// A production site, a scope that copies nothing, a `snapshot_id` that
+// isn't one of the production site's snapshots, or a database snapshot
+// from a WordPress core newer than any site image returns `422`. A
+// staging site that isn't `running` returns `409`, and so does, when a
+// fresh backup is needed, a production site that isn't `running` or
+// `stopped`.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/refresh (the `RefreshStagingSite` operationId).
+func (c *ClientWithResponses) RefreshStagingSiteWithBodyWithResponse(ctx context.Context, siteID SiteID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RefreshStagingSiteResponse, error) {
+	rsp, err := c.RefreshStagingSiteWithBody(ctx, siteID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRefreshStagingSiteResponse(rsp)
+}
+
+// RefreshStagingSiteWithResponse Refresh a staging site from its production site
+//
+// Copies the production site into this staging site with a scope
+// (design doc §5.4, §5.11). Needs the `site.staging.refresh` permission
+// (Operator).
+//
+// Unless `snapshot_id` names an existing backup of the production
+// site, a backup of kind `sync` of the production site is queued first,
+// and the returned job (`site.refresh`) waits for it (`after_job_id`).
+// The job runs the restore pipeline on the staging site (see
+// `restoreSite`): it takes a pre-refresh backup (kind `pre_restore`),
+// puts the site in maintenance mode, restores the scope, purges the
+// object cache and the page cache, and takes the site out of
+// maintenance mode. Restored files also restart the site's containers.
+//
+// A refresh with `database` also moves the site to a WordPress core at
+// least as new as the snapshot's, runs `wp core update-db`, rewrites the
+// production site's URLs to the staging site's preview URL, and makes
+// sure the default plugins are installed and active. A refresh without
+// it doesn't touch the database. `database: true` with `files: none`
+// gives the staging site the production site's current content and
+// keeps its own plugins and themes; since which plugins are active is
+// in the database, that list comes from production.
+//
+// The staging site keeps its settings: outbound email, preview
+// protection, domain, credentials, and environment.
+//
+// The response contains the site with status `updating`, and the job,
+// whose result holds `snapshot_id`, `pre_restore_backup_id`, and
+// `backup_id` (for a fresh backup). On success, the site's `staging`
+// object records the snapshot and the time. If the production site's
+// backup fails, the job fails without touching the staging site, which
+// goes back to `running`, with the reason in `status_message`. If the
+// job fails once the site's data was touched, it restores the pre-refresh
+// backup in full, and the site **stays in maintenance mode** with
+// `status_message` saying what happened.
+//
+// A production site, a scope that copies nothing, a `snapshot_id` that
+// isn't one of the production site's snapshots, or a database snapshot
+// from a WordPress core newer than any site image returns `422`. A
+// staging site that isn't `running` returns `409`, and so does, when a
+// fresh backup is needed, a production site that isn't `running` or
+// `stopped`.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/sites/{site_id}/refresh (the `RefreshStagingSite` operationId).
+func (c *ClientWithResponses) RefreshStagingSiteWithResponse(ctx context.Context, siteID SiteID, body RefreshStagingSiteJSONRequestBody, reqEditors ...RequestEditorFn) (*RefreshStagingSiteResponse, error) {
+	rsp, err := c.RefreshStagingSite(ctx, siteID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRefreshStagingSiteResponse(rsp)
 }
 
 // RestoreSiteWithBodyWithResponse Restore a site from a snapshot
@@ -40665,6 +41283,94 @@ func ParseRegenerateSitePreviewPasswordResponse(rsp *http.Response) (*Regenerate
 			}
 			headers.CacheControl = &value
 		}
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRefreshStagingSiteResponse parses an HTTP response from a RefreshStagingSiteWithResponse call
+func ParseRefreshStagingSiteResponse(rsp *http.Response) (*RefreshStagingSiteResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RefreshStagingSiteResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest SiteAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Conflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest UnprocessableContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers RefreshStagingSiteResponse202Headers
 		if values := rsp.Header.Values("Location"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: "uri-reference"}); err != nil {

@@ -126,7 +126,9 @@ Both are the restore pipeline (§5.4) with a scope. [#203](https://github.com/rc
 - **Maintenance mode.** The target is in maintenance mode from before the restore until it is finished.
 - **Core.** The target moves up to at least the snapshot's core when the database is copied (§5.4 step 4).
 - **URLs.** When the database is copied, URLs are rewritten from the source's host to the target's: production's primary domain, once live, on a push, and the staging preview domain on a refresh.
-- **Rollback.** A failure rolls the target back to its pre-restore backup.
+- **Rollback.** A failure rolls the target back to its pre-restore backup, in full, whatever the scope.
+
+Restored files restart the target, so PHP's opcode cache doesn't keep running replaced code. The cache purges run for every scope. A refresh with the database also converges the default plugin stack, because the dump brings production's plugin state, which may not match the staging site's code. A refresh without it can't: converging writes to the database, which that scope leaves alone.
 
 On top of that, a push:
 
