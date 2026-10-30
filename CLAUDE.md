@@ -40,7 +40,7 @@ CI (`.github/workflows/ci.yml`) runs lint, a `go mod tidy` check, tests, and the
 - Job steps must be idempotent; permanently failed jobs roll back what they created. §5
 - The host CLI never reads or writes the state database; state commands run inside the control plane container. §4.7
 - Migrations are forward-only. §4.7
-- Stay in MVP scope (§1.1). Don't build features that depend on open `type:decision` issues.
+- Stay in scope: build what the milestone's issues and accepted plan describe (§8). Non-goals (§1.1) stay out until a milestone takes them on. Don't build features that depend on open `type:decision` issues.
 
 ## Code conventions
 
@@ -56,4 +56,4 @@ CI (`.github/workflows/ci.yml`) runs lint, a `go mod tidy` check, tests, and the
 
 - Commit subject in the imperative, then a short bullet body. Reference issues with `Closes #N`.
 - End commit messages with the `Co-Authored-By` trailer.
-- Early-stage work is committed directly to `main`.
+- Since 1.0, work on a branch per issue (from `origin/main`) and land it through a pull request; never commit to `main`. Add the `e2e` label to PRs that change site workflows.

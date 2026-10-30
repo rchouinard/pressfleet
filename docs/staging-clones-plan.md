@@ -1,6 +1,6 @@
 # Staging Clones: Implementation Plan
 
-**Status:** Proposed, 2026-10-28. The decisions below wait on [#196](https://github.com/rchouinard/pressfleet/issues/196). Milestone: [Post-MVP: Staging Clones](https://github.com/rchouinard/pressfleet/milestone/7); tracking issue: [#101](https://github.com/rchouinard/pressfleet/issues/101).
+**Status:** Accepted, 2026-10-29. Every decision in [#196](https://github.com/rchouinard/pressfleet/issues/196) was confirmed as proposed; see the decision log. The design doc describes the result in §5.11. Milestone: [Post-MVP: Staging Clones](https://github.com/rchouinard/pressfleet/milestone/7); tracking issue: [#101](https://github.com/rchouinard/pressfleet/issues/101).
 
 This plan adds staging sites. A staging site is a copy of a production site on its own preview domain, linked to the production site. It can be refreshed from production, and its changes can be pushed back. The main use is testing heavier changes without affecting the production site: new or updated plugins, a theme rebuild, a PHP upgrade, or a WordPress major release. The design doc lists staging clones as the highest-priority follow-up to the MVP (§1.1, §8).
 
@@ -24,9 +24,9 @@ These pieces are missing:
 
 ## Decisions
 
-Proposed. Each one is confirmed or changed in [#196](https://github.com/rchouinard/pressfleet/issues/196), which also lists the alternatives.
+Confirmed in [#196](https://github.com/rchouinard/pressfleet/issues/196), which also lists the alternatives that were considered.
 
-| Topic | Proposal |
+| Topic | Decision |
 | --- | --- |
 | Shape | A staging site has `parent_site_id` set, and is in the same client group as its production site. Staging sites can't be nested, and a production site can have several. |
 | Copy mechanism | The backup engine. The source is backed up (backup kind `sync`) and the snapshot is restored into the target through the restore pipeline. A clone or refresh can also start from an existing production backup. |
@@ -97,7 +97,7 @@ POST /sites/{staging}/push
 
 With an existing snapshot (`snapshot_id`), the copy job is queued on its own. The waiting job's first step reads the awaited job's outcome. If the backup failed, the step fails permanently and the job rolls back, which changes nothing on the target.
 
-A waiting job must never deadlock the queue. For example, a push and a refresh of the same pair of sites, queued together, wait on each other's lock keys in opposite directions. The rule [#197](https://github.com/rchouinard/pressfleet/issues/197) proposes: a queued job that hasn't started doesn't block its lock key while it waits. A job that has started keeps its key until it is final, as today.
+A waiting job must not hold up its lock key. For example, a push and a refresh of the same pair of sites, queued together, wait on each other's lock keys in opposite directions. A job can only wait for a job that already exists, so waits never form a cycle and the queue can't deadlock, but with plain first-in-first-out lock keys the four jobs would run one after another. The rule from [#197](https://github.com/rchouinard/pressfleet/issues/197) lets them run two at a time: a queued job that hasn't started doesn't block its lock key while it waits. A job that has started keeps its key until it is final, as today.
 
 ### Creating a staging site
 
@@ -261,4 +261,15 @@ From 1.0 on, work is done on a branch per issue and merged through a pull reques
 
 ## Decision log
 
-Recorded here once [#196](https://github.com/rchouinard/pressfleet/issues/196) is resolved.
+**2026-10-29 ([#196](https://github.com/rchouinard/pressfleet/issues/196)):** all eight decisions were accepted as recommended, with no changes:
+
+1. **Shape:** a staging site has `parent_site_id` set and is in its production site's client group. No nesting, and no per-site limit beyond host capacity.
+2. **Copy mechanism:** the backup engine (a `sync` backup restored through the restore pipeline), not a live volume copy.
+3. **Scope:** `files` is `all`, `code`, or `none`, plus `database`. A copied scope ends up identical to the source's. No table-level selection.
+4. **Push:** database pushes are allowed, with a pre-push backup, automatic rollback, the production slug typed in, and the core policy guard. Settings are never pushed.
+5. **Defaults:** preview domain only, `WP_ENVIRONMENT_TYPE=staging`, preview protection on, outbound email off, WP-Cron on (not off), scheduled backups off. PHP version, core, resources, table prefix, and the initial admin user come from production.
+6. **Alerts:** built-in site-scoped rules skip staging sites unless a rule sets `include_staging`.
+7. **Permissions:** create, refresh, push, and delete staging sites are Operator actions without reauthentication. Deleting backups and deleting production sites stay Admin, and a production site with staging sites can't be deleted.
+8. **Rollouts:** staging sites take part like any site. Canary rollouts come later.
+
+The design doc records them in §1.1, §4.2, §4.3, §4.6, §5.4, §5.6, §5.10, the new §5.11, §7.3, §8, and §10.
