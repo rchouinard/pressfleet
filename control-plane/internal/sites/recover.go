@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup"
@@ -34,6 +35,15 @@ import (
 //     truth: it may hold snapshots newer than the state backup). If it
 //     was taken on a newer WordPress core than the site record says, the
 //     site moves to an image with at least that core (as a restore does).
+//     A staging site with no snapshot of its own is recovered from its
+//     production site's newest one instead (most have none: their scheduled
+//     backups are off). The job records the production site as the
+//     snapshot's source and warns about it. The snapshot is read from the
+//     client group's repository by the restic task of the staging site's
+//     own containers; nothing needs the production site's containers, its
+//     status, or its job's lock, so the two sites may recover at the same
+//     time, in either order. Only the production site's record is read
+//     (for its client group and URL), and the restored state has it.
 //  2. create_database and create_object_cache: as provisioning does, with
 //     the restored credentials. Both are idempotent.
 //  3. start_stack: provisioner.CreateSite renders the site with the current
@@ -42,7 +52,11 @@ import (
 //  4. restore: backup.Engine.Restore puts the snapshot's wp-content and
 //     database in place.
 //  5. restart_site and upgrade_database: as a restore does.
-//  6. finish: a site that was stopped is stopped again, and the status
+//  6. rewrite_urls: only for a staging site restored from its production
+//     site's snapshot, once its database is in place and its site is up:
+//     the production URLs become the staging site's preview URL, as when
+//     it was cloned. A snapshot of the site's own needs no rewrite.
+//  7. finish: a site that was stopped is stopped again, and the status
 //     is set from the containers.
 //
 // Every step converges, so a retried job, or one queued again, ends in the
@@ -66,6 +80,10 @@ const (
 // Job data keys of the site.recover job.
 const (
 	dataRecoverSnapshot = "snapshot_id"
+	// dataRecoverSource is the site whose repository snapshots hold
+	// dataRecoverSnapshot, when it isn't the recovering site's own: the
+	// production site of a staging site.
+	dataRecoverSource = "source_site_id"
 )
 
 // interruptedByRestore is the error of jobs failed by PrepareRecovery.
@@ -205,6 +223,7 @@ func (s *Service) recoverHandler() jobs.Handler {
 			{Name: stepRecoverRestore, Do: s.restoreRecovered},
 			{Name: stepRestartSite, Do: s.restartRestoredSite},
 			{Name: stepUpgradeDatabase, Do: s.upgradeRecoveredDatabase},
+			{Name: stepRewriteURLs, Do: s.rewriteRecoveredURLs},
 			{Name: stepRecoverFinish, Do: s.finishRecovery},
 		},
 	}
@@ -233,11 +252,21 @@ func (s *Service) prepareRecovery(ctx context.Context, r *jobs.Run) error {
 	if ok, err := r.Get(dataRecoverSnapshot, &snapID); err != nil || ok {
 		return err
 	}
-	snaps, err := s.engine.ListSnapshots(ctx, site.ID)
+	source := site.ID
+	snaps, err := s.engine.ListSnapshots(ctx, source)
 	if err != nil {
 		return fmt.Errorf("listing the site's backups: %w", err)
 	}
+	if len(snaps) == 0 && site.IsStaging() {
+		source = site.ParentSiteID
+		if snaps, err = s.engine.ListSnapshots(ctx, source); err != nil {
+			return fmt.Errorf("listing the production site's backups: %w", err)
+		}
+	}
 	if len(snaps) == 0 {
+		if site.IsStaging() {
+			return jobs.Permanent(errors.New("neither the staging site nor its production site has a backup to recover from"))
+		}
 		return jobs.Permanent(errors.New("the site has no backup to recover from"))
 	}
 	snap := snaps[len(snaps)-1]
@@ -251,8 +280,17 @@ func (s *Service) prepareRecovery(ctx context.Context, r *jobs.Run) error {
 		}
 		r.Logf("The backup was taken on WordPress %s; the site moves to WordPress %s.", snap.WPCoreVersion, core)
 	}
+	if source != site.ID {
+		if err := r.Set(dataRecoverSource, source); err != nil {
+			return err
+		}
+	}
 	if err := r.Set(dataRecoverSnapshot, string(snap.ID)); err != nil {
 		return err
+	}
+	if source != site.ID {
+		r.Warnf("The staging site has no backup of its own, so it is recovered from the newest backup of its production site %s (taken %s); its content is as of then.",
+			source, snap.Time.UTC().Format(time.RFC3339))
 	}
 	r.Logf("Recovering the site from backup %s, taken %s.", shortSnapshot(string(snap.ID)), snap.Time.UTC().Format(time.RFC3339))
 	return nil
@@ -305,11 +343,54 @@ func (s *Service) restoreRecovered(ctx context.Context, r *jobs.Run) error {
 	if !ok {
 		return jobs.Permanent(errors.New("the job has no snapshot to recover from"))
 	}
-	if err := s.engine.Restore(ctx, site.ID, backup.SnapshotID(snapID), site.ID, backup.FullRestore()); err != nil {
+	source, err := recoverSource(r, site.ID)
+	if err != nil {
+		return err
+	}
+	if err := s.engine.Restore(ctx, source, backup.SnapshotID(snapID), site.ID, backup.FullRestore()); err != nil {
 		return permanentRestoreError(err)
 	}
 	r.Logf("Restored the backup's wp-content and database.")
 	return nil
+}
+
+// recoverSource returns the site whose repository snapshots the job
+// restores: the recovering site, unless prepare chose its production site.
+func recoverSource(r *jobs.Run, siteID string) (string, error) {
+	var source string
+	if _, err := r.Get(dataRecoverSource, &source); err != nil {
+		return "", err
+	}
+	if source == "" {
+		return siteID, nil
+	}
+	return source, nil
+}
+
+// rewriteRecoveredURLs moves a staging site restored from its production
+// site's snapshot to its preview URL, as cloning does. A site restored from
+// its own snapshot keeps the URLs the snapshot has, as recovery always did.
+func (s *Service) rewriteRecoveredURLs(ctx context.Context, r *jobs.Run) error {
+	site, err := s.recoveringSite(ctx, r)
+	if err != nil {
+		return err
+	}
+	source, err := recoverSource(r, site.ID)
+	if err != nil {
+		return err
+	}
+	if source == site.ID {
+		return nil
+	}
+	var also []string
+	prod, err := store.NewSites(s.db).Get(ctx, source)
+	switch {
+	case err == nil:
+		also = append(also, strings.TrimPrefix(URL(prod), "https://"))
+	case !errors.Is(err, store.ErrNotFound):
+		return err
+	}
+	return s.rewriteRestoredHosts(ctx, r, site, also...)
 }
 
 // upgradeRecoveredDatabase applies the site's core's database schema to the

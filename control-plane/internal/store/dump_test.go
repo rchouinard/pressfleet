@@ -29,13 +29,14 @@ func fillState(t *testing.T, db *store.DB) {
 		t.Fatal(err)
 	}
 	sites := store.NewSites(db)
-	// The child is created first, so a dump in insertion order would put
-	// it before its parent.
+	// The staging sites are created first, so a dump in insertion order
+	// would put them before their production site.
 	child := newTestSite(g.ID, "child", 20001)
+	sibling := newTestSite(g.ID, "sibling", 20003)
 	parent := newTestSite(g.ID, "parent", 20002)
 	parent.EnableCache = false
 	parent.Maintenance = true
-	for _, s := range []*store.Site{child, parent} {
+	for _, s := range []*store.Site{child, sibling, parent} {
 		if err := sites.Create(ctx, s); err != nil {
 			t.Fatal(err)
 		}
@@ -45,7 +46,9 @@ func fillState(t *testing.T, db *store.DB) {
 		query string
 		args  []any
 	}{
-		{"UPDATE sites SET parent_site_id = ? WHERE id = ?", []any{parent.ID, child.ID}},
+		{"UPDATE sites SET parent_site_id = ?, mail_disabled = ?, staging_refreshed_at = ?, staging_snapshot_id = ?, staging_pushed_at = ? WHERE id = ?",
+			[]any{parent.ID, true, at, "0123456789abcdef", at.Add(time.Hour), child.ID}},
+		{"UPDATE sites SET parent_site_id = ?, mail_disabled = ? WHERE id = ?", []any{parent.ID, false, sibling.ID}},
 		{"INSERT INTO secrets (id, kind, key_id, ciphertext, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
 			[]any{"sec1", "site-db-password", "k1", []byte{0, 1, 2, 0xff, '"'}, at, at}},
 		{"INSERT INTO master_keys (id, check_value, is_current, created_at) VALUES (?, ?, ?, ?)",
@@ -173,6 +176,22 @@ func TestDumpLoad(t *testing.T) {
 				site, err := store.NewSites(loaded).GetBySlug(ctx, "parent")
 				if err != nil || site.EnableCache || !site.Maintenance {
 					t.Errorf("parent site = %+v, %v", site, err)
+				}
+				// The staging sites keep their production site and fields.
+				for _, tc := range []struct {
+					slug      string
+					mail      bool
+					snapshot  string
+					refreshed bool
+				}{{"child", true, "0123456789abcdef", true}, {"sibling", false, "", false}} {
+					stg, err := store.NewSites(loaded).GetBySlug(ctx, tc.slug)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !stg.IsStaging() || stg.ParentSiteID != site.ID || stg.MailDisabled != tc.mail || stg.StagingSnapshotID != tc.snapshot ||
+						stg.StagingRefreshedAt.IsZero() == tc.refreshed || stg.StagingPushedAt.IsZero() == tc.refreshed {
+						t.Errorf("staging site %s = %+v", tc.slug, stg)
+					}
 				}
 				// New rows get identities past the loaded ones.
 				j := store.Job{Type: "after", TargetType: store.JobTargetSite, TargetID: site.ID}
