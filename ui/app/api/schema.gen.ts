@@ -4696,6 +4696,12 @@ export interface components {
             steps: components["schemas"]["JobStep"][];
             /** @description The user who started the job; null for jobs started by the platform. */
             created_by?: components["schemas"]["ID"] | null;
+            /**
+             * @description The job this job waits for; null if it waits for none. A queued job isn't started until that job is
+             *     final (`succeeded`, `failed`, or `rollback_failed`), and then reads its outcome: if it failed, this job
+             *     fails too.
+             */
+            after_job_id?: components["schemas"]["ID"] | null;
             created_at: components["schemas"]["Timestamp"];
             updated_at: components["schemas"]["Timestamp"];
             started_at: components["schemas"]["Timestamp"] | null;

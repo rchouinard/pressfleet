@@ -129,6 +129,9 @@ func jobResponse(j store.Job, steps []store.JobStep, logs map[int][]gen.JobLogEn
 	if j.CreatedByUserID != "" {
 		out.CreatedBy = &j.CreatedByUserID
 	}
+	if j.AfterJobID != "" {
+		out.AfterJobID = &j.AfterJobID
+	}
 	for i, s := range steps {
 		out.Steps[i] = gen.JobStep{
 			Name:       s.Name,

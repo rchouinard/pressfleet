@@ -50,7 +50,7 @@ func TestJobsEndpoints(t *testing.T) {
 			t.Fatal(err)
 		}
 		time.Sleep(2 * time.Millisecond) // a later ID timestamp, for a stable newest-first order
-		queued, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "site.update", TargetType: store.JobTargetSite, TargetID: site})
+		queued, err := jobs.Enqueue(ctx, db, jobs.Spec{Type: "site.update", TargetType: store.JobTargetSite, TargetID: site, After: failed.ID})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -70,7 +70,7 @@ func TestJobsEndpoints(t *testing.T) {
 		j := decodeJSON[gen.Job](t, w.Body.Bytes())
 		if j.ID != failed.ID || j.State != gen.JobStateFailed || j.Error == nil || *j.Error != "install_wordpress: wp core install failed" ||
 			j.Target.Type != gen.JobTargetTypeSite || j.Target.ID != site || j.StartedAt == nil || j.FinishedAt == nil ||
-			j.Result["database"] != "site_x" || j.MaxAttempts != store.DefaultMaxAttempts {
+			j.Result["database"] != "site_x" || j.MaxAttempts != store.DefaultMaxAttempts || j.AfterJobID != nil {
 			t.Errorf("job = %s", w.Body)
 		}
 		if len(j.Steps) != 2 || j.Steps[0].Name != "create_database" || j.Steps[0].State != gen.JobStepStateSucceeded ||
@@ -78,6 +78,11 @@ func TestJobsEndpoints(t *testing.T) {
 			(*j.Steps[0].Log)[0].Message != "created database" || j.Steps[1].Log == nil || len(*j.Steps[1].Log) != 1 ||
 			(*j.Steps[1].Log)[0].Level != gen.JobLogEntryLevelError {
 			t.Errorf("steps = %s", w.Body)
+		}
+		// A job that waits for another names it.
+		w = do(t, h, request{authed: true, method: http.MethodGet, target: "/api/v1/jobs/" + queued.ID})
+		if j := decodeJSON[gen.Job](t, w.Body.Bytes()); w.Code != http.StatusOK || j.AfterJobID == nil || *j.AfterJobID != failed.ID {
+			t.Errorf("waiting job: %d %s", w.Code, w.Body)
 		}
 		if w := do(t, h, request{authed: true, method: http.MethodGet, target: "/api/v1/jobs/" + id.New()}); w.Code != http.StatusNotFound {
 			t.Errorf("get missing: %d %s", w.Code, w.Body)

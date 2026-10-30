@@ -2647,6 +2647,11 @@ type ImageUpdateFailure struct {
 
 // Job defines model for Job.
 type Job struct {
+	// AfterJobID The job this job waits for; null if it waits for none. A queued job isn't started until that job is
+	// final (`succeeded`, `failed`, or `rollback_failed`), and then reads its outcome: if it failed, this job
+	// fails too.
+	AfterJobID *ID `json:"after_job_id,omitempty"`
+
 	// Attempts Attempts in the current phase. A job gets `max_attempts` attempts, then its rollback gets as many again.
 	Attempts int `json:"attempts"`
 
