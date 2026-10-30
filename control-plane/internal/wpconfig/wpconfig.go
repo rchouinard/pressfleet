@@ -74,6 +74,13 @@ type Params struct {
 	// settings and must-use plugin modules (§6.1). The zero value turns
 	// everything off.
 	Security Security
+	// Environment is the site's environment type for WP_ENVIRONMENT_TYPE:
+	// "" or EnvironmentProduction (WordPress's own default, so nothing is
+	// emitted) or EnvironmentStaging.
+	Environment string
+	// DisableMail defines PRESSFLEET_DISABLE_MAIL, which makes the platform
+	// must-use plugin suppress outbound mail. False emits nothing.
+	DisableMail bool
 	// SiteID is the site's ID (PRESSFLEET_SITE_ID), which login tokens are
 	// bound to (§5.9). Empty emits neither login constant.
 	SiteID string
@@ -115,6 +122,20 @@ type Security struct {
 const (
 	HashBcrypt   = "bcrypt"
 	HashArgon2id = "argon2id"
+)
+
+// Values of Params.Environment, as WordPress's wp_get_environment_type()
+// knows them. Only the two a site can have are accepted.
+const (
+	EnvironmentProduction = "production"
+	EnvironmentStaging    = "staging"
+)
+
+// Constants for a site's environment. WP_ENVIRONMENT_TYPE is WordPress's;
+// PRESSFLEET_DISABLE_MAIL is read by the platform must-use plugin.
+const (
+	ConstEnvironmentType = "WP_ENVIRONMENT_TYPE"
+	ConstDisableMail     = "PRESSFLEET_DISABLE_MAIL"
 )
 
 // Constants read by the platform must-use plugin's security modules.
@@ -266,6 +287,22 @@ func Render(p Params) ([]byte, error) {
 	w.line("// in the database (§5.2).")
 	w.line("")
 
+	// Only what differs from production is emitted, so a production site's
+	// file is byte-identical to what it was before these settings existed
+	// (no render version bump, no template rollout; design doc §4.7).
+	if p.Environment == EnvironmentStaging || p.DisableMail {
+		w.line("// ** Environment ** //")
+		if p.Environment == EnvironmentStaging {
+			w.line("// WordPress and well-behaved plugins turn off live-only behavior.")
+			w.define(ConstEnvironmentType, EnvironmentStaging)
+		}
+		if p.DisableMail {
+			w.line("// The platform must-use plugin suppresses outbound mail.")
+			w.define(ConstDisableMail, true)
+		}
+		w.line("")
+	}
+
 	if r := p.Redis; r != nil {
 		w.line("// ** Object cache (Redis Object Cache plugin) ** //")
 		w.define("WP_REDIS_CLIENT", "phpredis")
@@ -390,6 +427,19 @@ func (p *Params) validate() error {
 		default:
 			errs = append(errs, errors.New(`smtp: encryption must be "tls", "ssl", or empty`))
 		}
+	}
+	switch p.Environment {
+	case "", EnvironmentProduction:
+	case EnvironmentStaging:
+		// A production site's agency constant keeps working, as it always
+		// has; a staging site would define the constant twice.
+		for _, c := range p.Constants {
+			if strings.EqualFold(c.Name, ConstEnvironmentType) {
+				errs = append(errs, fmt.Errorf("constant %s is set by the platform on a staging site", ConstEnvironmentType))
+			}
+		}
+	default:
+		errs = append(errs, fmt.Errorf("environment must be %q or %q", EnvironmentProduction, EnvironmentStaging))
 	}
 	if (p.SiteID == "") != (p.LoginPublicKey == "") {
 		errs = append(errs, errors.New("login: the site ID and the public key go together"))
