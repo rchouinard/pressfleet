@@ -1844,6 +1844,86 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /api/v1/sites/{site_id}/refresh:
+    parameters:
+      - $ref: "#/components/parameters/SiteID"
+    post:
+      operationId: refreshStagingSite
+      tags: [sites]
+      summary: Refresh a staging site from its production site
+      description: |
+        Copies the production site into this staging site with a scope
+        (design doc §5.4, §5.11). Needs the `site.staging.refresh` permission
+        (Operator).
+
+        Unless `snapshot_id` names an existing backup of the production
+        site, a backup of kind `sync` of the production site is queued first,
+        and the returned job (`site.refresh`) waits for it (`after_job_id`).
+        The job runs the restore pipeline on the staging site (see
+        `restoreSite`): it takes a pre-refresh backup (kind `pre_restore`),
+        puts the site in maintenance mode, restores the scope, purges the
+        object cache and the page cache, and takes the site out of
+        maintenance mode. Restored files also restart the site's containers.
+
+        A refresh with `database` also moves the site to a WordPress core at
+        least as new as the snapshot's, runs `wp core update-db`, rewrites the
+        production site's URLs to the staging site's preview URL, and makes
+        sure the default plugins are installed and active. A refresh without
+        it doesn't touch the database. `database: true` with `files: none`
+        gives the staging site the production site's current content and
+        keeps its own plugins and themes; since which plugins are active is
+        in the database, that list comes from production.
+
+        The staging site keeps its settings: outbound email, preview
+        protection, domain, credentials, and environment.
+
+        The response contains the site with status `updating`, and the job,
+        whose result holds `snapshot_id`, `pre_restore_backup_id`, and
+        `backup_id` (for a fresh backup). On success, the site's `staging`
+        object records the snapshot and the time. If the production site's
+        backup fails, the job fails without touching the staging site, which
+        goes back to `running`, with the reason in `status_message`. If the
+        job fails once the site's data was touched, it restores the pre-refresh
+        backup in full, and the site **stays in maintenance mode** with
+        `status_message` saying what happened.
+
+        A production site, a scope that copies nothing, a `snapshot_id` that
+        isn't one of the production site's snapshots, or a database snapshot
+        from a WordPress core newer than any site image returns `422`. A
+        staging site that isn't `running` returns `409`, and so does, when a
+        fresh backup is needed, a production site that isn't `running` or
+        `stopped`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StagingRefresh"
+      responses:
+        "202":
+          description: The staging site, now updating, and the refresh job.
+          headers:
+            Location:
+              $ref: "#/components/headers/JobLocation"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableContent"
+        default:
+          $ref: "#/components/responses/Error"
+
   /api/v1/sites/{site_id}/start:
     parameters:
       - $ref: "#/components/parameters/SiteID"
@@ -7716,6 +7796,37 @@ components:
           description: Display name. Defaults to the production site's name followed by "(staging)".
         resources:
           $ref: "#/components/schemas/ResourceLimitsUpdate"
+        snapshot_id:
+          type: string
+          description: |
+            An existing snapshot of the production site to copy (a backup's
+            `snapshot_id`, or a prefix of it of at least 8 characters),
+            instead of a fresh `sync` backup.
+          minLength: 1
+          maxLength: 64
+
+    StagingCopyFiles:
+      type: string
+      description: |
+        How much of `wp-content` a staging copy restores from the snapshot.
+        `all` makes all of it match the snapshot. `code` makes `plugins`,
+        `themes`, `mu-plugins`, and `languages` match it (a directory the
+        snapshot lacks is removed), and leaves `uploads` and everything else
+        alone. `none` leaves `wp-content` alone.
+      enum: [all, code, none]
+
+    StagingRefresh:
+      type: object
+      additionalProperties: false
+      required: [files, database]
+      properties:
+        files:
+          $ref: "#/components/schemas/StagingCopyFiles"
+        database:
+          type: boolean
+          description: |
+            Replace the staging site's database with the snapshot's. With
+            `files: none`, this must be true: a refresh copies something.
         snapshot_id:
           type: string
           description: |

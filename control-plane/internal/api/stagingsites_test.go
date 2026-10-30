@@ -25,6 +25,7 @@ type stagingEnv struct {
 	db         *store.DB
 	admin      http.Handler
 	operator   http.Handler
+	as         func(store.Role) http.Handler
 	prod, stg  store.Site
 	refreshed  time.Time
 	pushedAt   time.Time
@@ -62,12 +63,12 @@ func newStagingEnv(t *testing.T, db *store.DB) *stagingEnv {
 		e.prod.ID, true, e.refreshed, e.snapshotID, e.pushedAt, e.stg.ID); err != nil {
 		t.Fatal(err)
 	}
-	as := func(role store.Role) http.Handler {
+	e.as = func(role store.Role) http.Handler {
 		return newHandler(t, api.Options{DB: db, Sites: e.svc, Backups: e.backups, Authenticator: &fakeAuth{principal: &auth.Principal{
 			UserID: userID, Role: role, Method: auth.MethodSession, SessionID: "test",
 		}}})
 	}
-	e.admin, e.operator = as(store.RoleAdmin), as(store.RoleOperator)
+	e.admin, e.operator = e.as(store.RoleAdmin), e.as(store.RoleOperator)
 	return e
 }
 
@@ -234,6 +235,81 @@ func TestDeleteStagingAuthorization(t *testing.T) {
 		// Now the Admin can delete production.
 		w = e.request(t, e.admin, http.MethodDelete, "/api/v1/sites/"+e.prod.ID, "")
 		expectStatus(t, w, http.StatusAccepted, "admin deleting production")
+	})
+}
+
+func TestRefreshStagingSite(t *testing.T) {
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		e := newStagingEnv(t, db)
+		target := "/api/v1/sites/" + e.stg.ID + "/refresh"
+		scope := `{"files":"code","database":false}`
+
+		w := e.request(t, e.as(store.RoleViewer), http.MethodPost, target, scope)
+		expectStatus(t, w, http.StatusForbidden, "viewer refreshing")
+
+		// Refused requests change nothing. An invalid scope comes before
+		// the fresh backup.
+		snap, err := e.engine.Backup(ctx, e.prod.ID, backup.Options{Kind: string(store.BackupManual)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, tc := range []struct {
+			name, target, body string
+			want               int
+		}{
+			{"a production site", "/api/v1/sites/" + e.prod.ID + "/refresh", scope, http.StatusUnprocessableEntity},
+			{"a scope that copies nothing", target, `{"files":"none","database":false}`, http.StatusUnprocessableEntity},
+			{"an unknown files scope", target, `{"files":"some","database":true}`, http.StatusUnprocessableEntity},
+			{"no scope", target, `{}`, http.StatusUnprocessableEntity},
+			{"an unknown snapshot", target, `{"files":"all","database":true,"snapshot_id":"deadbeef00"}`, http.StatusUnprocessableEntity},
+			{"a missing site", "/api/v1/sites/" + strings.Repeat("0", 26) + "/refresh", scope, http.StatusNotFound},
+		} {
+			w := e.request(t, e.admin, http.MethodPost, tc.target, tc.body)
+			expectStatus(t, w, tc.want, tc.name)
+		}
+
+		// An Operator refreshes from a fresh backup: the job waits for the
+		// sync backup of production.
+		w = e.request(t, e.operator, http.MethodPost, target, scope)
+		expectStatus(t, w, http.StatusAccepted, "refresh")
+		acc := decodeJSON[gen.SiteAccepted](t, w.Body.Bytes())
+		if acc.Site.ID != e.stg.ID || acc.Site.Status != gen.SiteStatusUpdating || acc.PreviewCredentials != nil {
+			t.Errorf("site = %s", w.Body)
+		}
+		if acc.Job.Type != sites.RefreshJobType || acc.Job.AfterJobID == nil || w.Header().Get("Location") != "/api/v1/jobs/"+acc.Job.ID {
+			t.Fatalf("job = %+v, Location %q", acc.Job, w.Header().Get("Location"))
+		}
+		backupJob, err := store.NewJobs(db).Get(ctx, *acc.Job.AfterJobID)
+		if err != nil || backupJob.TargetID != e.prod.ID || backupJob.LockKey != store.SiteLockKey(e.prod.ID) ||
+			!strings.Contains(string(backupJob.Payload), `"sync"`) {
+			t.Errorf("awaited job = %+v, %v", backupJob, err)
+		}
+		ev := allEvents(t, db)[0]
+		if ev.Action != "site.staging.refresh" || ev.Result != store.AuditSuccess || ev.TargetID != e.stg.ID ||
+			ev.Details["parent_site_id"] != e.prod.ID || ev.Details["files"] != "code" || ev.Details["database"] != "false" ||
+			ev.Details["backup_job_id"] != backupJob.ID {
+			t.Errorf("audit event = %+v", ev)
+		}
+
+		// Busy: that refresh is queued.
+		w = e.request(t, e.admin, http.MethodPost, target, scope)
+		expectStatus(t, w, http.StatusConflict, "refresh while one is queued")
+
+		// From an existing backup: no backup job.
+		if _, err := db.ExecContext(ctx, "UPDATE sites SET status = ? WHERE id = ?", store.SiteRunning, e.stg.ID); err != nil {
+			t.Fatal(err)
+		}
+		w = e.request(t, e.admin, http.MethodPost, target, `{"files":"none","database":true,"snapshot_id":"`+string(snap.ID)+`"}`)
+		expectStatus(t, w, http.StatusAccepted, "refresh from a snapshot")
+		acc = decodeJSON[gen.SiteAccepted](t, w.Body.Bytes())
+		if acc.Job.AfterJobID != nil {
+			t.Errorf("job = %+v", acc.Job)
+		}
+		ev = allEvents(t, db)[0]
+		if ev.Details["snapshot_id"] != string(snap.ID) || ev.Details["database"] != "true" || ev.Details["files"] != "none" {
+			t.Errorf("audit event = %+v", ev)
+		}
 	})
 }
 

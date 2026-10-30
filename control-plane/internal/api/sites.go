@@ -10,6 +10,7 @@ import (
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/authz"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/id"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
@@ -179,6 +180,52 @@ func (h *Handlers) CreateStagingSite(ctx context.Context, req gen.CreateStagingS
 			},
 		},
 		Headers: gen.CreateStagingSite202ResponseHeaders{Location: &location},
+	}, nil
+}
+
+// RefreshStagingSite queues the jobs that copy a production site into its
+// staging site (#203, design doc §5.11), returning 202 with the staging site
+// and the refresh job. It is checked against the staging site, whose client
+// group its production site shares.
+func (h *Handlers) RefreshStagingSite(ctx context.Context, req gen.RefreshStagingSiteRequestObject) (gen.RefreshStagingSiteResponseObject, error) {
+	p, err := h.authorize(ctx, authz.RefreshStagingSite, authz.Site(req.SiteID))
+	if err != nil {
+		return nil, err
+	}
+	b := deref(req.Body)
+	out, err := h.sites.RefreshStaging(ctx, req.SiteID, sites.StagingRefresh{
+		Files:           backup.RestoreFiles(b.Files),
+		Database:        b.Database,
+		SnapshotID:      deref(b.SnapshotID),
+		CreatedByUserID: p.UserID,
+	})
+	if err != nil {
+		return nil, siteError(err)
+	}
+	details := map[string]string{
+		"parent_site_id": out.Site.ParentSiteID,
+		"files":          string(b.Files),
+		"database":       strconv.FormatBool(b.Database),
+		"job_id":         out.Job.ID,
+	}
+	if out.BackupJob != nil {
+		details["backup_job_id"] = out.BackupJob.ID
+	} else {
+		details["snapshot_id"] = out.SnapshotID
+	}
+	setAuditDetails(ctx, details)
+	_, aliases, err := h.sites.Get(ctx, out.Site.ID)
+	if err != nil {
+		return nil, siteError(err)
+	}
+	j, err := jobResponse(out.Job, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	location := jobLocation(out.Job)
+	return gen.RefreshStagingSite202JSONResponse{
+		Body:    gen.SiteAccepted{Site: siteResponse(out.Site, aliases), Job: j},
+		Headers: gen.RefreshStagingSite202ResponseHeaders{Location: &location},
 	}, nil
 }
 

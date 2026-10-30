@@ -69,6 +69,7 @@ var operationActions = map[string]authz.Action{
 	"createSite":                   authz.CreateSite,
 	"importSite":                   authz.ImportSite,
 	"createStagingSite":            authz.CreateStagingSite,
+	"refreshStagingSite":           authz.RefreshStagingSite,
 	"getSite":                      authz.ViewSites,
 	"updateSite":                   authz.UpdateSite,
 	"deleteSite":                   authz.DeleteSite,

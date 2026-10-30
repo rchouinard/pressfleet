@@ -97,6 +97,17 @@ import (
 // A job that fails after the restore is complete (turning maintenance
 // mode off, or finishing) doesn't roll the restored site back: its status
 // message says the restore finished and maintenance mode may still be on.
+//
+// # The shared pipeline
+//
+// These steps are the restore pipeline of §5.4, which site.refresh
+// (refresh.go) and site.push (#204) run too: [restoreFlow] holds what differs
+// between the job types, and [Service.restoreFlowHandler] builds the steps.
+// Everything else comes from the job's [restoreSource]: which snapshot of
+// which site, and how much of it. A step outside the scope succeeds without
+// doing anything, instead of being left out, so a job's steps don't depend on
+// its payload. site.restore always has the whole snapshot in scope, so its
+// steps, their names, and what they do are as listed above.
 
 // RestoreJobType restores a snapshot into a site.
 const RestoreJobType = "site.restore"
@@ -131,6 +142,11 @@ const (
 	// dataRollbackError records why restoring the pre-restore snapshot
 	// failed for good.
 	dataRollbackError = "rollback_error"
+	// dataRestoreSnapshot and dataRestoreSnapshotCore are the snapshot and its
+	// WordPress core version, for a job whose prepare step resolves them
+	// because the snapshot didn't exist when the job was queued.
+	dataRestoreSnapshot     = "restore_snapshot_id"
+	dataRestoreSnapshotCore = "restore_snapshot_core"
 )
 
 // ErrNoBackups means the service has no backup engine, so it can't
@@ -149,14 +165,106 @@ type Restore struct {
 	CreatedByUserID string
 }
 
-// restorePayload is the payload of a site.restore job.
+// restorePayload is the payload of a job of the restore pipeline.
 type restorePayload struct {
 	SourceSiteID string `json:"source_site_id"`
-	SnapshotID   string `json:"snapshot_id"`
+	// SnapshotID is empty for a job whose prepare step takes the snapshot
+	// from the backup job it waited for.
+	SnapshotID string `json:"snapshot_id,omitempty"`
 	// SnapshotWPCore is the snapshot's WordPress core version; empty if
-	// the snapshot doesn't say.
+	// the snapshot doesn't say, or isn't known yet.
 	SnapshotWPCore string `json:"snapshot_wp_core,omitempty"`
+	// Scope is how much of the snapshot to restore. A site.restore job has
+	// none, and restores all of it, as those queued before scopes existed
+	// do.
+	Scope *restoreScope `json:"scope,omitempty"`
 }
+
+// restoreScope is backup.RestoreOptions in a job's payload.
+type restoreScope struct {
+	Files    backup.RestoreFiles `json:"files"`
+	Database bool                `json:"database"`
+}
+
+// scope returns how much of the snapshot the job restores.
+func (p restorePayload) scope() backup.RestoreOptions {
+	if p.Scope == nil {
+		return backup.FullRestore()
+	}
+	return backup.RestoreOptions{Files: p.Scope.Files, Database: p.Scope.Database}
+}
+
+// restoreSource is what a job of the restore pipeline restores.
+type restoreSource struct {
+	// SiteID is the site the snapshot is of.
+	SiteID string
+	// SnapshotID is the snapshot's full ID.
+	SnapshotID string
+	// WPCore is the snapshot's WordPress core version; empty if the snapshot
+	// doesn't say.
+	WPCore string
+	// Scope is how much of the snapshot to restore.
+	Scope backup.RestoreOptions
+}
+
+// restoreFlow is what differs between the job types of the restore pipeline.
+type restoreFlow struct {
+	// jobType is the job's type.
+	jobType string
+	// noun names the operation in status messages: "restore" reads "restore
+	// failed" and "its pre-restore backup".
+	noun string
+	// prepare is the first step. It checks that the snapshot exists,
+	// resolving it into dataRestoreSnapshot if the payload doesn't name it,
+	// and has to fail before it changes anything on the site: its failure
+	// rolls back only the status.
+	prepare jobs.StepFunc
+	// rewriteFrom returns hosts to rewrite to the site's besides those the
+	// restored database's home and siteurl name; nil means none.
+	rewriteFrom func(ctx context.Context, src restoreSource) ([]string, error)
+	// convergePlugins adds a configure_plugins step after the URL rewrite,
+	// for a job whose database comes with another site's plugin state.
+	convergePlugins bool
+	// finish is the last step. It should call finishRestore.
+	finish jobs.StepFunc
+}
+
+// scopedStep runs do only if the job's scope wants it; otherwise the step
+// logs why it has nothing to do.
+func scopedStep(wanted func(backup.RestoreOptions) bool, skipped string, do jobs.StepFunc) jobs.StepFunc {
+	return func(ctx context.Context, r *jobs.Run) error {
+		src, err := jobRestoreSource(r)
+		if err != nil {
+			return err
+		}
+		if !wanted(src.Scope) {
+			r.Logf("%s", skipped)
+			return nil
+		}
+		return do(ctx, r)
+	}
+}
+
+// databaseInScope and filesInScope say which steps a scope needs.
+//
+// The core, the schema upgrade, the URL rewrite, and the plugin stack all
+// exist for the database: a core only has to be as new as the schema it
+// runs, and only a restored database names another site's URLs and plugin
+// state (§5.4). A restore that keeps the database must not touch it, which
+// the last three would.
+//
+// The restart exists for the files: PHP-FPM's opcode cache notices changed
+// files only once a minute, so it could keep running replaced code, while a
+// restored database reaches PHP on its next query.
+//
+// The cache purges run for every scope, so they aren't scoped. A cached page
+// is built from code and content alike, so it goes stale when either is
+// replaced, and the object cache holds both the old database's objects and
+// what the old plugins stored in their own format. Neither purge touches the
+// database.
+func databaseInScope(o backup.RestoreOptions) bool { return o.Database }
+
+func filesInScope(o backup.RestoreOptions) bool { return o.Files != backup.RestoreFilesNone }
 
 func (s *Service) restores() bool { return s.backups != nil && s.engine != nil }
 
@@ -334,33 +442,91 @@ func (s *Service) coreFor(snapCore, current string) (string, error) {
 }
 
 func (s *Service) restoreHandler() jobs.Handler {
-	steps := []jobs.Step{{Name: stepPrepareUpdate, Do: s.prepareRestore, Undo: s.finishFailedRestore}}
+	return s.restoreFlowHandler(restoreFlow{
+		jobType: RestoreJobType,
+		noun:    "restore",
+		prepare: s.prepareRestore,
+		finish:  s.finishRestore,
+	})
+}
+
+// restoreFlowHandler builds a job type of the restore pipeline. Keep each job
+// type's step names and their order stable: a queued job resumes by step
+// name.
+func (s *Service) restoreFlowHandler(f restoreFlow) jobs.Handler {
+	steps := []jobs.Step{{Name: stepPrepareUpdate, Do: f.prepare, Undo: func(ctx context.Context, r *jobs.Run) error {
+		return s.finishFailedRestore(ctx, r, f.noun)
+	}}}
 	steps = append(steps, s.backups.Steps(store.BackupPreRestore)...)
 	steps = append(steps,
 		jobs.Step{Name: stepEnableMaintenance, Do: s.enableRestoreMaintenance, Undo: s.revertRestoreMaintenance},
-		jobs.Step{Name: stepUpdateCore, Do: s.updateRestoreCore, Undo: s.revertRestoreCore},
-		jobs.Step{Name: stepRestore, Do: s.restoreSnapshot, Undo: s.rollbackRestore},
-		jobs.Step{Name: stepRestartSite, Do: s.restartRestoredSite},
-		jobs.Step{Name: stepUpgradeDatabase, Do: s.upgradeRestoredDatabase},
-		jobs.Step{Name: stepRewriteURLs, Do: s.rewriteRestoredURLs},
+		jobs.Step{
+			Name: stepUpdateCore,
+			Do:   scopedStep(databaseInScope, "The database isn't being restored, so the site keeps its WordPress core.", s.updateRestoreCore),
+			Undo: s.revertRestoreCore,
+		},
+		jobs.Step{Name: stepRestore, Do: s.restoreSnapshot, Undo: func(ctx context.Context, r *jobs.Run) error {
+			return s.rollbackRestore(ctx, r, f.noun)
+		}},
+		jobs.Step{
+			Name: stepRestartSite,
+			Do:   scopedStep(filesInScope, "No files were restored, so the site needs no restart.", s.restartRestoredSite),
+		},
+		jobs.Step{
+			Name: stepUpgradeDatabase,
+			Do:   scopedStep(databaseInScope, "The database wasn't restored, so it needs no upgrade.", s.upgradeRestoredDatabase),
+		},
+		jobs.Step{
+			Name: stepRewriteURLs,
+			Do: scopedStep(databaseInScope, "The database wasn't restored, so its URLs are the site's already.", func(ctx context.Context, r *jobs.Run) error {
+				return s.rewriteRestoredURLs(ctx, r, f.rewriteFrom)
+			}),
+		},
 	)
+	if f.convergePlugins {
+		steps = append(steps, jobs.Step{
+			Name: stepConfigurePlugins,
+			Do:   scopedStep(databaseInScope, "The database wasn't restored, so the site's plugin state is its own.", s.configureCreatedSitePlugins),
+		})
+	}
 	steps = append(steps, s.cacheSteps()...)
 	steps = append(steps,
 		jobs.Step{Name: stepDisableMaintenance, Do: s.disableRestoreMaintenance},
-		jobs.Step{Name: stepFinishManage, Do: s.finishRestore},
+		jobs.Step{Name: stepFinishManage, Do: f.finish},
 	)
-	return jobs.Handler{Type: RestoreJobType, Steps: steps}
+	return jobs.Handler{Type: f.jobType, Steps: steps}
 }
 
+// restoreJobPayload reads the payload of a job of the restore pipeline.
 func restoreJobPayload(r *jobs.Run) (restorePayload, error) {
 	var p restorePayload
 	if err := r.Payload(&p); err != nil {
 		return restorePayload{}, err
 	}
-	if !id.Valid(p.SourceSiteID) || p.SnapshotID == "" {
-		return restorePayload{}, jobs.Permanent(errors.New("the restore job's payload names no source site or snapshot"))
+	if !id.Valid(p.SourceSiteID) {
+		return restorePayload{}, jobs.Permanent(errors.New("the job's payload names no source site"))
 	}
 	return p, nil
+}
+
+// jobRestoreSource returns what the job restores: the payload's snapshot, or
+// the one its prepare step resolved.
+func jobRestoreSource(r *jobs.Run) (restoreSource, error) {
+	p, err := restoreJobPayload(r)
+	if err != nil {
+		return restoreSource{}, err
+	}
+	src := restoreSource{SiteID: p.SourceSiteID, SnapshotID: p.SnapshotID, WPCore: p.SnapshotWPCore, Scope: p.scope()}
+	if _, err := r.Get(dataRestoreSnapshot, &src.SnapshotID); err != nil {
+		return restoreSource{}, err
+	}
+	if _, err := r.Get(dataRestoreSnapshotCore, &src.WPCore); err != nil {
+		return restoreSource{}, err
+	}
+	if src.SnapshotID == "" {
+		return restoreSource{}, jobs.Permanent(errors.New("the job has no snapshot to restore"))
+	}
+	return src, nil
 }
 
 // flag reads a boolean from the job's data; absent is false.
@@ -379,7 +545,7 @@ func lastAttempt(r *jobs.Run, err error) bool {
 // permanentRestoreError marks the restore errors that retrying can't fix.
 func permanentRestoreError(err error) error {
 	for _, target := range []error{
-		backup.ErrSnapshotNotFound, backup.ErrSiteNotFound, backup.ErrCrossGroup,
+		backup.ErrSnapshotNotFound, backup.ErrSiteNotFound, backup.ErrCrossGroup, backup.ErrInvalidRestoreOptions,
 		provisioner.ErrSiteNotFound, sitedb.ErrDatabaseNotFound, errors.ErrUnsupported,
 	} {
 		if errors.Is(err, target) {
@@ -396,18 +562,18 @@ func (s *Service) prepareRestore(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
-	p, err := restoreJobPayload(r)
+	src, err := jobRestoreSource(r)
 	if err != nil {
 		return err
 	}
-	if _, err := s.findSnapshot(ctx, p.SourceSiteID, p.SnapshotID); err != nil {
+	if _, err := s.findSnapshot(ctx, src.SiteID, src.SnapshotID); err != nil {
 		return permanentRestoreError(err)
 	}
 	from := "its own snapshot"
-	if p.SourceSiteID != site.ID {
-		from = "a snapshot of site " + p.SourceSiteID
+	if src.SiteID != site.ID {
+		from = "a snapshot of site " + src.SiteID
 	}
-	r.Logf("Restoring %s (%s) into %s, after taking a pre-restore backup.", from, shortSnapshot(p.SnapshotID), site.PreviewDomain)
+	r.Logf("Restoring %s (%s) into %s, after taking a pre-restore backup.", from, shortSnapshot(src.SnapshotID), site.PreviewDomain)
 	return nil
 }
 
@@ -498,11 +664,11 @@ func (s *Service) updateRestoreCore(ctx context.Context, r *jobs.Run) error {
 		return err
 	}
 	if !found {
-		p, err := restoreJobPayload(r)
+		src, err := jobRestoreSource(r)
 		if err != nil {
 			return err
 		}
-		target, err = s.coreFor(p.SnapshotWPCore, site.WPCoreVersion)
+		target, err = s.coreFor(src.WPCore, site.WPCoreVersion)
 		if err != nil {
 			return jobs.Permanent(err)
 		}
@@ -578,23 +744,42 @@ func (s *Service) restoreSnapshot(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
-	p, err := restoreJobPayload(r)
+	src, err := jobRestoreSource(r)
 	if err != nil {
 		return err
 	}
 	if err := r.Set(dataRestoreStarted, true); err != nil {
 		return err
 	}
-	if err := s.engine.Restore(ctx, p.SourceSiteID, backup.SnapshotID(p.SnapshotID), site.ID, backup.FullRestore()); err != nil {
+	if err := s.engine.Restore(ctx, src.SiteID, backup.SnapshotID(src.SnapshotID), site.ID, src.Scope); err != nil {
 		return permanentRestoreError(err)
 	}
-	r.Logf("Restored the snapshot's wp-content and database.")
+	r.Logf("Restored the snapshot's %s.", describeScope(src.Scope))
 	return nil
 }
 
+// describeScope names what a restore of the scope replaces, for logs.
+func describeScope(o backup.RestoreOptions) string {
+	var files string
+	switch o.Files {
+	case backup.RestoreFilesAll:
+		files = "wp-content"
+	case backup.RestoreFilesCode:
+		files = strings.Join(backup.CodeDirs, ", ")
+	}
+	switch {
+	case files != "" && o.Database:
+		return files + " and database"
+	case files != "":
+		return files
+	}
+	return "database"
+}
+
 // rollbackRestore restores the pre-restore snapshot, unless the restore
-// completed or never started.
-func (s *Service) rollbackRestore(ctx context.Context, r *jobs.Run) error {
+// completed or never started. That snapshot is of the whole site, so it is
+// restored in full whatever the job's own scope was.
+func (s *Service) rollbackRestore(ctx context.Context, r *jobs.Run, noun string) error {
 	siteID := r.Job().TargetID
 	for _, key := range []string{dataRestoreComplete, dataRolledBack} {
 		if done, err := flag(r, key); err != nil || done {
@@ -609,11 +794,11 @@ func (s *Service) rollbackRestore(ctx context.Context, r *jobs.Run) error {
 		return err
 	}
 	giveUp := func(err error) error {
-		r.Warnf("Couldn't restore the pre-restore backup: %v", err)
+		r.Warnf("Couldn't restore the pre-%s backup: %v", noun, err)
 		return r.Set(dataRollbackError, err.Error())
 	}
 	if !found || rec.Status != store.BackupSucceeded || rec.SnapshotID == "" {
-		return giveUp(errors.New("the job has no pre-restore snapshot"))
+		return giveUp(fmt.Errorf("the job has no pre-%s snapshot", noun))
 	}
 	if err := s.engine.Restore(ctx, siteID, backup.SnapshotID(rec.SnapshotID), siteID, backup.FullRestore()); err != nil {
 		err = permanentRestoreError(err)
@@ -636,7 +821,7 @@ func (s *Service) rollbackRestore(ctx context.Context, r *jobs.Run) error {
 	if err := r.Set(dataRolledBack, true); err != nil {
 		return err
 	}
-	r.Warnf("Rolled the site back to its pre-restore backup %s (snapshot %s).", rec.ID, shortSnapshot(rec.SnapshotID))
+	r.Warnf("Rolled the site back to its pre-%s backup %s (snapshot %s).", noun, rec.ID, shortSnapshot(rec.SnapshotID))
 	return nil
 }
 
@@ -721,13 +906,37 @@ func (s *Service) upgradeRestoredDatabase(ctx context.Context, r *jobs.Run) erro
 }
 
 // rewriteRestoredURLs rewrites the restored database's URLs to the site's
-// if they name another host.
-func (s *Service) rewriteRestoredURLs(ctx context.Context, r *jobs.Run) error {
+// if they name another host, or a host rewriteFrom returns.
+func (s *Service) rewriteRestoredURLs(ctx context.Context, r *jobs.Run, rewriteFrom func(context.Context, restoreSource) ([]string, error)) error {
 	site, err := s.managedSite(ctx, r)
 	if err != nil {
 		return err
 	}
-	return s.rewriteRestoredHosts(ctx, r, site)
+	var also []string
+	if rewriteFrom != nil {
+		src, err := jobRestoreSource(r)
+		if err != nil {
+			return err
+		}
+		if also, err = rewriteFrom(ctx, src); err != nil {
+			return err
+		}
+	}
+	return s.rewriteRestoredHosts(ctx, r, site, also...)
+}
+
+// sourceSiteHost returns the source site's current host, if it still exists:
+// a host to rewrite for a job that copies between sites, in case the
+// snapshot predates a go-live and its home and siteurl name another.
+func (s *Service) sourceSiteHost(ctx context.Context, src restoreSource) ([]string, error) {
+	site, err := store.NewSites(s.db).Get(ctx, src.SiteID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return []string{strings.TrimPrefix(URL(site), "https://")}, nil
 }
 
 // rewriteRestoredHosts rewrites the hosts that the restored database's home and
@@ -821,11 +1030,11 @@ func (s *Service) finishRestore(ctx context.Context, r *jobs.Run) error {
 	if err := s.finishUpdate(ctx, r); err != nil {
 		return err
 	}
-	p, err := restoreJobPayload(r)
+	src, err := jobRestoreSource(r)
 	if err != nil {
 		return err
 	}
-	result := map[string]string{"site_id": r.Job().TargetID, "source_site_id": p.SourceSiteID, "snapshot_id": p.SnapshotID}
+	result := map[string]string{"site_id": r.Job().TargetID, "source_site_id": src.SiteID, "snapshot_id": src.SnapshotID}
 	if rec, found, err := s.backups.JobBackup(ctx, r); err != nil {
 		return err
 	} else if found {
@@ -839,10 +1048,10 @@ func (s *Service) finishRestore(ctx context.Context, r *jobs.Run) error {
 	return nil
 }
 
-// finishFailedRestore is the last Undo of a failed site.restore job: it
-// sets the site's status and says in its status message what the failed
-// restore left behind. A site being deleted is left alone.
-func (s *Service) finishFailedRestore(ctx context.Context, r *jobs.Run) error {
+// finishFailedRestore is the last Undo of a failed job of the restore
+// pipeline: it sets the site's status and says in its status message what the
+// failed job left behind. A site being deleted is left alone.
+func (s *Service) finishFailedRestore(ctx context.Context, r *jobs.Run, noun string) error {
 	siteID := r.Job().TargetID
 	var rollbackErr, revertErr string
 	if _, err := r.Get(dataRollbackError, &rollbackErr); err != nil {
@@ -863,25 +1072,25 @@ func (s *Service) finishFailedRestore(ctx context.Context, r *jobs.Run) error {
 	if rec, found, err := s.backups.JobBackup(ctx, r); err != nil {
 		return err
 	} else if found && rec.Status == store.BackupSucceeded {
-		backupNote = " (pre-restore backup " + rec.ID + ")"
+		backupNote = " (pre-" + noun + " backup " + rec.ID + ")"
 	}
 	status := s.observedStatus(ctx, siteID)
 	var prefix string
 	switch {
 	case complete:
-		prefix = "the restore finished, but the job failed afterwards; the site may still be in maintenance mode"
+		prefix = "the " + noun + " finished, but the job failed afterwards; the site may still be in maintenance mode"
 	case rollbackErr != "":
 		status = store.SiteFailed
-		prefix = "restore failed, and rolling back to the pre-restore backup failed too" + backupNote +
-			"; the site stays in maintenance mode. Restore the pre-restore backup to try again"
+		prefix = noun + " failed, and rolling back to the pre-" + noun + " backup failed too" + backupNote +
+			"; the site stays in maintenance mode. Restore the pre-" + noun + " backup to try again"
 	case revertErr != "":
 		status = store.SiteFailed
-		prefix = "restore failed and was rolled back" + backupNote + ", but the site's previous WordPress version couldn't be put back"
+		prefix = noun + " failed and was rolled back" + backupNote + ", but the site's previous WordPress version couldn't be put back"
 	case started:
-		prefix = "restore failed and the site was rolled back to its pre-restore backup" + backupNote +
+		prefix = noun + " failed and the site was rolled back to its pre-" + noun + " backup" + backupNote +
 			"; it stays in maintenance mode until you turn it off"
 	default:
-		prefix = "restore failed before changing the site"
+		prefix = noun + " failed before changing the site"
 	}
 	msg := statusMessage(prefix, r.Job().Error)
 	changed, err := store.NewSites(s.db).SetStatus(ctx, siteID, status, msg, store.SiteUpdating)

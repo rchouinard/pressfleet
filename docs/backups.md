@@ -48,7 +48,7 @@ Every site is backed up once a day from the moment it is created, at a time insi
 
 Per site, an Operator or Admin can change the schedule on the site's **Backups** page (or `PUT /api/v1/sites/{id}/backup-schedule`): the interval (1, 2, 3, 4, 6, 8, or 12 hours, or whole days up to a week), the UTC hour to start in, or turn scheduled backups off. Manual backups always work: **Back up now** on the same page (`POST /api/v1/sites/{id}/backups`).
 
-Before risky changes the platform takes its own backups: `pre_update` before a WordPress core update and `pre_restore` before a restore. A `sync` backup is the snapshot taken as the source of a staging clone, refresh, or push. They show in the same list with their `kind`, and the retention policy treats them like any other backup.
+Before risky changes the platform takes its own backups: `pre_update` before a WordPress core update and `pre_restore` before a restore or a staging refresh. A `sync` backup is the snapshot taken as the source of a staging clone, refresh, or push. They show in the same list with their `kind`, and the retention policy treats them like any other backup.
 
 A site backup that can't read some files still succeeds; the backup's message lists the files it skipped.
 

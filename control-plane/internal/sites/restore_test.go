@@ -44,6 +44,8 @@ type dataEngine struct {
 	mu    sync.Mutex
 	data  map[backup.SnapshotID][]byte
 	cores map[backup.SnapshotID]string
+	// backupCore, if set, is the WordPress core of the site's new snapshots.
+	backupCore map[string]string
 	// restoreErr, if set, is consulted on the nth Restore call (from 1).
 	restoreErr func(n int, snap backup.SnapshotID) error
 	restores   int
@@ -58,6 +60,9 @@ func (d *dataEngine) Backup(ctx context.Context, siteID string, opts backup.Opti
 	defer d.mu.Unlock()
 	if _, ok := d.data[snap.ID]; !ok {
 		d.data[snap.ID], _ = d.dbs.Data(siteID)
+	}
+	if core, ok := d.backupCore[siteID]; ok {
+		d.cores[snap.ID] = core
 	}
 	return snap, nil
 }
@@ -84,6 +89,9 @@ func (d *dataEngine) Restore(ctx context.Context, siteID string, snap backup.Sna
 		if err := fail(n, snap); err != nil {
 			return err
 		}
+	}
+	if !opts.Database {
+		return nil
 	}
 	d.mu.Lock()
 	data := d.data[snap]

@@ -142,6 +142,7 @@ var sampleBodies = map[string]string{
 	"createClientGroup":        `{"name":"Acme"}`,
 	"updateClientGroup":        `{"notes":"hello"}`,
 	"createSite":               `{"client_group_id":"abc123","name":"Acme","admin_email":"a@example.com"}`,
+	"refreshStagingSite":       `{"files":"none","database":true}`,
 	"updateSite":               `{"php_version":"8.4","resources":{"memory_limit_mb":256}}`,
 	"setSiteMaintenance":       `{"enabled":true}`,
 	"goLiveSite":               `{"primary_domain":"www.acme.example"}`,
