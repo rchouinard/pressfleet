@@ -10,6 +10,17 @@
 // the site row. Payloads, step data, and results are stored in plaintext and
 // must never contain secrets.
 //
+// # Job chains
+//
+// A job can wait for another: Spec.After names a job that must reach a
+// final state (succeeded, failed, or rollback_failed) before this one is
+// leased. Work that spans two lock keys is split this way, such as a copy
+// between two sites: a backup of the source under the source's key, then
+// the restore under the target's key, after the backup. The awaited job's
+// outcome doesn't matter to the queue; the dependent job's first step
+// reads it with [Run.Awaited] and, if it failed, returns [AwaitedJob.Err]
+// to fail permanently and roll back.
+//
 // # Lifecycle
 //
 //	queued ──lease──▶ running ──all steps done──▶ succeeded
@@ -53,6 +64,19 @@
 // attempts. A queued job also blocks the jobs behind it while it waits for
 // its RunAfter time. Jobs without a key, or with different keys, run
 // concurrently up to the pool's concurrency.
+//
+// The exception is a job chain. A queued job that hasn't started doesn't
+// block its lock key while it waits for its Spec.After job: later jobs
+// with its key run in the meantime, and it takes its place in line again
+// once the awaited job is final. A job that has started keeps its key
+// until it is final, as above. Otherwise a waiting job would hold up its
+// key for as long as the awaited job takes, on another key. Take a backup
+// of A then a copy to B, and a backup of B then a copy to A, queued
+// together: the copy to B would sit ahead of the backup of B, which the
+// copy to A waits for, and the four jobs would run one after another
+// instead of two at a time. Chains can't deadlock: a job waits only for a
+// job that already exists, so waits form no cycle, and a waiting job
+// blocks nothing.
 //
 // # Steps
 //

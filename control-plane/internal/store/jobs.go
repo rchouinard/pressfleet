@@ -17,6 +17,10 @@ import (
 // stop working on the job without writing anything else.
 var ErrLeaseLost = errors.New("job lease lost")
 
+// ErrAfterJobNotFound means a job was enqueued to run after a job that
+// doesn't exist.
+var ErrAfterJobNotFound = errors.New("awaited job not found")
+
 // JobState is where a job is in its lifecycle. Package jobs documents the
 // transitions.
 type JobState string
@@ -108,6 +112,9 @@ type Job struct {
 	CreatedByUserID string // empty for jobs started by the platform
 	ScheduleID      string // empty unless a schedule enqueued the job
 	ScheduledFor    time.Time
+	// AfterJobID is the job this one waits for: it isn't leased until that
+	// job is final. Empty if it waits for none.
+	AfterJobID string
 	// RunAfter is the earliest time the job may be leased.
 	RunAfter       time.Time
 	LeaseOwner     string
@@ -154,7 +161,7 @@ func NewJobs(q Querier) Jobs {
 }
 
 const jobColumns = "id, type, target_type, target_id, state, params, data, result, error, lock_key, attempts, max_attempts, " +
-	"created_by_user_id, schedule_id, scheduled_for, run_after, lease_owner, lease_expires_at, seq, " +
+	"created_by_user_id, schedule_id, after_job_id, scheduled_for, run_after, lease_owner, lease_expires_at, seq, " +
 	"created_at, started_at, finished_at, updated_at"
 
 func scanJob(s scanner) (Job, error) {
@@ -162,13 +169,15 @@ func scanJob(s scanner) (Job, error) {
 		j                                       Job
 		payload, data, result                   string
 		lockKey, createdBy, scheduleID, leaseBy sql.NullString
+		afterJobID                              sql.NullString
 		scheduledFor, leaseExp, started, done   sql.NullTime
 	)
 	err := s.Scan(&j.ID, &j.Type, &j.TargetType, &j.TargetID, &j.State, &payload, &data, &result, &j.Error,
-		&lockKey, &j.Attempts, &j.MaxAttempts, &createdBy, &scheduleID, &scheduledFor, &j.RunAfter,
+		&lockKey, &j.Attempts, &j.MaxAttempts, &createdBy, &scheduleID, &afterJobID, &scheduledFor, &j.RunAfter,
 		&leaseBy, &leaseExp, &j.Seq, &j.CreatedAt, &started, &done, &j.UpdatedAt)
 	j.Payload, j.Data, j.Result = json.RawMessage(payload), json.RawMessage(data), json.RawMessage(result)
 	j.LockKey, j.CreatedByUserID, j.ScheduleID, j.LeaseOwner = lockKey.String, createdBy.String, scheduleID.String, leaseBy.String
+	j.AfterJobID = afterJobID.String
 	j.ScheduledFor, j.LeaseExpiresAt, j.StartedAt, j.FinishedAt = scheduledFor.Time, leaseExp.Time, started.Time, done.Time
 	return j, err
 }
@@ -208,8 +217,9 @@ var jobIDs id.Monotonic
 
 // Enqueue inserts j as a queued job, filling in its ID, state, sequence
 // number, and timestamps. RunAfter defaults to now and MaxAttempts to
-// DefaultMaxAttempts. Run it inside DB.InTx to enqueue atomically with
-// other changes.
+// DefaultMaxAttempts. AfterJobID, if set, must name an existing job
+// (ErrAfterJobNotFound otherwise). Run it inside DB.InTx to enqueue
+// atomically with other changes.
 func (r Jobs) Enqueue(ctx context.Context, j *Job) error {
 	if j.Type == "" || j.TargetType == "" || j.TargetID == "" {
 		return errors.New("enqueue job: type, target type, and target ID are required")
@@ -217,6 +227,15 @@ func (r Jobs) Enqueue(ctx context.Context, j *Job) error {
 	payload, err := jsonObject(j.Payload)
 	if err != nil {
 		return fmt.Errorf("enqueue job: payload %w", err)
+	}
+	if j.AfterJobID != "" {
+		var n int
+		if err := r.q.QueryRowContext(ctx, "SELECT COUNT(*) FROM jobs WHERE id = ?", j.AfterJobID).Scan(&n); err != nil {
+			return fmt.Errorf("enqueue %s job: checking awaited job: %w", j.Type, err)
+		}
+		if n == 0 {
+			return fmt.Errorf("enqueue %s job after job %s: %w", j.Type, j.AfterJobID, ErrAfterJobNotFound)
+		}
 	}
 	e := *j
 	e.ID = jobIDs.NewAt(time.Now())
@@ -240,11 +259,11 @@ func (r Jobs) Enqueue(ctx context.Context, j *Job) error {
 	// meaningful order anyway.
 	err = r.q.QueryRowContext(ctx,
 		`INSERT INTO jobs (id, type, target_type, target_id, state, params, data, result, lock_key, max_attempts,
-			created_by_user_id, schedule_id, scheduled_for, run_after, created_at, updated_at, seq)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM jobs))
+			created_by_user_id, schedule_id, after_job_id, scheduled_for, run_after, created_at, updated_at, seq)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM jobs))
 		RETURNING seq`,
 		e.ID, e.Type, e.TargetType, e.TargetID, e.State, payload, "{}", "{}", nullString(e.LockKey), e.MaxAttempts,
-		nullString(e.CreatedByUserID), nullString(e.ScheduleID), nullTime(e.ScheduledFor), e.RunAfter,
+		nullString(e.CreatedByUserID), nullString(e.ScheduleID), nullString(e.AfterJobID), nullTime(e.ScheduledFor), e.RunAfter,
 		e.CreatedAt, e.UpdatedAt).Scan(&e.Seq)
 	if err != nil {
 		return fmt.Errorf("enqueue %s job: %w", e.Type, err)
@@ -256,11 +275,16 @@ func (r Jobs) Enqueue(ctx context.Context, j *Job) error {
 // Lease claims the next runnable job whose type is in types for owner until
 // expires, and returns it with its state set to running (or still
 // rolling_back) and Attempts incremented. It returns ErrNotFound if no job
-// is runnable. A job is runnable if RunAfter has passed and either
+// is runnable. A job is waiting if it is queued, hasn't started, and the
+// job it waits for (AfterJobID) isn't final. A job is runnable if RunAfter
+// has passed and either
 //
-//   - it is queued and no other job with its lock key is ahead of it: one
-//     that is running or rolling back, one that has started and is queued
-//     to retry, or one that is queued with a lower sequence number; or
+//   - it is queued, isn't waiting, and no other job with its lock key is
+//     ahead of it: one that is running or rolling back, one that has
+//     started and is queued to retry, or one that is queued with a lower
+//     sequence number and isn't waiting. A waiting job doesn't hold up the
+//     jobs behind it while the job it waits for runs under another key
+//     (package jobs, "Lock keys"); or
 //   - it is running or rolling back and its lease has expired or was
 //     released (its worker died, was stopped, or is waiting to retry a
 //     rollback).
@@ -291,13 +315,14 @@ func (r Jobs) Lease(ctx context.Context, types []string, owner string, now, expi
 			SELECT j.id FROM jobs j
 			WHERE j.type IN (` + placeholders(len(types)) + `) AND j.run_after <= ?
 			AND (
-				(j.state = 'queued' AND (j.lock_key IS NULL OR NOT EXISTS (
+				(j.state = 'queued' AND NOT ` + waiting("j") + ` AND (j.lock_key IS NULL OR NOT EXISTS (
 					SELECT 1 FROM jobs o
 					WHERE o.lock_key = j.lock_key AND o.id <> j.id AND (
 						o.state IN ('running', 'rolling_back')
 						OR (o.state = 'queued' AND o.started_at IS NOT NULL AND j.started_at IS NULL)
 						OR (o.state = 'queued' AND (o.started_at IS NULL) = (j.started_at IS NULL)
-							AND (o.seq < j.seq OR (o.seq = j.seq AND o.id < j.id)))
+							AND (o.seq < j.seq OR (o.seq = j.seq AND o.id < j.id))
+							AND NOT ` + waiting("o") + `)
 					)
 				)))
 				OR (j.state IN ('running', 'rolling_back') AND (j.lease_expires_at IS NULL OR j.lease_expires_at < ?))
@@ -314,6 +339,16 @@ func (r Jobs) Lease(ctx context.Context, types []string, owner string, now, expi
 		return Job{}, fmt.Errorf("lease job: %w", err)
 	}
 	return j, nil
+}
+
+// waiting returns an SQL condition that is true while the job aliased as
+// alias waits for its AfterJobID to reach a final state. Only a job that
+// hasn't started can be waiting: final states are permanent, so once a job
+// has been leased, the job it waited for stays final. An awaited job that
+// was deleted doesn't hold its dependents back.
+func waiting(alias string) string {
+	return `(` + alias + `.after_job_id IS NOT NULL AND EXISTS (
+		SELECT 1 FROM jobs a WHERE a.id = ` + alias + `.after_job_id AND a.state IN ('queued', 'running', 'rolling_back')))`
 }
 
 func placeholders(n int) string {

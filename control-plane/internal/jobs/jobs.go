@@ -20,6 +20,12 @@ var (
 	// ErrNoSecretStore means a step stored a secret result but the pool has
 	// no SecretStore.
 	ErrNoSecretStore = errors.New("no secret store configured")
+	// ErrNotWaiting means Run.Awaited was called for a job that wasn't
+	// enqueued with Spec.After.
+	ErrNotWaiting = errors.New("job does not wait for another job")
+	// ErrAwaitedJobFailed means the job a job waited for didn't succeed.
+	// AwaitedJob.Err returns it, marked permanent.
+	ErrAwaitedJobFailed = errors.New("awaited job did not succeed")
 )
 
 // Permanent marks err as permanent: the job rolls back without retrying.
@@ -68,7 +74,12 @@ type Spec struct {
 	// MaxAttempts defaults to store.DefaultMaxAttempts.
 	MaxAttempts int
 	// RunAfter delays the job; zero means now.
-	RunAfter        time.Time
+	RunAfter time.Time
+	// After is the ID of a job that must reach a final state (succeeded,
+	// failed, or rollback_failed) before this one is leased. The job's
+	// first step reads its outcome with Run.Awaited. Enqueue fails with
+	// store.ErrAfterJobNotFound if there is no such job.
+	After           string
 	CreatedByUserID string
 }
 
@@ -88,6 +99,7 @@ func Enqueue(ctx context.Context, q store.Querier, s Spec) (store.Job, error) {
 		LockKey:         s.LockKey,
 		MaxAttempts:     s.MaxAttempts,
 		RunAfter:        s.RunAfter,
+		AfterJobID:      s.After,
 		CreatedByUserID: s.CreatedByUserID,
 	}
 	if err := store.NewJobs(q).Enqueue(ctx, &j); err != nil {

@@ -7916,6 +7916,14 @@ components:
           oneOf:
             - $ref: "#/components/schemas/ID"
             - type: "null"
+        after_job_id:
+          description: |
+            The job this job waits for; null if it waits for none. A queued job isn't started until that job is
+            final (`succeeded`, `failed`, or `rollback_failed`), and then reads its outcome: if it failed, this job
+            fails too.
+          oneOf:
+            - $ref: "#/components/schemas/ID"
+            - type: "null"
         created_at:
           $ref: "#/components/schemas/Timestamp"
         updated_at:
