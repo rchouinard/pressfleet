@@ -26,12 +26,16 @@ const (
 	// BackupPreUpdate is the snapshot a core update takes of its site
 	// first, so a failed update can be reverted (design doc §5.5).
 	BackupPreUpdate BackupKind = "pre_update"
+	// BackupSync is the snapshot taken as the source of a staging clone,
+	// refresh, or push. Retention treats it like any other kind: the
+	// policy counts a site's snapshots whatever their kind.
+	BackupSync BackupKind = "sync"
 )
 
 // Valid reports whether k is a known kind.
 func (k BackupKind) Valid() bool {
 	switch k {
-	case BackupManual, BackupScheduled, BackupPreRestore, BackupPreUpdate:
+	case BackupManual, BackupScheduled, BackupPreRestore, BackupPreUpdate, BackupSync:
 		return true
 	}
 	return false

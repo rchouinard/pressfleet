@@ -212,7 +212,7 @@ func TestBackupRecords(t *testing.T) {
 }
 
 func TestBackupKindValid(t *testing.T) {
-	for _, k := range []store.BackupKind{store.BackupManual, store.BackupScheduled, store.BackupPreRestore} {
+	for _, k := range []store.BackupKind{store.BackupManual, store.BackupScheduled, store.BackupPreRestore, store.BackupPreUpdate, store.BackupSync} {
 		if !k.Valid() {
 			t.Errorf("%q is not valid", k)
 		}

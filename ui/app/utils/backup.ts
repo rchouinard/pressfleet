@@ -37,6 +37,7 @@ const kindLabels: Record<BackupKind, string> = {
   scheduled: 'Scheduled',
   pre_restore: 'Before a restore',
   pre_update: 'Before a core update',
+  sync: 'Staging sync',
 }
 
 export function backupKindLabel(kind: BackupKind): string {

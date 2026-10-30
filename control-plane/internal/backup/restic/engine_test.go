@@ -126,6 +126,17 @@ func (f *fixture) runTaskDirect(t *testing.T, siteID string, task provisioner.Ta
 		provisioner.TaskRepositoryPath, task.RepositoryDir,
 		provisioner.TaskSecretsPath, secrets,
 	)
+	if task.Command[0] == "rm" {
+		// The task that removes a code directory the snapshot lacks.
+		if len(task.Command) != 4 || task.Command[1] != "-rf" || task.Command[2] != "--" {
+			t.Errorf("rm task command = %q", task.Command)
+			return &provisioner.TaskResult{}, nil
+		}
+		if err := os.RemoveAll(paths.Replace(task.Command[3])); err != nil {
+			t.Fatal(err)
+		}
+		return &provisioner.TaskResult{}, nil
+	}
 	if task.Command[0] != "restic" {
 		t.Errorf("task command = %q", task.Command)
 	}
@@ -587,7 +598,7 @@ func TestRestore(t *testing.T) {
 		f.dbs.SetData(site.ID, []byte("-- changed"))
 		tasksBefore := len(f.tasks())
 
-		if err := f.engine.Restore(ctx, site.ID, snap.ID, site.ID); err != nil {
+		if err := f.engine.Restore(ctx, site.ID, snap.ID, site.ID, backup.FullRestore()); err != nil {
 			t.Fatal(err)
 		}
 		if got := f.wpContent(t, site.ID); !maps.Equal(got, before) {
@@ -617,7 +628,7 @@ func TestRestore(t *testing.T) {
 		}
 
 		// Restoring again converges; a short ID works too.
-		if err := f.engine.Restore(ctx, site.ID, snap.ID[:8], site.ID); err != nil {
+		if err := f.engine.Restore(ctx, site.ID, snap.ID[:8], site.ID, backup.FullRestore()); err != nil {
 			t.Fatal(err)
 		}
 		if got := f.wpContent(t, site.ID); !maps.Equal(got, before) {
@@ -627,7 +638,7 @@ func TestRestore(t *testing.T) {
 		// Into another site of the group: its wp-content and database
 		// become the snapshot's.
 		writeFile(t, filepath.Join(f.siteRoots[other.ID], "wp-content/only-in-shop.txt"), "shop")
-		if err := f.engine.Restore(ctx, site.ID, snap.ID, other.ID); err != nil {
+		if err := f.engine.Restore(ctx, site.ID, snap.ID, other.ID, backup.FullRestore()); err != nil {
 			t.Fatal(err)
 		}
 		if got := f.wpContent(t, other.ID); !maps.Equal(got, before) {
@@ -673,11 +684,11 @@ func TestRestoreErrors(t *testing.T) {
 			{"unknown source", id.New(), site.ID, snap.ID, backup.ErrSiteNotFound},
 			{"another client group", site.ID, stranger.ID, snap.ID, backup.ErrCrossGroup},
 		} {
-			if err := f.engine.Restore(ctx, tt.site, tt.snap, tt.target); !errors.Is(err, tt.want) {
+			if err := f.engine.Restore(ctx, tt.site, tt.snap, tt.target, backup.FullRestore()); !errors.Is(err, tt.want) {
 				t.Errorf("%s: Restore = %v, want %v", tt.name, err, tt.want)
 			}
 		}
-		if err := f.engine.Restore(ctx, "../x", snap.ID, site.ID); err == nil {
+		if err := f.engine.Restore(ctx, "../x", snap.ID, site.ID, backup.FullRestore()); err == nil {
 			t.Error("Restore accepted an invalid site ID")
 		}
 		if n := len(f.tasks()) - tasksBefore; n != 0 {
@@ -694,7 +705,7 @@ func TestRestoreErrors(t *testing.T) {
 			return &provisioner.TaskResult{}, nil
 		}
 		// The dump task "succeeds" without writing a dump.
-		if err := f.engine.Restore(ctx, site.ID, snap.ID, site.ID); !errors.Is(err, restic.ErrRestoreFailed) || !strings.Contains(err.Error(), "no database dump") {
+		if err := f.engine.Restore(ctx, site.ID, snap.ID, site.ID, backup.FullRestore()); !errors.Is(err, restic.ErrRestoreFailed) || !strings.Contains(err.Error(), "no database dump") {
 			t.Errorf("Restore of a snapshot without a dump: %v", err)
 		}
 		f.output = nil
@@ -705,7 +716,7 @@ func TestRestoreErrors(t *testing.T) {
 			return f.runTaskDirect(t, site.ID, task)
 		}
 		f.output = failWrite
-		err = f.engine.Restore(ctx, site.ID, snap.ID, site.ID)
+		err = f.engine.Restore(ctx, site.ID, snap.ID, site.ID, backup.FullRestore())
 		if !errors.Is(err, restic.ErrRestoreFailed) || !strings.Contains(err.Error(), "Fatal: disk full") {
 			t.Errorf("Restore with a failing task: %v", err)
 		}
@@ -724,7 +735,7 @@ func TestRestoreErrors(t *testing.T) {
 			}
 			return nil
 		}
-		if err := f.engine.Restore(ctx, site.ID, snap.ID, site.ID); err == nil || !strings.Contains(err.Error(), "import exploded") {
+		if err := f.engine.Restore(ctx, site.ID, snap.ID, site.ID, backup.FullRestore()); err == nil || !strings.Contains(err.Error(), "import exploded") {
 			t.Errorf("Restore with a failing import: %v", err)
 		}
 		f.dbs.Err = nil
