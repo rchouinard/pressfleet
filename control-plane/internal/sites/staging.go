@@ -528,7 +528,7 @@ func (s *Service) restoreClone(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
-	if err := s.engine.Restore(ctx, p.SourceSiteID, backup.SnapshotID(snap), site.ID); err != nil {
+	if err := s.engine.Restore(ctx, p.SourceSiteID, backup.SnapshotID(snap), site.ID, backup.FullRestore()); err != nil {
 		return permanentRestoreError(err)
 	}
 	r.Logf("Restored the production site's wp-content and database (snapshot %s).", shortSnapshot(snap))
