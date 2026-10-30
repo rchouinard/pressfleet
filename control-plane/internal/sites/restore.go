@@ -585,7 +585,7 @@ func (s *Service) restoreSnapshot(ctx context.Context, r *jobs.Run) error {
 	if err := r.Set(dataRestoreStarted, true); err != nil {
 		return err
 	}
-	if err := s.engine.Restore(ctx, p.SourceSiteID, backup.SnapshotID(p.SnapshotID), site.ID); err != nil {
+	if err := s.engine.Restore(ctx, p.SourceSiteID, backup.SnapshotID(p.SnapshotID), site.ID, backup.FullRestore()); err != nil {
 		return permanentRestoreError(err)
 	}
 	r.Logf("Restored the snapshot's wp-content and database.")
@@ -615,7 +615,7 @@ func (s *Service) rollbackRestore(ctx context.Context, r *jobs.Run) error {
 	if !found || rec.Status != store.BackupSucceeded || rec.SnapshotID == "" {
 		return giveUp(errors.New("the job has no pre-restore snapshot"))
 	}
-	if err := s.engine.Restore(ctx, siteID, backup.SnapshotID(rec.SnapshotID), siteID); err != nil {
+	if err := s.engine.Restore(ctx, siteID, backup.SnapshotID(rec.SnapshotID), siteID, backup.FullRestore()); err != nil {
 		err = permanentRestoreError(err)
 		if !lastAttempt(r, err) {
 			return err

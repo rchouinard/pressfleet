@@ -11,6 +11,7 @@ package backup
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -34,6 +35,9 @@ var (
 	// integrity check found errors. The repository needs an operator: it
 	// must be repaired (restic repair) before its backups can be trusted.
 	ErrRepositoryDamaged = errors.New("backup: the backup repository is damaged")
+	// ErrInvalidRestoreOptions is returned by Restore for a scope that
+	// restores nothing or names an unknown files scope.
+	ErrInvalidRestoreOptions = errors.New("backup: invalid restore options")
 )
 
 // SnapshotID identifies a snapshot within a client group repository.
@@ -83,6 +87,58 @@ type Snapshot struct {
 	Warnings []string
 }
 
+// RestoreFiles says how much of a snapshot's wp-content a restore brings
+// back.
+type RestoreFiles string
+
+// Files scopes.
+const (
+	// RestoreFilesAll replaces all of wp-content with the snapshot's.
+	RestoreFilesAll RestoreFiles = "all"
+	// RestoreFilesCode replaces the code directories (CodeDirs) with the
+	// snapshot's, each made to match it, and leaves the rest of wp-content,
+	// uploads above all, alone.
+	RestoreFilesCode RestoreFiles = "code"
+	// RestoreFilesNone leaves wp-content alone.
+	RestoreFilesNone RestoreFiles = "none"
+)
+
+// CodeDirs are the directories of wp-content that RestoreFilesCode
+// replaces: the site's code, as opposed to its content.
+var CodeDirs = []string{"plugins", "themes", "mu-plugins", "languages"}
+
+// RestoreOptions is the scope of a restore: which parts of the snapshot
+// replace the target's. The zero value is invalid; use FullRestore for the
+// whole snapshot.
+type RestoreOptions struct {
+	// Files is how much of wp-content to restore.
+	Files RestoreFiles
+	// Database says whether to replace the database with the snapshot's
+	// dump.
+	Database bool
+}
+
+// FullRestore is the scope of a plain restore: all of wp-content and the
+// database.
+func FullRestore() RestoreOptions {
+	return RestoreOptions{Files: RestoreFilesAll, Database: true}
+}
+
+// Validate returns an error wrapping ErrInvalidRestoreOptions unless the
+// scope names a known files scope and restores something.
+func (o RestoreOptions) Validate() error {
+	switch o.Files {
+	case RestoreFilesAll, RestoreFilesCode:
+	case RestoreFilesNone:
+		if !o.Database {
+			return fmt.Errorf("%w: neither files nor the database would be restored", ErrInvalidRestoreOptions)
+		}
+	default:
+		return fmt.Errorf("%w: unknown files scope %q", ErrInvalidRestoreOptions, o.Files)
+	}
+	return nil
+}
+
 // Retention is a retention policy: which of each site's snapshots Prune
 // keeps. A snapshot is kept if any rule keeps it; each site's snapshots
 // are counted separately. The zero policy keeps everything.
@@ -119,16 +175,18 @@ type Engine interface {
 	// ErrSiteNotFound if the platform knows nothing of the site.
 	ListSnapshots(ctx context.Context, siteID string) ([]Snapshot, error)
 	// Restore restores snapshot snap, taken of siteID, into targetSiteID:
-	// it replaces the target's wp-content with the snapshot's, removing
-	// files the snapshot doesn't have, and its database with the
-	// snapshot's dump. The target may be siteID itself or a different site
+	// the parts opts selects. It replaces the target's wp-content (or only
+	// its code directories) with the snapshot's, removing files the
+	// snapshot doesn't have, and/or its database with the snapshot's dump;
+	// whatever the scope leaves out stays as it is. The target may be siteID itself or a different site
 	// of the same client group (e.g. a future staging clone). It changes
 	// nothing else: maintenance mode, URLs, and caches are the caller's.
 	// Restoring again converges on the same state. Returns
 	// ErrSnapshotNotFound if snap does not belong to siteID, ErrSiteNotFound
 	// if the target doesn't exist, and ErrCrossGroup if the target is in
-	// another client group.
-	Restore(ctx context.Context, siteID string, snap SnapshotID, targetSiteID string) error
+	// another client group, and ErrInvalidRestoreOptions if opts restores
+	// nothing.
+	Restore(ctx context.Context, siteID string, snap SnapshotID, targetSiteID string, opts RestoreOptions) error
 	// Prune applies the engine's retention policy to a client group
 	// repository: it removes the snapshots the policy doesn't keep, then
 	// the data that only they used. Running it again converges on the

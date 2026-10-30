@@ -305,7 +305,7 @@ func (s *Service) restoreRecovered(ctx context.Context, r *jobs.Run) error {
 	if !ok {
 		return jobs.Permanent(errors.New("the job has no snapshot to recover from"))
 	}
-	if err := s.engine.Restore(ctx, site.ID, backup.SnapshotID(snapID), site.ID); err != nil {
+	if err := s.engine.Restore(ctx, site.ID, backup.SnapshotID(snapID), site.ID, backup.FullRestore()); err != nil {
 		return permanentRestoreError(err)
 	}
 	r.Logf("Restored the backup's wp-content and database.")

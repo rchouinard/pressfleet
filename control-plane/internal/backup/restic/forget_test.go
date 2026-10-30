@@ -60,7 +60,7 @@ func TestForgetSite(t *testing.T) {
 	if err := f.engine.Check(ctx, groupID); err != nil {
 		t.Errorf("Check after ForgetSite = %v", err)
 	}
-	if err := f.engine.Restore(ctx, other.ID, otherSnap.ID, other.ID); err != nil {
+	if err := f.engine.Restore(ctx, other.ID, otherSnap.ID, other.ID, backup.FullRestore()); err != nil {
 		t.Errorf("Restore of the other site's snapshot = %v", err)
 	}
 
