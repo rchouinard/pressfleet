@@ -73,6 +73,7 @@ func TestRenderGolden(t *testing.T) {
 	}{
 		{"minimal.php.golden", testParams()},
 		{"full.php.golden", fullParams()},
+		{"staging.php.golden", stagingParams()},
 	} {
 		t.Run(tc.golden, func(t *testing.T) {
 			got, err := Render(tc.params)

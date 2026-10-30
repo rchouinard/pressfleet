@@ -114,6 +114,32 @@ type SiteConfig struct {
 	// ImagePinner.PinImage returned for them (§5.5). A component without
 	// one runs its image's tag as it is.
 	PinnedImages map[Component]string
+	// Environment is the site's environment type, rendered as
+	// WP_ENVIRONMENT_TYPE (§5.11). Empty means production. A change reaches
+	// the running site through UpdateSite like the security set (§6.1).
+	Environment Environment
+	// DisableMail turns off the site's outbound email: the platform
+	// must-use plugin suppresses wp_mail(). It is independent of
+	// Environment, though staging sites default to it (§5.11).
+	DisableMail bool
+}
+
+// Environment is a site's environment type.
+type Environment string
+
+// Site environments. The empty Environment is production.
+const (
+	EnvironmentProduction Environment = "production"
+	EnvironmentStaging    Environment = "staging"
+)
+
+// Validate reports whether e is empty or a known environment.
+func (e Environment) Validate() error {
+	switch e {
+	case "", EnvironmentProduction, EnvironmentStaging:
+		return nil
+	}
+	return fmt.Errorf("environment must be %q or %q", EnvironmentProduction, EnvironmentStaging)
 }
 
 // pinnedImage matches the references ImagePinner.PinImage returns: a
@@ -192,6 +218,9 @@ func (c *SiteConfig) Validate() error {
 	}
 	if c.TablePrefix != "" && !tablePrefix.MatchString(c.TablePrefix) {
 		errs = append(errs, errors.New("TablePrefix may only contain letters, digits, and underscores"))
+	}
+	if err := c.Environment.Validate(); err != nil {
+		errs = append(errs, err)
 	}
 	if c.PreviewAuth != nil {
 		if err := c.PreviewAuth.Validate(); err != nil {

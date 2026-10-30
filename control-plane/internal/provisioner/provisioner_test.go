@@ -72,6 +72,19 @@ func TestSiteConfigValidate(t *testing.T) {
 			wantErr: []string{"TablePrefix may only contain"},
 		},
 		{
+			name:   "staging environment",
+			mutate: func(c *provisioner.SiteConfig) { c.Environment, c.DisableMail = provisioner.EnvironmentStaging, true },
+		},
+		{
+			name:   "explicit production environment",
+			mutate: func(c *provisioner.SiteConfig) { c.Environment = provisioner.EnvironmentProduction },
+		},
+		{
+			name:    "unknown environment",
+			mutate:  func(c *provisioner.SiteConfig) { c.Environment = "qa" },
+			wantErr: []string{`environment must be "production" or "staging"`},
+		},
+		{
 			name:    "zero resources",
 			mutate:  func(c *provisioner.SiteConfig) { c.Resources = provisioner.ResourceLimits{} },
 			wantErr: []string{"CPU is required", "MemoryReservationMB must be positive"},
