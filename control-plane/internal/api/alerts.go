@@ -75,18 +75,19 @@ func (h *Handlers) CreateAlertRule(ctx context.Context, req gen.CreateAlertRuleR
 	}
 	b := req.Body
 	rule := store.AlertRule{
-		Name:          b.Name,
-		Description:   deref(b.Description),
-		Scope:         store.AlertScope(b.Scope),
-		ClientGroupID: deref(b.ClientGroupID),
-		Kind:          store.AlertRuleKind(b.Kind),
-		Expr:          b.Expr,
-		Operator:      store.AlertOperator(deref(b.Operator)),
-		Threshold:     deref(b.Threshold),
-		Severity:      store.AlertSeverity(b.Severity),
-		Enabled:       b.Enabled == nil || *b.Enabled,
-		Labels:        deref(b.Labels),
-		Annotations:   deref(b.Annotations),
+		Name:           b.Name,
+		Description:    deref(b.Description),
+		Scope:          store.AlertScope(b.Scope),
+		ClientGroupID:  deref(b.ClientGroupID),
+		Kind:           store.AlertRuleKind(b.Kind),
+		Expr:           b.Expr,
+		Operator:       store.AlertOperator(deref(b.Operator)),
+		Threshold:      deref(b.Threshold),
+		Severity:       store.AlertSeverity(b.Severity),
+		Enabled:        b.Enabled == nil || *b.Enabled,
+		IncludeStaging: deref(b.IncludeStaging),
+		Labels:         deref(b.Labels),
+		Annotations:    deref(b.Annotations),
 	}
 	rule.For = secondsDuration(deref(b.ForSeconds))
 	if err := checkAlertRule(&rule); err != nil {
@@ -157,6 +158,9 @@ func (h *Handlers) UpdateAlertRule(ctx context.Context, req gen.UpdateAlertRuleR
 		}
 		if v := b.Severity; v != nil {
 			rule.Severity = store.AlertSeverity(*v)
+		}
+		if v := b.IncludeStaging; v != nil {
+			rule.IncludeStaging = *v
 		}
 		if v := b.Labels; v != nil {
 			rule.Labels = *v
@@ -315,21 +319,22 @@ func alertRuleError(err error, name string) error {
 
 func alertRule(r store.AlertRule) gen.AlertRule {
 	out := gen.AlertRule{
-		ID:            r.ID,
-		Name:          r.Name,
-		Description:   r.Description,
-		Scope:         gen.AlertScope(r.Scope),
-		ClientGroupID: optional(r.ClientGroupID),
-		Kind:          gen.AlertRuleKind(r.Kind),
-		Expr:          r.Expr,
-		ForSeconds:    int(r.For.Seconds()),
-		Severity:      gen.AlertSeverity(r.Severity),
-		Enabled:       r.Enabled,
-		Labels:        nonNil(r.Labels),
-		Annotations:   nonNil(r.Annotations),
-		Builtin:       r.Builtin(),
-		CreatedAt:     r.CreatedAt,
-		UpdatedAt:     r.UpdatedAt,
+		ID:             r.ID,
+		Name:           r.Name,
+		Description:    r.Description,
+		Scope:          gen.AlertScope(r.Scope),
+		ClientGroupID:  optional(r.ClientGroupID),
+		Kind:           gen.AlertRuleKind(r.Kind),
+		Expr:           r.Expr,
+		ForSeconds:     int(r.For.Seconds()),
+		Severity:       gen.AlertSeverity(r.Severity),
+		Enabled:        r.Enabled,
+		IncludeStaging: r.IncludeStaging,
+		Labels:         nonNil(r.Labels),
+		Annotations:    nonNil(r.Annotations),
+		Builtin:        r.Builtin(),
+		CreatedAt:      r.CreatedAt,
+		UpdatedAt:      r.UpdatedAt,
 	}
 	if r.Kind == store.AlertKindThreshold {
 		op, threshold := gen.AlertOperator(r.Operator), r.Threshold

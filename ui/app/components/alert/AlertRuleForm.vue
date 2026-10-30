@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Creates a rule, or edits the parts of one the dashboard exposes: name,
-// description, severity, and for threshold rules the operator and
+// description, severity, whether a site rule includes staging sites, and for threshold rules the operator and
 // threshold, plus how long the condition must hold. A new rule also takes
 // its scope, kind, PromQL expression and client group; once it exists they
 // stay API-only, as do labels and annotations. An edit sends only what
@@ -41,6 +41,7 @@ watch(() => [open.value, props.rule] as const, ([isOpen, rule]) => {
 }, { immediate: true })
 
 const kind = computed(() => props.rule?.kind ?? created.value?.kind)
+const scope = computed(() => props.rule?.scope ?? created.value?.scope)
 
 const severityItems = [
   { label: 'Info', value: 'info' },
@@ -172,6 +173,12 @@ async function create() {
         <p v-else-if="rule" class="text-sm text-muted">
           This rule is a PromQL expression that decides by itself when it is true, so it has no threshold to edit.
         </p>
+        <UCheckbox
+          v-if="scope === 'site'"
+          v-model="form.includeStaging"
+          label="Include staging sites"
+          description="Staging sites are disposable and often idle or stopped, so rules skip them unless you opt in."
+        />
         <UFormField label="Hold for (seconds)" name="for_seconds" required help="How long the condition must hold before the alert fires. 0 fires at once." :error="fieldError('/for_seconds')">
           <UInput v-model="form.forSeconds" inputmode="numeric" class="w-full" />
         </UFormField>

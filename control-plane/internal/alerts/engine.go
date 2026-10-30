@@ -147,6 +147,19 @@ func (e *Engine) Evaluate(ctx context.Context) error {
 		byRule[a.RuleID] = append(byRule[a.RuleID], a)
 	}
 
+	// staging is loaded lazily, once per evaluation, by the first enabled
+	// site rule that excludes staging sites.
+	var staging map[string]bool
+	stagingIDs := func() (map[string]bool, error) {
+		if staging == nil {
+			var err error
+			if staging, err = store.NewSites(e.db).StagingIDs(ctx); err != nil {
+				return nil, err
+			}
+		}
+		return staging, nil
+	}
+
 	ruleByID := make(map[string]store.AlertRule, len(rules))
 	for _, rule := range rules {
 		ruleByID[rule.ID] = rule
@@ -160,7 +173,7 @@ func (e *Engine) Evaluate(ctx context.Context) error {
 			}
 			continue
 		}
-		if err := e.evaluateRule(ctx, rule, byRule[rule.ID], now); err != nil {
+		if err := e.evaluateRule(ctx, rule, byRule[rule.ID], now, stagingIDs); err != nil {
 			e.log.Error("evaluating alert rule failed", "rule", rule.Name, "error", err)
 		}
 	}
@@ -176,7 +189,8 @@ type condition struct {
 	value       float64
 }
 
-func (e *Engine) evaluateRule(ctx context.Context, rule store.AlertRule, existing []store.Alert, now time.Time) error {
+func (e *Engine) evaluateRule(ctx context.Context, rule store.AlertRule, existing []store.Alert, now time.Time,
+	stagingIDs func() (map[string]bool, error)) error {
 	qctx, cancel := context.WithTimeout(ctx, e.queryTimeout)
 	samples, err := e.querier.Query(qctx, rule.Expr, now)
 	cancel()
@@ -197,6 +211,20 @@ func (e *Engine) evaluateRule(ctx context.Context, rule store.AlertRule, existin
 	if skipped > 0 {
 		e.log.Warn("alert rule returned series without a site_id label, which a site rule needs; they were ignored",
 			"rule", rule.Name, "series", skipped)
+	}
+	if rule.Scope == store.AlertScopeSite && !rule.IncludeStaging {
+		// Staging sites are disposable and often idle or stopped, so a rule
+		// that doesn't include them ignores their series (§7.3). Dropping
+		// the conditions, rather than skipping the rule's evaluation, means
+		// an alert already raised for a staging site (the site was cloned
+		// after the alert fired, or the rule was edited to exclude staging)
+		// resolves like one whose series disappeared. If staging sites
+		// can't be listed, leave every alert as it is, as for a failed query.
+		staging, err := stagingIDs()
+		if err != nil {
+			return fmt.Errorf("listing staging sites: %w", err)
+		}
+		conds = slices.DeleteFunc(conds, func(c condition) bool { return staging[c.labels["site_id"]] })
 	}
 	return e.apply(ctx, rule, conds, existing, now)
 }

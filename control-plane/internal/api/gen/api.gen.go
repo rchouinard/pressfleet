@@ -1634,6 +1634,11 @@ type AlertRule struct {
 	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
 	ID ID `json:"id"`
 
+	// IncludeStaging Whether a `site` rule also applies to staging sites. Staging
+	// sites are disposable and often idle or stopped, so rules skip
+	// them by default. Platform rules ignore it.
+	IncludeStaging bool `json:"include_staging"`
+
 	// Kind How the expression's result becomes a condition. `threshold`
 	// compares the value of every series with `operator` and `threshold`.
 	// `expression` treats every series the expression returns as true; the
@@ -1688,6 +1693,11 @@ type AlertRuleCreate struct {
 	Enabled       *bool   `json:"enabled,omitempty"`
 	Expr          string  `json:"expr"`
 	ForSeconds    *int    `json:"for_seconds,omitempty"`
+
+	// IncludeStaging Whether a `site` rule also applies to staging sites. Staging
+	// sites are disposable and often idle or stopped, so rules skip
+	// them by default. Platform rules ignore it.
+	IncludeStaging *bool `json:"include_staging,omitempty"`
 
 	// Kind How the expression's result becomes a condition. `threshold`
 	// compares the value of every series with `operator` and `threshold`.
@@ -1752,6 +1762,11 @@ type AlertRuleUpdate struct {
 	Description   *string `json:"description,omitempty"`
 	Expr          *string `json:"expr,omitempty"`
 	ForSeconds    *int    `json:"for_seconds,omitempty"`
+
+	// IncludeStaging Whether a `site` rule also applies to staging sites. Staging
+	// sites are disposable and often idle or stopped, so rules skip
+	// them by default. Platform rules ignore it.
+	IncludeStaging *bool `json:"include_staging,omitempty"`
 
 	// Kind How the expression's result becomes a condition. `threshold`
 	// compares the value of every series with `operator` and `threshold`.

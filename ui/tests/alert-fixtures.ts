@@ -15,6 +15,7 @@ export function rule(overrides: Partial<AlertRule> = {}): AlertRule {
     for_seconds: 600,
     severity: 'warning',
     enabled: true,
+    include_staging: false,
     labels: {},
     annotations: {},
     builtin: true,

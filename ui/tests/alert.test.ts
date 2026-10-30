@@ -81,13 +81,35 @@ describe('rule edit form', () => {
   })
 })
 
+describe('staging sites in the rule form', () => {
+  it('sends include_staging only when it changed on a site rule', () => {
+    const r = rule({ scope: 'site' })
+    const f = ruleFormFrom(r)
+    expect(f.includeStaging).toBe(false)
+    expect(ruleUpdateBody(r, f)).toEqual({})
+    f.includeStaging = true
+    expect(ruleUpdateBody(r, f)).toEqual({ include_staging: true })
+  })
+
+  it('ignores the switch on a platform rule', () => {
+    const r = rule({ scope: 'platform' })
+    const f = { ...ruleFormFrom(r), includeStaging: true }
+    expect(ruleUpdateBody(r, f)).toEqual({})
+  })
+
+  it('creates a site rule that includes staging sites', () => {
+    const f = { ...emptyNewRuleForm(), name: 'Down', expr: 'up == 0', threshold: '1', includeStaging: true }
+    expect(ruleCreateBody(f)).toMatchObject({ scope: 'site', include_staging: true })
+  })
+})
+
 describe('rule create form', () => {
   it('sends a threshold rule with its operator and threshold', () => {
     const f = { ...emptyNewRuleForm(), name: ' Busy PHP ', expr: ' pressfleet_site_phpfpm_active ', operator: 'gte' as const, threshold: '4', forSeconds: '60', clientGroupId: 'G1' }
     expect(validateNewRuleForm(f)).toEqual({})
     expect(ruleCreateBody(f)).toEqual({
       name: 'Busy PHP', description: '', scope: 'site', kind: 'threshold', expr: 'pressfleet_site_phpfpm_active',
-      operator: 'gte', threshold: 4, for_seconds: 60, severity: 'warning', enabled: true, client_group_id: 'G1',
+      operator: 'gte', threshold: 4, for_seconds: 60, severity: 'warning', enabled: true, client_group_id: 'G1', include_staging: false,
     })
   })
 
@@ -98,6 +120,7 @@ describe('rule create form', () => {
     expect(body).not.toHaveProperty('operator')
     expect(body).not.toHaveProperty('threshold')
     expect(body).not.toHaveProperty('client_group_id')
+    expect(body).toMatchObject({ include_staging: false })
     expect(body).toMatchObject({ scope: 'platform', kind: 'expression', for_seconds: 0 })
   })
 
