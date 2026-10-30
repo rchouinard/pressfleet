@@ -93,3 +93,5 @@ WP-CLI 2.12.0 at `/usr/local/bin/wp`, verified against the SHA-512 published wit
 ## Size
 
 The image is about 1 GB uncompressed, most of it the official PHP base image (which keeps its compiler toolchain for `docker-php-ext-install`). The extension layer is about 110 MB and WordPress about 120 MB.
+
+[../shared/mu-plugins/pressfleet-environment/](../shared/mu-plugins/pressfleet-environment) holds two modules loaded by `pressfleet.php`: `mail-switch.php` (only when `PRESSFLEET_DISABLE_MAIL` is true) drops all `wp_mail()` messages and logs the recipient count of each, and `environment-badge.php` adds an admin bar badge outside production. See the [runtime contract](../README.md#wp-configphp-requirements).

@@ -22,6 +22,14 @@ if ( defined( 'PRESSFLEET_SITE_ID' ) && defined( 'PRESSFLEET_LOGIN_PUBLIC_KEY' )
 	require __DIR__ . '/pressfleet-login/admin-login.php';
 }
 
+// Copies of production (staging clones). The outbound mail switch is a module
+// of its own, not part of pressfleet-smtp.php, because that plugin does
+// nothing without a relay. The badge shows outside production only.
+if ( defined( 'PRESSFLEET_DISABLE_MAIL' ) && PRESSFLEET_DISABLE_MAIL ) {
+	require __DIR__ . '/pressfleet-environment/mail-switch.php';
+}
+require __DIR__ . '/pressfleet-environment/environment-badge.php';
+
 /*
  * Core is baked into the image and read-only; the platform rolls out core
  * releases by replacing the image (design doc §5.5). WP_AUTO_UPDATE_CORE=false

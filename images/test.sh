@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test for the site images (issues #17, #18, #39, #40, #41, #43, #47, #108, #109, #127).
+# Smoke test for the site images (issues #17, #18, #39, #40, #41, #43, #47, #108, #109, #127, #201).
 #
 #   images/test.sh [php-version ...]     default: every PHP version images/matrix.sh builds
 #
@@ -162,6 +162,10 @@ if ( file_exists( __DIR__ . '/wp-content/pf-smoke-two-factor.php' ) ) {
 // Site ID and public key for the one-click login checks (#127).
 if ( file_exists( __DIR__ . '/wp-content/pf-smoke-login.php' ) ) {
 	require __DIR__ . '/wp-content/pf-smoke-login.php';
+}
+// The outbound mail switch (#201).
+if ( file_exists( __DIR__ . '/wp-content/pf-smoke-mail.php' ) ) {
+	require __DIR__ . '/wp-content/pf-smoke-mail.php';
 }
 if ( ! defined( 'ABSPATH' ) ) {
 	define( 'ABSPATH', __DIR__ . '/' );
@@ -367,6 +371,35 @@ test_stack() {
 		"$(jq -r '.messages[0].To[0].Address' <<<"$messages" 2>/dev/null)"
 	check_eq "reset email from the platform sender" "PressFleet Sites <sites@pressfleet.test>" \
 		"$(jq -r '.messages[0].From | "\(.Name) <\(.Address)>"' <<<"$messages" 2>/dev/null)"
+
+	# --- Outbound mail switch and environment badge (#201) -------------------
+	# Same reset request as above, now with PRESSFLEET_DISABLE_MAIL defined
+	# (and the environment set to staging): the relay gets nothing, the log
+	# gets one line without the address, and the request still succeeds.
+	local mail_before mail_after mail_log
+	mail_before="$(curl -fsS "$mailpit_api/messages" | jq -r '.total')"
+	docker exec -i "$php" sh -c 'cat > wp-content/pf-smoke-mail.php' <<-'PHP'
+		<?php
+		define( 'PRESSFLEET_DISABLE_MAIL', true );
+		define( 'WP_ENVIRONMENT_TYPE', 'staging' );
+	PHP
+	check_eq "mail switch: wp_mail() reports success" "yes" \
+		"$("${cexec[@]}" wp eval 'echo wp_mail( "nobody@example.com", "Secret subject", "x" ) ? "yes" : "no";' 2>/dev/null)"
+	check_eq "mail switch: password reset request still accepted" "302" \
+		"$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Forwarded-For: 198.51.100.77' -d 'user_login=admin&wp-submit=Get+New+Password' "$base/wp-login.php?action=lostpassword")"
+	sleep 2
+	mail_after="$(curl -fsS "$mailpit_api/messages" | jq -r '.total')"
+	check_eq "mail switch: the relay receives nothing" "$mail_before" "$mail_after"
+	mail_log="$(docker logs "$php" 2>&1)"
+	check_contains "mail switch: suppressed message logged with a recipient count" \
+		"pressfleet: outbound email is disabled (PRESSFLEET_DISABLE_MAIL); suppressed a message to 1 recipient(s)" "$mail_log"
+	check_not "mail switch: log has no addresses or subjects" grep -qE 'admin@example\.com|nobody@example\.com|Secret subject' \
+		<(grep 'outbound email is disabled' <<<"$mail_log")
+	check_contains "environment badge: admin bar names the environment" "STAGING | email off" \
+		"$("${cexec[@]}" wp eval --user=admin 'show_admin_bar( true ); _wp_admin_bar_init(); global $wp_admin_bar; do_action_ref_array( "admin_bar_menu", array( &$wp_admin_bar ) ); echo $wp_admin_bar->get_node( "pressfleet-environment" )->title;' 2>/dev/null)"
+	docker exec "$php" rm -f wp-content/pf-smoke-mail.php
+	check_eq "mail switch: unhooked again without the constant" "none" \
+		"$("${cexec[@]}" wp eval 'echo has_action("pre_wp_mail") ? "hooked" : "none";')"
 
 	# --- HTTP through nginx ---------------------------------------------------
 	local body code
