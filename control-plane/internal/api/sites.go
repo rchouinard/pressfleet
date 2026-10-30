@@ -135,6 +135,53 @@ func (h *Handlers) ImportSite(ctx context.Context, req gen.ImportSiteRequestObje
 	}, nil
 }
 
+// CreateStagingSite creates a staging site of a production site (#202,
+// design doc §5.11) and returns 202 with the staging site, its one-time
+// preview credentials, and the clone job. It is checked against the
+// production site, whose client group the staging site joins.
+func (h *Handlers) CreateStagingSite(ctx context.Context, req gen.CreateStagingSiteRequestObject) (gen.CreateStagingSiteResponseObject, error) {
+	p, err := h.authorize(ctx, authz.CreateStagingSite, authz.Site(req.SiteID))
+	if err != nil {
+		return nil, err
+	}
+	b := deref(req.Body)
+	in := sites.NewStaging{
+		Name:            deref(b.Name),
+		SnapshotID:      deref(b.SnapshotID),
+		CreatedByUserID: p.UserID,
+	}
+	if r := b.Resources; r != nil {
+		in.CPU, in.MemoryReservationMB, in.MemoryLimitMB = r.CPU, r.MemoryReservationMb, r.MemoryLimitMb
+	}
+	out, err := h.sites.CreateStaging(ctx, req.SiteID, in)
+	if err != nil {
+		return nil, siteError(err)
+	}
+	setAuditTarget(ctx, authz.Site(out.Site.ID))
+	details := map[string]string{"parent_site_id": req.SiteID, "job_id": out.Job.ID}
+	if out.BackupJob != nil {
+		details["backup_job_id"] = out.BackupJob.ID
+	} else {
+		details["snapshot_id"] = in.SnapshotID
+	}
+	setAuditDetails(ctx, details)
+	j, err := jobResponse(out.Job, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	location := jobLocation(out.Job)
+	return gen.CreateStagingSite202JSONResponse{
+		Body: gen.SiteAccepted{
+			Site: siteResponse(out.Site, nil),
+			Job:  j,
+			PreviewCredentials: &gen.PreviewCredentials{
+				Username: out.Preview.Username, Password: out.Preview.Password.Reveal(),
+			},
+		},
+		Headers: gen.CreateStagingSite202ResponseHeaders{Location: &location},
+	}, nil
+}
+
 // GetSite returns a site with its recorded status and its live runtime
 // state. The live state is best effort: if the container runtime can't be
 // reached in time, the phase is unknown and the request still succeeds.
@@ -478,6 +525,7 @@ func siteError(err error) error {
 		{sites.ErrNotRunning, ErrConflict},
 		{sites.ErrNotLive, ErrConflict},
 		{sites.ErrUploadNotReady, ErrConflict},
+		{sites.ErrSourceFailed, ErrConflict},
 	} {
 		if errors.Is(err, m.from) {
 			return fmt.Errorf("%w: %w", m.to, m.from)

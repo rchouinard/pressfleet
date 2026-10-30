@@ -12,8 +12,8 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
 )
 
-// stagingOf makes site a staging site of parent. Nothing creates staging
-// sites yet (#202), so tests link two provisioned sites directly.
+// stagingOf makes site a staging site of parent, linking two provisioned
+// sites directly rather than cloning one (see clone_test.go).
 func (e *env) stagingOf(t *testing.T, site, parent store.Site, mailDisabled bool) store.Site {
 	t.Helper()
 	if _, err := e.db.ExecContext(context.Background(),

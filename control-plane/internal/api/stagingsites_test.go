@@ -12,13 +12,14 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/api/gen"
 	"github.com/rchouinard/pressfleet/control-plane/internal/auth"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sites"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
 )
 
-// stagingEnv has a production site and a staging site cloned from it, as
-// #202 will create them: the tests insert the staging site directly.
+// stagingEnv has a production site and a staging site linked to it. The
+// tests link two provisioned sites directly, to set every staging field.
 type stagingEnv struct {
 	*siteEnv
 	db         *store.DB
@@ -233,5 +234,83 @@ func TestDeleteStagingAuthorization(t *testing.T) {
 		// Now the Admin can delete production.
 		w = e.request(t, e.admin, http.MethodDelete, "/api/v1/sites/"+e.prod.ID, "")
 		expectStatus(t, w, http.StatusAccepted, "admin deleting production")
+	})
+}
+
+func TestCreateStagingSite(t *testing.T) {
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		e := newStagingEnv(t, db)
+		target := "/api/v1/sites/" + e.prod.ID + "/staging-sites"
+
+		// An Operator creates one from a fresh backup (acme-staging is the
+		// linked site's slug already): the clone job waits
+		// for the sync backup of production.
+		w := e.request(t, e.operator, http.MethodPost, target, "")
+		expectStatus(t, w, http.StatusAccepted, "create staging site")
+		acc := decodeJSON[gen.SiteAccepted](t, w.Body.Bytes())
+		if acc.Site.ParentSiteID == nil || *acc.Site.ParentSiteID != e.prod.ID || acc.Site.Status != gen.SiteStatusProvisioning ||
+			acc.Site.Environment != gen.Staging || acc.Site.Slug != "acme-staging-2" || acc.Site.Name != "Acme (staging)" ||
+			!acc.Site.PreviewProtection.Enabled {
+			t.Errorf("site = %s", w.Body)
+		}
+		pc := acc.PreviewCredentials
+		if pc == nil || pc.Username != "acme-staging-2" || pc.Password == "" {
+			t.Fatalf("preview credentials = %+v", pc)
+		}
+		if acc.Job.Type != sites.CloneJobType || acc.Job.AfterJobID == nil || w.Header().Get("Location") != "/api/v1/jobs/"+acc.Job.ID {
+			t.Fatalf("job = %+v, Location %q", acc.Job, w.Header().Get("Location"))
+		}
+		backupJob, err := store.NewJobs(db).Get(ctx, *acc.Job.AfterJobID)
+		if err != nil || backupJob.TargetID != e.prod.ID || backupJob.LockKey != store.SiteLockKey(e.prod.ID) ||
+			!strings.Contains(string(backupJob.Payload), `"sync"`) {
+			t.Errorf("awaited job = %+v, %v", backupJob, err)
+		}
+		ev := allEvents(t, db)[0]
+		if ev.Action != "site.staging.create" || ev.Result != store.AuditSuccess || ev.TargetID != acc.Site.ID ||
+			ev.Details["parent_site_id"] != e.prod.ID || ev.Details["backup_job_id"] != backupJob.ID {
+			t.Errorf("audit event = %+v", ev)
+		}
+		for k, v := range ev.Details {
+			if strings.Contains(v, pc.Password) {
+				t.Errorf("audit detail %s holds the preview password", k)
+			}
+		}
+
+		// From an existing backup, with a name and resources: no backup job.
+		snap, err := e.engine.Backup(ctx, e.prod.ID, backup.Options{Kind: string(store.BackupManual)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		w = e.request(t, e.admin, http.MethodPost, target,
+			`{"name":"QA","snapshot_id":"`+string(snap.ID)+`","resources":{"memory_limit_mb":1024}}`)
+		expectStatus(t, w, http.StatusAccepted, "create staging site from a snapshot")
+		acc = decodeJSON[gen.SiteAccepted](t, w.Body.Bytes())
+		if acc.Site.Name != "QA" || acc.Site.Slug != "acme-staging-3" || acc.Site.Resources.MemoryLimitMb != 1024 || acc.Job.AfterJobID != nil {
+			t.Errorf("accepted = %s", w.Body)
+		}
+
+		for _, tc := range []struct {
+			name, target, body string
+			want               int
+		}{
+			{"from a staging site", "/api/v1/sites/" + e.stg.ID + "/staging-sites", "", http.StatusUnprocessableEntity},
+			{"unknown snapshot", target, `{"snapshot_id":"deadbeef00"}`, http.StatusUnprocessableEntity},
+			{"bad resources", target, `{"resources":{"memory_limit_mb":64,"memory_reservation_mb":128}}`, http.StatusUnprocessableEntity},
+			{"missing site", "/api/v1/sites/" + strings.Repeat("0", 26) + "/staging-sites", "", http.StatusNotFound},
+		} {
+			w := e.request(t, e.admin, http.MethodPost, tc.target, tc.body)
+			expectStatus(t, w, tc.want, tc.name)
+		}
+
+		// A production site being deleted is refused.
+		if _, err := db.ExecContext(ctx, "UPDATE sites SET status = ? WHERE id = ?", store.SiteDeleting, e.prod.ID); err != nil {
+			t.Fatal(err)
+		}
+		w = e.request(t, e.admin, http.MethodPost, target, "")
+		expectStatus(t, w, http.StatusConflict, "production being deleted")
+		if n, err := store.NewSites(db).Children(ctx, e.prod.ID); err != nil || len(n) != 3 {
+			t.Errorf("staging sites = %d, %v; want 3", len(n), err)
+		}
 	})
 }

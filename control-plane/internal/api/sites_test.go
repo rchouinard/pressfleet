@@ -72,6 +72,7 @@ var implementedSiteOps = map[string]bool{
 	"setSiteBackupSchedule":         true,
 	"restoreSite":                   true,
 	"importSite":                    true,
+	"createStagingSite":             true,
 	"exportSiteDatabase":            true,
 	"exportSite":                    true,
 	"exportSiteBackup":              true,

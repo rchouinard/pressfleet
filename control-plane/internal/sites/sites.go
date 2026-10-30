@@ -141,6 +141,13 @@
 // created, then creates the site like provisioning and fills it with the
 // imported content; see import.go.
 //
+// # Staging sites
+//
+// [Service.CreateStaging] allocates a staging site of a production site
+// (§5.11) and queues a sync backup of the production site and a
+// [CloneJobType] job that waits for it, provisions the staging site, and
+// restores the backup into it; see staging.go.
+//
 // # Startup reconciliation
 //
 // Install-wide settings such as the WordPress security set (§6.1) reach a
@@ -779,7 +786,7 @@ func (s *Service) Handlers() []jobs.Handler {
 		s.reconcileHandler(), s.purgeCacheHandler(), s.maintenanceHandler(), s.goLiveHandler(), s.aliasesHandler(),
 	}
 	if s.restores() {
-		handlers = append(handlers, s.restoreHandler(), s.recoverHandler())
+		handlers = append(handlers, s.restoreHandler(), s.recoverHandler(), s.cloneHandler())
 	}
 	if s.imports() {
 		handlers = append(handlers, s.importHandler())

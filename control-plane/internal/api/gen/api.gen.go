@@ -256,6 +256,7 @@ const (
 	PreRestore BackupKind = "pre_restore"
 	PreUpdate  BackupKind = "pre_update"
 	Scheduled  BackupKind = "scheduled"
+	Sync       BackupKind = "sync"
 )
 
 // Valid indicates whether the value is a known member of the BackupKind enum.
@@ -268,6 +269,8 @@ func (e BackupKind) Valid() bool {
 	case PreUpdate:
 		return true
 	case Scheduled:
+		return true
+	case Sync:
 		return true
 	default:
 		return false
@@ -1976,7 +1979,8 @@ type Backup struct {
 	// schedule (`scheduled`), or a restore, which backs up its target site
 	// first so the restore can be undone (`pre_restore`), or a WordPress
 	// core update, which backs up its site first so a failed update can
-	// be reverted (`pre_update`).
+	// be reverted (`pre_update`), or the snapshot taken as the source of a
+	// staging clone, refresh, or push (`sync`).
 	Kind BackupKind `json:"kind"`
 
 	// Message Why the backup failed, or a warning about a backup that succeeded
@@ -2029,7 +2033,8 @@ type BackupIntervalHours = int
 // schedule (`scheduled`), or a restore, which backs up its target site
 // first so the restore can be undone (`pre_restore`), or a WordPress
 // core update, which backs up its site first so a failed update can
-// be reverted (`pre_update`).
+// be reverted (`pre_update`), or the snapshot taken as the source of a
+// staging clone, refresh, or push (`sync`).
 type BackupKind string
 
 // BackupList defines model for BackupList.
@@ -3883,6 +3888,20 @@ type SSHKeyList struct {
 	NextCursor *NextCursor `json:"next_cursor"`
 }
 
+// StagingSiteCreate defines model for StagingSiteCreate.
+type StagingSiteCreate struct {
+	// Name Display name. Defaults to the production site's name followed by "(staging)".
+	Name *string `json:"name,omitempty"`
+
+	// Resources Partial resource limits. Omitted fields keep their current value, or the platform default when creating a site.
+	Resources *ResourceLimitsUpdate `json:"resources,omitempty"`
+
+	// SnapshotID An existing snapshot of the production site to copy (a backup's
+	// `snapshot_id`, or a prefix of it of at least 8 characters),
+	// instead of a fresh `sync` backup.
+	SnapshotID *string `json:"snapshot_id,omitempty"`
+}
+
 // StagingState What a staging site keeps about its production site and its mail.
 type StagingState struct {
 	// LastPushedAt When the site was last pushed to production; null if it never was.
@@ -4928,6 +4947,9 @@ type SetSiteMaintenanceJSONRequestBody = SiteMaintenance
 // RestoreSiteJSONRequestBody defines body for RestoreSite for application/json ContentType.
 type RestoreSiteJSONRequestBody = SiteRestore
 
+// CreateStagingSiteJSONRequestBody defines body for CreateStagingSite for application/json ContentType.
+type CreateStagingSiteJSONRequestBody = StagingSiteCreate
+
 // CreateUploadJSONRequestBody defines body for CreateUpload for application/json ContentType.
 type CreateUploadJSONRequestBody = UploadCreate
 
@@ -5233,6 +5255,9 @@ type ServerInterface interface {
 	// RestoreSite Restore a site from a snapshot
 	// (POST /api/v1/sites/{site_id}/restore)
 	RestoreSite(w http.ResponseWriter, r *http.Request, siteID SiteID)
+	// CreateStagingSite Create a staging site
+	// (POST /api/v1/sites/{site_id}/staging-sites)
+	CreateStagingSite(w http.ResponseWriter, r *http.Request, siteID SiteID)
 	// StartSite Start a stopped site
 	// (POST /api/v1/sites/{site_id}/start)
 	StartSite(w http.ResponseWriter, r *http.Request, siteID SiteID)
@@ -8734,6 +8759,32 @@ func (siw *ServerInterfaceWrapper) RestoreSite(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
+// CreateStagingSite operation middleware
+func (siw *ServerInterfaceWrapper) CreateStagingSite(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "site_id" -------------
+	var siteID SiteID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "site_id", r.PathValue("site_id"), &siteID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "site_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateStagingSite(w, r, siteID)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // StartSite operation middleware
 func (siw *ServerInterfaceWrapper) StartSite(w http.ResponseWriter, r *http.Request) {
 
@@ -9764,6 +9815,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/v1/sites/{site_id}", wrapper.DeleteSite)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/v1/sites/{site_id}", wrapper.GetSite)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/v1/sites/{site_id}", wrapper.UpdateSite)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/staging-sites", wrapper.CreateStagingSite)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/start", wrapper.StartSite)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/stop", wrapper.StopSite)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/v1/sites/{site_id}/cache/purge", wrapper.PurgeSiteCache)
@@ -19555,6 +19607,152 @@ func (response RestoreSitedefaultApplicationProblemPlusJSONResponse) VisitRestor
 	return err
 }
 
+type CreateStagingSiteRequestObject struct {
+	SiteID SiteID `json:"site_id"`
+	Body   *CreateStagingSiteJSONRequestBody
+}
+
+type CreateStagingSiteResponseObject interface {
+	VisitCreateStagingSiteResponse(w http.ResponseWriter) error
+}
+
+type CreateStagingSite202ResponseHeaders struct {
+	Location *string
+}
+
+type CreateStagingSite202JSONResponse struct {
+	Body    SiteAccepted
+	Headers CreateStagingSite202ResponseHeaders
+}
+
+func (response CreateStagingSite202JSONResponse) VisitCreateStagingSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.Location != nil {
+		w.Header().Set("Location", fmt.Sprint(*response.Headers.Location))
+	}
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateStagingSite400ApplicationProblemPlusJSONResponse struct {
+	BadRequestApplicationProblemPlusJSONResponse
+}
+
+func (response CreateStagingSite400ApplicationProblemPlusJSONResponse) VisitCreateStagingSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateStagingSite401ApplicationProblemPlusJSONResponse struct {
+	UnauthorizedApplicationProblemPlusJSONResponse
+}
+
+func (response CreateStagingSite401ApplicationProblemPlusJSONResponse) VisitCreateStagingSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateStagingSite403ApplicationProblemPlusJSONResponse struct {
+	ForbiddenApplicationProblemPlusJSONResponse
+}
+
+func (response CreateStagingSite403ApplicationProblemPlusJSONResponse) VisitCreateStagingSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateStagingSite404ApplicationProblemPlusJSONResponse struct {
+	NotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response CreateStagingSite404ApplicationProblemPlusJSONResponse) VisitCreateStagingSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateStagingSite409ApplicationProblemPlusJSONResponse struct {
+	ConflictApplicationProblemPlusJSONResponse
+}
+
+func (response CreateStagingSite409ApplicationProblemPlusJSONResponse) VisitCreateStagingSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateStagingSite422ApplicationProblemPlusJSONResponse struct {
+	UnprocessableContentApplicationProblemPlusJSONResponse
+}
+
+func (response CreateStagingSite422ApplicationProblemPlusJSONResponse) VisitCreateStagingSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateStagingSitedefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response CreateStagingSitedefaultApplicationProblemPlusJSONResponse) VisitCreateStagingSiteResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type StartSiteRequestObject struct {
 	SiteID SiteID `json:"site_id"`
 }
@@ -23385,6 +23583,9 @@ type StrictServerInterface interface {
 	// RestoreSite Restore a site from a snapshot
 	// (POST /api/v1/sites/{site_id}/restore)
 	RestoreSite(ctx context.Context, request RestoreSiteRequestObject) (RestoreSiteResponseObject, error)
+	// CreateStagingSite Create a staging site
+	// (POST /api/v1/sites/{site_id}/staging-sites)
+	CreateStagingSite(ctx context.Context, request CreateStagingSiteRequestObject) (CreateStagingSiteResponseObject, error)
 	// StartSite Start a stopped site
 	// (POST /api/v1/sites/{site_id}/start)
 	StartSite(ctx context.Context, request StartSiteRequestObject) (StartSiteResponseObject, error)
@@ -26072,6 +26273,42 @@ func (sh *strictHandler) RestoreSite(w http.ResponseWriter, r *http.Request, sit
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(RestoreSiteResponseObject); ok {
 		if err := validResponse.VisitRestoreSiteResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateStagingSite operation middleware
+func (sh *strictHandler) CreateStagingSite(w http.ResponseWriter, r *http.Request, siteID SiteID) {
+	var request CreateStagingSiteRequestObject
+
+	request.SiteID = siteID
+
+	var body CreateStagingSiteJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateStagingSite(ctx, request.(CreateStagingSiteRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateStagingSite")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateStagingSiteResponseObject); ok {
+		if err := validResponse.VisitCreateStagingSiteResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

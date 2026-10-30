@@ -82,8 +82,15 @@ func (s *Service) prepareCreate(ctx context.Context, r *jobs.Run) error {
 // and the cron and backup schedules created with the site and marks the site failed,
 // unless another request has changed its status meanwhile (a deletion).
 func (s *Service) failProvisioning(ctx context.Context, r *jobs.Run) error {
+	return s.failNewSite(ctx, r, "provisioning failed")
+}
+
+// failNewSite is failProvisioning with the status message's prefix, for
+// the jobs that provision a site and keep its row when they fail
+// (site.create and site.clone).
+func (s *Service) failNewSite(ctx context.Context, r *jobs.Run, prefix string) error {
 	siteID := r.Job().TargetID
-	msg := statusMessage("provisioning failed", r.Job().Error)
+	msg := statusMessage(prefix, r.Job().Error)
 	err := s.db.InTx(ctx, func(q store.Querier) error {
 		sites := store.NewSites(q)
 		site, err := sites.Get(ctx, siteID)

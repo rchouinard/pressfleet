@@ -119,3 +119,90 @@ func TestStagingSites(t *testing.T) {
 		}
 	})
 }
+
+func TestSetStagingRefreshed(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		group := createGroup(ctx, t, db)
+		sites := store.NewSites(db)
+		prod := newTestSite(group, "acme", 21100)
+		if err := sites.Create(ctx, prod); err != nil {
+			t.Fatal(err)
+		}
+		stg := newTestSite(group, "acme-staging", 21101)
+		stg.ParentSiteID = prod.ID
+		if err := sites.Create(ctx, stg); err != nil {
+			t.Fatal(err)
+		}
+		at := time.Date(2026, 10, 30, 12, 0, 0, 123456000, time.FixedZone("EST", -5*3600))
+		if ok, err := sites.SetStagingRefreshed(ctx, stg.ID, "abc123", at); err != nil || !ok {
+			t.Fatalf("SetStagingRefreshed = %v, %v", ok, err)
+		}
+		got, err := sites.Get(ctx, stg.ID)
+		if err != nil || got.StagingSnapshotID != "abc123" || !got.StagingRefreshedAt.Equal(at) || !got.StagingPushedAt.IsZero() {
+			t.Errorf("after SetStagingRefreshed = %+v, %v", got, err)
+		}
+		if ok, err := sites.SetStagingRefreshed(ctx, id.New(), "abc123", at); err != nil || ok {
+			t.Errorf("missing site: %v, %v", ok, err)
+		}
+		for _, bad := range []struct {
+			snap string
+			at   time.Time
+		}{{"", at}, {"abc123", time.Time{}}} {
+			if _, err := sites.SetStagingRefreshed(ctx, stg.ID, bad.snap, bad.at); err == nil {
+				t.Errorf("SetStagingRefreshed(%q, %v) accepted", bad.snap, bad.at)
+			}
+		}
+	})
+}
+
+// TestSiteLock checks that a transaction that locks a site sees what
+// another one that locked it first committed: on PostgreSQL through the row
+// lock, on SQLite because write transactions run one at a time.
+func TestSiteLock(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		group := createGroup(ctx, t, db)
+		sites := store.NewSites(db)
+		s := newTestSite(group, "acme", 21200)
+		s.Status = store.SiteRunning
+		if err := sites.Create(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := sites.Lock(ctx, id.New()); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("Lock of a missing site: %v", err)
+		}
+
+		locked := make(chan struct{})
+		seen := make(chan store.SiteStatus, 1)
+		errs := make(chan error, 2)
+		go func() {
+			errs <- db.InTx(ctx, func(q store.Querier) error {
+				if _, err := store.NewSites(q).Lock(ctx, s.ID); err != nil {
+					return err
+				}
+				close(locked)
+				// Give the other transaction time to reach its lock.
+				time.Sleep(100 * time.Millisecond)
+				_, err := store.NewSites(q).SetStatus(ctx, s.ID, store.SiteDeleting, "")
+				return err
+			})
+		}()
+		<-locked
+		go func() {
+			errs <- db.InTx(ctx, func(q store.Querier) error {
+				got, err := store.NewSites(q).Lock(ctx, s.ID)
+				seen <- got.Status
+				return err
+			})
+		}()
+		for range 2 {
+			if err := <-errs; err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := <-seen; got != store.SiteDeleting {
+			t.Errorf("the second transaction saw %s, want deleting", got)
+		}
+	})
+}

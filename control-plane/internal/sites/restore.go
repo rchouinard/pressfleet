@@ -727,12 +727,25 @@ func (s *Service) rewriteRestoredURLs(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
+	return s.rewriteRestoredHosts(ctx, r, site)
+}
+
+// rewriteRestoredHosts rewrites the hosts that the restored database's home and
+// siteurl name, and the hosts in also, to the site's host, then sets home
+// and siteurl to the site's URL. Hosts that are already the site's are
+// skipped, so it does nothing to a database that names the site.
+func (s *Service) rewriteRestoredHosts(ctx context.Context, r *jobs.Run, site store.Site, also ...string) error {
 	if err := s.caches.FlushCache(ctx, site.ID); err != nil {
 		return fmt.Errorf("flushing the object cache: %w", err)
 	}
 	target := URL(site)
 	targetHost := strings.TrimPrefix(target, "https://")
 	var sources []string
+	for _, h := range also {
+		if h = strings.ToLower(h); h != "" && h != targetHost && !slices.Contains(sources, h) {
+			sources = append(sources, h)
+		}
+	}
 	for _, option := range []string{"home", "siteurl"} {
 		out, err := s.wpcliRestored(ctx, site.ID, "option", "get", option)
 		if err != nil {

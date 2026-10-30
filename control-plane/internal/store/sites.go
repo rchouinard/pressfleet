@@ -210,6 +210,26 @@ func (r Sites) Get(ctx context.Context, siteID string) (Site, error) {
 	return s, nil
 }
 
+// Lock returns the site with the given ID, or ErrNotFound, and inside a
+// transaction on PostgreSQL locks its row (SELECT ... FOR UPDATE) until the
+// transaction ends. Creating a staging site and deleting its production
+// site both lock the production site first, so neither decides on what it
+// read before the other committed: the second waits, then reads the
+// first's change (the deleting status, or the new staging site). SQLite
+// needs no row lock, because the store's transactions take the database
+// write lock when they begin, so they already run one at a time.
+func (r Sites) Lock(ctx context.Context, siteID string) (Site, error) {
+	query := "SELECT " + siteColumns + " FROM sites WHERE id = ?"
+	if r.q.Dialect() == Postgres {
+		query += " FOR UPDATE"
+	}
+	s, err := scanSite(r.q.QueryRowContext(ctx, query, siteID))
+	if err != nil {
+		return Site{}, fmt.Errorf("lock site %s: %w", siteID, err)
+	}
+	return s, nil
+}
+
 // GetBySlug returns the site with the given slug, or ErrNotFound. The SFTP
 // gateway names sites by slug (design doc §5.8).
 func (r Sites) GetBySlug(ctx context.Context, slug string) (Site, error) {
@@ -484,6 +504,18 @@ func (r Sites) SetWPCoreVersion(ctx context.Context, siteID, version string, fro
 		args = append(args, from[0])
 	}
 	return r.exec(ctx, "set WordPress core version of site "+siteID, query, args...)
+}
+
+// SetStagingRefreshed records that a staging site was cloned or refreshed
+// from its production site's snapshot at the given time (§5.11). It
+// reports whether the site changed; a missing site is not an error.
+func (r Sites) SetStagingRefreshed(ctx context.Context, siteID, snapshotID string, at time.Time) (bool, error) {
+	if snapshotID == "" || at.IsZero() {
+		return false, fmt.Errorf("set staging refresh of site %s: snapshot and time are required", siteID)
+	}
+	return r.exec(ctx, "set staging refresh of site "+siteID,
+		"UPDATE sites SET staging_snapshot_id = ?, staging_refreshed_at = ?, updated_at = ? WHERE id = ?",
+		snapshotID, utc(at), now(), siteID)
 }
 
 // SetTemplateFingerprint records the fingerprint of the templates the site
