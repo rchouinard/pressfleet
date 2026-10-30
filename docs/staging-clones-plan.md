@@ -97,7 +97,7 @@ POST /sites/{staging}/push
 
 With an existing snapshot (`snapshot_id`), the copy job is queued on its own. The waiting job's first step reads the awaited job's outcome. If the backup failed, the step fails permanently and the job rolls back, which changes nothing on the target.
 
-A waiting job must never deadlock the queue. For example, a push and a refresh of the same pair of sites, queued together, wait on each other's lock keys in opposite directions. The rule [#197](https://github.com/rchouinard/pressfleet/issues/197) proposes: a queued job that hasn't started doesn't block its lock key while it waits. A job that has started keeps its key until it is final, as today.
+A waiting job must not hold up its lock key. For example, a push and a refresh of the same pair of sites, queued together, wait on each other's lock keys in opposite directions. A job can only wait for a job that already exists, so waits never form a cycle and the queue can't deadlock, but with plain first-in-first-out lock keys the four jobs would run one after another. The rule from [#197](https://github.com/rchouinard/pressfleet/issues/197) lets them run two at a time: a queued job that hasn't started doesn't block its lock key while it waits. A job that has started keeps its key until it is final, as today.
 
 ### Creating a staging site
 
