@@ -74,6 +74,7 @@ var implementedSiteOps = map[string]bool{
 	"importSite":                    true,
 	"createStagingSite":             true,
 	"refreshStagingSite":            true,
+	"pushStagingSite":               true,
 	"exportSiteDatabase":            true,
 	"exportSite":                    true,
 	"exportSiteBackup":              true,

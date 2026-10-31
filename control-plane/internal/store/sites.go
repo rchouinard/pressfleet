@@ -541,6 +541,18 @@ func (r Sites) SetStagingRefreshed(ctx context.Context, siteID, snapshotID strin
 		snapshotID, utc(at), now(), siteID)
 }
 
+// SetStagingPushed records that a staging site was pushed to its production
+// site at the given time (§5.11). It reports whether the site changed; a
+// missing site is not an error, since a staging site can be deleted while its
+// push runs.
+func (r Sites) SetStagingPushed(ctx context.Context, siteID string, at time.Time) (bool, error) {
+	if at.IsZero() {
+		return false, fmt.Errorf("set staging push of site %s: time is required", siteID)
+	}
+	return r.exec(ctx, "set staging push of site "+siteID,
+		"UPDATE sites SET staging_pushed_at = ?, updated_at = ? WHERE id = ?", utc(at), now(), siteID)
+}
+
 // SetTemplateFingerprint records the fingerprint of the templates the site
 // was just rendered with. It leaves updated_at alone: rendering doesn't
 // change the site's settings, and every site is re-rendered at startup. It

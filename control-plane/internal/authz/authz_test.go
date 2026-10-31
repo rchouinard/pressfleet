@@ -71,6 +71,8 @@ var designTable = map[authz.Action]struct {
 	authz.CreateStagingSite: {true, true, false, true},
 	// Refresh a staging site (§5.11).
 	authz.RefreshStagingSite: {true, true, false, true},
+	// Push a staging site to production (§5.11).
+	authz.PushStagingSite: {true, true, false, true},
 	// Delete a staging site (§5.11): the Operator-level delete.
 	authz.DeleteStagingSite: {true, true, false, true},
 	// Delete or offboard client groups.

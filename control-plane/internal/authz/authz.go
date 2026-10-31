@@ -155,6 +155,10 @@ const (
 	// (§5.11). It is checked against the staging site, whose client group
 	// its production site shares.
 	RefreshStagingSite Action = "site.staging.refresh"
+	// PushStagingSite is copying a staging site into its production site
+	// (§5.11). It is checked against both sites, so it stays correct once
+	// access is scoped by client group.
+	PushStagingSite Action = "site.staging.push"
 
 	// Take backups, restore, and approve core updates.
 	CreateBackup      Action = "backup.create"
@@ -389,6 +393,7 @@ var rules = map[Action]rule{
 
 	CreateStagingSite:  {store.RoleOperator, true},
 	RefreshStagingSite: {store.RoleOperator, true},
+	PushStagingSite:    {store.RoleOperator, true},
 
 	CreateBackup:      {store.RoleOperator, true},
 	RestoreBackup:     {store.RoleOperator, true},

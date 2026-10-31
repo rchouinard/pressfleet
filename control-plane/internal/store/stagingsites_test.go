@@ -164,6 +164,38 @@ func TestSetStagingRefreshed(t *testing.T) {
 	})
 }
 
+func TestSetStagingPushed(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		group := createGroup(ctx, t, db)
+		sites := store.NewSites(db)
+		prod := newTestSite(group, "acme", 21200)
+		if err := sites.Create(ctx, prod); err != nil {
+			t.Fatal(err)
+		}
+		stg := newTestSite(group, "acme-staging", 21201)
+		stg.ParentSiteID = prod.ID
+		if err := sites.Create(ctx, stg); err != nil {
+			t.Fatal(err)
+		}
+		at := time.Date(2026, 10, 30, 12, 0, 0, 123456000, time.FixedZone("EST", -5*3600))
+		if ok, err := sites.SetStagingPushed(ctx, stg.ID, at); err != nil || !ok {
+			t.Fatalf("SetStagingPushed = %v, %v", ok, err)
+		}
+		got, err := sites.Get(ctx, stg.ID)
+		if err != nil || !got.StagingPushedAt.Equal(at) || !got.StagingRefreshedAt.IsZero() || got.StagingSnapshotID != "" {
+			t.Errorf("after SetStagingPushed = %+v, %v", got, err)
+		}
+		// A staging site can be deleted while its push runs.
+		if ok, err := sites.SetStagingPushed(ctx, id.New(), at); err != nil || ok {
+			t.Errorf("missing site: %v, %v", ok, err)
+		}
+		if _, err := sites.SetStagingPushed(ctx, stg.ID, time.Time{}); err == nil {
+			t.Error("SetStagingPushed accepted no time")
+		}
+	})
+}
+
 // TestSiteLock checks that a transaction that locks a site sees what
 // another one that locked it first committed: on PostgreSQL through the row
 // lock, on SQLite because write transactions run one at a time.

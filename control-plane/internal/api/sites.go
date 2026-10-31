@@ -229,6 +229,55 @@ func (h *Handlers) RefreshStagingSite(ctx context.Context, req gen.RefreshStagin
 	}, nil
 }
 
+// PushStagingSite queues the jobs that copy a staging site into its production
+// site (#204, design doc §5.11), returning 202 with the production site and the
+// push job. It is checked against both sites, so it stays correct once access
+// is scoped by client group.
+func (h *Handlers) PushStagingSite(ctx context.Context, req gen.PushStagingSiteRequestObject) (gen.PushStagingSiteResponseObject, error) {
+	p, err := h.authorize(ctx, authz.PushStagingSite, authz.Site(req.SiteID))
+	if err != nil {
+		return nil, err
+	}
+	staging, _, err := h.sites.Get(ctx, req.SiteID)
+	if err != nil {
+		return nil, siteError(err)
+	}
+	// A production site as the target has no second site; the service refuses it.
+	if staging.IsStaging() {
+		if _, err := h.authorize(ctx, authz.PushStagingSite, authz.Site(staging.ParentSiteID)); err != nil {
+			return nil, err
+		}
+		// The event stays about the staging site, and names the production
+		// site in its details, whatever happens next.
+		setAuditTarget(ctx, authz.Site(staging.ID))
+		setAuditDetails(ctx, map[string]string{"production_site_id": staging.ParentSiteID})
+	}
+	b := deref(req.Body)
+	setAuditDetails(ctx, map[string]string{"files": string(b.Files), "database": strconv.FormatBool(b.Database)})
+	out, err := h.sites.PushStaging(ctx, req.SiteID, sites.StagingPush{
+		Files:           backup.RestoreFiles(b.Files),
+		Database:        b.Database,
+		CreatedByUserID: p.UserID,
+	})
+	if err != nil {
+		return nil, siteError(err)
+	}
+	setAuditDetails(ctx, map[string]string{"job_id": out.Job.ID, "backup_job_id": out.BackupJob.ID})
+	_, aliases, err := h.sites.Get(ctx, out.Site.ID)
+	if err != nil {
+		return nil, siteError(err)
+	}
+	j, err := jobResponse(out.Job, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	location := jobLocation(out.Job)
+	return gen.PushStagingSite202JSONResponse{
+		Body:    gen.SiteAccepted{Site: siteResponse(out.Site, aliases), Job: j},
+		Headers: gen.PushStagingSite202ResponseHeaders{Location: &location},
+	}, nil
+}
+
 // GetSite returns a site with its recorded status and its live runtime
 // state. The live state is best effort: if the container runtime can't be
 // reached in time, the phase is unknown and the request still succeeds.
@@ -573,6 +622,7 @@ func siteError(err error) error {
 		{sites.ErrNotLive, ErrConflict},
 		{sites.ErrUploadNotReady, ErrConflict},
 		{sites.ErrSourceFailed, ErrConflict},
+		{sites.ErrStagingFailed, ErrConflict},
 	} {
 		if errors.Is(err, m.from) {
 			return fmt.Errorf("%w: %w", m.to, m.from)

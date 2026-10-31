@@ -101,7 +101,7 @@ import (
 // # The shared pipeline
 //
 // These steps are the restore pipeline of §5.4, which site.refresh
-// (refresh.go) and site.push (#204) run too: [restoreFlow] holds what differs
+// (refresh.go) and site.push (push.go) run too: [restoreFlow] holds what differs
 // between the job types, and [Service.restoreFlowHandler] builds the steps.
 // Everything else comes from the job's [restoreSource]: which snapshot of
 // which site, and how much of it. A step outside the scope succeeds without
@@ -225,7 +225,11 @@ type restoreFlow struct {
 	// convergePlugins adds a configure_plugins step after the URL rewrite,
 	// for a job whose database comes with another site's plugin state.
 	convergePlugins bool
-	// finish is the last step. It should call finishRestore.
+	// repairPlugins, if set, is what that step does when the database isn't
+	// restored, instead of nothing; a job whose files can take away plugins
+	// its site can't do without needs it.
+	repairPlugins jobs.StepFunc
+	// finish is the last step. It should call finishRestore or finishRestoreAs.
 	finish jobs.StepFunc
 }
 
@@ -484,10 +488,20 @@ func (s *Service) restoreFlowHandler(f restoreFlow) jobs.Handler {
 		},
 	)
 	if f.convergePlugins {
-		steps = append(steps, jobs.Step{
-			Name: stepConfigurePlugins,
-			Do:   scopedStep(databaseInScope, "The database wasn't restored, so the site's plugin state is its own.", s.configureCreatedSitePlugins),
-		})
+		converge := scopedStep(databaseInScope, "The database wasn't restored, so the site's plugin state is its own.", s.configureCreatedSitePlugins)
+		if f.repairPlugins != nil {
+			converge = func(ctx context.Context, r *jobs.Run) error {
+				src, err := jobRestoreSource(r)
+				if err != nil {
+					return err
+				}
+				if databaseInScope(src.Scope) {
+					return s.configureCreatedSitePlugins(ctx, r)
+				}
+				return f.repairPlugins(ctx, r)
+			}
+		}
+		steps = append(steps, jobs.Step{Name: stepConfigurePlugins, Do: converge})
 	}
 	steps = append(steps, s.cacheSteps()...)
 	steps = append(steps,
@@ -1027,6 +1041,12 @@ func (s *Service) disableRestoreMaintenance(ctx context.Context, r *jobs.Run) er
 // finishRestore sets the status from the live phase and puts the restore
 // in the job's result.
 func (s *Service) finishRestore(ctx context.Context, r *jobs.Run) error {
+	return s.finishRestoreAs(ctx, r, "pre_restore_backup_id")
+}
+
+// finishRestoreAs is finishRestore with the result key that names the job's
+// own backup, the one that undoes it.
+func (s *Service) finishRestoreAs(ctx context.Context, r *jobs.Run, backupKey string) error {
 	if err := s.finishUpdate(ctx, r); err != nil {
 		return err
 	}
@@ -1038,7 +1058,7 @@ func (s *Service) finishRestore(ctx context.Context, r *jobs.Run) error {
 	if rec, found, err := s.backups.JobBackup(ctx, r); err != nil {
 		return err
 	} else if found {
-		result["pre_restore_backup_id"] = rec.ID
+		result[backupKey] = rec.ID
 	}
 	for k, v := range result {
 		if err := r.SetResult(k, v); err != nil {

@@ -134,7 +134,7 @@ On top of that, a push:
 
 - **Guards the core policy.** If the staging site runs a newer major branch than production's core policy allows, a database push would bypass the hold or approval (§5.5), so it is refused with a validation error: approve the branch for production first. A newer release of the same branch is allowed, since the rollout would bring production there anyway.
 - **Never pushes settings.** Production keeps its PHP version, resources, domains, preview protection, and mail switch. The dashboard points out differences so they can be applied by hand.
-- **Converges the default plugin stack** on production after the restore, as import does (§5.1 step 7).
+- **Converges the default plugin stack** on production after a database push, as import does (§5.1 step 7). A push without the database can't converge, for the same reason as a refresh, but production can't wait for the next reconciliation either: without Nginx Helper the page cache stops being purged, and without Two Factor required two-factor isn't enforced. So it reinstalls from the site image whatever default plugin (or object cache drop-in) the pushed files removed, and leaves activation, settings, and capabilities to production's own database. WordPress failing to load the pushed code at that point rolls the push back.
 
 ### Scope
 

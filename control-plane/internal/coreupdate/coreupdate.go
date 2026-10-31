@@ -172,6 +172,21 @@ type Plan struct {
 	Warnings []Warning
 }
 
+// AllowsBranch reports whether the plan's policy lets the site run a release
+// of the major branch: its own branch or an older one, or a newer one up to its
+// effective approval, whoever gave that (a hold has none). It is for work other
+// than the rollout that can move a site's core, which mustn't get around a hold
+// or an approval. A malformed branch isn't allowed.
+func (p Plan) AllowsBranch(branch string) bool {
+	if !catalog.ValidBranch(branch) {
+		return false
+	}
+	if compareBranches(branch, p.Branch) <= 0 {
+		return true
+	}
+	return p.ApprovedBranch != "" && compareBranches(branch, p.ApprovedBranch) <= 0
+}
+
 // Decide returns the plan of a site running current with its own and its
 // client group's policies, against the releases in the catalog, at now.
 // A malformed current version is catalog.ErrInvalidVersion; a policy with
