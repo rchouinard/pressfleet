@@ -100,8 +100,15 @@ type Site struct {
 	StagingRefreshedAt time.Time
 	StagingSnapshotID  string
 	StagingPushedAt    time.Time
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	// StagingDatabaseAsOf and StagingUploadsAsOf are the times of the
+	// snapshots the staging site's database and uploads were last copied
+	// from, which is how old they are. StagingRefreshedAt can't say: a
+	// code-only refresh moves it and leaves the database as old as it was.
+	// Zero means unknown.
+	StagingDatabaseAsOf time.Time
+	StagingUploadsAsOf  time.Time
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // IsStaging reports whether the site is a staging site: a clone of a
@@ -124,7 +131,7 @@ const siteColumns = "id, client_group_id, parent_site_id, name, slug, status, st
 	"uid, wp_salts_secret_ref, admin_username, admin_email, admin_password_secret_ref, " +
 	"preview_protection, preview_username, preview_password_hash, preview_password_secret_ref, maintenance, url_rewrite_from, " +
 	"table_prefix, template_fingerprint, mail_disabled, staging_refreshed_at, staging_snapshot_id, staging_pushed_at, " +
-	"created_at, updated_at"
+	"staging_database_as_of, staging_uploads_as_of, created_at, updated_at"
 
 // siteColumnCount is the number of siteColumns, so the INSERT's
 // placeholders follow the column list.
@@ -139,6 +146,8 @@ func scanSite(s scanner) (Site, error) {
 		rewrite string
 		refresh sql.NullTime
 		pushed  sql.NullTime
+		dbAsOf  sql.NullTime
+		upAsOf  sql.NullTime
 	)
 	err := s.Scan(&site.ID, &site.ClientGroupID, &parent, &site.Name, &site.Slug, &site.Status, &site.StatusMessage,
 		&site.PreviewDomain, &primary, &site.PHPVersion, &site.WPCoreVersion, &site.EnableCache,
@@ -146,13 +155,19 @@ func scanSite(s scanner) (Site, error) {
 		&site.AdminUsername, &site.AdminEmail, &site.AdminPasswordSecretRef,
 		&site.PreviewProtection, &site.PreviewUsername, &site.PreviewPasswordHash, &site.PreviewPasswordSecretRef,
 		&site.Maintenance, &rewrite, &site.TablePrefix, &site.TemplateFingerprint,
-		&site.MailDisabled, &refresh, &snap, &pushed, &site.CreatedAt, &site.UpdatedAt)
+		&site.MailDisabled, &refresh, &snap, &pushed, &dbAsOf, &upAsOf, &site.CreatedAt, &site.UpdatedAt)
 	site.PrimaryDomain, site.ParentSiteID, site.StagingSnapshotID = primary.String, parent.String, snap.String
 	if refresh.Valid {
 		site.StagingRefreshedAt = refresh.Time
 	}
 	if pushed.Valid {
 		site.StagingPushedAt = pushed.Time
+	}
+	if dbAsOf.Valid {
+		site.StagingDatabaseAsOf = dbAsOf.Time
+	}
+	if upAsOf.Valid {
+		site.StagingUploadsAsOf = upAsOf.Time
 	}
 	if rewrite != "" {
 		site.URLRewriteFrom = strings.Fields(rewrite)
@@ -193,7 +208,8 @@ func (r Sites) Create(ctx context.Context, s *Site) error {
 		created.PreviewProtection, created.PreviewUsername, created.PreviewPasswordHash, created.PreviewPasswordSecretRef,
 		created.Maintenance, strings.Join(created.URLRewriteFrom, " "), created.TablePrefix, created.TemplateFingerprint,
 		created.MailDisabled, nullTime(utc(created.StagingRefreshedAt)), nullString(created.StagingSnapshotID),
-		nullTime(utc(created.StagingPushedAt)), created.CreatedAt, created.UpdatedAt)
+		nullTime(utc(created.StagingPushedAt)),
+		nullTime(utc(created.StagingDatabaseAsOf)), nullTime(utc(created.StagingUploadsAsOf)), created.CreatedAt, created.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create site: %w", err)
 	}
@@ -551,6 +567,54 @@ func (r Sites) SetStagingPushed(ctx context.Context, siteID string, at time.Time
 	}
 	return r.exec(ctx, "set staging push of site "+siteID,
 		"UPDATE sites SET staging_pushed_at = ?, updated_at = ? WHERE id = ?", utc(at), now(), siteID)
+}
+
+// AsOfChange is what a job does to one of a staging site's copy times
+// (Site.StagingDatabaseAsOf, Site.StagingUploadsAsOf). The zero value leaves
+// the time as it is.
+type AsOfChange struct {
+	set, clear bool
+	at         time.Time
+}
+
+// AsOfSet records that the data is from a snapshot taken at the given time.
+// A zero time clears instead: unknown is the honest answer when the
+// snapshot's time isn't known.
+func AsOfSet(at time.Time) AsOfChange {
+	if at.IsZero() {
+		return AsOfClear()
+	}
+	return AsOfChange{set: true, at: utc(at)}
+}
+
+// AsOfClear records that the data's age is unknown, as after a restore of
+// data that may be of any age. Keeping the old time would understate it.
+func AsOfClear() AsOfChange { return AsOfChange{clear: true} }
+
+// SetStagingAsOf changes the times of the snapshots a staging site's database
+// and uploads are from (§5.11). It reports whether the site changed; a
+// missing site is not an error, since a staging site can be deleted while a
+// push to production runs.
+func (r Sites) SetStagingAsOf(ctx context.Context, siteID string, database, uploads AsOfChange) (bool, error) {
+	var sets []string
+	var args []any
+	for _, c := range []struct {
+		column string
+		change AsOfChange
+	}{{"staging_database_as_of", database}, {"staging_uploads_as_of", uploads}} {
+		switch {
+		case c.change.set:
+			sets, args = append(sets, c.column+" = ?"), append(args, c.change.at)
+		case c.change.clear:
+			sets = append(sets, c.column+" = NULL")
+		}
+	}
+	if len(sets) == 0 {
+		return false, nil
+	}
+	args = append(args, now(), siteID)
+	return r.exec(ctx, "set staging copy times of site "+siteID,
+		"UPDATE sites SET "+strings.Join(sets, ", ")+", updated_at = ? WHERE id = ?", args...)
 }
 
 // SetTemplateFingerprint records the fingerprint of the templates the site

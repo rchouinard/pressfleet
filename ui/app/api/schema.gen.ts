@@ -4392,6 +4392,22 @@ export interface components {
             last_snapshot_id: string | null;
             /** @description When the site was last pushed to production; null if it never was. */
             last_pushed_at: components["schemas"]["Timestamp"] | null;
+            /**
+             * @description How old the site's database is: the time of the snapshot it was
+             *     last copied from, not of the job that copied it. A refresh that
+             *     keeps the database leaves it as it was, and a refresh from an older
+             *     named backup reports that backup's age. A push to production sets
+             *     it to the pushed snapshot's time, since production's database is
+             *     then that old. Null when unknown: never copied, or restored from a
+             *     backup of the staging site, whose data has no known age.
+             */
+            database_as_of: components["schemas"]["Timestamp"] | null;
+            /**
+             * @description How old the site's uploads (all of wp-content) are, counted like
+             *     `database_as_of`. Only a copy of all files sets it; a code-only
+             *     refresh leaves it as it was. Null when unknown.
+             */
+            uploads_as_of: components["schemas"]["Timestamp"] | null;
             /** @description Whether the site sends email. Off by default on staging sites. */
             outbound_mail: boolean;
         };

@@ -84,6 +84,9 @@ const (
 	// dataRecoverSnapshot, when it isn't the recovering site's own: the
 	// production site of a staging site.
 	dataRecoverSource = "source_site_id"
+	// dataRecoverSnapshotTime is when dataRecoverSnapshot was taken. A job
+	// queued before it existed lacks it, which reads as unknown.
+	dataRecoverSnapshotTime = "snapshot_time"
 )
 
 // interruptedByRestore is the error of jobs failed by PrepareRecovery.
@@ -285,6 +288,11 @@ func (s *Service) prepareRecovery(ctx context.Context, r *jobs.Run) error {
 			return err
 		}
 	}
+	// Before the snapshot, which is what marks this step as done: a retry
+	// that finds the snapshot must find the time too.
+	if err := setSnapshotTime(r, dataRecoverSnapshotTime, snap.Time); err != nil {
+		return err
+	}
 	if err := r.Set(dataRecoverSnapshot, string(snap.ID)); err != nil {
 		return err
 	}
@@ -423,8 +431,27 @@ func (s *Service) finishRecovery(ctx context.Context, r *jobs.Run) error {
 			return fmt.Errorf("stopping the site: %w", err)
 		}
 	}
+	// Before the status leaves updating, which a retry of this step needs.
+	sites := store.NewSites(s.db)
+	if site.IsStaging() {
+		// A copy of the production site's snapshot is as old as it; the
+		// staging site's own backup holds data of an unknown age.
+		database, uploads := store.AsOfClear(), store.AsOfClear()
+		if source, err := recoverSource(r, site.ID); err != nil {
+			return err
+		} else if source != site.ID {
+			taken, err := getSnapshotTime(r, dataRecoverSnapshotTime)
+			if err != nil {
+				return err
+			}
+			database, uploads = store.AsOfSet(taken), store.AsOfSet(taken)
+		}
+		if _, err := sites.SetStagingAsOf(ctx, site.ID, database, uploads); err != nil {
+			return err
+		}
+	}
 	status := s.observedStatus(ctx, site.ID)
-	if _, err := store.NewSites(s.db).SetStatus(ctx, site.ID, status, "", store.SiteUpdating); err != nil {
+	if _, err := sites.SetStatus(ctx, site.ID, status, "", store.SiteUpdating); err != nil {
 		return err
 	}
 	if err := r.SetResult("site_id", site.ID); err != nil {
