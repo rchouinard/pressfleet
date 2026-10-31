@@ -46,8 +46,8 @@ func fillState(t *testing.T, db *store.DB) {
 		query string
 		args  []any
 	}{
-		{"UPDATE sites SET parent_site_id = ?, mail_disabled = ?, staging_refreshed_at = ?, staging_snapshot_id = ?, staging_pushed_at = ? WHERE id = ?",
-			[]any{parent.ID, true, at, "0123456789abcdef", at.Add(time.Hour), child.ID}},
+		{"UPDATE sites SET parent_site_id = ?, mail_disabled = ?, staging_refreshed_at = ?, staging_snapshot_id = ?, staging_pushed_at = ?, staging_database_as_of = ?, staging_uploads_as_of = ? WHERE id = ?",
+			[]any{parent.ID, true, at, "0123456789abcdef", at.Add(time.Hour), at.Add(-48 * time.Hour), at.Add(-24 * time.Hour), child.ID}},
 		{"UPDATE sites SET parent_site_id = ?, mail_disabled = ? WHERE id = ?", []any{parent.ID, false, sibling.ID}},
 		{"INSERT INTO secrets (id, kind, key_id, ciphertext, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
 			[]any{"sec1", "site-db-password", "k1", []byte{0, 1, 2, 0xff, '"'}, at, at}},
@@ -189,7 +189,8 @@ func TestDumpLoad(t *testing.T) {
 						t.Fatal(err)
 					}
 					if !stg.IsStaging() || stg.ParentSiteID != site.ID || stg.MailDisabled != tc.mail || stg.StagingSnapshotID != tc.snapshot ||
-						stg.StagingRefreshedAt.IsZero() == tc.refreshed || stg.StagingPushedAt.IsZero() == tc.refreshed {
+						stg.StagingRefreshedAt.IsZero() == tc.refreshed || stg.StagingPushedAt.IsZero() == tc.refreshed ||
+						stg.StagingDatabaseAsOf.IsZero() == tc.refreshed || stg.StagingUploadsAsOf.IsZero() == tc.refreshed {
 						t.Errorf("staging site %s = %+v", tc.slug, stg)
 					}
 				}

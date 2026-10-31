@@ -15,7 +15,7 @@ export function site(over: Partial<Site> = {}): Site {
 export function stagingSite(id: string, parent: string, over: Partial<Site> = {}): Site {
   return site({
     id, name: `Staging ${id}`, slug: `acme-staging-${id}`, environment: 'staging', parent_site_id: parent,
-    staging: { production_site_id: parent, last_refreshed_at: null, last_snapshot_id: null, last_pushed_at: null, outbound_mail: false },
+    staging: { production_site_id: parent, last_refreshed_at: null, last_snapshot_id: null, last_pushed_at: null, database_as_of: null, uploads_as_of: null, outbound_mail: false },
     ...over,
   })
 }

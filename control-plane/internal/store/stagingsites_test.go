@@ -196,6 +196,71 @@ func TestSetStagingPushed(t *testing.T) {
 	})
 }
 
+func TestSetStagingAsOf(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		group := createGroup(ctx, t, db)
+		sites := store.NewSites(db)
+		prod := newTestSite(group, "acme", 21300)
+		if err := sites.Create(ctx, prod); err != nil {
+			t.Fatal(err)
+		}
+		stg := newTestSite(group, "acme-staging", 21301)
+		stg.ParentSiteID = prod.ID
+		if err := sites.Create(ctx, stg); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := sites.Get(ctx, stg.ID); !got.StagingDatabaseAsOf.IsZero() || !got.StagingUploadsAsOf.IsZero() {
+			t.Fatalf("new staging site has copy times: %+v", got)
+		}
+		est := time.FixedZone("EST", -5*3600)
+		dbAt := time.Date(2026, 10, 26, 9, 0, 0, 123456000, est)
+		upAt := time.Date(2026, 10, 27, 9, 0, 0, 654321000, est)
+		steps := []struct {
+			name              string
+			database, uploads store.AsOfChange
+			wantDB, wantUp    time.Time
+			changed           bool
+		}{
+			{"set both", store.AsOfSet(dbAt), store.AsOfSet(upAt), dbAt, upAt, true},
+			{"keep both", store.AsOfChange{}, store.AsOfChange{}, dbAt, upAt, false},
+			{"set one, keep the other", store.AsOfSet(upAt), store.AsOfChange{}, upAt, upAt, true},
+			{"clear one, keep the other", store.AsOfChange{}, store.AsOfClear(), upAt, time.Time{}, true},
+			{"a zero time clears", store.AsOfSet(time.Time{}), store.AsOfSet(dbAt), time.Time{}, dbAt, true},
+			{"clear both", store.AsOfClear(), store.AsOfClear(), time.Time{}, time.Time{}, true},
+		}
+		for _, tc := range steps {
+			ok, err := sites.SetStagingAsOf(ctx, stg.ID, tc.database, tc.uploads)
+			if err != nil || ok != tc.changed {
+				t.Fatalf("%s: SetStagingAsOf = %v, %v; want %v", tc.name, ok, err, tc.changed)
+			}
+			got, err := sites.Get(ctx, stg.ID)
+			if err != nil || !got.StagingDatabaseAsOf.Equal(tc.wantDB) || !got.StagingUploadsAsOf.Equal(tc.wantUp) {
+				t.Errorf("%s: database %v, uploads %v, err %v; want %v and %v", tc.name,
+					got.StagingDatabaseAsOf, got.StagingUploadsAsOf, err, tc.wantDB, tc.wantUp)
+			}
+		}
+		// The job times and the snapshot are not touched.
+		if got, _ := sites.Get(ctx, stg.ID); !got.StagingRefreshedAt.IsZero() || got.StagingSnapshotID != "" || !got.StagingPushedAt.IsZero() {
+			t.Errorf("SetStagingAsOf changed the job times: %+v", got)
+		}
+		// A staging site can be deleted while its push runs.
+		if ok, err := sites.SetStagingAsOf(ctx, id.New(), store.AsOfSet(dbAt), store.AsOfClear()); err != nil || ok {
+			t.Errorf("missing site: %v, %v", ok, err)
+		}
+
+		// Created with times, they read back.
+		kept := newTestSite(group, "acme-staging-2", 21302)
+		kept.ParentSiteID, kept.StagingDatabaseAsOf, kept.StagingUploadsAsOf = prod.ID, dbAt, upAt
+		if err := sites.Create(ctx, kept); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := sites.Get(ctx, kept.ID); !got.StagingDatabaseAsOf.Equal(dbAt) || !got.StagingUploadsAsOf.Equal(upAt) {
+			t.Errorf("created with times = %+v", got)
+		}
+	})
+}
+
 // TestSiteLock checks that a transaction that locks a site sees what
 // another one that locked it first committed: on PostgreSQL through the row
 // lock, on SQLite because write transactions run one at a time.

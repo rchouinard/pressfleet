@@ -271,9 +271,27 @@ func (s *Service) prepareRefresh(ctx context.Context, r *jobs.Run) error {
 			return err
 		}
 	}
+	if err := setSnapshotTime(r, dataRestoreSnapshotTime, snap.Time); err != nil {
+		return err
+	}
 	r.Logf("Refreshing %s from snapshot %s of site %s (%s), after taking a pre-refresh backup.",
 		site.PreviewDomain, shortSnapshot(string(snap.ID)), p.SourceSiteID, describeScope(scope))
 	return nil
+}
+
+// copiedAsOf says what a job that copied the scope of src changes of the
+// copy times of the site it copied to: the parts in scope are as old as the
+// snapshot, the others are unchanged. Uploads count as copied only with all of
+// wp-content. A snapshot without a time (a job queued before it was recorded)
+// clears what it would have set, since unknown is honest and a wrong time isn't.
+func copiedAsOf(src restoreSource) (database, uploads store.AsOfChange) {
+	if src.Scope.Database {
+		database = store.AsOfSet(src.SnapshotTime)
+	}
+	if src.Scope.Files == backup.RestoreFilesAll {
+		uploads = store.AsOfSet(src.SnapshotTime)
+	}
+	return database, uploads
 }
 
 // finishRefresh finishes like a restore, then records the refresh on the
@@ -287,7 +305,14 @@ func (s *Service) finishRefresh(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
-	if _, err := store.NewSites(s.db).SetStagingRefreshed(ctx, r.Job().TargetID, src.SnapshotID, s.now()); err != nil {
+	sites := store.NewSites(s.db)
+	if _, err := sites.SetStagingRefreshed(ctx, r.Job().TargetID, src.SnapshotID, s.now()); err != nil {
+		return err
+	}
+	// The snapshot's time, not the job's: the snapshot may be an older named
+	// backup, and a refresh that skips a part leaves that part as old as it was.
+	database, uploads := copiedAsOf(src)
+	if _, err := sites.SetStagingAsOf(ctx, r.Job().TargetID, database, uploads); err != nil {
 		return err
 	}
 	var backupID string

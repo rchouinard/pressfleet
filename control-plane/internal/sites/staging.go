@@ -81,6 +81,9 @@ const (
 	// dataCloneSnapshot is the full ID of the snapshot being cloned, once
 	// prepare resolved it.
 	dataCloneSnapshot = "clone_snapshot_id"
+	// dataCloneSnapshotTime is when that snapshot was taken. Jobs queued
+	// before it existed lack it, which reads as unknown.
+	dataCloneSnapshotTime = "clone_snapshot_time"
 	// dataCloneBackupID is the ID of the sync backup the job waited for.
 	dataCloneBackupID = "clone_backup_id"
 )
@@ -467,6 +470,9 @@ func (s *Service) prepareClone(ctx context.Context, r *jobs.Run) error {
 			return err
 		}
 	}
+	if err := setSnapshotTime(r, dataCloneSnapshotTime, snap.Time); err != nil {
+		return err
+	}
 	if err := r.Set(dataCloneSnapshot, string(snap.ID)); err != nil {
 		return err
 	}
@@ -586,6 +592,13 @@ func (s *Service) finishClone(ctx context.Context, r *jobs.Run) error {
 	}
 	sites := store.NewSites(s.db)
 	if _, err := sites.SetStagingRefreshed(ctx, site.ID, snap, s.now()); err != nil {
+		return err
+	}
+	taken, err := getSnapshotTime(r, dataCloneSnapshotTime)
+	if err != nil {
+		return err
+	}
+	if _, err := sites.SetStagingAsOf(ctx, site.ID, store.AsOfSet(taken), store.AsOfSet(taken)); err != nil {
 		return err
 	}
 	changed, err := sites.SetStatus(ctx, site.ID, store.SiteRunning, "", store.SiteProvisioning)
