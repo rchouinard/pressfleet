@@ -124,9 +124,18 @@ func TestUpgradeRecovery(t *testing.T) {
 	if before.Version != skew.MinUpgradeFrom || !before.Ready {
 		t.Fatalf("the installed control plane runs %s (ready: %t), want %s", before.Version, before.Ready, skew.MinUpgradeFrom)
 	}
-	// The site images of this tree's catalog. The previous release pins its
-	// own; the provisioner pulls any of those missing, unless they are
-	// private.
+	// Two sets of site images have to be on the host before the site is
+	// created, because a control plane has no registry credentials and the
+	// site images are private: it can only use what is already here, and
+	// the harness pulling on the host is the one with credentials.
+	//  - The previous release provisions the newest WordPress release of
+	//    its own catalog, which this tree's catalog may have moved past.
+	//    Its core rollout (GET /api/v1/core-rollout, in v0.1.0 already)
+	//    lists the releases it has images for, newest first, so ask it
+	//    rather than hard-code a version.
+	//  - This tree's control plane, which the test upgrades to, runs the
+	//    core rollout for its own newest release, and the site
+	//    is created with the PHP version below.
 	cat, err := catalog.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -135,11 +144,28 @@ func TestUpgradeRecovery(t *testing.T) {
 	if !ok {
 		t.Fatal("no default PHP version")
 	}
-	images, err := cat.Images(php, cat.LatestWordPress().Version)
+	rollout, err := p.Client.GetCoreRolloutWithResponse(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	e2e.EnsureImages(t, images.PHP, images.Nginx)
+	if rollout.JSON200 == nil || len(rollout.JSON200.Releases) == 0 {
+		t.Fatalf("%s core rollout: status %d: %s", skew.MinUpgradeFrom, rollout.StatusCode(), rollout.Body)
+	}
+	var wanted []string
+	for _, wp := range []string{rollout.JSON200.Releases[0].Version, cat.LatestWordPress().Version} {
+		// Images doesn't require the version to be in this tree's catalog.
+		images, err := cat.Images(php, wp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, image := range []string{images.PHP, images.Nginx} {
+			if !slices.Contains(wanted, image) {
+				wanted = append(wanted, image)
+			}
+		}
+	}
+	t.Logf("%s provisions WordPress %s; ensuring %s", skew.MinUpgradeFrom, rollout.JSON200.Releases[0].Version, wanted)
+	e2e.EnsureImages(t, wanted...)
 	groupID := createGroup(t, p, "E2E Upgrade Recovery Agency")
 	created := createSite(t, p, groupID, "E2E Upgrade Recovery", php)
 	siteProject = compose.Project{Name: compose.SiteProjectName(created.Site.ID), Dir: t.TempDir()}
