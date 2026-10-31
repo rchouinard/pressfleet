@@ -107,6 +107,27 @@ watch(id, () => {
   jobId.value = undefined
 })
 
+// `?backup=<id>` points at a backup, such as the one a finished push or
+// refresh took first. It is looked for in the history, loading further pages
+// (a few at most) when it isn't on the first.
+const markedId = computed(() => {
+  const q = route.query.backup
+  return typeof q === 'string' && q !== '' ? q : undefined
+})
+const marked = computed(() => backups.items.value.find(b => b.id === markedId.value))
+const markedSearching = ref(false)
+watch([markedId, () => backups.items.value.length], async () => {
+  if (!markedId.value || marked.value || markedSearching.value) return
+  markedSearching.value = true
+  try {
+    for (let i = 0; i < 10 && !marked.value && backups.cursor.value; i++) await backups.loadMore()
+  } catch {
+    // The history shows its own error; the notice just doesn't appear.
+  } finally {
+    markedSearching.value = false
+  }
+}, { immediate: true })
+
 const ended = createEndedJobs()
 async function onJobUpdate(job: Job) {
   if (!ended.add(job)) return
@@ -215,6 +236,17 @@ const mayBackUp = computed(() => !!site.value && canBackUpSite(site.value) && !b
         {{ site.status_message }}
       </p>
 
+      <div v-if="marked" class="rounded-md border border-default bg-elevated p-3 text-sm" role="status" data-testid="marked-backup">
+        <p class="font-medium">
+          <UIcon name="i-lucide-history" class="mr-1 inline size-4 align-text-bottom" aria-hidden="true" />
+          The backup from {{ new Date(marked.started_at).toLocaleString() }} is marked "Undo point" below
+        </p>
+        <p class="mt-1 text-muted">
+          It was taken just before a push or refresh. Restoring it puts this site's database and wp-content back as they were then,
+          whatever the scope was, so anything recorded here since is lost too. Use the Restore button on its row.
+        </p>
+      </div>
+
       <div v-if="schedule || scheduleError">
         <ProblemAlert v-if="scheduleError" :error="scheduleError" />
         <BackupScheduleCard v-else-if="schedule" :schedule="schedule" :can-edit="can('backup.create')" :save="saveSchedule" />
@@ -241,6 +273,7 @@ const mayBackUp = computed(() => !!site.value && canBackUpSite(site.value) && !b
           :backups="backups.items.value"
           :can-restore="mayRestore"
           :can-export="can('site.export') && !exportingId"
+          :marked-id="markedId"
           @restore="askRestore"
           @export="exportBackup"
         />

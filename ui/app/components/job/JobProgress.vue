@@ -39,6 +39,9 @@ const targetHref = computed(() => {
       <template v-if="targetHref" #target="{ target }">
         <NuxtLink :to="targetHref" class="break-all text-primary underline">{{ target.type }} <span class="font-mono text-xs">{{ target.id }}</span></NuxtLink>
       </template>
+      <template #undo-link="{ href, label }">
+        <NuxtLink :to="href" class="text-primary underline" data-testid="undo-link">{{ label }}</NuxtLink>
+      </template>
       <template #waits-for="{ jobId: waitingId }">
         <NuxtLink :to="`/jobs/${waitingId}`" class="break-all font-mono text-xs text-primary underline">{{ waitingId }}</NuxtLink>
       </template>
