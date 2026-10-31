@@ -3,7 +3,7 @@
 // overwrites a production site. It lists what the chosen scope does to
 // production (utils/staging-sync.ts: only the warnings that apply), shows
 // when the data that would be lost starts, and asks for the production site's
-// slug before a database push can start. The caller does the request in
+// slug before a push with the database or all files can start. The caller does the request in
 // `submit`. A 422 on `/database` is the core guard (the server's message,
 // with a link to production's core policy); other 422s show next to their
 // fields and anything else in a ProblemAlert. Props only, so it mounts under
@@ -12,17 +12,15 @@ import { computed, ref, watch } from 'vue'
 import { toApiError, type ApiError } from '../../utils/api-error'
 import type { Site } from '../../utils/site'
 import {
-  CORE_GUARD_FIELD, baselineNote, copyFilesOptions, corePolicyHref, emptyPushScope, pushBaseline, pushConfirmed,
+  CORE_GUARD_FIELD, copyFilesOptions, corePolicyHref, emptyPushScope, pushConfirmed,
   pushWarnings, slugRequired, validateScope, type SyncScope,
 } from '../../utils/staging-sync'
 
 const props = defineProps<{
   /** The staging site being pushed. */
-  staging: Pick<Site, 'name' | 'php_version' | 'wp_core_version' | 'staging' | 'created_at'>
+  staging: Pick<Site, 'name' | 'php_version' | 'wp_core_version' | 'staging'>
   /** The production site it is pushed to, as just read. */
   production: Pick<Site, 'id' | 'name' | 'slug' | 'php_version' | 'wp_core_version' | 'maintenance'>
-  /** When the production backup the staging site was copied from was taken, if it could be found. */
-  snapshotAt?: string
   submit: (scope: SyncScope) => Promise<void>
 }>()
 const open = defineModel<boolean>('open', { required: true })
@@ -42,13 +40,11 @@ watch(open, (isOpen) => {
 const filesItems = copyFilesOptions.map(o => ({ label: o.label, value: o.value, description: o.description }))
 
 const scopeError = computed(() => validateScope(scope.value))
-const baseline = computed(() => pushBaseline(props.staging.staging, props.staging.created_at, props.snapshotAt))
 const warnings = computed(() => (scopeError.value
   ? []
-  : pushWarnings({ scope: scope.value, staging: props.staging, production: props.production, baseline: baseline.value })))
+  : pushWarnings({ scope: scope.value, staging: props.staging, production: props.production })))
 const dangers = computed(() => warnings.value.filter(w => w.level === 'danger'))
 const infos = computed(() => warnings.value.filter(w => w.level === 'info'))
-const note = computed(() => (dangers.value.length > 0 ? baselineNote(baseline.value) : ''))
 
 const needsSlug = computed(() => slugRequired(scope.value))
 const ready = computed(() => pushConfirmed(scope.value, typed.value, props.production.slug))
@@ -120,7 +116,6 @@ async function onSubmit() {
             <ul class="list-disc space-y-1 pl-5">
               <li v-for="w in dangers" :key="w.id" :data-testid="`warn-${w.id}`">{{ w.text }}</li>
             </ul>
-            <p data-testid="baseline-note">{{ note }}</p>
           </section>
 
           <section class="space-y-2 rounded-md border border-default bg-elevated p-3 text-sm" aria-label="What a push does" data-testid="push-infos">
@@ -131,7 +126,7 @@ async function onSubmit() {
           </section>
         </template>
 
-        <UFormField v-if="needsSlug" :label="`Type ${production.slug} to confirm`" name="confirm" hint="The production site's slug">
+        <UFormField v-if="needsSlug" :label="`Type ${production.slug} to confirm`" name="confirm" hint="This push overwrites production's data, so it asks for the production site's slug">
           <UInput v-model="typed" autocomplete="off" :disabled="busy" class="w-full" data-testid="slug-input" />
         </UFormField>
       </form>
@@ -140,7 +135,7 @@ async function onSubmit() {
       <div class="flex w-full flex-wrap justify-end gap-2">
         <UButton color="neutral" variant="outline" :disabled="busy" @click="open = false">Cancel</UButton>
         <UButton type="submit" form="push-form" color="error" :loading="busy" :disabled="!ready" data-testid="push-submit">
-          {{ scope.database ? 'Overwrite production and push' : 'Push to production' }}
+          {{ needsSlug ? 'Overwrite production and push' : 'Push to production' }}
         </UButton>
       </div>
     </template>

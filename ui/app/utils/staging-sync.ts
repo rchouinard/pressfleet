@@ -6,7 +6,6 @@
 import type { components } from '../api/schema.gen'
 import { isTerminal, type Job } from './job'
 import { siteStatusView, type Site } from './site'
-import type { Backup } from './backup'
 import type { StagingState } from './staging'
 
 export type StagingRefresh = components['schemas']['StagingRefresh']
@@ -71,9 +70,14 @@ export function pushPayload(scope: SyncScope): StagingPush {
   return { files: scope.files, database: scope.database }
 }
 
-/** A database push asks for the production site's slug first; other scopes don't. */
-export function slugRequired(scope: Pick<SyncScope, 'database'>): boolean {
-  return scope.database
+/**
+ * A push that overwrites production for good asks for its slug first: any
+ * push with the database, and all files, which replaces `uploads`. Code-only
+ * and no-database pushes don't. This is a dashboard gate; the API doesn't
+ * enforce it.
+ */
+export function slugRequired(scope: SyncScope): boolean {
+  return scope.database || scope.files === 'all'
 }
 
 /** Whether what was typed lets the push start. */
@@ -151,84 +155,10 @@ export function pushBlockedReason(staging: Pick<Site, 'status'>, production: Pro
   }
 }
 
-function validDate(iso: string | null | undefined): iso is string {
-  return !!iso && !Number.isNaN(new Date(iso).getTime())
-}
-
 /** A time for the warnings, in the viewer's locale. */
 export function formatSyncTime(iso: string, locale?: string): string {
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(locale)
-}
-
-/**
- * The time from which the staging site's data is a copy of production's, and
- * so the time from which production's own changes are lost by a push.
- */
-export interface PushBaseline {
-  /**
-   * `snapshot`: the production backup the site was last copied from was found;
-   * `refreshed`: the time the site was last refreshed (or cloned); `created`:
-   * the site was never refreshed, so the time it was created from production;
-   * `unknown`: not even that is recorded.
-   */
-  kind: 'snapshot' | 'refreshed' | 'created' | 'unknown'
-  at?: string
-  /** When the site was last refreshed, if it was. */
-  refreshedAt?: string
-  /** When it was last pushed, if it ever was. */
-  pushedAt?: string
-  /** The site was copied from a snapshot that couldn't be looked up. */
-  snapshotUnresolved: boolean
-}
-
-/**
- * Where the staging site's data starts. The best answer is when the production
- * backup it was copied from was taken: a site refreshed from an older backup
- * is older than its refresh time. Without it, the refresh time, and for a site
- * that was never refreshed the time it was created from production.
- */
-export function pushBaseline(
-  state: Pick<StagingState, 'last_refreshed_at' | 'last_snapshot_id' | 'last_pushed_at'> | null | undefined,
-  createdAt: string,
-  snapshotAt?: string,
-): PushBaseline {
-  const refreshedAt = validDate(state?.last_refreshed_at) ? state.last_refreshed_at : undefined
-  const pushedAt = validDate(state?.last_pushed_at) ? state.last_pushed_at : undefined
-  const common = { refreshedAt, pushedAt }
-  if (validDate(snapshotAt)) return { ...common, kind: 'snapshot', at: snapshotAt, snapshotUnresolved: false }
-  const unresolved = !!state?.last_snapshot_id
-  if (refreshedAt) return { ...common, kind: 'refreshed', at: refreshedAt, snapshotUnresolved: unresolved }
-  if (validDate(createdAt)) return { ...common, kind: 'created', at: createdAt, snapshotUnresolved: false }
-  return { ...common, kind: 'unknown', snapshotUnresolved: false }
-}
-
-/** "since <time>" for the warnings; never blank. */
-export function baselineSince(b: PushBaseline, locale?: string): string {
-  return b.at ? `since ${formatSyncTime(b.at, locale)}` : 'since the staging site was created from production (the time isn\'t recorded)'
-}
-
-/** What the time means, said once under the warnings that use it. */
-export function baselineNote(b: PushBaseline, locale?: string): string {
-  const parts: string[] = []
-  switch (b.kind) {
-    case 'snapshot':
-      parts.push(`That is when the production backup this staging site was copied from was taken${b.refreshedAt ? ` (it was refreshed ${formatSyncTime(b.refreshedAt, locale)})` : ''}.`)
-      break
-    case 'refreshed':
-      parts.push('That is when this staging site was last refreshed from production.')
-      if (b.snapshotUnresolved) parts.push('If it was copied from an older production backup, what production recorded since that backup was taken is lost too.')
-      break
-    case 'created':
-      parts.push('This staging site has never been refreshed, so that is when it was created from production.')
-      break
-    default:
-      parts.push('This staging site has never been refreshed, and when it was created from production isn\'t recorded.')
-  }
-  if (b.pushedAt) {
-    parts.push(`It was last pushed to production ${formatSyncTime(b.pushedAt, locale)}. If that push included the database, only what production recorded after that is lost.`)
-  }
-  return parts.join(' ')
 }
 
 /** Compares dotted versions numerically; undefined when either isn't one. */
@@ -254,11 +184,30 @@ export interface PushWarning {
   text: string
 }
 
+function validTime(iso: string | null | undefined): iso is string {
+  return !!iso && !Number.isNaN(new Date(iso).getTime())
+}
+
+/** The database warning. The time is `database_as_of`; without it, the age is said to be unknown. */
+export function databaseLoss(asOf: string | null | undefined, locale?: string): string {
+  if (validTime(asOf)) {
+    return `Replaces production's database with the staging site's. Everything production has recorded since ${formatSyncTime(asOf, locale)} is lost: orders, comments, form entries and users. That is when the staging site's database was last copied.`
+  }
+  return 'Replaces production\'s database with the staging site\'s: orders, comments, form entries and users recorded on production are lost. This staging site\'s database has been restored from a backup or predates this tracking, so its age isn\'t known. Anything production recorded since the staging site was copied from it may be lost.'
+}
+
+/** The uploads warning. The time is `uploads_as_of`, which can differ from the database's. */
+export function uploadsLoss(asOf: string | null | undefined, locale?: string): string {
+  if (validTime(asOf)) {
+    return `Replaces production's uploads with the staging site's copy. Media added to production since ${formatSyncTime(asOf, locale)} is lost. That is when the staging site's uploads were last copied.`
+  }
+  return 'Replaces production\'s uploads with the staging site\'s copy, so media added to production is lost. This staging site\'s uploads have been restored from a backup or predate this tracking, so their age isn\'t known. Media added to production since the staging site was copied from it may be lost.'
+}
+
 export interface PushContext {
   scope: SyncScope
-  staging: Pick<Site, 'php_version' | 'wp_core_version'>
+  staging: Pick<Site, 'php_version' | 'wp_core_version'> & { staging?: Pick<StagingState, 'database_as_of' | 'uploads_as_of'> | null }
   production: Pick<Site, 'php_version' | 'wp_core_version' | 'maintenance'>
-  baseline: PushBaseline
   locale?: string
 }
 
@@ -268,16 +217,15 @@ export interface PushContext {
  * listed. Danger entries come first, in the order they are listed here.
  */
 export function pushWarnings(ctx: PushContext): PushWarning[] {
-  const { scope, staging, production, baseline } = ctx
+  const { scope, staging, production } = ctx
   const out: PushWarning[] = []
-  const since = baselineSince(baseline, ctx.locale)
   const add = (id: PushWarningId, level: PushWarning['level'], text: string) => out.push({ id, level, text })
 
   if (scope.database) {
-    add('database', 'danger', `Replaces production's database with the staging site's. Everything production has recorded ${since} is lost: orders, comments, form entries and users.`)
+    add('database', 'danger', databaseLoss(staging.staging?.database_as_of, ctx.locale))
   }
   if (scope.files === 'all') {
-    add('uploads', 'danger', `Replaces production's uploads with the staging site's copy. Media added to production ${since} is lost.`)
+    add('uploads', 'danger', uploadsLoss(staging.staging?.uploads_as_of, ctx.locale))
     add('removes', 'info', 'All of production\'s wp-content is made to match the staging site\'s: plugins, themes and any other files that exist only on production are removed.')
   }
   if (scope.files === 'code') {
@@ -370,27 +318,6 @@ export function corePolicyHref(productionId: string): string {
 
 /** The core guard refuses a database push with a validation error on `/database`. */
 export const CORE_GUARD_FIELD = '/database'
-
-/**
- * Finds the time of a snapshot among a site's backups (the backup that
- * refreshed the staging site), reading a few pages of the list at most.
- */
-export async function findSnapshotTime(
-  fetchPage: (cursor?: string) => Promise<{ items: Pick<Backup, 'snapshot_id' | 'started_at'>[], next_cursor?: string | null }>,
-  snapshotId: string | null | undefined,
-  maxPages = 5,
-): Promise<string | undefined> {
-  if (!snapshotId) return undefined
-  let cursor: string | undefined
-  for (let page = 0; page < maxPages; page++) {
-    const { items, next_cursor } = await fetchPage(cursor)
-    const hit = items.find(b => b.snapshot_id === snapshotId)
-    if (hit) return hit.started_at
-    if (!next_cursor) return undefined
-    cursor = next_cursor
-  }
-  return undefined
-}
 
 /** The undo point a finished refresh or push job names. */
 export interface SyncUndo {

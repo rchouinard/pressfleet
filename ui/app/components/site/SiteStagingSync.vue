@@ -13,7 +13,7 @@
 import { toApiError, type ApiError } from '../../utils/api-error'
 import { backupChoices, type BackupChoice } from '../../utils/staging'
 import {
-  findSnapshotTime, pushBlockedReason, pushPayload, refreshBlockedReason, refreshPayload,
+  pushBlockedReason, pushPayload, refreshBlockedReason, refreshPayload,
   type ProductionLookup, type RefreshFormValues, type SyncScope,
 } from '../../utils/staging-sync'
 import { productionIdOf, type Site } from '../../utils/site'
@@ -87,34 +87,14 @@ async function refresh(values: RefreshFormValues) {
   emit('changed')
 }
 
-// Push: read production fresh and find when the staging data starts before
-// the dialog opens, so the time it shows doesn't change under the reader. The
-// backup the site was copied from says how old its data is; a failed lookup
-// leaves the refresh time, and the dialog says so.
+// Push: read production fresh before the dialog opens.
 const pushOpen = ref(false)
 const pushPreparing = ref(false)
-const snapshotAt = ref<string>()
 async function openPush() {
   pushPreparing.value = true
   try {
     await loadProduction()
-    if (pushBlockedReason(props.site, lookup.value)) return
-    snapshotAt.value = undefined
-    const id = productionId.value
-    const snapshot = props.site.staging?.last_snapshot_id
-    if (id && snapshot) {
-      try {
-        snapshotAt.value = await findSnapshotTime(async (cursor) => {
-          const { data } = await api.GET('/api/v1/sites/{site_id}/backups', {
-            params: { path: { site_id: id }, query: { limit: 200, cursor } },
-          })
-          return data ?? { items: [] }
-        }, snapshot)
-      } catch {
-        snapshotAt.value = undefined
-      }
-    }
-    pushOpen.value = true
+    if (!pushBlockedReason(props.site, lookup.value)) pushOpen.value = true
   } finally {
     pushPreparing.value = false
   }
@@ -159,7 +139,6 @@ async function push(scope: SyncScope) {
       v-model:open="pushOpen"
       :staging="site"
       :production="production"
-      :snapshot-at="snapshotAt"
       :submit="push"
     />
   </div>

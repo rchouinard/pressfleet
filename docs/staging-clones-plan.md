@@ -31,7 +31,7 @@ Confirmed in [#196](https://github.com/rchouinard/pressfleet/issues/196), which 
 | Shape | A staging site has `parent_site_id` set, and is in the same client group as its production site. Staging sites can't be nested, and a production site can have several. |
 | Copy mechanism | The backup engine. The source is backed up (backup kind `sync`) and the snapshot is restored into the target through the restore pipeline. A clone or refresh can also start from an existing production backup. |
 | Scope | `files` is `all`, `code` (`plugins`, `themes`, `mu-plugins`, `languages`), or `none`, and `database` is yes or no; at least one is copied. No table-level selection. |
-| Push guards | A pre-push backup and automatic rollback. A database push is refused when it would move production to a WordPress major branch that production's core policy doesn't allow. Settings are never pushed. In the dashboard, a database push needs the production site's slug typed in. |
+| Push guards | A pre-push backup and automatic rollback. A database push is refused when it would move production to a WordPress major branch that production's core policy doesn't allow. Settings are never pushed. In the dashboard, a database or all-files push needs the production site's slug typed in. |
 | Staging defaults | Preview domain only, `WP_ENVIRONMENT_TYPE=staging`, preview protection on, outbound email off (can be turned on per site), WP-Cron on, scheduled backups off. PHP version, core, resources, table prefix, and the initial admin user come from production, and no admin password is generated. |
 | Alerts | Built-in site-scoped rules skip staging sites. A rule can opt in with `include_staging`. |
 | Permissions | Create, refresh, push, and delete staging sites: Operator. Deleting a staging site's backups, and deleting production sites, stay Admin. Nothing new needs reauthentication. |
@@ -276,3 +276,5 @@ From 1.0 on, work is done on a branch per issue and merged through a pull reques
 8. **Rollouts:** staging sites take part like any site. Canary rollouts come later.
 
 The design doc records them in §1.1, §4.2, §4.3, §4.6, §5.4, §5.6, §5.10, the new §5.11, §7.3, §8, and §10.
+
+**2026-10-30 ([#196](https://github.com/rchouinard/pressfleet/issues/196), decision 4 extended):** the dashboard also asks for the production site's slug before a push of all files, not only before a database push, because it replaces production's `uploads` and is as irreversible without the pre-push backup. It is a dashboard gate; the API doesn't enforce it. The push warnings use the per-part copy times (`database_as_of` for the database, `uploads_as_of` for all files), not the time of the last refresh, and say plainly when a time is unknown.

@@ -6,12 +6,13 @@ import JobProgressView from '../app/components/job/JobProgressView.vue'
 import ProblemAlert from '../app/components/ProblemAlert.vue'
 import SitePushDialog from '../app/components/site/SitePushDialog.vue'
 import SiteRefreshDialog from '../app/components/site/SiteRefreshDialog.vue'
+import { databaseLoss, uploadsLoss } from '../app/utils/staging-sync'
 import { ApiError } from '../app/utils/api-error'
 import { jobTypeLabel } from '../app/utils/job'
 import { can } from '../app/utils/permissions'
 import {
-  baselineNote, compareVersions, corePolicyHref, findSnapshotTime, formatSyncTime, freshCopyBlockedReason, maintenanceLeftOn,
-  pushBaseline, pushBlockedReason, pushConfirmed, pushPayload, pushWarnings, refreshBlockedReason, refreshNotes,
+  compareVersions, corePolicyHref, formatSyncTime, freshCopyBlockedReason, maintenanceLeftOn,
+  pushBlockedReason, pushConfirmed, pushPayload, pushWarnings, refreshBlockedReason, refreshNotes,
   refreshPayload, slugRequired, syncUndo, undoHref, undoText, validateRefreshForm, validateScope,
   type PushWarning, type RefreshFormValues, type SyncScope,
 } from '../app/utils/staging-sync'
@@ -29,12 +30,15 @@ const UModal = defineComponent({
 const UIcon = defineComponent({ template: '<i />' })
 const stubs = { ...uiStubs, NuxtLink, UModal, UIcon }
 
-const REFRESHED = '2026-10-01T10:00:00Z'
-const SNAPSHOT = '2026-10-01T09:58:00Z'
-const PUSHED = '2026-10-10T08:00:00Z'
+// The two parts of a staging site can have different ages.
+const DB_AS_OF = '2026-10-01T09:58:00Z'
+const UPLOADS_AS_OF = '2026-09-20T07:30:00Z'
 
 function stagingState(over: Partial<NonNullable<ReturnType<typeof stagingSite>['staging']>> = {}) {
-  return { production_site_id: 'p1', last_refreshed_at: REFRESHED, last_snapshot_id: 'snap1', last_pushed_at: null, outbound_mail: false, ...over }
+  return {
+    production_site_id: 'p1', last_refreshed_at: '2026-10-05T10:00:00Z', last_snapshot_id: 'snap1', last_pushed_at: null,
+    database_as_of: DB_AS_OF, uploads_as_of: UPLOADS_AS_OF, outbound_mail: false, ...over,
+  }
 }
 
 function ids(ws: PushWarning[]): string[] {
@@ -72,16 +76,22 @@ describe('the production site\'s slug', () => {
   const prod = 'acme'
   it('is required for a database push, whatever the files', () => {
     for (const files of ['all', 'code', 'none'] as const) {
-      expect(slugRequired({ database: true })).toBe(true)
+      expect(slugRequired({ files, database: true })).toBe(true)
       expect(pushConfirmed({ files, database: true }, '', prod)).toBe(false)
       expect(pushConfirmed({ files, database: true }, 'acme-staging', prod)).toBe(false)
       expect(pushConfirmed({ files, database: true }, ' acme ', prod)).toBe(true)
     }
   })
 
-  it('is not asked for without the database, including for all files', () => {
-    expect(slugRequired({ database: false })).toBe(false)
-    expect(pushConfirmed({ files: 'all', database: false }, '', prod)).toBe(true)
+  it('is required for all files without the database', () => {
+    expect(slugRequired({ files: 'all', database: false })).toBe(true)
+    expect(pushConfirmed({ files: 'all', database: false }, '', prod)).toBe(false)
+    expect(pushConfirmed({ files: 'all', database: false }, 'acme', prod)).toBe(true)
+  })
+
+  it('is not asked for with code only or no files, without the database', () => {
+    expect(slugRequired({ files: 'code', database: false })).toBe(false)
+    expect(slugRequired({ files: 'none', database: false })).toBe(false)
     expect(pushConfirmed({ files: 'code', database: false }, '', prod)).toBe(true)
   })
 
@@ -135,46 +145,21 @@ describe('why a sync can\'t start', () => {
   })
 })
 
-describe('where the staging data starts', () => {
-  it('prefers the time of the production backup it was copied from', () => {
-    const b = pushBaseline(stagingState(), '2026-09-01T00:00:00Z', SNAPSHOT)
-    expect(b).toMatchObject({ kind: 'snapshot', at: SNAPSHOT, refreshedAt: REFRESHED })
-    expect(baselineNote(b)).toContain(formatSyncTime(REFRESHED))
+describe('the copy times', () => {
+  it('uses each part\'s own time, which can differ', () => {
+    expect(databaseLoss(DB_AS_OF, 'en-US')).toContain(`since ${formatSyncTime(DB_AS_OF, 'en-US')}`)
+    expect(databaseLoss(DB_AS_OF, 'en-US')).not.toContain(formatSyncTime(UPLOADS_AS_OF, 'en-US'))
+    expect(uploadsLoss(UPLOADS_AS_OF, 'en-US')).toContain(`since ${formatSyncTime(UPLOADS_AS_OF, 'en-US')}`)
   })
 
-  it('uses the refresh time when the backup can\'t be found, and says the loss may go back further', () => {
-    const b = pushBaseline(stagingState(), '2026-09-01T00:00:00Z')
-    expect(b).toMatchObject({ kind: 'refreshed', at: REFRESHED, snapshotUnresolved: true })
-    expect(baselineNote(b)).toContain('older production backup')
-    expect(baselineNote(pushBaseline(stagingState({ last_snapshot_id: null }), '2026-09-01T00:00:00Z'))).not.toContain('older production backup')
-  })
-
-  it('falls back to when the site was created from production if it was never refreshed', () => {
-    const b = pushBaseline(stagingState({ last_refreshed_at: null, last_snapshot_id: null }), '2026-09-01T00:00:00Z')
-    expect(b).toMatchObject({ kind: 'created', at: '2026-09-01T00:00:00Z' })
-    expect(baselineNote(b)).toContain('never been refreshed')
-  })
-
-  it('says so plainly when no time is recorded at all', () => {
-    const b = pushBaseline(null, 'not a date')
-    expect(b.kind).toBe('unknown')
-    expect(baselineNote(b)).toContain('isn\'t recorded')
-  })
-
-  it('mentions the last push, since a database push before it already replaced production\'s data', () => {
-    const b = pushBaseline(stagingState({ last_pushed_at: PUSHED }), '2026-09-01T00:00:00Z', SNAPSHOT)
-    expect(baselineNote(b)).toContain(formatSyncTime(PUSHED))
-  })
-
-  it('finds a snapshot\'s time across pages, and gives up quietly', async () => {
-    const pages: Record<string, { items: { snapshot_id: string | null, started_at: string }[], next_cursor: string | null }> = {
-      first: { items: [{ snapshot_id: 'a', started_at: 'T-a' }], next_cursor: 'second' },
-      second: { items: [{ snapshot_id: 'snap1', started_at: SNAPSHOT }], next_cursor: null },
+  it('says plainly that the age is unknown for a null or unusable time', () => {
+    for (const t of [null, undefined, 'not a date']) {
+      expect(databaseLoss(t)).toContain('age isn\'t known')
+      expect(databaseLoss(t)).toContain('may be lost')
+      expect(databaseLoss(t)).not.toContain('since not')
+      expect(uploadsLoss(t)).toContain('age isn\'t known')
+      expect(uploadsLoss(t)).toContain('may be lost')
     }
-    const fetchPage = vi.fn(async (cursor?: string) => pages[cursor ?? 'first']!)
-    expect(await findSnapshotTime(fetchPage, 'snap1')).toBe(SNAPSHOT)
-    expect(await findSnapshotTime(fetchPage, 'missing')).toBeUndefined()
-    expect(await findSnapshotTime(fetchPage, null)).toBeUndefined()
   })
 })
 
@@ -190,27 +175,28 @@ describe('compareVersions', () => {
 describe('the warnings of a push', () => {
   const staging = { php_version: '8.4', wp_core_version: '6.9.1' }
   const production = { php_version: '8.4', wp_core_version: '6.9.1', maintenance: false }
-  const baseline = pushBaseline(stagingState(), '2026-09-01T00:00:00Z', SNAPSHOT)
+  const withTimes = { ...staging, staging: stagingState() }
   const warn = (scope: SyncScope, over: Partial<Parameters<typeof pushWarnings>[0]> = {}) =>
-    pushWarnings({ scope, staging, production, baseline, locale: 'en-US', ...over })
-  const since = formatSyncTime(SNAPSHOT, 'en-US')
+    pushWarnings({ scope, staging: withTimes, production, locale: 'en-US', ...over })
+  const dbSince = formatSyncTime(DB_AS_OF, 'en-US')
+  const upSince = formatSyncTime(UPLOADS_AS_OF, 'en-US')
 
   it('warns about the database, with the time, only for a database push', () => {
     const w = warn({ files: 'none', database: true }).find(x => x.id === 'database')!
     expect(w.level).toBe('danger')
-    expect(w.text).toContain(`since ${since}`)
+    expect(w.text).toContain(`since ${dbSince}`)
     for (const word of ['orders', 'comments', 'form entries', 'users']) expect(w.text).toContain(word)
     expect(ids(warn({ files: 'all', database: false }))).not.toContain('database')
     expect(ids(warn({ files: 'code', database: false }))).not.toContain('database')
   })
 
-  it('warns about the uploads with the same weight and time, for all files only', () => {
+  it('warns about the uploads with the own time, for all files only', () => {
     const all = warn({ files: 'all', database: false })
     const w = all.find(x => x.id === 'uploads')!
     expect(w.level).toBe('danger')
     expect(w.text).toContain('uploads')
     expect(w.text).toContain('Media added to production')
-    expect(w.text).toContain(`since ${since}`)
+    expect(w.text).toContain(`since ${upSince}`)
     expect(ids(warn({ files: 'code', database: true }))).not.toContain('uploads')
     expect(ids(warn({ files: 'none', database: true }))).not.toContain('uploads')
     // The same two kinds of loss show together for everything.
@@ -291,11 +277,14 @@ describe('the warnings of a push', () => {
     expect(w.slice(2).every(x => x.level === 'info')).toBe(true)
   })
 
-  it('never shows a blank time', () => {
-    const never = pushBaseline(null, 'nope')
-    const w = warn({ files: 'all', database: true }, { baseline: never })
-    expect(w.find(x => x.id === 'database')!.text).toContain('since the staging site was created from production')
-    expect(w.find(x => x.id === 'uploads')!.text).toContain('since the staging site was created from production')
+  it('says the age is unknown, per part, when a time is null', () => {
+    const w = warn({ files: 'all', database: true }, { staging: { ...staging, staging: stagingState({ database_as_of: null, uploads_as_of: UPLOADS_AS_OF }) } })
+    expect(w.find(x => x.id === 'database')!.text).toContain('database has been restored from a backup')
+    expect(w.find(x => x.id === 'uploads')!.text).toContain(`since ${upSince}`)
+    const both = warn({ files: 'all', database: true }, { staging: { ...staging, staging: stagingState({ database_as_of: null, uploads_as_of: null }) } })
+    expect(both.find(x => x.id === 'uploads')!.text).toContain('uploads have been restored from a backup')
+    const none = warn({ files: 'all', database: true }, { staging: { ...staging, staging: null } })
+    expect(none.find(x => x.id === 'database')!.text).toContain('age isn\'t known')
   })
 })
 
@@ -428,7 +417,7 @@ describe('SitePushDialog', () => {
   const setup = (props: Record<string, unknown> = {}) => {
     const submit = vi.fn((_: SyncScope) => Promise.resolve())
     const wrapper = mount(SitePushDialog, {
-      props: { open: true, staging, production, snapshotAt: SNAPSHOT, submit, ...props } as never,
+      props: { open: true, staging, production, submit, ...props } as never,
       global: { stubs, components: { ProblemAlert } },
     })
     return { wrapper, submit }
@@ -457,8 +446,7 @@ describe('SitePushDialog', () => {
   it('shows the database warning with its time, and holds the push until the slug matches', async () => {
     const { wrapper, submit } = setup()
     await database(wrapper, true)
-    expect(wrapper.find('[data-testid="warn-database"]').text()).toContain(formatSyncTime(SNAPSHOT))
-    expect(wrapper.find('[data-testid="baseline-note"]').text()).toContain(formatSyncTime(REFRESHED))
+    expect(wrapper.find('[data-testid="warn-database"]').text()).toContain(formatSyncTime(DB_AS_OF))
     expect(submitButton(wrapper).attributes('disabled')).toBeDefined()
     await wrapper.find('form').trigger('submit')
     await flushPromises()
@@ -474,25 +462,28 @@ describe('SitePushDialog', () => {
     expect(submit).toHaveBeenCalledWith({ files: 'code', database: true })
   })
 
-  it('asks for the slug for every files choice once the database is in, and for none without it', async () => {
+  it('asks for the slug with the database, or with all files, and not otherwise', async () => {
     const { wrapper } = setup()
+    const asks = () => wrapper.find('[data-testid="slug-input"] input').exists()
     for (const n of [0, 1, 2] as const) {
       await files(wrapper, n)
       await database(wrapper, true)
-      expect(wrapper.find('[data-testid="slug-input"] input').exists()).toBe(true)
-      await database(wrapper, n === 2 ? true : false)
-      expect(wrapper.find('[data-testid="slug-input"] input').exists()).toBe(n === 2)
+      expect(asks()).toBe(true)
+      await database(wrapper, false)
+      expect(asks()).toBe(n === 0)
     }
   })
 
-  it('warns about the uploads for all files, with the same time, and does not need the slug', async () => {
+  it('warns about the uploads for all files, with their own time, and holds the push until the slug matches', async () => {
     const { wrapper } = setup()
     await files(wrapper, 0)
     const w = wrapper.find('[data-testid="warn-uploads"]')
     expect(w.text()).toContain('Media added to production')
-    expect(w.text()).toContain(formatSyncTime(SNAPSHOT))
+    expect(w.text()).toContain(formatSyncTime(UPLOADS_AS_OF))
     expect(wrapper.find('[data-testid="push-dangers"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="warn-database"]').exists()).toBe(false)
+    expect(submitButton(wrapper).attributes('disabled')).toBeDefined()
+    await wrapper.find('[data-testid="slug-input"] input').setValue('acme')
     expect(submitButton(wrapper).attributes('disabled')).toBeUndefined()
   })
 
@@ -517,12 +508,13 @@ describe('SitePushDialog', () => {
     expect(submit).not.toHaveBeenCalled()
   })
 
-  it('names the fallback time of a staging site that was never refreshed', async () => {
-    const never = stagingSite('s1', 'p1', { created_at: '2026-09-01T00:00:00Z', staging: stagingState({ last_refreshed_at: null, last_snapshot_id: null }) })
-    const { wrapper } = setup({ staging: never, snapshotAt: undefined })
+  it('says the age is unknown when the staging site has no recorded time', async () => {
+    const unknown = stagingSite('s1', 'p1', { staging: stagingState({ database_as_of: null, uploads_as_of: null }) })
+    const { wrapper } = setup({ staging: unknown })
     await database(wrapper, true)
-    expect(wrapper.find('[data-testid="warn-database"]').text()).toContain(formatSyncTime('2026-09-01T00:00:00Z'))
-    expect(wrapper.find('[data-testid="baseline-note"]').text()).toContain('never been refreshed')
+    await files(wrapper, 0)
+    expect(wrapper.find('[data-testid="warn-database"]').text()).toContain('age isn\'t known')
+    expect(wrapper.find('[data-testid="warn-uploads"]').text()).toContain('age isn\'t known')
   })
 
   it('shows PHP and core differences', () => {
