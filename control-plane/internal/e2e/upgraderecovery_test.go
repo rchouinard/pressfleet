@@ -26,6 +26,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 	"github.com/rchouinard/pressfleet/control-plane/internal/skew"
+	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
 
 // brokenControlPlane is the Dockerfile of a control plane image that
@@ -151,6 +152,25 @@ func TestUpgradeRecovery(t *testing.T) {
 
 	// 3. Upgrade to a control plane that never becomes healthy, while a
 	// visitor keeps requesting the site.
+	// The control plane's container creates the state backups directory as
+	// root, mode 0700, which the operator running upgrade can't read. The
+	// release's init creates it as the test user instead, so make it so:
+	// the recovery steps have to find the backup through Docker.
+	backupsDir := filepath.Join(dataDir, "state", "backups")
+	if _, err := project.ExecService(ctx, e2e.Service, "sh", "-c", `mkdir -p "$1" && chown 0:0 "$1" && chmod 0700 "$1"`, "sh", backupsDir); err != nil {
+		t.Fatalf("making the state backups directory root's: %v", err)
+	}
+	if os.Geteuid() != 0 {
+		if _, err := os.ReadDir(backupsDir); err == nil {
+			t.Fatalf("%s is still readable by the test user", backupsDir)
+		}
+	}
+	previousSchema := installedSchema(ctx, t, project)
+	latestSchema, err := store.LatestVersion(store.SQLite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("the state database is at schema version %d in %s and %d in this tree", previousSchema, skew.MinUpgradeFrom, latestSchema)
 	broken := "pressfleet-control-plane:" + project.Name + "-broken"
 	if err := compose.BuildImage(ctx, nil, broken, fmt.Sprintf(brokenControlPlane, image)); err != nil {
 		t.Fatal(err)
@@ -177,17 +197,21 @@ func TestUpgradeRecovery(t *testing.T) {
 		}
 	}
 	restore := slices.IndexFunc(commands, func(c string) bool { return strings.Contains(c, " state restore ") })
-	if restore >= 0 {
+	switch {
+	case restore >= 0:
 		// The restore runs the previous control plane image, by digest.
 		if digest := previousControlPlaneDigest(t, dataDir); !strings.Contains(stderr, digest) {
 			t.Errorf("the recovery steps don't name the previous control plane image %s", digest)
 		}
-	} else {
-		if !strings.Contains(stderr, "The state database needs no restore") {
-			t.Error("the recovery steps neither restore the state database nor say it needs no restore")
-		}
-		t.Logf("NOTE: the state database schema didn't change between %s and this tree, "+
-			"so the state restore step was left out: this run doesn't test it", skew.MinUpgradeFrom)
+	case previousSchema != latestSchema:
+		// The new control plane migrated the database, so without the
+		// restore the previous release crash-loops on a schema it doesn't
+		// know. The steps mustn't hedge either: they have to name the
+		// backup (the operator running them isn't root, and the backups
+		// directory is).
+		t.Fatalf("the state database schema is %d in %s and %d in this tree, but the recovery steps have no state restore command", previousSchema, skew.MinUpgradeFrom, latestSchema)
+	case !strings.Contains(stderr, "The state database needs no restore"):
+		t.Error("the recovery steps neither restore the state database nor say it needs no restore")
 	}
 
 	// 5. Recover by running the printed commands as they are.
@@ -417,6 +441,30 @@ func previousControlPlaneDigest(t *testing.T, dataDir string) string {
 		t.Fatalf("the upgrade recorded no digest of the previous control plane image: %s", data)
 	}
 	return digests[0]
+}
+
+// schemaReady finds the schema version in the "state database ready" log
+// line a control plane writes after migrating its state database.
+var schemaReady = regexp.MustCompile(`state database ready.*?schema_version\W+(\d+)`)
+
+// installedSchema returns the schema version the running control plane
+// reports it migrated its state database to, from its log: the release's
+// own answer, not an assumption about it.
+func installedSchema(ctx context.Context, t *testing.T, project compose.Project) int {
+	t.Helper()
+	out, err := project.Logs(ctx)
+	if err != nil {
+		t.Fatalf("reading the control plane's log: %v", err)
+	}
+	matches := schemaReady.FindAllSubmatch(out, -1)
+	if len(matches) == 0 {
+		t.Fatalf("the control plane's log has no \"state database ready\" line:\n%.2000s", out)
+	}
+	schema, err := strconv.Atoi(string(matches[len(matches)-1][1]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return schema
 }
 
 // backupSchema finds the schema version in a pre-migration backup's name.
