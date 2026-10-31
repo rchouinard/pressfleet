@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
@@ -147,7 +148,39 @@ const (
 	// because the snapshot didn't exist when the job was queued.
 	dataRestoreSnapshot     = "restore_snapshot_id"
 	dataRestoreSnapshotCore = "restore_snapshot_core"
+	// dataRestoreSnapshotTime is the time the snapshot was taken, which is how
+	// old the data it brings is (store.Site.StagingDatabaseAsOf). Jobs queued
+	// before it existed lack it, which reads as unknown.
+	dataRestoreSnapshotTime = "restore_snapshot_time"
 )
+
+// snapshotTimeLayout formats a snapshot's time in job data. RFC 3339 with
+// nanoseconds round-trips exactly, as restic's times are finer than seconds.
+const snapshotTimeLayout = time.RFC3339Nano
+
+// setSnapshotTime records when the snapshot was taken in the job's data under
+// key. A snapshot with no time records nothing, which reads as unknown.
+func setSnapshotTime(r *jobs.Run, key string, t time.Time) error {
+	if t.IsZero() {
+		return nil
+	}
+	return r.Set(key, t.UTC().Format(snapshotTimeLayout))
+}
+
+// getSnapshotTime reads a time recorded by setSnapshotTime. Absent, or
+// unreadable, is the zero time: a job queued before the time was recorded must
+// finish, and an unknown age is honest where a wrong one isn't.
+func getSnapshotTime(r *jobs.Run, key string) (time.Time, error) {
+	var v string
+	if _, err := r.Get(key, &v); err != nil {
+		return time.Time{}, err
+	}
+	t, err := time.Parse(snapshotTimeLayout, v)
+	if err != nil {
+		return time.Time{}, nil
+	}
+	return t, nil
+}
 
 // ErrNoBackups means the service has no backup engine, so it can't
 // restore; a wiring bug.
@@ -205,6 +238,9 @@ type restoreSource struct {
 	WPCore string
 	// Scope is how much of the snapshot to restore.
 	Scope backup.RestoreOptions
+	// SnapshotTime is when the snapshot was taken; zero if the job's prepare
+	// step didn't record it.
+	SnapshotTime time.Time
 }
 
 // restoreFlow is what differs between the job types of the restore pipeline.
@@ -450,8 +486,31 @@ func (s *Service) restoreHandler() jobs.Handler {
 		jobType: RestoreJobType,
 		noun:    "restore",
 		prepare: s.prepareRestore,
-		finish:  s.finishRestore,
+		finish:  s.finishRestoreSite,
 	})
+}
+
+// finishRestoreSite finishes a restore, then, for a staging site, forgets how
+// old its database and uploads are: a restore puts back data of any age, and
+// the times from before it would understate what a push loses. The restore is
+// always the full scope.
+func (s *Service) finishRestoreSite(ctx context.Context, r *jobs.Run) error {
+	if err := s.finishRestore(ctx, r); err != nil {
+		return err
+	}
+	sites := store.NewSites(s.db)
+	site, err := sites.Get(ctx, r.Job().TargetID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !site.IsStaging() {
+		return nil
+	}
+	_, err = sites.SetStagingAsOf(ctx, site.ID, store.AsOfClear(), store.AsOfClear())
+	return err
 }
 
 // restoreFlowHandler builds a job type of the restore pipeline. Keep each job
@@ -535,6 +594,9 @@ func jobRestoreSource(r *jobs.Run) (restoreSource, error) {
 		return restoreSource{}, err
 	}
 	if _, err := r.Get(dataRestoreSnapshotCore, &src.WPCore); err != nil {
+		return restoreSource{}, err
+	}
+	if src.SnapshotTime, err = getSnapshotTime(r, dataRestoreSnapshotTime); err != nil {
 		return restoreSource{}, err
 	}
 	if src.SnapshotID == "" {

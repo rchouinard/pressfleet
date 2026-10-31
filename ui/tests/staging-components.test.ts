@@ -61,7 +61,7 @@ describe('SiteStagingTable', () => {
     const s = stagingSite('s1', 'p1', {
       url: 'https://acme-staging.preview.example',
       preview_domain: 'acme-staging.preview.example',
-      staging: { production_site_id: 'p1', last_refreshed_at: '2026-10-01T10:00:00Z', last_snapshot_id: 'x', last_pushed_at: null, outbound_mail: false },
+      staging: { production_site_id: 'p1', last_refreshed_at: '2026-10-01T10:00:00Z', last_snapshot_id: 'x', last_pushed_at: null, database_as_of: null, uploads_as_of: null, outbound_mail: false },
     })
     const w = mount(SiteStagingTable, { props: { sites: [s], canDelete: false }, global: { stubs } })
     expect(w.text()).toContain('Running')
@@ -97,7 +97,7 @@ describe('SiteStagingBanner', () => {
 
   it('says when the copy was made and that nothing was pushed', () => {
     const s = stagingSite('s1', 'p1', {
-      staging: { production_site_id: 'p1', last_refreshed_at: '2026-10-01T10:00:00Z', last_snapshot_id: 'x', last_pushed_at: null, outbound_mail: false },
+      staging: { production_site_id: 'p1', last_refreshed_at: '2026-10-01T10:00:00Z', last_snapshot_id: 'x', last_pushed_at: null, database_as_of: null, uploads_as_of: null, outbound_mail: false },
     })
     const w = mount(SiteStagingBanner, { props: { site: s }, global: { stubs } })
     expect(w.find('[data-testid="staging-history"]').text()).toContain('Never pushed')
@@ -208,7 +208,7 @@ describe('outbound email in SiteSettingsPanel', () => {
     return { wrapper, update }
   }
   const staging = (outbound_mail: boolean) => ({
-    staging: { production_site_id: 'p1', last_refreshed_at: null, last_snapshot_id: null, last_pushed_at: null, outbound_mail },
+    staging: { production_site_id: 'p1', last_refreshed_at: null, last_snapshot_id: null, last_pushed_at: null, database_as_of: null, uploads_as_of: null, outbound_mail },
   })
 
   it('has no email switch on a production site', () => {

@@ -333,6 +333,9 @@ func (s *Service) preparePush(ctx context.Context, r *jobs.Run) error {
 			return err
 		}
 	}
+	if err := setSnapshotTime(r, dataRestoreSnapshotTime, snap.Time); err != nil {
+		return err
+	}
 	r.Logf("Pushing snapshot %s of staging site %s (%s) to %s, after taking a pre-push backup.",
 		shortSnapshot(string(snap.ID)), p.SourceSiteID, describeScope(scope), URL(site))
 	return nil
@@ -447,8 +450,15 @@ func (s *Service) finishPush(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return err
 	}
-	recorded, err := store.NewSites(s.db).SetStagingPushed(ctx, src.SiteID, s.now())
+	sites := store.NewSites(s.db)
+	recorded, err := sites.SetStagingPushed(ctx, src.SiteID, s.now())
 	if err != nil {
+		return err
+	}
+	// Production's copy of what was pushed is now as old as the snapshot, so
+	// that is where what a later push can lose starts.
+	database, uploads := copiedAsOf(src)
+	if _, err := sites.SetStagingAsOf(ctx, src.SiteID, database, uploads); err != nil {
 		return err
 	}
 	if !recorded {

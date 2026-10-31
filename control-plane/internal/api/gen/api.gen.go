@@ -3981,6 +3981,15 @@ type StagingSiteCreate struct {
 
 // StagingState What a staging site keeps about its production site and its mail.
 type StagingState struct {
+	// DatabaseAsOf How old the site's database is: the time of the snapshot it was
+	// last copied from, not of the job that copied it. A refresh that
+	// keeps the database leaves it as it was, and a refresh from an older
+	// named backup reports that backup's age. A push to production sets
+	// it to the pushed snapshot's time, since production's database is
+	// then that old. Null when unknown: never copied, or restored from a
+	// backup of the staging site, whose data has no known age.
+	DatabaseAsOf *Timestamp `json:"database_as_of"`
+
 	// LastPushedAt When the site was last pushed to production; null if it never was.
 	LastPushedAt *Timestamp `json:"last_pushed_at"`
 
@@ -3997,6 +4006,11 @@ type StagingState struct {
 	//
 	// Examples: 01J9ZQ3V6T8K4M2N5P7R9S1X3Y
 	ProductionSiteID ID `json:"production_site_id"`
+
+	// UploadsAsOf How old the site's uploads (all of wp-content) are, counted like
+	// `database_as_of`. Only a copy of all files sets it; a code-only
+	// refresh leaves it as it was. Null when unknown.
+	UploadsAsOf *Timestamp `json:"uploads_as_of"`
 }
 
 // TemplateRollout defines model for TemplateRollout.

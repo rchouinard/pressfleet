@@ -22,14 +22,16 @@ import (
 // tests link two provisioned sites directly, to set every staging field.
 type stagingEnv struct {
 	*siteEnv
-	db         *store.DB
-	admin      http.Handler
-	operator   http.Handler
-	as         func(store.Role) http.Handler
-	prod, stg  store.Site
-	refreshed  time.Time
-	pushedAt   time.Time
-	snapshotID string
+	db          *store.DB
+	admin       http.Handler
+	operator    http.Handler
+	as          func(store.Role) http.Handler
+	prod, stg   store.Site
+	refreshed   time.Time
+	pushedAt    time.Time
+	dbAsOf      time.Time
+	uploadsAsOf time.Time
+	snapshotID  string
 }
 
 func newStagingEnv(t *testing.T, db *store.DB) *stagingEnv {
@@ -39,6 +41,7 @@ func newStagingEnv(t *testing.T, db *store.DB) *stagingEnv {
 	e := &stagingEnv{siteEnv: newSiteEnv(t, db, testPreviewBase), db: db, snapshotID: "9f8e7d6c"}
 	e.refreshed = time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 	e.pushedAt = e.refreshed.Add(time.Hour)
+	e.dbAsOf, e.uploadsAsOf = e.refreshed.Add(-72*time.Hour), e.refreshed.Add(-48*time.Hour)
 	now := time.Now()
 	if _, err := db.ExecContext(ctx, "INSERT INTO users (id, email, password_hash, role, created_at, updated_at) VALUES (?, ?, 'x', 'admin', ?, ?)",
 		userID, "admin@example.com", now, now); err != nil {
@@ -59,8 +62,8 @@ func newStagingEnv(t *testing.T, db *store.DB) *stagingEnv {
 	}
 	e.prod, e.stg = provision("Acme"), provision("Acme staging")
 	if _, err := db.ExecContext(ctx,
-		"UPDATE sites SET parent_site_id = ?, mail_disabled = ?, staging_refreshed_at = ?, staging_snapshot_id = ?, staging_pushed_at = ? WHERE id = ?",
-		e.prod.ID, true, e.refreshed, e.snapshotID, e.pushedAt, e.stg.ID); err != nil {
+		"UPDATE sites SET parent_site_id = ?, mail_disabled = ?, staging_refreshed_at = ?, staging_snapshot_id = ?, staging_pushed_at = ?, staging_database_as_of = ?, staging_uploads_as_of = ? WHERE id = ?",
+		e.prod.ID, true, e.refreshed, e.snapshotID, e.pushedAt, e.dbAsOf, e.uploadsAsOf, e.stg.ID); err != nil {
 		t.Fatal(err)
 	}
 	e.as = func(role store.Role) http.Handler {
@@ -89,7 +92,8 @@ func TestStagingSiteReadsBack(t *testing.T) {
 		}
 		st := got.Staging
 		if st.ProductionSiteID != e.prod.ID || st.OutboundMail || st.LastSnapshotID == nil || *st.LastSnapshotID != e.snapshotID ||
-			st.LastRefreshedAt == nil || !st.LastRefreshedAt.Equal(e.refreshed) || st.LastPushedAt == nil || !st.LastPushedAt.Equal(e.pushedAt) {
+			st.LastRefreshedAt == nil || !st.LastRefreshedAt.Equal(e.refreshed) || st.LastPushedAt == nil || !st.LastPushedAt.Equal(e.pushedAt) ||
+			st.DatabaseAsOf == nil || !st.DatabaseAsOf.Equal(e.dbAsOf) || st.UploadsAsOf == nil || !st.UploadsAsOf.Equal(e.uploadsAsOf) {
 			t.Errorf("staging = %+v", st)
 		}
 
@@ -102,12 +106,14 @@ func TestStagingSiteReadsBack(t *testing.T) {
 
 		// A staging site that was never refreshed has no times.
 		if _, err := db.ExecContext(context.Background(),
-			"UPDATE sites SET staging_refreshed_at = NULL, staging_snapshot_id = NULL, staging_pushed_at = NULL, mail_disabled = ? WHERE id = ?", false, e.stg.ID); err != nil {
+			"UPDATE sites SET staging_refreshed_at = NULL, staging_snapshot_id = NULL, staging_pushed_at = NULL, staging_database_as_of = NULL, staging_uploads_as_of = NULL, mail_disabled = ? WHERE id = ?", false, e.stg.ID); err != nil {
 			t.Fatal(err)
 		}
 		w = e.request(t, e.admin, http.MethodGet, "/api/v1/sites/"+e.stg.ID, "")
 		if st := decodeJSON[gen.Site](t, w.Body.Bytes()).Staging; st == nil || !st.OutboundMail || st.LastRefreshedAt != nil ||
-			st.LastSnapshotID != nil || st.LastPushedAt != nil || !strings.Contains(w.Body.String(), `"last_pushed_at":null`) {
+			st.LastSnapshotID != nil || st.LastPushedAt != nil || st.DatabaseAsOf != nil || st.UploadsAsOf != nil ||
+			!strings.Contains(w.Body.String(), `"last_pushed_at":null`) || !strings.Contains(w.Body.String(), `"database_as_of":null`) ||
+			!strings.Contains(w.Body.String(), `"uploads_as_of":null`) {
 			t.Errorf("fresh staging site = %s", w.Body)
 		}
 

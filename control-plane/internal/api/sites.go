@@ -694,6 +694,8 @@ func siteResponse(s store.Site, aliases []string) gen.Site {
 			LastRefreshedAt:  optTime(s.StagingRefreshedAt),
 			LastSnapshotID:   optString(s.StagingSnapshotID),
 			LastPushedAt:     optTime(s.StagingPushedAt),
+			DatabaseAsOf:     optTime(s.StagingDatabaseAsOf),
+			UploadsAsOf:      optTime(s.StagingUploadsAsOf),
 			OutboundMail:     !s.MailDisabled,
 		}
 	}

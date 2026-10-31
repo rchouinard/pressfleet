@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/backuptest"
@@ -49,6 +50,19 @@ type dataEngine struct {
 	// restoreErr, if set, is consulted on the nth Restore call (from 1).
 	restoreErr func(n int, snap backup.SnapshotID) error
 	restores   int
+	// times overrides the time ListSnapshots reports for a snapshot; the
+	// zero time is a snapshot that doesn't say when it was taken.
+	times map[backup.SnapshotID]time.Time
+}
+
+// setTime makes the snapshot report that it was taken at the given time.
+func (d *dataEngine) setTime(snap backup.SnapshotID, at time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.times == nil {
+		d.times = map[backup.SnapshotID]time.Time{}
+	}
+	d.times[snap] = at
 }
 
 func (d *dataEngine) Backup(ctx context.Context, siteID string, opts backup.Options) (backup.Snapshot, error) {
@@ -73,6 +87,9 @@ func (d *dataEngine) ListSnapshots(ctx context.Context, siteID string) ([]backup
 	defer d.mu.Unlock()
 	for i := range snaps {
 		snaps[i].WPCoreVersion = d.cores[snaps[i].ID]
+		if at, ok := d.times[snaps[i].ID]; ok {
+			snaps[i].Time = at
+		}
 	}
 	return snaps, err
 }

@@ -70,6 +70,7 @@ Confirmed in [#196](https://github.com/rchouinard/pressfleet/issues/196), which 
 | Change | Issue |
 | --- | --- |
 | `store.Site.ParentSiteID` (column exists). New `sites` columns: `mail_disabled`, `staging_refreshed_at`, `staging_snapshot_id`, `staging_pushed_at` | [#199](https://github.com/rchouinard/pressfleet/issues/199) |
+| `sites.staging_database_as_of` and `staging_uploads_as_of` (migration 0035): the times of the snapshots the staging site's database and uploads were last copied from, so a push can say what it would lose; null means unknown | [#208](https://github.com/rchouinard/pressfleet/issues/208) |
 | `jobs.after_job_id` | [#197](https://github.com/rchouinard/pressfleet/issues/197) |
 | `alert_rules.include_staging` | [#205](https://github.com/rchouinard/pressfleet/issues/205) |
 | Backup kind `sync`. `backup_records.kind` is free text, so this needs no migration | [#200](https://github.com/rchouinard/pressfleet/issues/200) |
