@@ -168,7 +168,7 @@ async function regenerate() {
 
     <!-- Maintenance mode -->
     <div class="space-y-2" aria-labelledby="set-maint-heading">
-      <h3 id="set-maint-heading" class="font-medium">Maintenance mode</h3>
+      <h3 id="set-maint-heading" class="scroll-mt-20 font-medium">Maintenance mode</h3>
       <p class="text-sm" data-testid="maintenance-state">
         {{ site.maintenance ? 'On: every domain of the site shows the maintenance page (503).' : 'Off: the site is being served.' }}
       </p>

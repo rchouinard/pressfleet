@@ -78,7 +78,7 @@ function when(iso: string): string {
 
 <template>
   <section class="space-y-3 rounded-md border border-default p-4" aria-labelledby="site-core-heading">
-    <h2 id="site-core-heading" class="text-lg font-semibold">WordPress core</h2>
+    <h2 id="site-core-heading" class="scroll-mt-20 text-lg font-semibold">WordPress core</h2>
     <ProblemAlert v-if="loadError" :error="loadError" />
     <p v-else-if="!core" class="text-sm text-muted" role="status">Loading core status...</p>
     <template v-else>
