@@ -10,6 +10,8 @@ defineProps<{
   description?: string
   confirmLabel?: string
   busy?: boolean
+  /** The action can't go ahead; the slot says why. */
+  confirmDisabled?: boolean
   error?: ApiError
 }>()
 const open = defineModel<boolean>('open', { required: true })
@@ -25,7 +27,7 @@ defineEmits<{ confirm: [] }>()
     <template #footer>
       <div class="flex w-full flex-wrap justify-end gap-2">
         <UButton color="neutral" variant="outline" :disabled="busy" @click="open = false">Cancel</UButton>
-        <UButton color="error" :loading="busy" @click="$emit('confirm')">{{ confirmLabel ?? 'Delete' }}</UButton>
+        <UButton color="error" :loading="busy" :disabled="confirmDisabled" @click="$emit('confirm')">{{ confirmLabel ?? 'Delete' }}</UButton>
       </div>
     </template>
   </UModal>

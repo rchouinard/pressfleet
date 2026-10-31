@@ -5,6 +5,22 @@ export type Site = components['schemas']['Site']
 export type SiteStatus = components['schemas']['SiteStatus']
 export type SiteCreate = components['schemas']['SiteCreate']
 export type SiteAdminCredentials = components['schemas']['SiteAdminCredentials']
+export type SiteEnvironment = components['schemas']['SiteEnvironment']
+
+/** Whether the site is a staging copy of a production site (design doc §5.11). */
+export function isStaging(site: Pick<Site, 'environment'>): boolean {
+  return site.environment === 'staging'
+}
+
+/** The production site a staging site was cloned from, or undefined for a production site. */
+export function productionIdOf(site: Pick<Site, 'parent_site_id' | 'staging'>): string | undefined {
+  return site.parent_site_id ?? site.staging?.production_site_id ?? undefined
+}
+
+/** A site's name for a picker, with its slug; staging sites say so, since they otherwise look like their production site. */
+export function siteOptionLabel(site: Pick<Site, 'name' | 'slug' | 'environment'>): string {
+  return `${site.name} (${site.slug})${isStaging(site) ? ' - staging' : ''}`
+}
 
 export interface SiteStatusView {
   label: string
@@ -36,6 +52,13 @@ export function siteStatusView(status: SiteStatus): SiteStatusView {
 
 /** The "no filter" value of the list's select boxes. */
 export const SITE_FILTER_ALL = 'all'
+
+/** Options for the environment filter; the values are the API's `environment` filter. */
+export const siteEnvironmentOptions: readonly { label: string, value: string }[] = [
+  { label: 'All sites', value: SITE_FILTER_ALL },
+  { label: 'Production sites', value: 'production' },
+  { label: 'Staging sites', value: 'staging' },
+]
 
 /** Options for the status filter. */
 export const siteStatusOptions: readonly { label: string, value: string }[] = [

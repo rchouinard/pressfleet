@@ -3,6 +3,7 @@
 // the entry point to /sites/<id>/logs.
 import { toApiError, type ApiError } from '../utils/api-error'
 import type { components } from '../api/schema.gen'
+import { siteOptionLabel } from '../utils/site'
 
 type Site = components['schemas']['Site']
 
@@ -42,7 +43,7 @@ async function loadMore() {
 }
 
 const selected = ref<string>()
-const items = computed(() => sites.value.map(s => ({ label: `${s.name} (${s.slug})`, value: s.id })))
+const items = computed(() => sites.value.map(s => ({ label: siteOptionLabel(s), value: s.id })))
 watch(selected, (id) => {
   if (id) void navigateTo(`/sites/${encodeURIComponent(id)}/logs`)
 })

@@ -5,7 +5,12 @@
 import { ref } from 'vue'
 import type { PreviewCredentials } from '../../utils/site-settings'
 
-defineProps<{ credentials: PreviewCredentials, previewDomain: string }>()
+withDefaults(defineProps<{
+  credentials: PreviewCredentials
+  previewDomain: string
+  /** The job that applies the password, as the note names it. */
+  jobLabel?: string
+}>(), { jobLabel: 'update job' })
 
 const copied = ref<string>()
 const failed = ref(false)
@@ -32,7 +37,7 @@ const fields = [
   <div class="space-y-3">
     <div class="flex items-start gap-2 rounded-md border border-default bg-elevated p-3 text-sm" role="note">
       <UIcon name="i-lucide-triangle-alert" class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-      <p>Copy the password now. It is shown only once and can't be retrieved again; if you lose it, generate a new one. It applies to {{ previewDomain }} once the update job has finished.</p>
+      <p>Copy the password now. It is shown only once and can't be retrieved again; if you lose it, generate a new one. It applies to {{ previewDomain }} once the {{ jobLabel }} has finished.</p>
     </div>
     <dl class="space-y-3">
       <div v-for="f in fields" :key="f.key">

@@ -1,11 +1,13 @@
 <script setup lang="ts">
-// Sites: list with status, filter by client group and status, cursor
-// pagination, and provisioning. Management actions are on the detail page.
+// Sites: list with status, filter by client group, status and environment,
+// cursor pagination, and provisioning. Staging sites are badged and listed
+// under their production site. Management actions are on the detail page.
 import { createPagedList } from '../../utils/paged-list'
 import {
-  SITE_FILTER_ALL, createSitePayload, siteStatusOptions,
-  type Site, type SiteFormValues, type SiteStatus,
+  SITE_FILTER_ALL, createSitePayload, siteEnvironmentOptions, siteStatusOptions,
+  type Site, type SiteEnvironment, type SiteFormValues, type SiteStatus,
 } from '../../utils/site'
+import { missingProductionIds } from '../../utils/staging'
 
 useHead({ title: 'Sites' })
 useBreadcrumbs([{ label: 'Sites' }])
@@ -18,6 +20,7 @@ const { groupItems, groupNames } = useClientGroupLookup()
 const groupFilterItems = computed(() => [{ label: 'All client groups', value: SITE_FILTER_ALL }, ...groupItems.value])
 const groupFilter = ref<string>(SITE_FILTER_ALL)
 const statusFilter = ref<string>(SITE_FILTER_ALL)
+const environmentFilter = ref<string>(SITE_FILTER_ALL)
 
 const list = createPagedList<Site>(async (cursor) => {
   const { data } = await api.GET('/api/v1/sites', {
@@ -27,6 +30,7 @@ const list = createPagedList<Site>(async (cursor) => {
         cursor,
         client_group_id: groupFilter.value === SITE_FILTER_ALL ? undefined : groupFilter.value,
         status: statusFilter.value === SITE_FILTER_ALL ? undefined : (statusFilter.value as SiteStatus),
+        environment: environmentFilter.value === SITE_FILTER_ALL ? undefined : (environmentFilter.value as SiteEnvironment),
       },
     },
   })
@@ -36,9 +40,27 @@ await useAsyncData('sites-list', async () => {
   await list.load()
   return true
 })
-watch([groupFilter, statusFilter], () => void list.load())
+watch([groupFilter, statusFilter, environmentFilter], () => void list.load())
 
-const filtered = computed(() => groupFilter.value !== SITE_FILTER_ALL || statusFilter.value !== SITE_FILTER_ALL)
+const filtered = computed(() => [groupFilter, statusFilter, environmentFilter].some(f => f.value !== SITE_FILTER_ALL))
+
+// A staging site can be listed without its production site: it is on another
+// page, or the status or environment filter left it out. The row still names
+// it, so look the missing ones up (once each; a failed lookup shows the ID).
+const productionNames = ref<Record<string, string>>({})
+const lookedUp = new Set<string>()
+watch(() => list.items.value, (items) => {
+  const ids = missingProductionIds(items).filter(id => !lookedUp.has(id))
+  for (const id of ids) lookedUp.add(id)
+  void Promise.all(ids.map(async (id) => {
+    try {
+      const { data } = await api.GET('/api/v1/sites/{site_id}', { params: { path: { site_id: id } } })
+      if (data) productionNames.value = { ...productionNames.value, [id]: data.name }
+    } catch {
+      lookedUp.delete(id)
+    }
+  }))
+}, { immediate: true })
 
 async function loadMore() {
   try {
@@ -84,6 +106,9 @@ async function create(values: SiteFormValues) {
       <UFormField label="Status" name="status">
         <USelect v-model="statusFilter" :items="[...siteStatusOptions]" class="w-44" />
       </UFormField>
+      <UFormField label="Environment" name="environment">
+        <USelect v-model="environmentFilter" :items="[...siteEnvironmentOptions]" class="w-44" />
+      </UFormField>
     </div>
 
     <ProblemAlert v-if="list.error.value" :error="list.error.value" />
@@ -94,7 +119,7 @@ async function create(values: SiteFormValues) {
         <template v-if="filtered">No sites match these filters.</template>
         <template v-else>No sites yet. Create one to provision a WordPress site on a preview domain.</template>
       </p>
-      <SiteTable v-else :sites="list.items.value" :group-names="groupNames" />
+      <SiteTable v-else :sites="list.items.value" :group-names="groupNames" :production-names="productionNames" />
 
       <div v-if="list.cursor.value" class="flex justify-center">
         <UButton color="neutral" variant="outline" :loading="list.loadingMore.value" @click="loadMore()">Load more</UButton>

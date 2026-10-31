@@ -3,12 +3,24 @@
 // plugin and theme updates, client group, domain and creation date.
 // Management actions live on the detail page, so the list stays read-only
 // and the same for every role. The table scrolls sideways inside its own
-// region on narrow screens.
+// region on narrow screens. Staging sites carry a badge and sit under their
+// production site; one whose production site isn't in `sites` (another page,
+// or filtered out) stays in place and names it, so it never disappears.
+import { computed } from 'vue'
 import { groupLabel, type Site } from '../../utils/site'
+import { arrangeSites } from '../../utils/staging'
+import SiteEnvironmentBadge from './SiteEnvironmentBadge.vue'
 import SiteStatusBadge from './SiteStatusBadge.vue'
 import SiteUpdatesBadge from './SiteUpdatesBadge.vue'
 
-defineProps<{ sites: readonly Site[], groupNames: Readonly<Record<string, string>> }>()
+const props = defineProps<{
+  sites: readonly Site[]
+  groupNames: Readonly<Record<string, string>>
+  /** Names of production sites by ID, for staging sites listed without theirs. */
+  productionNames?: Readonly<Record<string, string>>
+}>()
+
+const rows = computed(() => arrangeSites(props.sites))
 
 function when(iso: string): string {
   const d = new Date(iso)
@@ -19,7 +31,7 @@ function when(iso: string): string {
 <template>
   <div class="overflow-x-auto rounded-md border border-default" tabindex="0" role="region" aria-label="Sites">
     <table class="w-full min-w-[40rem] text-left text-sm">
-      <caption class="sr-only">Sites, newest first</caption>
+      <caption class="sr-only">Sites, newest first, each production site followed by its staging sites</caption>
       <thead class="bg-elevated text-xs uppercase tracking-wide text-muted">
         <tr>
           <th scope="col" class="px-3 py-2 font-medium">Name</th>
@@ -30,9 +42,17 @@ function when(iso: string): string {
         </tr>
       </thead>
       <tbody class="divide-y divide-default">
-        <tr v-for="s in sites" :key="s.id">
-          <th scope="row" class="px-3 py-2 font-medium">
-            <NuxtLink :to="`/sites/${s.id}`" class="rounded text-primary underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-primary">{{ s.name }}</NuxtLink>
+        <tr v-for="{ site: s, parentId, grouped } in rows" :key="s.id" :data-environment="s.environment">
+          <th scope="row" class="px-3 py-2 font-medium" :class="grouped ? 'pl-8' : ''">
+            <span class="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <UIcon v-if="grouped" name="i-lucide-corner-down-right" class="size-4 shrink-0 text-muted" aria-hidden="true" />
+              <NuxtLink :to="`/sites/${s.id}`" class="rounded text-primary underline-offset-2 hover:underline focus-visible:ring-2 focus-visible:ring-primary">{{ s.name }}</NuxtLink>
+              <SiteEnvironmentBadge :environment="s.environment" />
+            </span>
+            <span v-if="parentId && !grouped" class="mt-0.5 block text-xs font-normal text-muted" data-testid="staging-of">
+              Staging site of
+              <NuxtLink :to="`/sites/${parentId}`" class="text-primary underline-offset-2 hover:underline">{{ productionNames?.[parentId] ?? parentId.slice(0, 8) }}</NuxtLink>
+            </span>
           </th>
           <td class="px-3 py-2">
             <span class="flex flex-wrap items-center gap-1">
