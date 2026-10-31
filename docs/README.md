@@ -16,6 +16,7 @@ PressFleet is a self-hostable WordPress application platform for agencies. These
 | --- | --- |
 | Upgrade PressFleet | [Upgrading](upgrading.md) (release check, version skew, recovery from a failed upgrade) |
 | Recover from losing the server | [Disaster recovery](disaster-recovery.md) |
+| Try a change on a copy of a site, and push it to production | [Staging sites](staging.md) |
 | Fix something that's broken | [Troubleshooting](troubleshooting.md) |
 | Handle API tokens, rotate a secret, or understand the security review | [Security notes](security.md) |
 | Change a setting | [Configuration](configuration.md#changing-settings) |
@@ -36,4 +37,4 @@ PressFleet is a self-hostable WordPress application platform for agencies. These
 
 ## Not in this release
 
-These come up often enough to say plainly. They are planned, not built: passwordless sign-in, staging clones, per-client access (roles are platform-wide), a Kubernetes driver, automatic rollback of a failed upgrade, rotating the master key, and a settings page in the dashboard (settings are changed in the config file).
+These come up often enough to say plainly. They are planned, not built: passwordless sign-in, per-client access (roles are platform-wide), a Kubernetes driver, automatic rollback of a failed upgrade, rotating the master key, and a settings page in the dashboard (settings are changed in the config file).

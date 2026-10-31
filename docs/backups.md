@@ -48,7 +48,9 @@ Every site is backed up once a day from the moment it is created, at a time insi
 
 Per site, an Operator or Admin can change the schedule on the site's **Backups** page (or `PUT /api/v1/sites/{id}/backup-schedule`): the interval (1, 2, 3, 4, 6, 8, or 12 hours, or whole days up to a week), the UTC hour to start in, or turn scheduled backups off. Manual backups always work: **Back up now** on the same page (`POST /api/v1/sites/{id}/backups`).
 
-Before risky changes the platform takes its own backups: `pre_update` before a WordPress core update and `pre_restore` before a restore or a staging refresh. A `sync` backup is the snapshot taken as the source of a staging clone, refresh, or push. They show in the same list with their `kind`, and the retention policy treats them like any other backup.
+Before risky changes the platform takes its own backups: `pre_update` before a WordPress core update and `pre_restore` before a restore, a staging refresh, or a push to production. A `sync` backup (**Staging sync** in the dashboard) is the snapshot taken as the source of a staging clone, refresh, or push: production's for a clone or refresh, the staging site's for a push. They show in the same list with their `kind`, and the retention policy treats them like any other backup.
+
+[Staging sites](staging.md) start with scheduled backups **off**, because they are disposable copies, so the **Backup stale** and **Backup failed** alerts don't apply to them. Turn a schedule on from the staging site's **Backups** page if one holds work you can't redo. Manual backups work, and every refresh and push backs the staging site up anyway. A staging site's backups sit in its production site's repository and deduplicate against production's.
 
 A site backup that can't read some files still succeeds; the backup's message lists the files it skipped.
 
@@ -92,6 +94,8 @@ On the site's **Backups** page, choose a backup and **Restore**. Via the API: `P
 5. purges the caches and takes the site out of maintenance mode.
 
 If the restore fails after touching the site's data, the job puts the `pre_restore` backup back and leaves the site **in maintenance mode** with the error in its status message. Check the site, then turn maintenance mode off (the site page, or `PUT /api/v1/sites/{id}/maintenance` with `{"enabled": false}`). If even that can't be restored, the site is marked `failed` and the status message names the pre-restore backup; restore it once the cause is fixed.
+
+To undo a push to production, restore the **Before a restore** backup that the push took of production ([Undoing a push](staging.md#undoing-a-push)).
 
 Restores stay within a client group, because each group has its own repository. To restore a site's backup into a site of another group, [export](#exporting-a-site) it and import it ([Site import](configuration.md#site-import)).
 

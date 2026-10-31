@@ -106,6 +106,29 @@ Common causes:
 - **The disk is full.** `df -h /var/lib/pressfleet /var/lib/docker`.
 - **No preview base domain.** Creating a site returns `409` while `preview_base_domain` is unset.
 
+## A staging refresh or push failed
+
+A copy between a production site and a staging site is two jobs on the **Jobs** page: a `site.backup` job (the **Staging sync** backup of the source), and then `site.clone`, `site.refresh`, or `site.push`, which waits for it. Open the failed job: the step that failed and its error are on it, and the site's page shows the same in its status message. What state the site is left in depends on how far the job got. [Staging sites](staging.md) has the background.
+
+**It failed before changing the site.** The status message starts with `refresh failed before changing the site` or `push failed before changing the site`, and the site is back to `running`. Nothing needs undoing. The usual causes:
+
+- **The source's backup failed.** The copy job fails at its first step. Fix the backup first: look at the `site.backup` job ([Backups](#backups)). A push also fails when the staging site was deleted, was marked `failed`, or was being deleted while the push waited.
+- **A database push the production site's core policy doesn't allow.** The request is refused with `422` (the dialog says "The database can't be pushed: production's core policy doesn't allow it"), or, if the staging site's core changed while the job waited, the job fails with `refusing the database push`. Approve the branch on production's **WordPress core** card, or push without the database ([WordPress core](staging.md#wordpress-core)).
+- **The snapshot is gone.** A refresh from an existing backup fails if retention removed that backup meanwhile. Choose another, or a fresh copy.
+- **`409`, "another job is working on the site".** A job is running on the site (or, for a push, on either site), or the site isn't running: a refresh needs the staging site running, and a push needs the production site running. Wait for the job, or start the site.
+
+**It failed after changing the site, and was rolled back.** The status message reads `push failed and the site was rolled back to its pre-push backup (pre-push backup ...); it stays in maintenance mode until you turn it off` (for a refresh, `pre-refresh`). The data is as it was before the job. The site is **left in maintenance mode on purpose** (visitors get the `503` page) so you can check it first. Look at the job's error, then turn maintenance mode off: the site's page, **Settings** > **Maintenance mode** > **Turn maintenance mode off**, or `PUT /api/v1/sites/{id}/maintenance` with `{"enabled": false}`. A push without the database rolls back if WordPress can't load the pushed code (`WordPress can't load the pushed code`): fix the code on the staging site and push again.
+
+**Rolling back failed too.** The message reads `push failed, and rolling back to the pre-push backup failed too`, and names the backup. The site is marked `failed` and stays in maintenance mode, and its data may be half-pushed. The named backup holds the site as it was: [restore it](backups.md#restoring-a-site) once the cause is fixed, and if the site can't be restored in place, [export that backup](backups.md#exporting-a-site) and import it as a new site. The job log says why the rollback failed.
+
+**It finished, but the job failed afterwards.** The message reads `the push finished, but the job failed afterwards; the site may still be in maintenance mode`. The new content is in place and isn't rolled back. Check the site and turn maintenance mode off.
+
+**You want to take a push back.** That is an [undo](staging.md#undoing-a-push), not a failure: restore the pre-push backup.
+
+**A staging site stays `failed` after it was created.** The `site.clone` job failed and rolled back what it built; the production site was not touched. The reason is on the staging site's page ("creating the staging site failed: ..."). Delete the staging site and create it again.
+
+**The staging site sends mail, or the admin bar has no `STAGING | email off` badge.** The site runs a site image from before the mail switch. Stop it, and see [Staging sites need up-to-date site images](upgrading.md#staging-sites-need-up-to-date-site-images).
+
 ## A site is down or slow
 
 1. Is it `running`? A site in `stopped`, `failed`, or `updating` isn't serving. The site page shows `status` and its message.

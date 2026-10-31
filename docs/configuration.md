@@ -648,6 +648,8 @@ These default rules are created at the first start with the version that has the
 | Redis eviction spike | platform | the object cache evicts more than 1 key per second | 5 minutes | warning |
 | Plugin or theme updates pending | site | a site has plugins or themes with an update available (one alert per kind) | 3 days | warning |
 
+The built-in site rules skip [staging sites](staging.md), which are disposable and often idle or stopped. A rule opts in with `include_staging`, which you can set on a built-in rule too (**Include staging sites** in the dashboard); it applies to site-scoped rules only and defaults to off. A staging site whose backup schedule you turn on is reported by the backup rules like any other.
+
 Operators and Admins manage rules with `/api/v1/alert-rules` (list, create, get, update, delete, `enable`, and `disable`); every role can read rules and the alerts they raised with `GET /api/v1/alerts`, filtered by `state`, `rule_id`, `site_id`, `client_group_id`, and the time they started. Changes to rules are recorded in the [audit log](#audit-log) as `alert_rule.manage`. The expression's brackets and quotes are checked when a rule is saved, but its PromQL is only checked when VictoriaMetrics evaluates it, which is logged. One control plane process evaluates the rules.
 
 ### Alert channels

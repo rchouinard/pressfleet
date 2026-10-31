@@ -61,6 +61,33 @@ The host CLI never opens the state database itself. Running `upgrade` again when
 
 Sites aren't part of the platform project. If the release changes how sites are rendered, the upgraded control plane moves them to the new rendering one at a time, with a health check and a revert on failure ([Site template updates](configuration.md#site-template-updates)); `GET /api/v1/template-rollout` shows its progress.
 
+## Notes for specific releases
+
+The GitHub release notes list the commits since the previous release ([Releasing](releasing.md)). What an operator needs to know or do for a release is kept here, so it is versioned with the release.
+
+### The release that adds staging sites
+
+**New.** [Staging sites](staging.md): a copy of a production site on its own preview address, refreshed from production and pushed back to it, from the dashboard or the API. Nothing changes for existing sites until someone creates a staging site.
+
+**New permissions.** Four actions, each for Operators and Admins: `site.staging.create`, `site.staging.refresh`, `site.staging.push`, and `site.staging.delete`. Deleting a staging site's backups with it stays Admin, as does deleting a production site. None asks for a fresh second factor. Roles are platform-wide, so any Operator can push any staging site to its production site: look at who holds the role ([Roles](first-steps.md#3-create-users-and-choose-roles), [Security](security.md#staging-sites)).
+
+**Release order: site images first.** Staging sites turn off outbound email with a switch (`PRESSFLEET_DISABLE_MAIL`) that is part of the **site images**. Whoever cuts the release must publish site images that have the switch before publishing the control plane release that can create staging sites. An older image ignores the switch, and a staging site on it **can send real email** to the customers in the copied data. The same images add the admin bar badge `STAGING | email off`.
+
+#### Staging sites need up-to-date site images
+
+A site runs a pinned build of its image tag. A new site is pinned to the build the host already has for that tag, and it pulls the tag only if the host has none. So right after an upgrade, a staging site can start on a cached build from before the switch, until the image rollout moves it (a pass runs when the control plane starts and every 15 minutes, and pulls new builds every `updates.images.check_hours`, 6 hours by default; see [Platform image updates](configuration.md#platform-image-updates)). Before the first staging site on an upgraded host:
+
+1. Check that the image rollout has finished: the Jobs page shows the `site.image_update` jobs, and `GET /api/v1/image-rollout` the newest builds it has seen and any failed sites. If you set `updates.images.check_hours` to `0`, or you don't want to wait, pull the tags in use on the host yourself (`docker pull ghcr.io/rchouinard/pressfleet/site-php:<tag>` and `site-nginx:<tag>`); builds that reach the host that way roll out too.
+2. Create the staging site, open it, and look for the `STAGING | email off` badge in the admin bar. If it isn't there, the site runs an older image: stop it (it does no harm while stopped) and wait for the rollout to move it.
+
+#### Other changes in this release
+
+**CPU limits.** A site's CPU limit is now split between its `nginx` and `php` containers in multiples of 0.01 CPU. Docker's systemd cgroup driver rounds each container's limit up to a multiple of 10 ms per second, so a site set to 0.75 CPUs used to get 0.76. Existing sites keep their old split until they are next re-rendered, which includes the reconciliation the control plane runs for every site when it starts. A site whose limit isn't a multiple of 0.04 CPU (the default of 1 CPU is) gets its containers recreated by that reconciliation after this upgrade, a brief restart outside the maintenance window and without the health check of a rollout. The rest are unaffected.
+
+**Database.** Migrations 0032 to 0035 add what staging sites keep: the job a job waits for (0032), a staging site's state and outbound mail switch (0033), the alert rule option `include_staging` (0034), and the ages of a staging site's database and uploads (0035). Like all migrations they are forward-only: the control plane can't be moved back to the previous release without restoring the state backup ([Recovering from a failed upgrade](#recovering-from-a-failed-upgrade)).
+
+**Not changed.** No new settings. The site templates are unchanged, so no template rollout runs. The oldest release this one upgrades from is unchanged, and the host CLI has no changes since the previous release, so the CLI and control plane skew rules are unaffected ([Version skew](#version-skew)). The built-in alert rules skip staging sites ([Alerts](configuration.md#alerts)).
+
 ## PostgreSQL state databases
 
 PressFleet backs up an SQLite state database before migrating it, but not PostgreSQL (see [State database](configuration.md#state-database)). Take a backup of the PostgreSQL database right before upgrading: returning to the previous release after a failed upgrade needs it. `upgrade` asks you to confirm that, or takes `--yes`.

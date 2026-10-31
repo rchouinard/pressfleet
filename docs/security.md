@@ -39,6 +39,16 @@ PressFleet accepts this, because making user management session-only would break
 
 The dashboard warns an Admin who creates a full-scope token. Create tokens under **Account & tokens**; the secret is shown once. Review and revoke old tokens there (Admins can manage other users' tokens).
 
+## Staging sites
+
+A [staging site](staging.md) is a copy of a production site, so it holds the same private data: the users and their password hashes, customer records, and the API keys, license keys, and webhooks in plugin settings. Treat it as sensitive as production, and as exposed as its weakest protection.
+
+- **Preview protection is on by default.** A new staging site is behind the preview domain's HTTP login, with a generated password shown once when the site is created. It is the only thing between the copy and the internet (`noindex` keeps search engines away, but doesn't keep anyone out). Don't turn protection off on a staging site, and share its login only with people who may see production's data. **Settings** > **Preview password protection** on the site's page changes or replaces the password ([Rotating secrets](#rotating-secrets)).
+- **Outbound email is off by default,** but only for mail that goes through WordPress's `wp_mail()`. Plugins that send mail or call payment, CRM, or other services some other way aren't stopped. Switch live keys to test mode after every copy ([What a copy carries along](staging.md#what-a-copy-carries-along)).
+- **Backups of staging sites** are in the production site's repository, under the same encryption. Deleting a staging site keeps its backups; only an Admin can delete them.
+- **Roles are platform-wide,** so any Operator can create a staging site of any client's site, and push one to production. Creating, refreshing, pushing, and deleting staging sites are Operator permissions that don't ask for a fresh second factor. The push is limited in the dashboard by typing the production slug, but not in the API ([Automating pushes](staging.md#what-a-database-push-or-an-all-files-push-loses)). Give an API token that scripts pushes to an Operator, not an Admin ([API tokens](#api-tokens)).
+- **Everything about them is in the audit log,** like other site actions.
+
 ## Rotating secrets
 
 Rotate on a schedule that fits your risk, when someone who knew a secret leaves, and at once if one leaks. Where a procedure says "create the new credential first", do it so there is no gap.
