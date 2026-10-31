@@ -13,7 +13,9 @@ const props = withDefaults(defineProps<{
   canRestore: boolean
   canExport?: boolean
   showSite?: boolean
-}>(), { canExport: false, showSite: false })
+  /** A backup to point out, such as the one that undoes a push (`?backup=`). */
+  markedId?: string
+}>(), { canExport: false, showSite: false, markedId: undefined })
 defineEmits<{ restore: [backup: Backup], export: [backup: Backup] }>()
 
 const actions = computed(() => props.canRestore || props.canExport)
@@ -50,13 +52,16 @@ function when(iso: string): string {
         </tr>
       </thead>
       <tbody class="divide-y divide-default">
-        <tr v-for="b in backups" :key="b.id">
+        <tr v-for="b in backups" :key="b.id" :class="{ 'bg-elevated': b.id === markedId }" :data-marked="b.id === markedId ? 'true' : undefined">
           <td v-if="showSite" class="px-3 py-2">
             <span class="font-medium">{{ siteLabel(b) }}</span>
             <span v-if="b.site_slug && b.site_name" class="block font-mono text-xs text-muted">{{ b.site_slug }}</span>
           </td>
           <th scope="row" class="whitespace-nowrap px-3 py-2 font-medium"><time :datetime="b.started_at">{{ when(b.started_at) }}</time></th>
-          <td class="whitespace-nowrap px-3 py-2">{{ backupKindLabel(b.kind) }}</td>
+          <td class="whitespace-nowrap px-3 py-2">
+            {{ backupKindLabel(b.kind) }}
+            <UBadge v-if="b.id === markedId" color="warning" variant="subtle" icon="i-lucide-history" data-testid="undo-point">Undo point</UBadge>
+          </td>
           <td class="px-3 py-2">
             <UBadge :color="backupStatusView(b).color" variant="subtle" :icon="backupStatusView(b).icon">{{ backupStatusView(b).label }}</UBadge>
             <p v-if="b.message" class="mt-1 max-w-xs whitespace-pre-line break-words text-xs text-muted">{{ b.message }}</p>

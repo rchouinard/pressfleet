@@ -16,6 +16,7 @@ import {
   type JobStep,
   waitsFor,
 } from '../../utils/job'
+import { syncUndo, undoHref, undoText } from '../../utils/staging-sync'
 import JobStateBadge from './JobStateBadge.vue'
 import JobStepLog from './JobStepLog.vue'
 
@@ -69,6 +70,10 @@ function when(iso: string | null | undefined): string {
 
 const showError = computed(() => !!props.job.error && (props.job.state !== 'succeeded'))
 const errorHeading = computed(() => (props.job.state === 'queued' ? 'Last attempt failed; it will be retried' : 'The job failed'))
+// A push or refresh names the backup that undoes it (design doc §5.11).
+const undo = computed(() => syncUndo(props.job))
+const undoCopy = computed(() => (undo.value ? undoText(undo.value) : undefined))
+const undoLink = computed(() => (undo.value ? undoHref(undo.value) : ''))
 const hasResult = computed(() => Object.keys(props.job.result ?? {}).length > 0)
 </script>
 
@@ -156,6 +161,28 @@ const hasResult = computed(() => Object.keys(props.job.result ?? {}).length > 0)
         Roll-back
       </p>
       <p class="mt-1">{{ rollback.text }}</p>
+    </div>
+
+    <div
+      v-if="undo && undoCopy"
+      class="rounded-md border p-4 text-sm"
+      :class="undo.state === 'rollback_failed'
+        ? 'border-red-300 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-100'
+        : 'border-default bg-elevated'"
+      :role="undo.state === 'rollback_failed' ? 'alert' : 'status'"
+      data-testid="sync-undo"
+    >
+      <p class="flex items-center gap-2 font-medium">
+        <UIcon name="i-lucide-history" class="size-4" aria-hidden="true" />
+        {{ undoCopy.title }}
+      </p>
+      <p class="mt-1">{{ undoCopy.body }}</p>
+      <p class="mt-2">
+        <!-- The wrapper fills the slot with a router link. -->
+        <slot name="undo-link" :href="undoLink" :label="undoCopy.link">
+          <a :href="undoLink" class="text-primary underline" data-testid="undo-link">{{ undoCopy.link }}</a>
+        </slot>
+      </p>
     </div>
 
     <div>

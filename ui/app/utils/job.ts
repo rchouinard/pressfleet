@@ -81,6 +81,8 @@ const jobTypeLabels: Record<string, string> = {
   'site.database_export': 'Export database',
   'site.export': 'Export site',
   'site.clone': 'Create staging site',
+  'site.refresh': 'Refresh staging site',
+  'site.push': 'Push to production',
   'site.update_check': 'Check plugin and theme updates',
   'backup.export': 'Export site from backup',
   'backup.repository_delete': 'Delete backup repository',

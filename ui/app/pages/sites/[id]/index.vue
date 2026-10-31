@@ -11,6 +11,7 @@ import {
   type Site, type SiteAdminCredentials,
 } from '../../../utils/site'
 import { deleteBlockers } from '../../../utils/staging'
+import { maintenanceLeftOn } from '../../../utils/staging-sync'
 import { countSnapshots, deleteSiteQuery, type SnapshotCount } from '../../../utils/site-delete'
 
 definePageMeta({ requires: 'site.view' })
@@ -40,6 +41,9 @@ const site = computed<Site | undefined>(() => loaded.value?.site ?? undefined)
 const loadError = computed(() => loaded.value?.error ?? undefined)
 const name = computed(() => site.value?.name ?? id.value.slice(0, 8))
 const staging = computed(() => (site.value ? isStaging(site.value) : false))
+// A failed restore, refresh or push rolls back and leaves the site in
+// maintenance mode with a status message saying so (design doc §5.4 step 7).
+const maintenanceReason = computed(() => (site.value ? maintenanceLeftOn(site.value) : undefined))
 const productionId = computed(() => (site.value && staging.value ? productionIdOf(site.value) : undefined))
 
 // A staging site names its production site. A failed lookup only leaves the
@@ -318,8 +322,9 @@ function when(iso: string): string {
       </header>
 
       <SiteStagingBanner v-if="staging" :site="site" :production-name="production?.name">
-        <!-- #208: the refresh and push buttons go in this slot. -->
-        <template #actions />
+        <template #actions>
+          <SiteStagingSync :site="site" @changed="onDomainsChanged" />
+        </template>
       </SiteStagingBanner>
 
       <div
@@ -329,6 +334,21 @@ function when(iso: string): string {
       >
         <p class="font-medium">This site failed</p>
         <p class="mt-1 whitespace-pre-line break-words text-muted">{{ site.status_message }}</p>
+      </div>
+      <div
+        v-else-if="maintenanceReason"
+        class="rounded-md border border-default bg-elevated p-3 text-sm"
+        role="alert"
+        data-testid="maintenance-left-on"
+      >
+        <p class="font-medium">This site is in maintenance mode</p>
+        <p class="mt-1 whitespace-pre-line break-words text-muted">{{ maintenanceReason }}</p>
+        <p class="mt-1">
+          Visitors see the maintenance page until it is turned off. Check the site, then turn it off under
+          <a href="#set-maint-heading" class="text-primary underline">Maintenance mode</a> in its settings.
+          <NuxtLink :to="`/sites/${site.id}/backups`" class="text-primary underline">Backups</NuxtLink>
+          lists the backup taken before it, to restore.
+        </p>
       </div>
       <p v-else-if="site.status_message" class="text-sm text-muted">{{ site.status_message }}</p>
 
