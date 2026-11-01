@@ -492,6 +492,24 @@ Left out of the dashboard on purpose, so not covered here (their own e2e or unit
 | `pressfleet state restore`, `key generate`, `metrics-access rotate` | Restoring the state database from a backup, making a master key, and replacing the public metrics password: platform administration on the host or in the control plane container (§4.7) |
 | SFTP and database tunnels themselves | They are SSH, not the dashboard; the dashboard manages the keys and sessions (`TestSFTPGateway`, `TestDatabaseSessions`) |
 
+## Backup memory test
+
+`TestBackupMemory` checks that a sync backup and the restore after it fit the default task memory limit (`backup.task_memory_mb`, 512 MiB) with a large upload. It isn't part of `make test-e2e`, which skips it, because it writes tens of GiB. Run it on the host in question, with Docker Engine on Linux and cgroup v2:
+
+```sh
+mise exec -- make test-backup-memory
+```
+
+It creates a staging site from a production site with a 256 MiB upload of random data, then refreshes it with a 1 GiB and a 4 GiB upload, and compares the upload's checksum on both sites. It takes about 30 GiB of disk, for the two sites and the repository, and pulls the site images from GHCR unless they exist locally. It fails if a backup or copy job fails, or goes back to the queue with an error even once. restic's memory grows with the CPUs it sees, and tasks have no CPU limit, so note the CPU count in the run's first lines: a pass on a small host says little about a large one.
+
+It refuses a temporary directory on tmpfs, as `/tmp` is on many hosts: the harness keeps the repository below it, and tmpfs pages are charged to the task, so the result wouldn't apply to a real install. `make test-backup-memory` sets `TMPDIR=/var/tmp` unless `TMPDIR` is set.
+
+For each task it logs the highest memory seen, sampled from the task's cgroup twice a second:
+
+- `anon` and `shmem` can't be reclaimed without swap, so together they are what must fit the limit: restic's heap, and its tmpfs.
+- `file`, `file_dirty`, `file_writeback`, and `memory.peak` include page cache, which the kernel reclaims under pressure. `memory.peak` near the limit is normal.
+- `hit the limit` counts the times reclaim had to run, and `OOM kills` the kills seen while the task was still running. A task killed between samples shows in its job's error instead (`exit status 137`).
+
 ## Capacity test
 
 The capacity test (#98) runs 50 sites on a real 8 GiB host under light traffic through a backup window, prune, and check, and records memory, pressure, restarts, and latency. Its scripts are in `scripts/capacity/`; they are not part of `go test ./...`. The results of the first run are in [Capacity test](capacity-test.md).
