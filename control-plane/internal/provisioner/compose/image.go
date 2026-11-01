@@ -2,6 +2,7 @@ package compose
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -22,6 +23,36 @@ func EnsureImage(ctx context.Context, docker ExecFunc, image string) (pulled boo
 	}
 	if _, err := docker(ctx, nil, "image", "pull", "--quiet", "--", image); err != nil {
 		return false, fmt.Errorf("pulling image %s: %w", image, err)
+	}
+	return true, nil
+}
+
+// ErrImageFileMissing means an image lacks a file its user needs.
+var ErrImageFileMissing = errors.New("the image doesn't have the file")
+
+// EnsureImageFile checks that a local image has a file. If it doesn't, the tag
+// may be an old build left on the host, which EnsureImage is happy with, so it
+// pulls the tag once and checks again. It reports whether the pull fixed it. An
+// image that has the file is never pulled, so locally built images (make images)
+// are used as they are. Without the file it returns an error that wraps
+// ErrImageFileMissing, and says why the pull didn't help if it failed. A nil
+// docker means DockerExec.
+func EnsureImageFile(ctx context.Context, docker ExecFunc, image, path string) (refreshed bool, err error) {
+	if docker == nil {
+		docker = DockerExec
+	}
+	has := func() error {
+		_, err := RunContainer(ctx, docker, RunOptions{Image: image, Entrypoint: "ls", Command: []string{path}})
+		return err
+	}
+	if has() == nil {
+		return false, nil
+	}
+	if _, err := docker(ctx, nil, "image", "pull", "--quiet", "--", image); err != nil {
+		return false, fmt.Errorf("%w %s: %s, and pulling it failed: %w", ErrImageFileMissing, path, image, err)
+	}
+	if err := has(); err != nil {
+		return false, fmt.Errorf("%w %s: %s, even after pulling it: %w", ErrImageFileMissing, path, image, err)
 	}
 	return true, nil
 }
