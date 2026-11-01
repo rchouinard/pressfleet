@@ -70,7 +70,7 @@ The same data goes the other way. Test-mode keys and other settings you change o
 
 **What it can't turn off.** The switch only stops mail that goes through `wp_mail()`. A plugin that sends mail or calls an outside service some other way isn't covered: a transactional-mail plugin that calls its provider's API directly, a payment gateway, an SMS plugin, a CRM or marketing integration, a webhook sender. Plugins that honor the environment type may stop on their own, but don't rely on it. Anything else needs its own test mode, which is why the checklist above is yours to do. WP-Cron isn't turned off either.
 
-**Site images.** The mail switch and the admin bar badge are in the site images. A staging site on an image from before they existed ignores the switch and would send real email. After you create the first staging site on a host that was just upgraded, check that the admin bar shows `STAGING | email off`. If it doesn't, stop the site and wait for the image rollout to move it ([Upgrading](upgrading.md#staging-sites-need-up-to-date-site-images)).
+**Site images.** The mail switch and the admin bar badge are in the site images. A staging site on an image from before they existed would ignore the switch and send real email, so creating a staging site checks the image before any of production's data is copied, and fails if the switch is missing. The fix is a current build of the site image on the host ([Upgrading](upgrading.md#a-staging-site-is-only-created-on-an-image-with-the-mail-switch)).
 
 ## Refreshing from production
 
@@ -165,7 +165,7 @@ If you can't find the job, the same backup is the one of kind **Before a restore
 
 ### If a push fails
 
-The job rolls production back to the backup it took, so a failed push leaves production as it was, but **in maintenance mode**. It stays there until you turn it off, so you can look at the site first. Check it, then turn maintenance mode off: **Settings** > **Maintenance mode** > **Turn maintenance mode off** on production's page. A push that fails before it changes anything (the staging backup failed, a core guard refusal, the staging site disappeared) leaves production running and untouched. [Troubleshooting](troubleshooting.md#a-staging-refresh-or-push-failed) has the messages.
+The job rolls production back to the backup it took, so a failed push leaves production as it was, but **in maintenance mode**. It stays there until you turn it off, so you can look at the site first. Check it, then turn maintenance mode off: **Settings** > **Maintenance mode** > **Turn maintenance mode off** on production's page. A push that fails before it changes anything (the staging backup failed, a core guard refusal, the staging site disappeared) leaves production running and untouched. If the rollback fails too, the site is marked `failed`: restore a backup, usually the pre-push backup its status message names ([Recovering a failed site](backups.md#recovering-a-failed-site)). [Troubleshooting](troubleshooting.md#a-staging-refresh-or-push-failed) has the messages.
 
 ## How old the staging site's data is
 
