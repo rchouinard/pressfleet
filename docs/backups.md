@@ -91,7 +91,7 @@ On the site's **Backups** page, choose a backup and **Restore**. Via the API: `P
 4. rewrites the database's URLs to the site's own if the snapshot came from another site or from before go-live;
 5. purges the caches and takes the site out of maintenance mode.
 
-If the restore fails after touching the site's data, the job puts the `pre_restore` backup back and leaves the site **in maintenance mode** with the error in its status message. Check the site, then turn maintenance mode off (the site page, or `PUT /api/v1/sites/{id}/maintenance` with `{"enabled": false}`). If even that can't be restored, the site is marked `failed` and the status message names the pre-restore backup; restore it once the cause is fixed.
+If the restore fails after touching the site's data, the job puts the `pre_restore` backup back and leaves the site **in maintenance mode**, with what happened in its status message. The message stays after maintenance mode is off, as a record: the site's `maintenance` flag, which the site page shows, is what says whether visitors see the `503` page. Check the site, then turn maintenance mode off (the site page, or `PUT /api/v1/sites/{id}/maintenance` with `{"enabled": false}`). If even that can't be restored, the site is marked `failed` and the status message names the pre-restore backup; restore it once the cause is fixed.
 
 ### Recovering a failed site
 
@@ -101,7 +101,7 @@ On a failed site, the job differs from the one above:
 
 - It first puts back what is missing and starts the site: the database, the object cache user, and the containers.
 - It attempts the `pre_restore` backup, but goes on without it if a broken site can't be backed up. The job then carries a warning, the backup shows as failed, and the restore **can't be undone or rolled back**.
-- A site that was in maintenance mode when the restore started, which a failed job usually leaves it in, **stays in maintenance mode**, and visitors see the `503` page. The status message and the job's log say so. Check the site, then turn maintenance mode off as above. A site that wasn't in maintenance mode serves visitors when the job finishes.
+- A site that was in maintenance mode when the restore started, which a failed job usually leaves it in, **stays in maintenance mode**, and visitors see the `503` page. The site page and the job's log say so. Check the site, then turn maintenance mode off as above. A site that wasn't in maintenance mode serves visitors when the job finishes.
 - If the restore fails too, the site stays `failed`, with a status message that says what state its data is in, whether it was rolled back to the state it failed in, left as the restore left it, or never touched. Fix the cause and restore again.
 
 Restores stay within a client group, because each group has its own repository. To restore a site's backup into a site of another group, [export](#exporting-a-site) it and import it ([Site import](configuration.md#site-import)).

@@ -346,7 +346,10 @@ describe('the undo point of a job', () => {
     expect(done.body).toContain('restore that backup')
     expect(done.body).toContain('anything recorded on production after the push is lost')
     const failed = undoText(syncUndo(push({ state: 'failed' }))!)
-    expect(failed.body).toContain('stays in maintenance mode until you turn it off')
+    // It stays on screen, so it holds whatever the flag has become since.
+    expect(failed.body).toContain('the job left it in maintenance mode')
+    expect(failed.body).toContain('if it is still on')
+    expect(failed.body).not.toContain('stays in maintenance mode')
     const broken = undoText(syncUndo(push({ state: 'rollback_failed' }))!)
     expect(broken.title).toContain('could not be rolled back')
   })

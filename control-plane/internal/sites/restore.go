@@ -99,7 +99,13 @@ import (
 //
 // A job that fails after the restore is complete (turning maintenance
 // mode off, or finishing) doesn't roll the restored site back: its status
-// message says the restore finished and maintenance mode may still be on.
+// message says the restore finished.
+//
+// A status message outlives the moment it was written: turning maintenance mode
+// off doesn't clear it. So it says only what happened and what to do about the
+// data, which stay true, and never whether the site is in maintenance mode. The
+// site's maintenance flag says that, and the dashboard shows the two together.
+// A job's warnings describe a moment in time, so they can say it.
 //
 // # Restoring a failed site
 //
@@ -128,11 +134,13 @@ import (
 //     goes on the job, and the job goes on. A running site's failed backup still
 //     stops its restore: it has a working site to lose.
 //   - disable_maintenance leaves maintenance mode on if the site was in it
-//     when the restore started, as for any site, and says so with a warning and
-//     in the status message (restoreOutcome). The flag can't tell an operator's
-//     choice from what a failed job left behind. It stays on rather than sending
-//     visitors to a site nobody has looked at yet, the same reasoning as §5.4
-//     step 7, and the person who started the restore can turn it off.
+//     when the restore started, as for any site, and says so with a warning.
+//     The status message says the restore recovered the site (restoreOutcome),
+//     which gives the dashboard's maintenance alert its reason. The flag can't
+//     tell an operator's choice from what a failed job left behind. It stays on
+//     rather than sending visitors to a site nobody has looked at yet, the same
+//     reasoning as §5.4 step 7, and the person who started the restore can turn
+//     it off.
 //   - A failed job leaves the site failed, whatever its containers are doing,
 //     unless the restore completed. The status message says what state the data
 //     is in and keeps the message the site had before. With no undo point there
@@ -608,10 +616,10 @@ func (s *Service) finishRestoreSite(ctx context.Context, r *jobs.Run) error {
 }
 
 // restoreOutcome is the status message of a failed site that a restore just
-// recovered, for what the operator has to know: that the restore can't be
-// undone and, above all, that the site isn't serving visitors yet. A site with
-// neither has none. The wording stays true after maintenance mode is turned
-// off, since the message outlives it.
+// recovered: what happened, for a site left in maintenance mode, whose alert
+// needs a reason, and that the restore can't be undone, if it can't. A site
+// with neither has none. It doesn't say whether the site is in maintenance mode,
+// since the message outlives that (see "Failure and rollback").
 func (s *Service) restoreOutcome(r *jobs.Run) (string, error) {
 	if recovering, _ := failedTarget(r); !recovering {
 		return "", nil
@@ -627,10 +635,7 @@ func (s *Service) restoreOutcome(r *jobs.Run) (string, error) {
 	if noUndo == "" && !before {
 		return "", nil
 	}
-	msg := "the restore recovered the site"
-	if before {
-		msg += "; it was in maintenance mode when the restore started and was left in it, so visitors see the maintenance page until it is turned off"
-	}
+	msg := "the restore recovered the site from its failed state"
 	if noUndo != "" {
 		msg += "; no pre-restore backup could be taken, so this restore can't be undone (" + noUndo + ")"
 	}
@@ -1338,7 +1343,8 @@ func (s *Service) finishRestoreWith(ctx context.Context, r *jobs.Run, backupKey,
 
 // finishFailedRestore is the last Undo of a failed job of the restore
 // pipeline: it sets the site's status and says in its status message what the
-// failed job left behind. A site being deleted is left alone.
+// failed job did, in words that stay true whatever happens to the maintenance
+// flag (see "Failure and rollback"). A site being deleted is left alone.
 func (s *Service) finishFailedRestore(ctx context.Context, r *jobs.Run, noun string) error {
 	siteID := r.Job().TargetID
 	var rollbackErr, revertErr string
@@ -1371,19 +1377,19 @@ func (s *Service) finishFailedRestore(ctx context.Context, r *jobs.Run, noun str
 	var prefix string
 	switch {
 	case complete:
-		prefix = "the " + noun + " finished, but the job failed afterwards; the site may still be in maintenance mode"
+		prefix = "the " + noun + " finished, but the job failed afterwards"
+		r.Warnf("The site may still be in maintenance mode: the job failed after the %s finished.", noun)
 	case started && noUndo != "":
 		status = store.SiteFailed
 		prefix = noun + " failed, and there is no pre-" + noun + " backup to roll back to, because it couldn't be taken" +
-			"; the site's data may be partly restored, and the site stays in maintenance mode. Restore a backup to try again"
+			"; the site's data may be partly restored. Restore a backup to try again"
 	case rollbackErr != "":
 		status = store.SiteFailed
 		again := "Restore a backup to try again"
 		if backupNote != "" {
 			again = "Restore the pre-" + noun + " backup to try again"
 		}
-		prefix = noun + " failed, and rolling back to the pre-" + noun + " backup failed too" + backupNote +
-			"; the site stays in maintenance mode. " + again
+		prefix = noun + " failed, and rolling back to the pre-" + noun + " backup failed too" + backupNote + ". " + again
 	case revertErr != "":
 		status = store.SiteFailed
 		prefix = noun + " failed and was rolled back" + backupNote + ", but the site's previous WordPress version couldn't be put back" +
@@ -1393,13 +1399,12 @@ func (s *Service) finishFailedRestore(ctx context.Context, r *jobs.Run, noun str
 		// to it isn't getting better, whatever its containers are doing.
 		status = store.SiteFailed
 		prefix = noun + " failed and the site was rolled back to its pre-" + noun + " backup" + backupNote +
-			", which is the state it failed in; it is still failed and stays in maintenance mode. Restore a backup to try again"
+			", which is the state it failed in. Restore a backup to try again"
 	case started:
-		prefix = noun + " failed and the site was rolled back to its pre-" + noun + " backup" + backupNote +
-			"; it stays in maintenance mode until you turn it off"
+		prefix = noun + " failed and the site was rolled back to its pre-" + noun + " backup" + backupNote
 	case recovering:
 		status = store.SiteFailed
-		prefix = noun + " failed before changing the site's data; it is still failed. Restore a backup to try again"
+		prefix = noun + " failed before changing the site's data. Restore a backup to try again"
 	default:
 		prefix = noun + " failed before changing the site"
 	}

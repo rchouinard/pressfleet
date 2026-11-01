@@ -3471,7 +3471,10 @@ type Site struct {
 	// right now is the site's `runtime`.
 	Status SiteStatus `json:"status"`
 
-	// StatusMessage Details about the status, such as why the site failed.
+	// StatusMessage Details about the status, such as why the site failed: what happened,
+	// which stays true afterwards. It doesn't say whether the site is in
+	// maintenance mode (`maintenance` does), and turning that off doesn't
+	// clear it.
 	StatusMessage *string `json:"status_message,omitempty"`
 
 	// UpdatedAt Examples: 2026-09-26T17:25:00Z
@@ -7322,8 +7325,8 @@ type ClientInterface interface {
 	//   and the restore can't be undone or rolled back.
 	// - If the site was in maintenance mode when the restore started, which
 	//   a failure usually leaves it in, it **stays in maintenance mode**,
-	//   and `status_message` says so. Visitors see the maintenance page until
-	//   it is turned off. If it wasn't, the site serves visitors when the job
+	//   which `maintenance` shows. Visitors see the maintenance page until it
+	//   is turned off. If it wasn't, the site serves visitors when the job
 	//   finishes.
 	// - If the job fails before the restore is complete, the site stays
 	//   `failed`, and `status_message` says what state its data is in. The
@@ -7387,8 +7390,8 @@ type ClientInterface interface {
 	//   and the restore can't be undone or rolled back.
 	// - If the site was in maintenance mode when the restore started, which
 	//   a failure usually leaves it in, it **stays in maintenance mode**,
-	//   and `status_message` says so. Visitors see the maintenance page until
-	//   it is turned off. If it wasn't, the site serves visitors when the job
+	//   which `maintenance` shows. Visitors see the maintenance page until it
+	//   is turned off. If it wasn't, the site serves visitors when the job
 	//   finishes.
 	// - If the job fails before the restore is complete, the site stays
 	//   `failed`, and `status_message` says what state its data is in. The
@@ -11419,8 +11422,8 @@ func (c *Client) RefreshStagingSite(ctx context.Context, siteID SiteID, body Ref
 //     and the restore can't be undone or rolled back.
 //   - If the site was in maintenance mode when the restore started, which
 //     a failure usually leaves it in, it **stays in maintenance mode**,
-//     and `status_message` says so. Visitors see the maintenance page until
-//     it is turned off. If it wasn't, the site serves visitors when the job
+//     which `maintenance` shows. Visitors see the maintenance page until it
+//     is turned off. If it wasn't, the site serves visitors when the job
 //     finishes.
 //   - If the job fails before the restore is complete, the site stays
 //     `failed`, and `status_message` says what state its data is in. The
@@ -11494,8 +11497,8 @@ func (c *Client) RestoreSiteWithBody(ctx context.Context, siteID SiteID, content
 //     and the restore can't be undone or rolled back.
 //   - If the site was in maintenance mode when the restore started, which
 //     a failure usually leaves it in, it **stays in maintenance mode**,
-//     and `status_message` says so. Visitors see the maintenance page until
-//     it is turned off. If it wasn't, the site serves visitors when the job
+//     which `maintenance` shows. Visitors see the maintenance page until it
+//     is turned off. If it wasn't, the site serves visitors when the job
 //     finishes.
 //   - If the job fails before the restore is complete, the site stays
 //     `failed`, and `status_message` says what state its data is in. The
@@ -21216,8 +21219,8 @@ type ClientWithResponsesInterface interface {
 	//   and the restore can't be undone or rolled back.
 	// - If the site was in maintenance mode when the restore started, which
 	//   a failure usually leaves it in, it **stays in maintenance mode**,
-	//   and `status_message` says so. Visitors see the maintenance page until
-	//   it is turned off. If it wasn't, the site serves visitors when the job
+	//   which `maintenance` shows. Visitors see the maintenance page until it
+	//   is turned off. If it wasn't, the site serves visitors when the job
 	//   finishes.
 	// - If the job fails before the restore is complete, the site stays
 	//   `failed`, and `status_message` says what state its data is in. The
@@ -21281,8 +21284,8 @@ type ClientWithResponsesInterface interface {
 	//   and the restore can't be undone or rolled back.
 	// - If the site was in maintenance mode when the restore started, which
 	//   a failure usually leaves it in, it **stays in maintenance mode**,
-	//   and `status_message` says so. Visitors see the maintenance page until
-	//   it is turned off. If it wasn't, the site serves visitors when the job
+	//   which `maintenance` shows. Visitors see the maintenance page until it
+	//   is turned off. If it wasn't, the site serves visitors when the job
 	//   finishes.
 	// - If the job fails before the restore is complete, the site stays
 	//   `failed`, and `status_message` says what state its data is in. The
@@ -35103,8 +35106,8 @@ func (c *ClientWithResponses) RefreshStagingSiteWithResponse(ctx context.Context
 //     and the restore can't be undone or rolled back.
 //   - If the site was in maintenance mode when the restore started, which
 //     a failure usually leaves it in, it **stays in maintenance mode**,
-//     and `status_message` says so. Visitors see the maintenance page until
-//     it is turned off. If it wasn't, the site serves visitors when the job
+//     which `maintenance` shows. Visitors see the maintenance page until it
+//     is turned off. If it wasn't, the site serves visitors when the job
 //     finishes.
 //   - If the job fails before the restore is complete, the site stays
 //     `failed`, and `status_message` says what state its data is in. The
@@ -35174,8 +35177,8 @@ func (c *ClientWithResponses) RestoreSiteWithBodyWithResponse(ctx context.Contex
 //     and the restore can't be undone or rolled back.
 //   - If the site was in maintenance mode when the restore started, which
 //     a failure usually leaves it in, it **stays in maintenance mode**,
-//     and `status_message` says so. Visitors see the maintenance page until
-//     it is turned off. If it wasn't, the site serves visitors when the job
+//     which `maintenance` shows. Visitors see the maintenance page until it
+//     is turned off. If it wasn't, the site serves visitors when the job
 //     finishes.
 //   - If the job fails before the restore is complete, the site stays
 //     `failed`, and `status_message` says what state its data is in. The

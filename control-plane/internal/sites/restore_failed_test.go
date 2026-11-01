@@ -80,6 +80,16 @@ func (e *restoreEnv) requireStep(t *testing.T, d store.JobDetail, wantInLog stri
 	}
 }
 
+// requireNoMaintenanceClaim: a status message outlives the maintenance flag, so
+// it mustn't say whether the site is in maintenance mode, or to turn it off.
+// The earlier message it may quote is held to the same rule.
+func requireNoMaintenanceClaim(t *testing.T, site store.Site) {
+	t.Helper()
+	if strings.Contains(strings.ToLower(site.StatusMessage), "maintenance") {
+		t.Errorf("status message speaks of maintenance mode: %q", site.StatusMessage)
+	}
+}
+
 func provOps(e *restoreEnv, siteID string) []string {
 	var ops []string
 	for _, c := range e.prov.Calls() {
@@ -115,9 +125,10 @@ func TestRestoreFailedSite(t *testing.T) {
 
 		got := e.requireRecovered(t, site.ID, d, true)
 		// Maintenance mode is on because the failure left it: the site says so.
-		if !strings.Contains(got.StatusMessage, "visitors see the maintenance page") {
+		if !strings.Contains(got.StatusMessage, "recovered the site") {
 			t.Errorf("status message = %q", got.StatusMessage)
 		}
+		requireNoMaintenanceClaim(t, got)
 		e.requireStep(t, d, "not serving visitors yet")
 
 		// The state it failed in was backed up first, in case that is all
@@ -264,10 +275,10 @@ func TestRestoreFailedSiteNoUndoPoint(t *testing.T) {
 					t.Errorf("%d backups in %d job attempts, want %d", backups, d.Job.Attempts, tc.attempts)
 				}
 				if !strings.Contains(got.StatusMessage, "no pre-restore backup could be taken") ||
-					!strings.Contains(got.StatusMessage, tc.err.Error()) ||
-					!strings.Contains(got.StatusMessage, "visitors see the maintenance page") {
+					!strings.Contains(got.StatusMessage, tc.err.Error()) {
 					t.Errorf("status message = %q", got.StatusMessage)
 				}
+				requireNoMaintenanceClaim(t, got)
 				e.requireStep(t, d, "Couldn't take a pre-restore backup")
 				pre := e.preRestoreBackups(t, site.ID)
 				newest := pre[0]
@@ -410,7 +421,7 @@ func TestRestoreFailedSiteFailsAgain(t *testing.T) {
 					return nil
 				}
 			},
-			msg:  "restore failed before changing the site's data; it is still failed",
+			msg:  "restore failed before changing the site's data",
 			data: "post=half-imported",
 		},
 		{
@@ -423,7 +434,7 @@ func TestRestoreFailedSiteFailsAgain(t *testing.T) {
 					return nil
 				}
 			},
-			msg:  "restore failed before changing the site's data; it is still failed",
+			msg:  "restore failed before changing the site's data",
 			data: "post=half-imported",
 		},
 		{
@@ -484,6 +495,7 @@ func TestRestoreFailedSiteFailsAgain(t *testing.T) {
 				if !strings.Contains(got.StatusMessage, "before this restore: restore failed, and rolling back") {
 					t.Errorf("status message lost what the site said before: %q", got.StatusMessage)
 				}
+				requireNoMaintenanceClaim(t, got)
 				if data := e.data(site.ID); !strings.Contains(data, tc.data) {
 					t.Errorf("database = %q, want %q", data, tc.data)
 				}
@@ -582,8 +594,48 @@ func TestRestoreFailedSiteAfterCompletion(t *testing.T) {
 		if got.Status != store.SiteRunning || !strings.Contains(got.StatusMessage, "the restore finished") {
 			t.Errorf("site: %s %q", got.Status, got.StatusMessage)
 		}
+		requireNoMaintenanceClaim(t, got)
+		e.requireStep(t, d, "may still be in maintenance mode")
 		if data := e.data(site.ID); !strings.Contains(data, "post=good") {
 			t.Errorf("database = %q", data)
+		}
+	})
+}
+
+// TestStatusMessageSurvivesMaintenance: the message of a rolled back restore
+// says what happened, says nothing about maintenance mode, and is still there,
+// and still true, once maintenance mode is off. The job's log has the moment.
+func TestStatusMessageSurvivesMaintenance(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		e := newRestoreEnv(t, db)
+		site := e.runningSite(t, "Acme", "post=good")
+		snap := e.snapshot(t, site.ID)
+		e.setFailWP(func(_ string, args []string) error {
+			if args[0] == "core" && args[1] == "update-db" {
+				return &provisioner.ExecError{ExitCode: 255, Stderr: "PHP Fatal error"}
+			}
+			return nil
+		})
+		d := e.restore(t, site.ID, sites.Restore{SnapshotID: string(snap.ID)})
+		e.setFailWP(nil)
+		if d.Job.State != store.JobFailed {
+			t.Fatalf("restore job: %s %s\n%s", d.Job.State, d.Job.Error, jobLog(d))
+		}
+		e.requireStep(t, d, "stays in maintenance mode")
+		got := e.site(t, site.ID)
+		pre := e.preRestoreBackups(t, site.ID)
+		if got.Status != store.SiteRunning || !got.Maintenance ||
+			!strings.Contains(got.StatusMessage, "rolled back to its pre-restore backup") || !strings.Contains(got.StatusMessage, pre[0].ID) {
+			t.Errorf("site after the rollback: %s, maintenance %v, %q", got.Status, got.Maintenance, got.StatusMessage)
+		}
+		requireNoMaintenanceClaim(t, got)
+		if _, _, err := e.svc.SetMaintenance(ctx, site.ID, false, ""); err != nil {
+			t.Fatal(err)
+		}
+		e.runJobs(t)
+		if after := e.site(t, site.ID); after.Maintenance || after.StatusMessage != got.StatusMessage {
+			t.Errorf("after turning maintenance mode off: maintenance %v, %q", after.Maintenance, after.StatusMessage)
 		}
 	})
 }
@@ -759,6 +811,7 @@ func TestRestoreRecoversProductionAfterFailedPush(t *testing.T) {
 			!strings.Contains(prod.StatusMessage, "Restore the pre-push backup to try again") || !strings.Contains(prod.StatusMessage, undo.ID) {
 			t.Fatalf("production after the failed push: %s, maintenance %v, %q", prod.Status, prod.Maintenance, prod.StatusMessage)
 		}
+		requireNoMaintenanceClaim(t, prod)
 		// Its data is the staging site's, half pushed; a second push is refused.
 		if _, err := e.svc.PushStaging(ctx, e.stg.ID, sites.StagingPush{Files: backup.RestoreFilesAll, Database: true}); !errors.Is(err, sites.ErrNotRunning) {
 			t.Errorf("push to the failed production site = %v", err)
@@ -772,9 +825,10 @@ func TestRestoreRecoversProductionAfterFailedPush(t *testing.T) {
 			t.Errorf("production's database = %q, want %q", got, e.prodData)
 		}
 		prod = e.site(t, e.prod.ID)
-		if prod.Status != store.SiteRunning || !prod.Maintenance || !strings.Contains(prod.StatusMessage, "visitors see the maintenance page") {
+		if prod.Status != store.SiteRunning || !prod.Maintenance || !strings.Contains(prod.StatusMessage, "recovered the site") {
 			t.Errorf("production after the restore: %s, maintenance %v, %q", prod.Status, prod.Maintenance, prod.StatusMessage)
 		}
+		requireNoMaintenanceClaim(t, prod)
 		if _, _, err := e.svc.SetMaintenance(ctx, e.prod.ID, false, ""); err != nil {
 			t.Fatal(err)
 		}

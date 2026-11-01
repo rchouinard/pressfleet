@@ -3472,7 +3472,10 @@ type Site struct {
 	// right now is the site's `runtime`.
 	Status SiteStatus `json:"status"`
 
-	// StatusMessage Details about the status, such as why the site failed.
+	// StatusMessage Details about the status, such as why the site failed: what happened,
+	// which stays true afterwards. It doesn't say whether the site is in
+	// maintenance mode (`maintenance` does), and turning that off doesn't
+	// clear it.
 	StatusMessage *string `json:"status_message,omitempty"`
 
 	// UpdatedAt Examples: 2026-09-26T17:25:00Z

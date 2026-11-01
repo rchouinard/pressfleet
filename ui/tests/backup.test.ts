@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
 import {
   backupKindLabel, backupStatusView, canBackUpSite, canRestoreSite, describeSchedule, formatBytes,
-  failedSiteNotice, intervalOptions, isRestorable, restoreBlockedReason, restoreConfirmed, restoreDialogNotes, restoreFinishedNotice, restorePayload,
+  failedSiteNotice, intervalOptions, maintenanceNote, isRestorable, restoreBlockedReason, restoreConfirmed, restoreDialogNotes, restoreFinishedNotice, restorePayload,
   scheduleFormPayload, scheduleToForm, scheduleUnchanged, validateSchedule,
   type Backup, type BackupSchedule,
 } from '../app/utils/backup'
@@ -99,13 +99,26 @@ describe('restore rules', () => {
     expect(notInMaintenance).not.toMatch(/stays in it/)
   })
 
+  it('takes what it says about maintenance mode from the live flag', () => {
+    expect(maintenanceNote({ status: 'running', maintenance: false })).toBeUndefined()
+    expect(maintenanceNote({ status: 'failed', maintenance: false })).toBeUndefined()
+    expect(maintenanceNote({ status: 'running', maintenance: true })).toMatch(/until it is turned off/)
+    expect(maintenanceNote({ status: 'failed', maintenance: true })).toMatch(/once the site is recovered/)
+  })
+
   it('says after a restore whether visitors can see the site', () => {
-    const stillIn = restoreFinishedNotice({ maintenance: true })
+    const stillIn = restoreFinishedNotice('Acme', { maintenance: true })
     expect(stillIn.stillInMaintenance).toBe(true)
-    expect(stillIn.description).toMatch(/still in maintenance mode/)
-    const serving = restoreFinishedNotice({ maintenance: false })
+    expect(stillIn.description).toBe('Acme is still in maintenance mode: visitors see the maintenance page until you check it and turn it off.')
+    const serving = restoreFinishedNotice('Acme', { maintenance: false })
     expect(serving.stillInMaintenance).toBe(false)
-    expect(serving.description).toMatch(/serving visitors/)
+    expect(serving.description).toBe('Acme is serving visitors.')
+  })
+
+  // ui/e2e/backups.spec.ts finds the toast by this exact title.
+  it('titles the toast of a running site\'s restore "Restore finished"', () => {
+    expect(restoreFinishedNotice('Acme', { maintenance: false }).title).toBe('Restore finished')
+    expect(restoreFinishedNotice('Acme', { maintenance: true }).title).toBe('Restore finished')
   })
 
   it('backs up settled sites but not provisioning, deleting or failed ones', () => {

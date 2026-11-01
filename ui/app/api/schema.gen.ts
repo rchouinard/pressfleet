@@ -1919,8 +1919,8 @@ export interface paths {
          *       and the restore can't be undone or rolled back.
          *     - If the site was in maintenance mode when the restore started, which
          *       a failure usually leaves it in, it **stays in maintenance mode**,
-         *       and `status_message` says so. Visitors see the maintenance page until
-         *       it is turned off. If it wasn't, the site serves visitors when the job
+         *       which `maintenance` shows. Visitors see the maintenance page until it
+         *       is turned off. If it wasn't, the site serves visitors when the job
          *       finishes.
          *     - If the job fails before the restore is complete, the site stays
          *       `failed`, and `status_message` says what state its data is in. The
@@ -4375,7 +4375,12 @@ export interface components {
              */
             maintenance: boolean;
             status: components["schemas"]["SiteStatus"];
-            /** @description Details about the status, such as why the site failed. */
+            /**
+             * @description Details about the status, such as why the site failed: what happened,
+             *     which stays true afterwards. It doesn't say whether the site is in
+             *     maintenance mode (`maintenance` does), and turning that off doesn't
+             *     clear it.
+             */
             status_message?: string;
             runtime?: components["schemas"]["SiteRuntime"];
             /**

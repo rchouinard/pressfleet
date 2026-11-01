@@ -5,7 +5,7 @@
 // with <JobProgress> and the lists reload when it ends.
 import { toApiError, type ApiError } from '../../../utils/api-error'
 import {
-  canBackUpSite, canRestoreSite, failedSiteNotice, restoreBlockedReason, restoreFinishedNotice, restorePayload, scheduleFormPayload,
+  canBackUpSite, canRestoreSite, failedSiteNotice, maintenanceNote, restoreBlockedReason, restoreFinishedNotice, restorePayload, scheduleFormPayload,
   type Backup, type BackupSchedule, type ScheduleFormValues,
 } from '../../../utils/backup'
 import { createEndedJobs, followedJob, type Job } from '../../../utils/job'
@@ -133,9 +133,9 @@ async function onJobUpdate(job: Job) {
   if (!ended.add(job)) return
   await Promise.all([refreshSite(), backups.load(), loadSchedule()])
   if (job.type === 'site.restore' && job.state === 'succeeded') {
-    const notice = restoreFinishedNotice(site.value)
-    if (notice.stillInMaintenance) notify.info(`Restore of ${name.value} finished`, notice.description)
-    else notify.success(`Restore of ${name.value} finished`, notice.description)
+    const notice = restoreFinishedNotice(name.value, site.value)
+    if (notice.stillInMaintenance) notify.info(notice.title, notice.description)
+    else notify.success(notice.title, notice.description)
   }
 }
 const busyWithJob = computed(() => jobId.value !== undefined && !ended.has(jobId.value))
@@ -240,11 +240,13 @@ const failedNotice = computed(() => (can('backup.restore') && site.value ? faile
       <div v-if="site.status === 'failed'" class="rounded-md border border-default bg-elevated p-3 text-sm" role="alert" data-testid="failed-site">
         <p class="font-medium">This site failed</p>
         <p v-if="site.status_message" class="mt-1 whitespace-pre-line break-words text-muted">{{ site.status_message }}</p>
+        <p v-if="maintenanceNote(site)" class="mt-1" data-testid="maintenance-note">{{ maintenanceNote(site) }}</p>
         <p v-if="failedNotice" class="mt-1">{{ failedNotice }}</p>
       </div>
-      <p v-else-if="site.maintenance && site.status_message" class="rounded-md border border-default bg-elevated p-3 text-sm" role="status">
-        {{ site.status_message }}
-      </p>
+      <div v-else-if="site.maintenance && site.status_message" class="rounded-md border border-default bg-elevated p-3 text-sm" role="status">
+        <p class="font-medium">{{ maintenanceNote(site) }}</p>
+        <p class="mt-1 whitespace-pre-line break-words text-muted">{{ site.status_message }}</p>
+      </div>
 
       <div v-if="marked" class="rounded-md border border-default bg-elevated p-3 text-sm" role="status" data-testid="marked-backup">
         <p class="font-medium">

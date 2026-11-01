@@ -114,11 +114,23 @@ export function restoreDialogNotes(site: Pick<Site, 'status' | 'maintenance'> | 
   ]
 }
 
+/**
+ * What the live flag means, to show beside a status message, which says only
+ * what happened. The dashboard can't change settings of a failed site.
+ */
+export function maintenanceNote(site: Pick<Site, 'status' | 'maintenance'>): string | undefined {
+  if (!site.maintenance) return undefined
+  return site.status === 'failed'
+    ? 'This site is in maintenance mode: visitors see the maintenance page. It can be turned off once the site is recovered.'
+    : 'This site is in maintenance mode: visitors see the maintenance page until it is turned off in its settings.'
+}
+
 /** What to say when a restore has finished: above all, whether visitors can see the site. */
-export function restoreFinishedNotice(site: Pick<Site, 'maintenance'> | undefined): { stillInMaintenance: boolean, description: string } {
+export function restoreFinishedNotice(name: string, site: Pick<Site, 'maintenance'> | undefined): { title: string, stillInMaintenance: boolean, description: string } {
+  const title = 'Restore finished'
   return site?.maintenance
-    ? { stillInMaintenance: true, description: 'The site is still in maintenance mode: visitors see the maintenance page until you check it and turn it off.' }
-    : { stillInMaintenance: false, description: 'The site is serving visitors.' }
+    ? { title, stillInMaintenance: true, description: `${name} is still in maintenance mode: visitors see the maintenance page until you check it and turn it off.` }
+    : { title, stillInMaintenance: false, description: `${name} is serving visitors.` }
 }
 
 /**

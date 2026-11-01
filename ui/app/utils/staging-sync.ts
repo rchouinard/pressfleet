@@ -371,13 +371,13 @@ export function undoText(u: SyncUndo): UndoText {
   if (u.state === 'rollback_failed') {
     return {
       title: `The ${noun} failed and could not be rolled back`,
-      body: `${site.charAt(0).toUpperCase()}${site.slice(1)} may be half-${noun === 'push' ? 'pushed' : 'refreshed'} and stays in maintenance mode. Restore the pre-${noun} backup to put it back as it was.`,
+      body: `${site.charAt(0).toUpperCase()}${site.slice(1)} may be half-${noun === 'push' ? 'pushed' : 'refreshed'}, and the job left it in maintenance mode. Restore the pre-${noun} backup to put it back as it was.`,
       link,
     }
   }
   return {
     title: `The ${noun} failed`,
-    body: `If the ${noun} had changed ${site} before it failed, ${site} was rolled back to its pre-${noun} backup and stays in maintenance mode until you turn it off. Check it, then turn maintenance mode off in its settings.`,
+    body: `If the ${noun} had changed ${site} before it failed, ${site} was rolled back to its pre-${noun} backup, and the job left it in maintenance mode. Check it, then turn maintenance mode off in its settings if it is still on.`,
     link,
   }
 }
