@@ -18,6 +18,7 @@ const (
 	exitIncomplete    = 3 // the snapshot was made, but some files couldn't be read
 	exitLocked        = 11
 	exitWrongPassword = 12
+	exitKilled        = 137 // SIGKILL, as the kernel does to a task over its memory limit
 )
 
 const (
@@ -119,6 +120,20 @@ func (o output) detail() string {
 	return msg
 }
 
+// failure explains a failed task: restic's words, and what to do if the task was
+// killed, when restic has no words. The hint comes after detail's truncation, so
+// long output can't cut it off.
+func (o output) failure(code int) string {
+	msg := o.detail()
+	if code != exitKilled {
+		return msg
+	}
+	if msg == "" {
+		return repository.KilledHint
+	}
+	return msg + " (" + repository.KilledHint + ")"
+}
+
 // restoreResult turns a restore task's outcome into restic's summary. Any
 // problem fails the restore, even one restic got past (exit status 3): a
 // restore that left files out isn't the state the user asked for, and the
@@ -133,7 +148,7 @@ func restoreResult(res *provisioner.TaskResult, runErr error) (*message, error) 
 		o = parseOutput(res.Stdout, res.Stderr)
 	case errors.As(runErr, &ee):
 		o = parseOutput(ee.Stdout, ee.Stderr)
-		err := fmt.Errorf("%w (exit status %d): %s", ErrRestoreFailed, ee.ExitCode, o.detail())
+		err := fmt.Errorf("%w (exit status %d): %s", ErrRestoreFailed, ee.ExitCode, o.failure(ee.ExitCode))
 		switch ee.ExitCode {
 		case exitLocked:
 			err = fmt.Errorf("%w: %w", repository.ErrLocked, err)
@@ -173,7 +188,7 @@ func backupResult(res *provisioner.TaskResult, runErr error) (backup.Snapshot, e
 		return backup.Snapshot{}, fmt.Errorf("running the backup task: %w", runErr)
 	}
 	if code != 0 && (code != exitIncomplete || o.summary == nil) {
-		err := fmt.Errorf("%w (exit status %d): %s", ErrBackupFailed, code, o.detail())
+		err := fmt.Errorf("%w (exit status %d): %s", ErrBackupFailed, code, o.failure(code))
 		switch code {
 		case exitLocked:
 			err = fmt.Errorf("%w: %w", repository.ErrLocked, err)

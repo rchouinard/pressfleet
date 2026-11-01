@@ -72,6 +72,18 @@ func TestBackupResult(t *testing.T) {
 			wantErr: []error{ErrBackupFailed, repository.ErrWrongPassword},
 		},
 		{
+			name:    "killed, with nothing from restic",
+			err:     &provisioner.ExecError{ExitCode: 137},
+			wantErr: []error{ErrBackupFailed},
+			inErr:   "(exit status 137): killed, probably for exceeding the task's memory limit: raise backup.task_memory_mb",
+		},
+		{
+			name:    "killed, after restic said something",
+			err:     &provisioner.ExecError{ExitCode: 137, Stderr: "Fatal: something went wrong\n"},
+			wantErr: []error{ErrBackupFailed},
+			inErr:   "Fatal: something went wrong (killed, probably",
+		},
+		{
 			name:    "no summary",
 			res:     &provisioner.TaskResult{Stdout: "something else\n"},
 			wantErr: []error{ErrBackupFailed},
@@ -127,5 +139,17 @@ func TestParseSnapshotsRejectsGarbage(t *testing.T) {
 	snaps, err := parseSnapshots([]byte(`[{"id":"b","time":"2026-09-28T12:00:00Z","tags":["site:x"]},{"id":"a","time":"2026-09-28T11:00:00Z"}]`))
 	if err != nil || len(snaps) != 2 || snaps[0].ID != "a" || snaps[1].SiteID != "x" || snaps[0].SizeBytes != 0 {
 		t.Errorf("parseSnapshots = %+v, %v", snaps, err)
+	}
+}
+
+// A killed restore prints nothing either, and the job's rollback runs another
+// restore in the same limit, so the operator needs to be told what to change.
+func TestRestoreResultKilled(t *testing.T) {
+	_, err := restoreResult(nil, &provisioner.ExecError{ExitCode: 137})
+	if !errors.Is(err, ErrRestoreFailed) || !strings.Contains(fmt.Sprint(err), "(exit status 137): "+repository.KilledHint) {
+		t.Errorf("err = %v", err)
+	}
+	if _, err := restoreResult(nil, &provisioner.ExecError{ExitCode: 1}); strings.Contains(fmt.Sprint(err), "backup.task_memory_mb") {
+		t.Errorf("another failure names the memory limit: %v", err)
 	}
 }

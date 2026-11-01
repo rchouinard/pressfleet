@@ -29,6 +29,11 @@ const (
 	exitKilled = 137
 )
 
+// KilledHint says what to do about a restic task killed with SIGKILL (exit
+// status 137). restic prints nothing when it is killed, so without this the
+// error names no cause. Site tasks (package restic) report it too.
+const KilledHint = "killed, probably for exceeding the task's memory limit: raise backup.task_memory_mb"
+
 // maxStderr bounds how much of restic's error output goes into an error.
 const maxStderr = 2048
 
@@ -172,7 +177,7 @@ func resticError(sub string, err error) error {
 		return fmt.Errorf("%s: %w: %s", sub, sentinel, msg)
 	}
 	if execErr.ExitCode == exitKilled {
-		msg += " (killed, probably for exceeding the task's memory limit: raise backup.task_memory_mb)"
+		msg += " (" + KilledHint + ")"
 	}
 	return fmt.Errorf("%s: exit status %d: %s", sub, execErr.ExitCode, strings.TrimSpace(msg))
 }
