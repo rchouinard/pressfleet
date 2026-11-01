@@ -617,7 +617,7 @@ func TestPushStagingRollsBack(t *testing.T) {
 				}
 				got := e.site(t, e.prod.ID)
 				rt, _ := e.prov.Site(e.prod.ID)
-				if got.Status != store.SiteRunning || !strings.Contains(got.StatusMessage, "push failed and the site was rolled back to its pre-push backup") ||
+				if got.Status != store.SiteRunning || !strings.Contains(got.StatusMessage, "rolled back") ||
 					!strings.Contains(got.StatusMessage, pre[0].ID) {
 					t.Errorf("production site after the rollback: %s %q", got.Status, got.StatusMessage)
 				}

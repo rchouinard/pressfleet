@@ -335,7 +335,7 @@ func TestStagingSites(t *testing.T) {
 		f.checkUnchanged(t, before, f.database(t, f.prodID))
 		f.checkSettingsKept(t, settings)
 		got := getSite(t, p, f.prodID)
-		if got.Status != client.SiteStatusRunning || !got.Maintenance || !strings.Contains(deref(got.StatusMessage), "rolled back to its pre-push backup") {
+		if got.Status != client.SiteStatusRunning || !got.Maintenance || !strings.Contains(deref(got.StatusMessage), "rolled back") {
 			t.Errorf("production after the rollback: %s, maintenance %v, message %q", got.Status, got.Maintenance, deref(got.StatusMessage))
 		}
 		if id, _ := final.Result["pre_push_backup_id"].(string); id == "" || !strings.Contains(deref(got.StatusMessage), id) {
@@ -350,8 +350,21 @@ func TestStagingSites(t *testing.T) {
 		f.setMaintenance(t, false)
 		waitIngress(t, f.hc, primaryURL+"/", nil, http.StatusOK)
 		siteSh(t, f.stag, "printf '%s' '"+widgetSource+"' > "+widgetFile)
-		if got := getSite(t, p, f.prodID); got.Maintenance || deref(got.StatusMessage) != "" {
-			t.Errorf("production after maintenance mode went off: maintenance %v, message %q", got.Maintenance, deref(got.StatusMessage))
+		// The message keeps saying what happened, but no longer claims the site is
+		// in maintenance mode or asks to turn it off: that is the live flag's to say.
+		off := getSite(t, p, f.prodID)
+		message := deref(off.StatusMessage)
+		if off.Maintenance {
+			t.Error("production is still in maintenance mode after it was turned off")
+		}
+		for _, stale := range []string{"maintenance mode", "turn it off"} {
+			if strings.Contains(strings.ToLower(message), stale) {
+				t.Errorf("the status message still says %q with maintenance mode off: %q", stale, message)
+			}
+		}
+		backupID, _ := final.Result["pre_push_backup_id"].(string)
+		if !strings.Contains(message, "failed") || !strings.Contains(message, "rolled back") || backupID == "" || !strings.Contains(message, backupID) {
+			t.Errorf("the status message no longer says the push failed and was rolled back to backup %q: %q", backupID, message)
 		}
 	})
 

@@ -285,7 +285,7 @@ test('a failed push leaves production in maintenance mode, and the alert\'s link
   await waitForJobInUI(page, job.id, JobState.failed)
 
   const alert = page.getByRole('alert').filter({ hasText: 'This site is in maintenance mode' })
-  await expect(alert).toContainText('rolled back to its pre-push backup')
+  await expect(alert).toContainText('rolled back')
   const site = await getSite(adminApi, production.id)
   expect(site.maintenance).toBe(true)
   expect(await harness.php(production.id, ['cat', `${plugins}/${slug}/${slug}.php`])).not.toContain('boom')
