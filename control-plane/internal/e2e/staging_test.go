@@ -561,6 +561,13 @@ func TestStagingSites(t *testing.T) {
 				if err := compose.BuildImage(ctx, nil, img.tag, dockerfile); err != nil {
 					t.Fatal(err)
 				}
+				// The control plane pins the builds it runs under a tag of their
+				// own, in the same repository, which has to go too.
+				id, err := compose.ImageID(ctx, nil, img.tag)
+				if err != nil {
+					t.Fatal(err)
+				}
+				tags = append(tags, compose.PinTag(img.tag[:strings.LastIndexByte(img.tag, ':')], id))
 			}
 		}
 		hold := true
