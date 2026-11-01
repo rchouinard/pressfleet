@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 )
@@ -115,5 +116,34 @@ func TestRunContainer(t *testing.T) {
 	if !slices.Contains(last, "--interactive") || slices.Index(last, "--interactive") > slices.Index(last, "--") ||
 		r.stdin[len(r.stdin)-1] != "SELECT 1;" {
 		t.Errorf("args = %q, stdin %q", last, r.stdin[len(r.stdin)-1])
+	}
+}
+
+func TestHealthchecks(t *testing.T) {
+	long := strings.Repeat("x", 5000)
+	inspect := `{"Name":"/pressfleet-traefik-1","RestartCount":2,"State":{"Status":"running","ExitCode":0,"OOMKilled":false,` +
+		`"Health":{"Status":"unhealthy","FailingStreak":3,"Log":[{"Start":"2026-10-31T10:00:00Z","End":"2026-10-31T10:00:05Z","ExitCode":1,"Output":"` + long + `"}]}}}
+{"Name":"/pressfleet-redis-1","RestartCount":0,"State":{"Status":"running","ExitCode":0,"OOMKilled":false}}
+`
+	s := &scripted{answers: map[string]string{"container ls": "a\nb\n", "container inspect": inspect}}
+	p := compose.Project{Name: "pressfleet", Dir: "/data/platform", Docker: s.exec}
+	got, err := p.Healthchecks(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d containers with a healthcheck, want 1: %+v", len(got), got)
+	}
+	h := got[0]
+	if h.Name != "pressfleet-traefik-1" || h.Health != "unhealthy" || h.FailingStreak != 3 || h.RestartCount != 2 || len(h.Probes) != 1 ||
+		h.Probes[0].ExitCode != 1 || h.Probes[0].End.Sub(h.Probes[0].Start) != 5*time.Second {
+		t.Errorf("health = %+v", h)
+	}
+	if o := h.Probes[0].Output; len(o) >= len(long) || !strings.HasSuffix(o, "(cut)") {
+		t.Errorf("probe output isn't bounded: %d bytes", len(o))
+	}
+	// Only the state is asked for, so the environment is never read.
+	if format := strings.Join(s.calls[1], " "); strings.Contains(format, ".Config") {
+		t.Errorf("inspect reads the configuration: %q", format)
 	}
 }

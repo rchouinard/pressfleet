@@ -17,7 +17,11 @@ name: Images
 #                       publishes the release once the images are pushed
 #   weekly schedule     rebuild (without cache) and push the site matrix, to
 #                       pick up base image and Debian security patches
-#   manual (on main)    push control-plane:sha-<short> and the site matrix
+#   manual (on main)    push control-plane:sha-<short> and the site matrix; with
+#                       extra_wordpress, also rebuild those superseded releases
+#                       (images/README.md, "Rebuilding older releases"). Their
+#                       images are verified and scanned with Trivy before they
+#                       are pushed, as on a release
 #
 # The site matrix comes from images/manifest.json via images/matrix.sh.
 # Site tags follow the runtime contract in images/README.md.
@@ -30,6 +34,15 @@ on:
   schedule:
     - cron: "23 4 * * 1" # Mondays 04:23 UTC
   workflow_dispatch:
+    inputs:
+      extra_wordpress:
+        description: >-
+          One-time rebuild of superseded WordPress releases, e.g. "7.1.2 7.1.3":
+          also build and push their images. Each must be in
+          images/extra-wordpress.json. Leave empty for a normal run.
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -54,11 +67,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # to diff against the previous commit of a push
+      - name: Test matrix.sh
+        run: images/matrix-test.sh
       - id: plan
         name: Decide what to build
         env:
           EVENT: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
+          # Only workflow_dispatch has the input; it is empty everywhere else.
+          EXTRA_WORDPRESS: ${{ github.event_name == 'workflow_dispatch' && inputs.extra_wordpress || '' }}
           PUBLISH: ${{ github.repository == 'rchouinard/pressfleet' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
         run: |
           # Site images are rebuilt when their sources or this workflow change.
@@ -86,10 +103,13 @@ jobs:
             version="sha-${GITHUB_SHA::7}"
           fi
 
+          # Assigned first so an invalid or unknown EXTRA_WORDPRESS version
+          # fails the plan (a failure inside echo "$(...)" would not).
+          matrix="$(images/matrix.sh github)"
           {
             echo "push=$PUBLISH"
             echo "sites=$sites"
-            echo "matrix=$(images/matrix.sh github)"
+            echo "matrix=$matrix"
             echo "registry=$(images/matrix.sh registry)"
             echo "version=$version"
           } >>"$GITHUB_OUTPUT"
@@ -97,6 +117,9 @@ jobs:
             echo "### Image plan"
             echo "- publish: \`$PUBLISH\`, site images: \`$sites\`, control plane version: \`$version\`"
             echo "- PHP: $(images/matrix.sh php | xargs), WordPress: $(images/matrix.sh wp | xargs)"
+            if [ -n "$EXTRA_WORDPRESS" ]; then
+              echo "- extra WordPress releases (rebuilt once, not in the manifest): \`$EXTRA_WORDPRESS\`"
+            fi
           } >>"$GITHUB_STEP_SUMMARY"
 
   # --- Control plane ---------------------------------------------------------
@@ -283,7 +306,7 @@ jobs:
           password: ${{ github.token }}
       # Release builds are scanned before anything is pushed: a fixed CRITICAL
       # finding stops the release (docs/releasing.md, "Vulnerability scanning").
-      - if: startsWith(github.ref, 'refs/tags/v')
+      - if: startsWith(github.ref, 'refs/tags/v') || matrix.extra
         uses: docker/build-push-action@v7
         with:
           context: images
@@ -296,7 +319,7 @@ jobs:
           load: true
           pull: true
           cache-from: type=gha,scope=site-nginx
-      - if: startsWith(github.ref, 'refs/tags/v')
+      - if: startsWith(github.ref, 'refs/tags/v') || matrix.extra
         uses: ./.github/actions/trivy-scan
         with:
           fail-on: CRITICAL
@@ -345,7 +368,7 @@ jobs:
           password: ${{ github.token }}
       # Release builds are scanned before anything is pushed: a fixed CRITICAL
       # finding stops the release (docs/releasing.md, "Vulnerability scanning").
-      - if: startsWith(github.ref, 'refs/tags/v')
+      - if: startsWith(github.ref, 'refs/tags/v') || matrix.extra
         uses: docker/build-push-action@v7
         with:
           context: images
@@ -359,7 +382,20 @@ jobs:
           load: true
           pull: true
           cache-from: type=gha,scope=site-php-${{ matrix.php }}
-      - if: startsWith(github.ref, 'refs/tags/v')
+      # The point of rebuilding an older release is what the current sources
+      # add to it: the image must carry that release's core and the outbound
+      # mail switch (#201).
+      - if: matrix.extra
+        name: Verify the rebuilt image
+        env:
+          IMAGE: ${{ needs.plan.outputs.registry }}/site-php:php${{ matrix.php }}-wp${{ matrix.wp }}
+          WP: ${{ matrix.wp }}
+        run: |
+          set -euo pipefail
+          docker run --rm --entrypoint grep "$IMAGE" -q "^\$wp_version = '${WP}';" /var/www/wordpress/wp-includes/version.php
+          docker run --rm --entrypoint test "$IMAGE" -f /opt/pressfleet/mu-plugins/pressfleet-environment/mail-switch.php
+          echo "$IMAGE carries WordPress $WP and the mail switch" | tee -a "$GITHUB_STEP_SUMMARY"
+      - if: startsWith(github.ref, 'refs/tags/v') || matrix.extra
         uses: ./.github/actions/trivy-scan
         with:
           fail-on: CRITICAL

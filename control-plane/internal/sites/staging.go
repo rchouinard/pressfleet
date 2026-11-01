@@ -51,9 +51,13 @@ import (
 //     snapshot was taken on a newer core than the staging site's, the
 //     site moves to an image with at least that core before its stack
 //     starts. Its Undo runs last in a rollback (see below).
-//  2. create_database, create_object_cache, start_stack: as provisioning.
-//  3. restore: backup.Engine.Restore of the production snapshot into the
-//     staging site.
+//  2. create_database, create_object_cache, start_stack: as provisioning,
+//     except that start_stack first pulls the site's images (a failed pull
+//     is a warning), so that the build it pins is the registry's newest.
+//  3. restore: first checks that the image the staging site runs has the
+//     outbound mail switch, and fails permanently if not (see
+//     checkMailSwitch); then backup.Engine.Restore of the production
+//     snapshot into the staging site.
 //  4. restart_site and upgrade_database: as a restore.
 //  5. rewrite_urls: as a restore, from the hosts the restored home and
 //     siteurl name and from the production site's current host, to the
@@ -86,6 +90,9 @@ const (
 	dataCloneSnapshotTime = "clone_snapshot_time"
 	// dataCloneBackupID is the ID of the sync backup the job waited for.
 	dataCloneBackupID = "clone_backup_id"
+	// dataClonePullError is why pulling the site images failed, if it did,
+	// for the mail switch check's message.
+	dataClonePullError = "clone_pull_error"
 )
 
 // ErrSourceFailed means a staging site can't be created or refreshed from a
@@ -412,7 +419,7 @@ func (s *Service) cloneHandler() jobs.Handler {
 		{Name: stepPrepare, Do: s.prepareClone, Undo: s.failClone},
 		{Name: stepCreateDatabase, Do: s.createDatabase, Undo: s.dropDatabase},
 		{Name: stepCreateCache, Do: s.createObjectCache, Undo: s.deleteObjectCache},
-		{Name: stepStartStack, Do: s.startStack, Undo: s.deleteStack},
+		{Name: stepStartStack, Do: s.startCloneStack, Undo: s.deleteStack},
 		{Name: stepRestore, Do: s.restoreClone},
 		{Name: stepRestartSite, Do: s.restartRestoredSite},
 		{Name: stepUpgradeDatabase, Do: s.upgradeRestoredDatabase},
@@ -534,10 +541,111 @@ func (s *Service) failClone(ctx context.Context, r *jobs.Run) error {
 	return s.failNewSite(ctx, r, "creating the staging site failed")
 }
 
+// ErrMailSwitchMissing means the image a staging site runs predates the
+// outbound mail switch, so it would send real email with production's
+// customers' addresses.
+var ErrMailSwitchMissing = errors.New("the site image predates the outbound mail switch")
+
+// startCloneStack starts the staging site's stack like provisioning does,
+// after pulling the images it is about to pin. The newest release's tags are
+// rebuilt without changing, and pinning keeps whatever build the host has
+// cached, so a staging site created right after an upgrade could otherwise
+// be pinned to a stale build from before the mail switch (checkMailSwitch is
+// the check that decides). A pull that fails is only a warning, kept for
+// that check's message: a locally built image or an
+// offline host has no registry to pull from. The pull is in this step, not a
+// step of its own, because a queued job resumes by step name.
+func (s *Service) startCloneStack(ctx context.Context, r *jobs.Run) error {
+	site, err := s.jobSite(ctx, r)
+	if err != nil {
+		return err
+	}
+	if err := s.pullUnpinnedImages(ctx, r, site); err != nil {
+		return err
+	}
+	return s.startStack(ctx, r)
+}
+
+// pullUnpinnedImages pulls the images of the site's tags that have no pin
+// yet, which are the ones pinnedImages is about to pin. A retry of the step
+// finds the pins its first attempt recorded and pulls nothing.
+func (s *Service) pullUnpinnedImages(ctx context.Context, r *jobs.Run, site store.Site) error {
+	if s.pinner == nil {
+		return nil
+	}
+	tags, err := s.siteImageTags(site)
+	if err != nil {
+		return jobs.Permanent(err)
+	}
+	current, err := store.NewImagePins(s.db).Site(ctx, site.ID)
+	if err != nil {
+		return err
+	}
+	var failed []string
+	for _, comp := range siteComponents {
+		image := tags[comp]
+		if _, ok := current[image]; ok {
+			continue
+		}
+		if err := s.pinner.PullImage(ctx, image); err != nil {
+			r.Warnf("Couldn't pull %s, so the site uses the build this host has (%v).", image, err)
+			failed = append(failed, err.Error())
+			continue
+		}
+		r.Logf("Pulled %s.", image)
+	}
+	// Kept for checkMailSwitch, which runs in a later step.
+	if len(failed) > 0 {
+		return r.Set(dataClonePullError, strings.Join(failed, "; "))
+	}
+	return nil
+}
+
+// checkMailSwitch fails the job permanently if the staging site's running
+// image lacks the outbound mail switch and the site is meant to have mail
+// off. WP-Cron runs on a staging site, so a copy of production on such an
+// image could email real customers. It runs before the first byte of
+// production's data is restored, so the rollback has nothing to remove but
+// the stack.
+func (s *Service) checkMailSwitch(ctx context.Context, r *jobs.Run, site store.Site) error {
+	if !site.MailDisabled {
+		return nil
+	}
+	present, err := provisioner.HasMailSwitch(ctx, s.prov, site.ID)
+	if err != nil {
+		return fmt.Errorf("checking the site image for the outbound mail switch: %w", err)
+	}
+	if !present {
+		var pullErr string
+		if _, err := r.Get(dataClonePullError, &pullErr); err != nil {
+			return err
+		}
+		image := "for WordPress " + site.WPCoreVersion
+		if tags, err := s.siteImageTags(site); err == nil {
+			image = tags[provisioner.ComponentPHP]
+		}
+		msg := fmt.Sprintf("this build of the site image %s doesn't include the outbound mail switch, "+
+			"so the clone was stopped to keep a copy of production from sending real email. "+
+			"Get a current build of that image onto this host (pull it, or rebuild it from current sources) and try again.", image)
+		if pullErr != "" {
+			msg += fmt.Sprintf(" Pulling it failed in this job: %s.", pullErr)
+		}
+		msg += " Updating the production site to a newer WordPress release also gets it an image with the switch."
+		return jobs.Permanent(fmt.Errorf("%w: %s", ErrMailSwitchMissing, msg))
+	}
+	r.Logf("The site image has the outbound mail switch.")
+	return nil
+}
+
 // restoreClone restores the production snapshot into the staging site.
 func (s *Service) restoreClone(ctx context.Context, r *jobs.Run) error {
 	site, err := s.managedSite(ctx, r)
 	if err != nil {
+		return err
+	}
+	// Before anything of production's reaches the site, in the same step so
+	// that a queued job resumes into it.
+	if err := s.checkMailSwitch(ctx, r, site); err != nil {
 		return err
 	}
 	p, err := cloneJobPayload(r)

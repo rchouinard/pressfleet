@@ -36,7 +36,7 @@ var (
 // templates/compose/*.tmpl change the fingerprint by themselves, and
 // changes that render nothing differently (refactoring, new SiteConfig
 // fields that default to the old output) need no bump.
-const renderVersion = 1
+const renderVersion = 2
 
 // templateFingerprint hashes the embedded site templates with
 // renderVersion. The embedded files can't change while the process runs, so
