@@ -41,6 +41,10 @@ The scheduled [Image updates workflow](../.github/workflows/image-updates.yml) r
 
 The [Images workflow](../.github/workflows/images.yml) builds every image for linux/amd64. Pull requests build without pushing (site images only when `images/` changes, plus the smoke test for the latest WordPress on the newest and oldest PHP branch). Pushes to `main`, `v*` tags, a weekly schedule (uncached, for base image patches), and manual runs on `main` push to GHCR. The control plane image is tagged `sha-<7-char commit>` from `main` and with the tag name (e.g. `v1.2.3`) from releases, matching the version the binary embeds.
 
+### Rebuilding older releases
+
+Superseded releases are never rebuilt, so a change to the shared sources (such as a new mu-plugin) misses the tags of versions that are no longer `latest` or `pinned`. To give such a tag a one-time rebuild, run the Images workflow on `main` by hand with the `extra_wordpress` input, for example `gh workflow run images.yml --ref main -f extra_wordpress="7.1.2 7.1.3"`. Each version must have its SHA-1 and `dbVersion` in [`extra-wordpress.json`](extra-wordpress.json) (taken from the manifest's history; the run fails otherwise), and `manifest.json` and the control plane's catalog don't change. The run builds those versions for every PHP branch, plus their `site-nginx`, checks that each `site-php` carries that core and `mail-switch.php`, scans it with Trivy before pushing (a fixed CRITICAL finding fails that image, which is then not pushed), and moves the existing tags to the new builds. Running sites pick them up through the image rollout (and the core rollout, if the site is moving to a newer release), one site at a time, with a health check; see [Platform image updates](../docs/configuration.md#platform-image-updates).
+
 ## Building and testing
 
 The build context for both images is this `images/` directory (shared files live in [`shared/`](shared)). The Makefile and `test.sh` need `jq`.
