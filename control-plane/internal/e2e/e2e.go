@@ -113,6 +113,10 @@ type override struct {
 	// env is extra environment of the control plane, on top of the
 	// rendered one.
 	env map[string]string
+	// traefikMemory, if set, replaces Traefik's memory limit and sets
+	// GOMEMLIMIT to the given value, for releases older than the limit
+	// Traefik needs.
+	traefikMemory, traefikGoMemLimit string
 }
 
 // render returns the override file's contents.
@@ -125,6 +129,10 @@ services:
       - "127.0.0.1::80"
       - "127.0.0.1::443"
 `)
+	if o.traefikMemory != "" {
+		b.WriteString("    environment:\n      GOMEMLIMIT: " + strconv.Quote(o.traefikGoMemLimit) + "\n")
+		b.WriteString("    deploy:\n      resources:\n        limits:\n          memory: " + o.traefikMemory + "\n")
+	}
 	if len(o.traefikDependsOn) > 0 {
 		b.WriteString("    depends_on:\n")
 		for _, s := range o.traefikDependsOn {
@@ -325,6 +333,16 @@ func Image(t *testing.T) string {
 func WriteOverride(t *testing.T, dir string) {
 	t.Helper()
 	override{}.write(t, dir)
+}
+
+// WriteReleaseOverride is WriteOverride for a release older than the Traefik
+// memory limit raised in 6f4041a (96 MiB to 192 MiB). At 96 MiB, on a busy
+// runner, Traefik serves but every healthcheck exceeds its 5s timeout, which
+// fails the release's install; the tests that use this aren't about Traefik's
+// memory, so they run it with the current limit.
+func WriteReleaseOverride(t *testing.T, dir string) {
+	t.Helper()
+	override{traefikMemory: "192M", traefikGoMemLimit: "144MiB"}.write(t, dir)
 }
 
 // Restart recreates the control plane with extra PRESSFLEET_* environment

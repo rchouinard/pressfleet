@@ -74,7 +74,7 @@ func TestUpgradeRecovery(t *testing.T) {
 		}
 	})
 	p := e2e.Adopt(t, project, dataDir)
-	e2e.WriteOverride(t, project.Dir)
+	e2e.WriteReleaseOverride(t, project.Dir)
 	ctx, cancel := context.WithTimeout(t.Context(), 40*time.Minute)
 	defer cancel()
 
