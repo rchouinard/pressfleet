@@ -14,8 +14,9 @@ test('the login button lands in wp-admin as an administrator', async ({ adminPag
   await page.getByRole('button', { name: 'Log in to WordPress' }).click()
   const tab = await opened
 
-  // The tab ends up in wp-admin on the site's own origin.
-  await expect(tab).toHaveURL(`https://${site.preview_domain}/wp-admin/`)
+  // The tab ends up in wp-admin on the site's own origin. A site's first
+  // wp-admin request can take longer than the default wait (16.5 s on a runner).
+  await expect(tab).toHaveURL(`https://${site.preview_domain}/wp-admin/`, { timeout: 60_000 })
   await expect(tab.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeVisible()
   // As the administrator: their profile, and a page only administrators reach.
   await tab.goto(`https://${site.preview_domain}/wp-admin/profile.php`)

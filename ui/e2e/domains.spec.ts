@@ -29,8 +29,10 @@ test('goes live, then adds and removes aliases', async ({ adminPage: page, admin
   await domains.getByRole('button', { name: 'Go live' }).click()
   const dns = domains.getByRole('alert').filter({ hasText: 'Nothing was changed' })
   await expect(dns).toBeVisible()
+  // The names don't exist, but the lookup goes to the runner's resolver, which
+  // may not answer within the check's 5 seconds. Either way the check refuses.
   for (const d of [primary, alias]) {
-    await expect(dns.getByRole('listitem').filter({ hasText: new RegExp(`^${d.replaceAll('.', '\\.')}: it does not resolve`) })).toBeVisible()
+    await expect(dns.getByRole('listitem').filter({ hasText: new RegExp(`^${d.replaceAll('.', '\\.')}: (it does not resolve|the DNS lookup timed out)`) })).toBeVisible()
   }
   expect(await getSite(adminApi, site.id)).toMatchObject({ primary_domain: null, aliases: [] })
 
