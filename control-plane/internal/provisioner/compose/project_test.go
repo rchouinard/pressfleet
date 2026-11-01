@@ -75,6 +75,10 @@ func TestCommands(t *testing.T) {
 			_, err := p.RunService(context.Background(), "control-plane", "state", "recover")
 			return err
 		}, []string{"run", "--rm", "--no-deps", "--no-TTY", "control-plane", "state", "recover"}},
+		{"list dir", func(p compose.Project) error {
+			_, err := p.ListDir(context.Background(), "control-plane", "/data/state/backups")
+			return err
+		}, []string{"run", "--rm", "--no-deps", "--no-TTY", "--entrypoint", "ls", "control-plane", "-1", "/data/state/backups"}},
 		{"down", func(p compose.Project) error { return p.Down(context.Background(), compose.DownOptions{}) },
 			[]string{"down", "--remove-orphans"}},
 		{"down volumes", func(p compose.Project) error {

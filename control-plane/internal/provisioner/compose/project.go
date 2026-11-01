@@ -176,6 +176,22 @@ func (p Project) RunService(ctx context.Context, service string, command ...stri
 	return p.run(ctx, nil, append([]string{"run", "--rm", "--no-deps", "--no-TTY", service}, command...)...)
 }
 
+// ListDir lists the names of the entries of a directory as a new container
+// of a service sees it (compose run --rm --no-deps, with ls as the
+// entrypoint). The host CLI uses it for directories only the container's
+// root can read, such as the state backups (§4.7). The service's image must
+// ship ls.
+func (p Project) ListDir(ctx context.Context, service, dir string) ([]string, error) {
+	if service == "" {
+		return nil, fmt.Errorf("%w: ls needs a service", ErrInvalidProject)
+	}
+	out, err := p.run(ctx, nil, "run", "--rm", "--no-deps", "--no-TTY", "--entrypoint", "ls", service, "-1", dir)
+	if err != nil {
+		return nil, err
+	}
+	return strings.Fields(string(out)), nil
+}
+
 // waitSeconds formats a wait timeout for Compose, which takes whole seconds
 // and reads 0 as no limit, so a positive timeout never rounds down to 0.
 func waitSeconds(d time.Duration) string {

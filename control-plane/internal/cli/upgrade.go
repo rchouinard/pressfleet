@@ -82,6 +82,7 @@ type UpgradeProject interface {
 	ConfigHashes(ctx context.Context) (map[string]string, error)
 	FileMounts(ctx context.Context) (map[string][]string, error)
 	ImageDigests(ctx context.Context, image string) ([]string, error)
+	ListDir(ctx context.Context, service, dir string) ([]string, error)
 }
 
 // upgradeFlags are the flags of `pressfleet upgrade`.
@@ -714,9 +715,14 @@ func (u *upgrader) fail(cause error) error {
 		}
 	}
 	if !data.Postgres {
-		backup, err := migrationBackup(u.layout.StateBackupsDir(), u.record.StartedAt)
+		data.BackupsDir = u.layout.StateBackupsDir()
+		data.Since = u.record.StartedAt.UTC().Format(backupTimeLayout)
+		backup, err := u.findBackup()
 		if err != nil {
+			// Not knowing is not the same as finding none: the steps
+			// must not tell the operator that no restore is needed.
 			u.a.warnf("looking for the pre-migration backup: %v", err)
+			data.BackupUnchecked = true
 		}
 		data.Backup = backup
 	}
@@ -732,37 +738,108 @@ func (u *upgrader) fail(cause error) error {
 // pressfleet-<timestamp>-schemaNNNN.db.
 var backupName = regexp.MustCompile(`^pressfleet-(\d{8}T\d{6}\.\d{3}Z)-schema\d{4}\.db$`)
 
-// migrationBackup returns the pre-migration backup the control plane wrote
-// after since, the start of the upgrade, or "" if there is none, in which
-// case no migration ran. It goes by file names only: the host CLI never
-// opens the state database (§4.7).
-func migrationBackup(dir string, since time.Time) (string, error) {
+// backupTimeLayout is the timestamp layout of backups' names.
+const backupTimeLayout = "20060102T150405.000Z"
+
+// backupClockSkew is how much earlier than the upgrade's start a backup's
+// timestamp may be and still count as taken by it. The control plane writes
+// the timestamp with the clock of its container and the CLI takes the start
+// from the host's, which differ when Docker runs in a VM (WSL, Docker
+// Desktop). A few seconds of skew would otherwise hide the backup and bring
+// back the false "no restore needed". The reverse risk, picking up an older
+// backup, needs a migration within this window before the upgrade started,
+// which is far less likely. The schema number in the name can't replace the
+// comparison: the host doesn't know the previous release's schema version
+// (it never opens the database, §4.7).
+const backupClockSkew = 30 * time.Second
+
+// dirLister lists the names in a directory.
+type dirLister func(ctx context.Context, dir string) ([]string, error)
+
+// hostListDir lists a directory with the host's own permissions. Tests
+// replace it to simulate a directory the CLI can't read (as root, chmod
+// wouldn't).
+var hostListDir dirLister = func(_ context.Context, dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, len(entries))
+	for i, e := range entries {
+		names[i] = e.Name()
+	}
+	return names, nil
+}
+
+// findBackup looks for the pre-migration backup of this upgrade. The backups
+// directory belongs to root (the control plane container created it, mode
+// 0700), so a CLI run by an operator in the docker group can't read it:
+// then a container of the control plane lists it, the previous release's
+// first, because the new image may be the broken one.
+func (u *upgrader) findBackup() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	via := func(p UpgradeProject) dirLister {
+		return func(ctx context.Context, dir string) ([]string, error) {
+			return p.ListDir(ctx, controlPlaneService, dir)
+		}
+	}
+	return migrationBackup(ctx, u.layout.StateBackupsDir(), u.record.StartedAt, hostListDir,
+		via(u.a.upgradeProject(u.name, filepath.Join(u.upgradeDir, previousPlatform), nil)),
+		via(u.project))
+}
+
+// migrationBackup returns the pre-migration backup the control plane wrote
+// at or after since (less the clock skew), the start of the upgrade, or ""
+// with a nil error if there is none, in which case no migration ran. It
+// goes by file names only: the host CLI never opens the state database
+// (§4.7). The names come from host, or if that fails for another reason
+// than a missing directory, from the first of fallbacks that works. If none
+// does, the error says so, and whether a migration ran isn't known.
+func migrationBackup(ctx context.Context, dir string, since time.Time, host dirLister, fallbacks ...dirLister) (string, error) {
+	names, err := host(ctx, dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", nil
 	}
-	if err != nil {
-		return "", err
+	errs := []error{err}
+	for _, list := range fallbacks {
+		if err == nil {
+			break
+		}
+		if names, err = list(ctx, dir); err != nil {
+			errs = append(errs, err)
+		}
 	}
+	if err != nil {
+		return "", errors.Join(errs...)
+	}
+	if best := oldestBackup(names, since); best != "" {
+		return filepath.Join(dir, best), nil
+	}
+	return "", nil
+}
+
+// oldestBackup picks, from the file names of a backups directory, the
+// oldest pre-migration backup taken after the upgrade started: the first
+// migration's, which holds the database as the previous release left it.
+func oldestBackup(names []string, since time.Time) string {
+	since = since.Add(-backupClockSkew).Truncate(time.Millisecond)
 	var best string
 	var bestAt time.Time
-	for _, e := range entries {
-		m := backupName.FindStringSubmatch(e.Name())
+	for _, name := range names {
+		m := backupName.FindStringSubmatch(name)
 		if m == nil {
 			continue
 		}
-		at, err := time.Parse("20060102T150405.000Z", m[1])
-		if err != nil || at.Before(since.Truncate(time.Millisecond)) {
+		at, err := time.Parse(backupTimeLayout, m[1])
+		if err != nil || at.Before(since) {
 			continue
 		}
 		if best == "" || at.Before(bestAt) {
-			best, bestAt = e.Name(), at
+			best, bestAt = name, at
 		}
 	}
-	if best == "" {
-		return "", nil
-	}
-	return filepath.Join(dir, best), nil
+	return best
 }
 
 // copyTree copies the directory src to dst, which must not exist, keeping
