@@ -90,6 +90,9 @@ const (
 	dataCloneSnapshotTime = "clone_snapshot_time"
 	// dataCloneBackupID is the ID of the sync backup the job waited for.
 	dataCloneBackupID = "clone_backup_id"
+	// dataClonePullError is why pulling the site images failed, if it did,
+	// for the mail switch check's message.
+	dataClonePullError = "clone_pull_error"
 )
 
 // ErrSourceFailed means a staging site can't be created or refreshed from a
@@ -544,11 +547,12 @@ func (s *Service) failClone(ctx context.Context, r *jobs.Run) error {
 var ErrMailSwitchMissing = errors.New("the site image predates the outbound mail switch")
 
 // startCloneStack starts the staging site's stack like provisioning does,
-// after pulling the images it is about to pin. Image tags are rebuilt without
-// changing, and pinning keeps whatever build the host has cached, so a
-// staging site created right after an upgrade could otherwise be pinned to a
-// build from before the mail switch (checkMailSwitch is the check that
-// decides). A pull that fails is only a warning: a locally built image or an
+// after pulling the images it is about to pin. The newest release's tags are
+// rebuilt without changing, and pinning keeps whatever build the host has
+// cached, so a staging site created right after an upgrade could otherwise
+// be pinned to a stale build from before the mail switch (checkMailSwitch is
+// the check that decides). A pull that fails is only a warning, kept for
+// that check's message: a locally built image or an
 // offline host has no registry to pull from. The pull is in this step, not a
 // step of its own, because a queued job resumes by step name.
 func (s *Service) startCloneStack(ctx context.Context, r *jobs.Run) error {
@@ -577,6 +581,7 @@ func (s *Service) pullUnpinnedImages(ctx context.Context, r *jobs.Run, site stor
 	if err != nil {
 		return err
 	}
+	var failed []string
 	for _, comp := range siteComponents {
 		image := tags[comp]
 		if _, ok := current[image]; ok {
@@ -584,9 +589,14 @@ func (s *Service) pullUnpinnedImages(ctx context.Context, r *jobs.Run, site stor
 		}
 		if err := s.pinner.PullImage(ctx, image); err != nil {
 			r.Warnf("Couldn't pull %s, so the site uses the build this host has (%v).", image, err)
+			failed = append(failed, err.Error())
 			continue
 		}
 		r.Logf("Pulled %s.", image)
+	}
+	// Kept for checkMailSwitch, which runs in a later step.
+	if len(failed) > 0 {
+		return r.Set(dataClonePullError, strings.Join(failed, "; "))
 	}
 	return nil
 }
@@ -606,9 +616,22 @@ func (s *Service) checkMailSwitch(ctx context.Context, r *jobs.Run, site store.S
 		return fmt.Errorf("checking the site image for the outbound mail switch: %w", err)
 	}
 	if !present {
-		return jobs.Permanent(fmt.Errorf("%w: the clone was stopped so that a copy of production can't send real email; "+
-			"publish or pull newer site images (from the release that added the mail switch or later), then try again",
-			ErrMailSwitchMissing))
+		var pullErr string
+		if _, err := r.Get(dataClonePullError, &pullErr); err != nil {
+			return err
+		}
+		image := "for WordPress " + site.WPCoreVersion
+		if tags, err := s.siteImageTags(site); err == nil {
+			image = tags[provisioner.ComponentPHP]
+		}
+		msg := fmt.Sprintf("this build of the site image %s doesn't include the outbound mail switch, "+
+			"so the clone was stopped to keep a copy of production from sending real email. "+
+			"Get a current build of that image onto this host (pull it, or rebuild it from current sources) and try again.", image)
+		if pullErr != "" {
+			msg += fmt.Sprintf(" Pulling it failed in this job: %s.", pullErr)
+		}
+		msg += " Updating the production site to a newer WordPress release also gets it an image with the switch."
+		return jobs.Permanent(fmt.Errorf("%w: %s", ErrMailSwitchMissing, msg))
 	}
 	r.Logf("The site image has the outbound mail switch.")
 	return nil

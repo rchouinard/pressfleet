@@ -106,12 +106,21 @@ func TestCloneFailsWithoutMailSwitch(t *testing.T) {
 		e.runJobs(t)
 
 		d := e.requireRolledBack(t, out, prod, prodData)
-		for _, want := range []string{sites.ErrMailSwitchMissing.Error(), "can't send real email", "publish or pull newer site images", "try again"} {
+		// The pull succeeded, so the message names the image, says to get a
+		// current build, and doesn't mention a failed pull.
+		for _, want := range []string{
+			sites.ErrMailSwitchMissing.Error(), cloneImages(t, prod).PHP, "doesn't include the outbound mail switch",
+			"real email", "Get a current build of that image onto this host", "try again",
+			"Updating the production site to a newer WordPress release",
+		} {
 			if !strings.Contains(d.Job.Error, want) {
 				t.Errorf("job error %q lacks %q", d.Job.Error, want)
 			}
 		}
-		if !strings.Contains(e.site(t, out.Site.ID).StatusMessage, "can't send real email") {
+		if strings.Contains(d.Job.Error, "Pulling it failed") {
+			t.Errorf("job error %q mentions a failed pull", d.Job.Error)
+		}
+		if !strings.Contains(e.site(t, out.Site.ID).StatusMessage, "Get a current build") {
 			t.Errorf("status message = %q", e.site(t, out.Site.ID).StatusMessage)
 		}
 		// Permanent: one attempt, and nothing of production's arrived.
@@ -170,6 +179,13 @@ func TestCloneMailSwitchWhenPullFails(t *testing.T) {
 				e.requireRolledBack(t, out, prod, prodData)
 				if !strings.Contains(d.Job.Error, sites.ErrMailSwitchMissing.Error()) || restores(e) != 0 {
 					t.Errorf("job error = %q, restores = %d", d.Job.Error, restores(e))
+				}
+				// It still names the image and the production update, and
+				// says the pull failed and why.
+				for _, want := range []string{cloneImages(t, prod).PHP, "Get a current build", "Pulling it failed in this job: no registry", "Updating the production site"} {
+					if !strings.Contains(d.Job.Error, want) {
+						t.Errorf("job error %q lacks %q", d.Job.Error, want)
+					}
 				}
 			})
 		})
