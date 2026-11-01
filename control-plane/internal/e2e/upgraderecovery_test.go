@@ -310,7 +310,15 @@ func TestUpgradeRecovery(t *testing.T) {
 		t.Error("the upgraded control plane isn't ready")
 	}
 	p.Client = p.Login(t, email, password)
-	if s := getSite(t, p, site.ID); s.Status != client.SiteStatusRunning {
+	// The upgraded control plane starts the core rollout to its newer
+	// WordPress release at once, which has the site "updating" for a while.
+	deadline := time.Now().Add(5 * time.Minute)
+	s := getSite(t, p, site.ID)
+	for s.Status == client.SiteStatusUpdating && time.Now().Before(deadline) {
+		time.Sleep(3 * time.Second)
+		s = getSite(t, p, site.ID)
+	}
+	if s.Status != client.SiteStatusRunning {
 		t.Errorf("after the upgrade, the site is %s", s.Status)
 	}
 }
