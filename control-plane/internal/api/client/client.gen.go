@@ -3444,6 +3444,11 @@ type Site struct {
 	// PrimaryDomain The domain the site is served on once live (`POST /api/v1/sites/{site_id}/go-live`); null until then.
 	PrimaryDomain *string `json:"primary_domain"`
 
+	// Provisioned False for a site whose provisioning or clone failed: its secrets
+	// are gone and it can only be deleted. A `failed` site for which this
+	// is true can be restored from a backup (`restoreSite`).
+	Provisioned bool `json:"provisioned"`
+
 	// Resources Limits for the site as a whole; the platform splits them between the site's containers.
 	Resources ResourceLimits `json:"resources"`
 
@@ -7306,11 +7311,29 @@ type ClientInterface interface {
 	// back fails too, the site is `failed` and `status_message` names the
 	// pre-restore backup, which can be restored like any other.
 	//
+	// A `failed` site that finished provisioning (`provisioned`) can be
+	// restored too: this is how to recover one, whatever failed it. The job
+	// first makes sure its database, object cache user, and containers exist,
+	// and starts them. Three things differ from a running site:
+	//
+	// - If the pre-restore backup can't be taken, the job goes on with a
+	//   warning, because the restore is what can repair the site. The backup
+	//   is marked failed, the job's result has no `pre_restore_backup_id`,
+	//   and the restore can't be undone or rolled back.
+	// - If the site was in maintenance mode when the restore started, which
+	//   a failure usually leaves it in, it **stays in maintenance mode**,
+	//   and `status_message` says so. Visitors see the maintenance page until
+	//   it is turned off. If it wasn't, the site serves visitors when the job
+	//   finishes.
+	// - If the job fails before the restore is complete, the site stays
+	//   `failed`, and `status_message` says what state its data is in. The
+	//   restore can be requested again.
+	//
 	// A snapshot that isn't the source site's, a source site in another
 	// client group (restores stay within a client group, whose sites
 	// share one backup repository), or a snapshot from a WordPress core
 	// newer than any site image returns `422`, and nothing changes. The
-	// site must be `running` (`409` otherwise); a site that is
+	// site must be `running` or `failed` (`409` otherwise); a site that is
 	// `provisioning`, `updating`, or `deleting`, or whose provisioning
 	// failed, returns `409` too.
 	//
@@ -7353,11 +7376,29 @@ type ClientInterface interface {
 	// back fails too, the site is `failed` and `status_message` names the
 	// pre-restore backup, which can be restored like any other.
 	//
+	// A `failed` site that finished provisioning (`provisioned`) can be
+	// restored too: this is how to recover one, whatever failed it. The job
+	// first makes sure its database, object cache user, and containers exist,
+	// and starts them. Three things differ from a running site:
+	//
+	// - If the pre-restore backup can't be taken, the job goes on with a
+	//   warning, because the restore is what can repair the site. The backup
+	//   is marked failed, the job's result has no `pre_restore_backup_id`,
+	//   and the restore can't be undone or rolled back.
+	// - If the site was in maintenance mode when the restore started, which
+	//   a failure usually leaves it in, it **stays in maintenance mode**,
+	//   and `status_message` says so. Visitors see the maintenance page until
+	//   it is turned off. If it wasn't, the site serves visitors when the job
+	//   finishes.
+	// - If the job fails before the restore is complete, the site stays
+	//   `failed`, and `status_message` says what state its data is in. The
+	//   restore can be requested again.
+	//
 	// A snapshot that isn't the source site's, a source site in another
 	// client group (restores stay within a client group, whose sites
 	// share one backup repository), or a snapshot from a WordPress core
 	// newer than any site image returns `422`, and nothing changes. The
-	// site must be `running` (`409` otherwise); a site that is
+	// site must be `running` or `failed` (`409` otherwise); a site that is
 	// `provisioning`, `updating`, or `deleting`, or whose provisioning
 	// failed, returns `409` too.
 	//
@@ -11367,11 +11408,29 @@ func (c *Client) RefreshStagingSite(ctx context.Context, siteID SiteID, body Ref
 // back fails too, the site is `failed` and `status_message` names the
 // pre-restore backup, which can be restored like any other.
 //
+// A `failed` site that finished provisioning (`provisioned`) can be
+// restored too: this is how to recover one, whatever failed it. The job
+// first makes sure its database, object cache user, and containers exist,
+// and starts them. Three things differ from a running site:
+//
+//   - If the pre-restore backup can't be taken, the job goes on with a
+//     warning, because the restore is what can repair the site. The backup
+//     is marked failed, the job's result has no `pre_restore_backup_id`,
+//     and the restore can't be undone or rolled back.
+//   - If the site was in maintenance mode when the restore started, which
+//     a failure usually leaves it in, it **stays in maintenance mode**,
+//     and `status_message` says so. Visitors see the maintenance page until
+//     it is turned off. If it wasn't, the site serves visitors when the job
+//     finishes.
+//   - If the job fails before the restore is complete, the site stays
+//     `failed`, and `status_message` says what state its data is in. The
+//     restore can be requested again.
+//
 // A snapshot that isn't the source site's, a source site in another
 // client group (restores stay within a client group, whose sites
 // share one backup repository), or a snapshot from a WordPress core
 // newer than any site image returns `422`, and nothing changes. The
-// site must be `running` (`409` otherwise); a site that is
+// site must be `running` or `failed` (`409` otherwise); a site that is
 // `provisioning`, `updating`, or `deleting`, or whose provisioning
 // failed, returns `409` too.
 //
@@ -11424,11 +11483,29 @@ func (c *Client) RestoreSiteWithBody(ctx context.Context, siteID SiteID, content
 // back fails too, the site is `failed` and `status_message` names the
 // pre-restore backup, which can be restored like any other.
 //
+// A `failed` site that finished provisioning (`provisioned`) can be
+// restored too: this is how to recover one, whatever failed it. The job
+// first makes sure its database, object cache user, and containers exist,
+// and starts them. Three things differ from a running site:
+//
+//   - If the pre-restore backup can't be taken, the job goes on with a
+//     warning, because the restore is what can repair the site. The backup
+//     is marked failed, the job's result has no `pre_restore_backup_id`,
+//     and the restore can't be undone or rolled back.
+//   - If the site was in maintenance mode when the restore started, which
+//     a failure usually leaves it in, it **stays in maintenance mode**,
+//     and `status_message` says so. Visitors see the maintenance page until
+//     it is turned off. If it wasn't, the site serves visitors when the job
+//     finishes.
+//   - If the job fails before the restore is complete, the site stays
+//     `failed`, and `status_message` says what state its data is in. The
+//     restore can be requested again.
+//
 // A snapshot that isn't the source site's, a source site in another
 // client group (restores stay within a client group, whose sites
 // share one backup repository), or a snapshot from a WordPress core
 // newer than any site image returns `422`, and nothing changes. The
-// site must be `running` (`409` otherwise); a site that is
+// site must be `running` or `failed` (`409` otherwise); a site that is
 // `provisioning`, `updating`, or `deleting`, or whose provisioning
 // failed, returns `409` too.
 //
@@ -21128,11 +21205,29 @@ type ClientWithResponsesInterface interface {
 	// back fails too, the site is `failed` and `status_message` names the
 	// pre-restore backup, which can be restored like any other.
 	//
+	// A `failed` site that finished provisioning (`provisioned`) can be
+	// restored too: this is how to recover one, whatever failed it. The job
+	// first makes sure its database, object cache user, and containers exist,
+	// and starts them. Three things differ from a running site:
+	//
+	// - If the pre-restore backup can't be taken, the job goes on with a
+	//   warning, because the restore is what can repair the site. The backup
+	//   is marked failed, the job's result has no `pre_restore_backup_id`,
+	//   and the restore can't be undone or rolled back.
+	// - If the site was in maintenance mode when the restore started, which
+	//   a failure usually leaves it in, it **stays in maintenance mode**,
+	//   and `status_message` says so. Visitors see the maintenance page until
+	//   it is turned off. If it wasn't, the site serves visitors when the job
+	//   finishes.
+	// - If the job fails before the restore is complete, the site stays
+	//   `failed`, and `status_message` says what state its data is in. The
+	//   restore can be requested again.
+	//
 	// A snapshot that isn't the source site's, a source site in another
 	// client group (restores stay within a client group, whose sites
 	// share one backup repository), or a snapshot from a WordPress core
 	// newer than any site image returns `422`, and nothing changes. The
-	// site must be `running` (`409` otherwise); a site that is
+	// site must be `running` or `failed` (`409` otherwise); a site that is
 	// `provisioning`, `updating`, or `deleting`, or whose provisioning
 	// failed, returns `409` too.
 	//
@@ -21175,11 +21270,29 @@ type ClientWithResponsesInterface interface {
 	// back fails too, the site is `failed` and `status_message` names the
 	// pre-restore backup, which can be restored like any other.
 	//
+	// A `failed` site that finished provisioning (`provisioned`) can be
+	// restored too: this is how to recover one, whatever failed it. The job
+	// first makes sure its database, object cache user, and containers exist,
+	// and starts them. Three things differ from a running site:
+	//
+	// - If the pre-restore backup can't be taken, the job goes on with a
+	//   warning, because the restore is what can repair the site. The backup
+	//   is marked failed, the job's result has no `pre_restore_backup_id`,
+	//   and the restore can't be undone or rolled back.
+	// - If the site was in maintenance mode when the restore started, which
+	//   a failure usually leaves it in, it **stays in maintenance mode**,
+	//   and `status_message` says so. Visitors see the maintenance page until
+	//   it is turned off. If it wasn't, the site serves visitors when the job
+	//   finishes.
+	// - If the job fails before the restore is complete, the site stays
+	//   `failed`, and `status_message` says what state its data is in. The
+	//   restore can be requested again.
+	//
 	// A snapshot that isn't the source site's, a source site in another
 	// client group (restores stay within a client group, whose sites
 	// share one backup repository), or a snapshot from a WordPress core
 	// newer than any site image returns `422`, and nothing changes. The
-	// site must be `running` (`409` otherwise); a site that is
+	// site must be `running` or `failed` (`409` otherwise); a site that is
 	// `provisioning`, `updating`, or `deleting`, or whose provisioning
 	// failed, returns `409` too.
 	//
@@ -34979,11 +35092,29 @@ func (c *ClientWithResponses) RefreshStagingSiteWithResponse(ctx context.Context
 // back fails too, the site is `failed` and `status_message` names the
 // pre-restore backup, which can be restored like any other.
 //
+// A `failed` site that finished provisioning (`provisioned`) can be
+// restored too: this is how to recover one, whatever failed it. The job
+// first makes sure its database, object cache user, and containers exist,
+// and starts them. Three things differ from a running site:
+//
+//   - If the pre-restore backup can't be taken, the job goes on with a
+//     warning, because the restore is what can repair the site. The backup
+//     is marked failed, the job's result has no `pre_restore_backup_id`,
+//     and the restore can't be undone or rolled back.
+//   - If the site was in maintenance mode when the restore started, which
+//     a failure usually leaves it in, it **stays in maintenance mode**,
+//     and `status_message` says so. Visitors see the maintenance page until
+//     it is turned off. If it wasn't, the site serves visitors when the job
+//     finishes.
+//   - If the job fails before the restore is complete, the site stays
+//     `failed`, and `status_message` says what state its data is in. The
+//     restore can be requested again.
+//
 // A snapshot that isn't the source site's, a source site in another
 // client group (restores stay within a client group, whose sites
 // share one backup repository), or a snapshot from a WordPress core
 // newer than any site image returns `422`, and nothing changes. The
-// site must be `running` (`409` otherwise); a site that is
+// site must be `running` or `failed` (`409` otherwise); a site that is
 // `provisioning`, `updating`, or `deleting`, or whose provisioning
 // failed, returns `409` too.
 //
@@ -35032,11 +35163,29 @@ func (c *ClientWithResponses) RestoreSiteWithBodyWithResponse(ctx context.Contex
 // back fails too, the site is `failed` and `status_message` names the
 // pre-restore backup, which can be restored like any other.
 //
+// A `failed` site that finished provisioning (`provisioned`) can be
+// restored too: this is how to recover one, whatever failed it. The job
+// first makes sure its database, object cache user, and containers exist,
+// and starts them. Three things differ from a running site:
+//
+//   - If the pre-restore backup can't be taken, the job goes on with a
+//     warning, because the restore is what can repair the site. The backup
+//     is marked failed, the job's result has no `pre_restore_backup_id`,
+//     and the restore can't be undone or rolled back.
+//   - If the site was in maintenance mode when the restore started, which
+//     a failure usually leaves it in, it **stays in maintenance mode**,
+//     and `status_message` says so. Visitors see the maintenance page until
+//     it is turned off. If it wasn't, the site serves visitors when the job
+//     finishes.
+//   - If the job fails before the restore is complete, the site stays
+//     `failed`, and `status_message` says what state its data is in. The
+//     restore can be requested again.
+//
 // A snapshot that isn't the source site's, a source site in another
 // client group (restores stay within a client group, whose sites
 // share one backup repository), or a snapshot from a WordPress core
 // newer than any site image returns `422`, and nothing changes. The
-// site must be `running` (`409` otherwise); a site that is
+// site must be `running` or `failed` (`409` otherwise); a site that is
 // `provisioning`, `updating`, or `deleting`, or whose provisioning
 // failed, returns `409` too.
 //

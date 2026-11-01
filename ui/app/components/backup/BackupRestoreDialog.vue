@@ -3,10 +3,12 @@
 // site's files and database. The operator must type the site's name. The
 // caller owns the request (see ConfirmDialog): it sets `busy`, passes a
 // failure as `error`, and closes the dialog on success.
+import { computed, ref, watch } from 'vue'
 import type { ApiError } from '../../utils/api-error'
-import { restoreConfirmed, type Backup } from '../../utils/backup'
+import { restoreConfirmed, restoreDialogNotes, type Backup } from '../../utils/backup'
+import type { Site } from '../../utils/site'
 
-const props = defineProps<{ siteName: string, backup?: Backup, busy?: boolean, error?: ApiError }>()
+const props = defineProps<{ siteName: string, site?: Pick<Site, 'status' | 'maintenance'>, backup?: Backup, busy?: boolean, error?: ApiError }>()
 const open = defineModel<boolean>('open', { required: true })
 defineEmits<{ confirm: [] }>()
 
@@ -16,6 +18,7 @@ watch(open, () => {
   typed.value = ''
 })
 const ok = computed(() => restoreConfirmed(typed.value, props.siteName))
+const notes = computed(() => restoreDialogNotes(props.site))
 
 function when(iso: string): string {
   const d = new Date(iso)
@@ -32,9 +35,7 @@ function when(iso: string): string {
           This <strong>overwrites everything on this site</strong>: its database and its <code>wp-content</code> (themes, plugins, uploads) are replaced with the backup's. Anything changed or added since that backup is removed, including posts, orders and uploads.
         </p>
         <ul class="list-disc space-y-1 pl-5 text-muted">
-          <li>The site goes into maintenance mode, so visitors see the maintenance page until it finishes.</li>
-          <li>A backup of the current state is taken first (kind "Before a restore"), so this can be undone by restoring it.</li>
-          <li>If the restore fails, that backup is restored automatically and the site stays in maintenance mode until you check it.</li>
+          <li v-for="note in notes" :key="note">{{ note }}</li>
         </ul>
         <UFormField :label="`Type ${siteName} to confirm`">
           <UInput v-model="typed" autocomplete="off" :disabled="busy" class="w-full" />

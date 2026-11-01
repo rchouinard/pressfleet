@@ -357,3 +357,77 @@ func TestSiteRestoreEndpoint(t *testing.T) {
 		}
 	})
 }
+
+// TestSiteRestoreEndpointFailedSite: an operator can restore a failed site that
+// finished provisioning; the site tells a client so, and the others stay a 409.
+func TestSiteRestoreEndpointFailedSite(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		e := newSiteEnv(t, db, testPreviewBase)
+		now := time.Now()
+		if _, err := db.ExecContext(ctx, "INSERT INTO users (id, email, password_hash, role, created_at, updated_at) VALUES (?, ?, 'x', 'operator', ?, ?)",
+			"01j9zq3v6t8k4m2n5p7r9s1x3y", "operator@example.com", now, now); err != nil {
+			t.Fatal(err)
+		}
+		operator := newHandler(t, api.Options{DB: db, Authenticator: &fakeAuth{principal: &auth.Principal{
+			UserID: "01j9zq3v6t8k4m2n5p7r9s1x3y", Role: store.RoleOperator, Method: auth.MethodSession, SessionID: "o",
+		}}, Sites: e.svc, Backups: e.backups})
+		group := &store.ClientGroup{Name: "Acme"}
+		if err := store.NewClientGroups(db).Create(ctx, group); err != nil {
+			t.Fatal(err)
+		}
+		state := store.NewSites(db)
+		newSite := func(name string, status store.SiteStatus) (store.Site, string) {
+			t.Helper()
+			site, _, err := e.svc.Create(ctx, sites.NewSite{ClientGroupID: group.ID, Name: name, AdminEmail: "o@example.com", PHPVersion: "8.4"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			e.runJobs(t)
+			snap, err := e.engine.Backup(ctx, site.ID, backup.Options{Kind: "manual"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := state.SetStatus(ctx, site.ID, status, "restore failed"); err != nil {
+				t.Fatal(err)
+			}
+			return site, `{"snapshot_id":"` + string(snap.ID) + `"}`
+		}
+		provisioned := func(siteID string) bool {
+			t.Helper()
+			w := do(t, operator, request{authed: true, method: http.MethodGet, target: "/api/v1/sites/" + siteID})
+			if w.Code != http.StatusOK {
+				t.Fatalf("get site: %d %s", w.Code, w.Body)
+			}
+			return decodeJSON[gen.Site](t, w.Body.Bytes()).Provisioned
+		}
+
+		failed, body := newSite("Failed", store.SiteFailed)
+		if !provisioned(failed.ID) {
+			t.Error("a site that finished provisioning says it didn't")
+		}
+		w := do(t, operator, request{authed: true, method: http.MethodPost, target: "/api/v1/sites/" + failed.ID + "/restore", body: body})
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("restore of a failed site: %d %s", w.Code, w.Body)
+		}
+		if accepted := decodeJSON[gen.SiteAccepted](t, w.Body.Bytes()); accepted.Site.Status != gen.SiteStatusUpdating {
+			t.Errorf("restore response = %s", w.Body)
+		}
+
+		stopped, body := newSite("Stopped", store.SiteStopped)
+		if w := do(t, operator, request{authed: true, method: http.MethodPost, target: "/api/v1/sites/" + stopped.ID + "/restore", body: body}); w.Code != http.StatusConflict {
+			t.Errorf("restore of a stopped site: %d %s", w.Code, w.Body)
+		}
+
+		never, body := newSite("Never", store.SiteFailed)
+		if err := state.ClearSecretRefs(ctx, never.ID); err != nil {
+			t.Fatal(err)
+		}
+		if provisioned(never.ID) {
+			t.Error("a site whose provisioning failed says it finished")
+		}
+		if w := do(t, operator, request{authed: true, method: http.MethodPost, target: "/api/v1/sites/" + never.ID + "/restore", body: body}); w.Code != http.StatusConflict {
+			t.Errorf("restore of a site whose provisioning failed: %d %s", w.Code, w.Body)
+		}
+	})
+}

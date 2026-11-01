@@ -67,17 +67,58 @@ export function canBackUpSite(site: Pick<Site, 'status'>): boolean {
   return site.status === 'running' || site.status === 'stopped' || site.status === 'updating'
 }
 
-/** A restore needs a running site (409 otherwise). */
-export function canRestoreSite(site: Pick<Site, 'status'>): boolean {
-  return site.status === 'running'
+/**
+ * A restore needs a running site, or a failed one that finished provisioning,
+ * for which it is the way back (409 otherwise). A site whose provisioning failed
+ * has no secrets left, so `provisioned` tells the two kinds of failed apart.
+ */
+export function canRestoreSite(site: Pick<Site, 'status' | 'provisioned'>): boolean {
+  return site.status === 'running' || (site.status === 'failed' && site.provisioned)
 }
 
 /** Why a restore isn't offered for a site that can't take one; undefined if it can. */
-export function restoreBlockedReason(site: Pick<Site, 'status'>): string | undefined {
+export function restoreBlockedReason(site: Pick<Site, 'status' | 'provisioned'>): string | undefined {
   if (canRestoreSite(site)) return undefined
-  return site.status === 'stopped'
-    ? 'Start the site to restore a backup into it.'
-    : 'A site can be restored only while it is running and idle.'
+  switch (site.status) {
+    case 'stopped':
+      return 'Start the site to restore a backup into it.'
+    case 'failed':
+      return 'This site never finished provisioning, so there is nothing to restore into. Delete it and create it again.'
+    default:
+      return 'A site can be restored only while it is running and idle, or failed.'
+  }
+}
+
+/** What the backups page says about a failed site that a restore can recover. */
+export function failedSiteNotice(site: Pick<Site, 'status' | 'provisioned'>): string | undefined {
+  if (site.status !== 'failed' || !site.provisioned) return undefined
+  return 'Restoring a backup recovers this site, whatever state it is in. Its status message above says which backup, if a failed job left one for this.'
+}
+
+/** What a restore will do, as the confirmation lists it. A failed site differs. */
+export function restoreDialogNotes(site: Pick<Site, 'status' | 'maintenance'> | undefined): string[] {
+  if (site?.status !== 'failed') {
+    return [
+      'The site goes into maintenance mode, so visitors see the maintenance page until it finishes.',
+      'A backup of the current state is taken first (kind "Before a restore"), so this can be undone by restoring it.',
+      'If the restore fails, that backup is restored automatically and the site stays in maintenance mode until you check it.',
+    ]
+  }
+  return [
+    'This site is marked failed. Whatever it is missing (its containers, its database, its object cache user) is put back first.',
+    'A backup of its current state is attempted first (kind "Before a restore"). A broken site may not back up: the restore then goes on without it, and can\'t be undone or rolled back.',
+    'If the restore fails, the site stays failed, its status message says what state its data is in, and you can try again.',
+    site.maintenance
+      ? 'The site is in maintenance mode, and stays in it after the restore: visitors see the maintenance page until you check the site and turn it off.'
+      : 'The site goes into maintenance mode while this runs, and serves visitors as soon as the restore finishes.',
+  ]
+}
+
+/** What to say when a restore has finished: above all, whether visitors can see the site. */
+export function restoreFinishedNotice(site: Pick<Site, 'maintenance'> | undefined): { stillInMaintenance: boolean, description: string } {
+  return site?.maintenance
+    ? { stillInMaintenance: true, description: 'The site is still in maintenance mode: visitors see the maintenance page until you check it and turn it off.' }
+    : { stillInMaintenance: false, description: 'The site is serving visitors.' }
 }
 
 /**

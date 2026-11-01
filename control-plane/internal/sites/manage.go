@@ -511,6 +511,11 @@ func (s *Service) observedStatus(ctx context.Context, siteID string) store.SiteS
 // or stopped for a site that was stopped. A site being deleted keeps its
 // status.
 func (s *Service) finishUpdate(ctx context.Context, r *jobs.Run) error {
+	return s.finishUpdateWith(ctx, r, "")
+}
+
+// finishUpdateWith is finishUpdate with the status message to set.
+func (s *Service) finishUpdateWith(ctx context.Context, r *jobs.Run, message string) error {
 	siteID := r.Job().TargetID
 	st, err := s.prov.GetSite(ctx, siteID)
 	if err != nil {
@@ -527,7 +532,7 @@ func (s *Service) finishUpdate(ctx context.Context, r *jobs.Run) error {
 		// the site failing right after; retrying finds out.
 		return fmt.Errorf("the site is %s after the update: %s", st.Phase, st.Message)
 	}
-	changed, err := store.NewSites(s.db).SetStatus(ctx, siteID, status, "", store.SiteUpdating)
+	changed, err := store.NewSites(s.db).SetStatus(ctx, siteID, status, message, store.SiteUpdating)
 	if err != nil {
 		return err
 	}

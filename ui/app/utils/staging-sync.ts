@@ -99,7 +99,7 @@ export function refreshBlockedReason(staging: Pick<Site, 'status'>): string | un
     case 'stopped':
       return 'This staging site is stopped. Start it first: a refresh needs it running.'
     case 'failed':
-      return 'This staging site is marked failed, and a refresh needs it running. Delete it and create a new staging site.'
+      return 'This staging site is marked failed, and a refresh needs it running. Restore one of its backups on its Backups page, or delete it and create a new staging site.'
     default:
       return busyReason('This staging site', staging, 'A refresh')
   }
@@ -149,7 +149,7 @@ export function pushBlockedReason(staging: Pick<Site, 'status'>, production: Pro
     case 'stopped':
       return 'The production site is stopped. Start it first: a push needs it running.'
     case 'failed':
-      return 'The production site is marked failed, so nothing can be pushed to it.'
+      return 'The production site is marked failed, so nothing can be pushed to it. Restore one of its backups on its Backups page first.'
     default:
       return busyReason('The production site', production.site, 'A push')
   }

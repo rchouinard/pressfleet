@@ -62,7 +62,7 @@ import (
 // Every step converges, so a retried job, or one queued again, ends in the
 // same place. A job that fails for good marks the site failed with the
 // reason and leaves what it created for the operator to look at: deleting
-// the site (or restoring it from a backup once it runs) removes or replaces
+// the site (or restoring it from a backup, see restore.go) removes or replaces
 // it, and there is no earlier state to roll back to.
 
 // RecoverJobType recreates a site from its newest backup after the state

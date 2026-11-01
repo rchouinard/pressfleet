@@ -11,6 +11,7 @@ import {
   type Site, type SiteAdminCredentials,
 } from '../../../utils/site'
 import { deleteBlockers } from '../../../utils/staging'
+import { canRestoreSite } from '../../../utils/backup'
 import { maintenanceLeftOn } from '../../../utils/staging-sync'
 import { countSnapshots, deleteSiteQuery, type SnapshotCount } from '../../../utils/site-delete'
 
@@ -334,6 +335,11 @@ function when(iso: string): string {
       >
         <p class="font-medium">This site failed</p>
         <p class="mt-1 whitespace-pre-line break-words text-muted">{{ site.status_message }}</p>
+        <p v-if="canRestoreSite(site)" class="mt-1" data-testid="failed-site-recovery">
+          To recover it, restore a backup on its
+          <NuxtLink :to="`/sites/${site.id}/backups`" class="text-primary underline">Backups</NuxtLink>
+          page.
+        </p>
       </div>
       <div
         v-else-if="maintenanceReason"

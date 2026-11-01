@@ -3445,6 +3445,11 @@ type Site struct {
 	// PrimaryDomain The domain the site is served on once live (`POST /api/v1/sites/{site_id}/go-live`); null until then.
 	PrimaryDomain *string `json:"primary_domain"`
 
+	// Provisioned False for a site whose provisioning or clone failed: its secrets
+	// are gone and it can only be deleted. A `failed` site for which this
+	// is true can be restored from a backup (`restoreSite`).
+	Provisioned bool `json:"provisioned"`
+
 	// Resources Limits for the site as a whole; the platform splits them between the site's containers.
 	Resources ResourceLimits `json:"resources"`
 

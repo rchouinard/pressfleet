@@ -81,6 +81,19 @@ func (s *Service) JobBackup(ctx context.Context, r *jobs.Run) (store.BackupRecor
 	return rec, true, nil
 }
 
+// AbandonJobBackup marks the job's backup failed with the reason, for a job that
+// goes on without it. It does nothing to a backup that finished or that the job
+// never recorded, so it is safe to repeat.
+func (s *Service) AbandonJobBackup(ctx context.Context, r *jobs.Run, reason string) error {
+	var backupID string
+	found, err := r.Get(DataBackupID, &backupID)
+	if err != nil || !found {
+		return err
+	}
+	_, err = store.NewBackupRecords(s.db).Fail(ctx, backupID, truncate(reason))
+	return err
+}
+
 // record checks the site and creates its backup record, once.
 func (s *Service) record(ctx context.Context, r *jobs.Run, kindOf kindFunc) error {
 	kind, err := kindOf(r)
