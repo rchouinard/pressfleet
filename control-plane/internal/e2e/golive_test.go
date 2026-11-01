@@ -122,7 +122,10 @@ func TestSiteGoLive(t *testing.T) {
 			t.Fatalf("status %d: %s", resp.StatusCode(), resp.Body)
 		}
 		for _, e := range *prob.Errors {
-			if !strings.Contains(e.Detail, "does not resolve") || !strings.Contains(e.Detail, e2e.PublicIP) {
+			// The names don't exist, but the lookup goes to the runner's resolver,
+			// which may not answer in time. Either way the check refuses.
+			resolved := strings.Contains(e.Detail, "does not resolve") || strings.Contains(e.Detail, "timed out")
+			if !resolved || !strings.Contains(e.Detail, e2e.PublicIP) {
 				t.Errorf("%s: %s", e.Field, e.Detail)
 			}
 		}
