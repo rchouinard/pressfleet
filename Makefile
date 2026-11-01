@@ -105,6 +105,16 @@ test-e2e: ## Run the end-to-end tests against a freshly built image and real Doc
 		go test -count=1 -v -timeout 60m ./control-plane/internal/e2e/; \
 		status=$$?; docker image rm pressfleet-control-plane:e2e >/dev/null; exit $$status
 
+# TestBackupMemory, which the regular suite skips because it writes tens of GiB.
+# TMPDIR must be on disk: the test refuses tmpfs (see docs/testing.md).
+.PHONY: test-backup-memory
+test-backup-memory: ## Check that backups of large uploads fit the task memory limit, against real Docker
+	$(MAKE) image IMAGE=pressfleet-control-plane:e2e
+	TMPDIR="$${TMPDIR:-/var/tmp}" PRESSFLEET_TEST_BACKUP_MEMORY=1 \
+	PRESSFLEET_DOCKER_TESTS=1 PRESSFLEET_TEST_CONTROL_PLANE_IMAGE=pressfleet-control-plane:e2e \
+		go test -count=1 -v -timeout 120m -run '^TestBackupMemory$$' ./control-plane/internal/e2e/; \
+		status=$$?; docker image rm pressfleet-control-plane:e2e >/dev/null; exit $$status
+
 # The Playwright suite in ui/e2e, against a platform booted by the e2e
 # harness (control-plane/internal/e2e/dashboard). PLAYWRIGHT_ARGS go to
 # `playwright test`, e.g. PLAYWRIGHT_ARGS="--headed -g provision".
