@@ -109,7 +109,7 @@ test('a code-only push asks for no slug, and production\'s page follows the queu
   await expect(dialog.getByRole('radio', { name: /Code only/ })).toBeChecked()
   await expect(dialog.getByRole('radio', { name: /All files/ })).toBeVisible()
   await expect(dialog.getByRole('radio', { name: /No files/ })).toBeVisible()
-  const database = dialog.getByRole('checkbox', { name: 'Database' })
+  const database = dialog.getByRole('checkbox', { name: 'Replace production\'s database with the staging site\'s' })
   await expect(database).not.toBeChecked()
   await expect(dialog.getByRole('region', { name: 'Data that will be lost' })).toHaveCount(0)
   await expect(dialog.getByRole('region', { name: 'What a push does' })).toContainText('Production\'s database stays as it is.')
@@ -168,7 +168,7 @@ test('the typed slug gates a database push and an all-files push', async ({ admi
   const stagURL = `https://${staging.preview_domain}`
   await harness.wp(staging.id, 'post', 'create', '--post_status=publish', '--post_title=PF E2E pushed from staging', `--post_content=<a href="${stagURL}/x/">x</a>`)
   const dialog = await openPushDialog(page)
-  const database = dialog.getByRole('checkbox', { name: 'Database' })
+  const database = dialog.getByRole('checkbox', { name: 'Replace production\'s database with the staging site\'s' })
   const slug = dialog.getByRole('textbox', { name: `Type ${production.slug} to confirm` })
   const submit = page.getByRole('button', { name: 'Overwrite production and push' })
 
@@ -226,7 +226,7 @@ test('refreshes the staging site, database only', async ({ adminPage: page, admi
   const dialog = page.getByRole('dialog', { name: `Refresh ${staging.name} from production` })
   await expect(dialog).toBeVisible()
   await dialog.getByRole('radio', { name: /No files/ }).click()
-  await expect(dialog.getByRole('checkbox', { name: 'Database' })).toBeChecked()
+  await expect(dialog.getByRole('checkbox', { name: 'Replace the staging site\'s database with production\'s' })).toBeChecked()
   await expect(dialog.getByRole('region', { name: 'What a refresh does' })).toContainText('this staging site\'s wp-content stays as it is')
   await expect(dialog.getByRole('radio', { name: /A fresh copy of production/ })).toBeChecked()
 
@@ -255,7 +255,7 @@ test('the core guard\'s link lands on production\'s core policy', async ({ admin
   }))
   const dialog = await openPushDialog(page)
   await dialog.getByRole('radio', { name: /No files/ }).click()
-  await dialog.getByRole('checkbox', { name: 'Database' }).click()
+  await dialog.getByRole('checkbox', { name: 'Replace production\'s database with the staging site\'s' }).click()
   await dialog.getByRole('textbox', { name: `Type ${production.slug} to confirm` }).fill(production.slug)
   await page.getByRole('button', { name: 'Overwrite production and push' }).click()
 

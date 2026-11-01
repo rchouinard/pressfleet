@@ -88,7 +88,8 @@ async function onSubmit() {
         <UFormField label="Files" name="files" :error="err('files')">
           <URadioGroup v-model="values.files" :items="filesItems" data-testid="refresh-files" />
         </UFormField>
-        <UFormField label="Database" name="database" :error="err('database')">
+        <!-- No label on the field: it would become the checkbox's accessible name in place of its own. -->
+        <UFormField name="database" :error="err('database')">
           <UCheckbox v-model="values.database" label="Replace the staging site's database with production's" data-testid="refresh-database" />
         </UFormField>
         <p v-if="scopeError" class="text-sm text-red-700 dark:text-red-300" role="alert" data-testid="scope-error">{{ scopeError }}</p>

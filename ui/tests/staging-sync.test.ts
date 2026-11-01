@@ -427,6 +427,12 @@ describe('SitePushDialog', () => {
   const submitButton = (w: ReturnType<typeof setup>['wrapper']) => w.find('[data-testid="push-submit"]')
   const warnings = (w: ReturnType<typeof setup>['wrapper']) => w.findAll('[data-testid^="warn-"]').map(e => e.attributes('data-testid')!.replace('warn-', ''))
 
+  it('labels the database checkbox with what it does, and no field label over it', () => {
+    const { wrapper } = setup()
+    expect(wrapper.findAll('label').map(l => l.text())).not.toContain('Database')
+    expect(wrapper.find('input[type="checkbox"]').element.closest('label')!.textContent).toContain('Replace production\'s database with the staging site\'s')
+  })
+
   it('starts with a code-only push: no loss warnings, no slug', () => {
     const { wrapper } = setup()
     expect(wrapper.find('[data-testid="push-dangers"]').exists()).toBe(false)
@@ -572,6 +578,12 @@ describe('SiteRefreshDialog', () => {
   }
   const radios = (w: ReturnType<typeof setup>['wrapper']) => w.findAll('input[type="radio"]')
   const submitButton = (w: ReturnType<typeof setup>['wrapper']) => w.find('[data-testid="refresh-submit"]')
+
+  it('labels the database checkbox with what it does, and no field label over it', () => {
+    const { wrapper } = setup()
+    expect(wrapper.findAll('label').map(l => l.text())).not.toContain('Database')
+    expect(wrapper.find('input[type="checkbox"]').element.closest('label')!.textContent).toContain('Replace the staging site\'s database with production\'s')
+  })
 
   it('refreshes all files and the database from a fresh copy by default', async () => {
     const { wrapper, submit } = setup()

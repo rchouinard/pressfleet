@@ -97,9 +97,7 @@ async function onSubmit() {
         <UFormField label="Files" name="files" :error="filesError">
           <URadioGroup v-model="scope.files" :items="filesItems" data-testid="push-files" />
         </UFormField>
-        <UFormField label="Database" name="database">
-          <UCheckbox v-model="scope.database" label="Replace production's database with the staging site's" data-testid="push-database" />
-        </UFormField>
+        <UCheckbox v-model="scope.database" label="Replace production's database with the staging site's" data-testid="push-database" />
         <p v-if="scopeError" class="text-sm text-red-700 dark:text-red-300" role="alert" data-testid="scope-error">{{ scopeError }}</p>
 
         <template v-else>

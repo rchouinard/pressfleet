@@ -15,7 +15,7 @@ export const uiStubs = {
   UIcon: { template: '<i />' },
   UFormField: {
     props: ['label', 'error', 'description'],
-    template: '<div><label>{{ label }}</label><slot /><p v-if="error" role="alert">{{ error }}</p></div>',
+    template: '<div><label v-if="label">{{ label }}</label><slot /><p v-if="error" role="alert">{{ error }}</p></div>',
   },
   UInput: {
     props: ['modelValue', 'type'],
