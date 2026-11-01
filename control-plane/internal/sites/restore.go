@@ -1367,6 +1367,16 @@ func (s *Service) finishFailedRestore(ctx context.Context, r *jobs.Run, noun str
 		return err
 	} else if found && rec.Status == store.BackupSucceeded {
 		backupNote = " (pre-" + noun + " backup " + rec.ID + ")"
+		// The job result names it too, as it does when the job succeeds: that is
+		// where the dashboard finds the link to it, which matters most when the
+		// rollback failed and restoring it by hand is what is left to do.
+		key := "pre_restore_backup_id"
+		if noun == "push" {
+			key = resultPrePushBackup
+		}
+		if err := r.SetResult(key, rec.ID); err != nil {
+			return err
+		}
 	}
 	var noUndo string
 	if _, err := r.Get(dataNoUndoPoint, &noUndo); err != nil {

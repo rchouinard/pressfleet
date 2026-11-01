@@ -432,7 +432,10 @@ func (m *monitoring) startReceiver(t *testing.T) string {
 	}
 	l, err := net.Listen("tcp", net.JoinHostPort(gw, "0"))
 	if err != nil {
-		t.Fatalf("webhook receiver: %v", err)
+		// Not fatal: only the specs that ask for the receiver need it, and they
+		// fail on their own (GET /webhook).
+		t.Logf("no webhook receiver; the specs that use it will fail: %v", err)
+		return ""
 	}
 	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
@@ -472,6 +475,10 @@ func (m *monitoring) gateway(ctx context.Context) (string, error) {
 }
 
 func (m *monitoring) webhook(w http.ResponseWriter, _ *http.Request) {
+	if m.webhookURL == "" {
+		http.Error(w, "no webhook receiver: this host doesn't own the bridge's address (Docker Desktop)", http.StatusServiceUnavailable)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"url": m.webhookURL})
 }

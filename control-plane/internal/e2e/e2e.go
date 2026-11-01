@@ -36,6 +36,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/ingress"
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
@@ -656,6 +657,31 @@ func EnsureImages(t *testing.T, images ...string) {
 		}
 		if pulled {
 			t.Logf("pulled %s", image)
+		}
+	}
+}
+
+// EnsureStagingImages makes site-php images ready for staging sites. Call it,
+// after EnsureImages, in any test that creates a staging site, and before it
+// creates the production site: a staging site inherits production's build, and
+// is refused if that build lacks the outbound mail switch (#272).
+//
+// EnsureImages uses a local image as it is, and image tags are rebuilt without
+// changing, so a host can hold a build from before the switch, which the control
+// plane may have no credentials to replace. Such a tag is pulled here, once, and
+// the refresh is logged. An image with the switch, such as one from `make images`,
+// isn't touched. If the pull doesn't help, the test stops, naming the image.
+func EnsureStagingImages(t *testing.T, images ...string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), pullTimeout)
+	defer cancel()
+	for _, image := range images {
+		refreshed, err := compose.EnsureImageFile(ctx, nil, image, provisioner.MailSwitchPath)
+		if err != nil {
+			t.Fatalf("%s has no mail switch; pull it or run `make images`: %v", image, err)
+		}
+		if refreshed {
+			t.Logf("refreshed %s: the local build had no mail switch", image)
 		}
 	}
 }

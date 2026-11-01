@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
@@ -24,6 +25,18 @@ const UModal = defineComponent({
   },
 })
 const stubs = { ...uiStubs, NuxtLink, UModal }
+
+describe('sections links land on', () => {
+  // The page's sticky header would cover a heading scrolled to the very top. A
+  // browser test (e2e/staging.spec.ts) checks the result; this names the cause.
+  it.each([
+    ['site/SiteCoreCard.vue', 'site-core-heading'],
+    ['site/SiteSettingsPanel.vue', 'set-maint-heading'],
+  ])('%s keeps #%s clear of the sticky header', (file, id) => {
+    const source = readFileSync(`${process.cwd()}/app/components/${file}`, 'utf8')
+    expect(source).toMatch(new RegExp(`id="${id}" class="[^"]*\\bscroll-mt-20\\b`))
+  })
+})
 
 describe('SiteTable with staging sites', () => {
   const mountTable = (sites: ReturnType<typeof site>[], productionNames: Record<string, string> = {}) =>

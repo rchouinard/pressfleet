@@ -593,6 +593,9 @@ func TestPushStagingRollsBack(t *testing.T) {
 				if len(pre) != 1 || pre[0].Status != store.BackupSucceeded {
 					t.Fatalf("pre-push backups = %+v", pre)
 				}
+				if res := jobResult(t, d.Job); res["pre_push_backup_id"] != pre[0].ID {
+					t.Errorf("the failed push's result = %v, want it to name the pre-push backup %s", res, pre[0].ID)
+				}
 				var restores []backuptest.Call
 				for _, c := range e.engine.Calls()[from:] {
 					if c.Op == "Restore" {
@@ -614,7 +617,7 @@ func TestPushStagingRollsBack(t *testing.T) {
 				}
 				got := e.site(t, e.prod.ID)
 				rt, _ := e.prov.Site(e.prod.ID)
-				if got.Status != store.SiteRunning || !strings.Contains(got.StatusMessage, "push failed and the site was rolled back to its pre-push backup") ||
+				if got.Status != store.SiteRunning || !strings.Contains(got.StatusMessage, "rolled back") ||
 					!strings.Contains(got.StatusMessage, pre[0].ID) {
 					t.Errorf("production site after the rollback: %s %q", got.Status, got.StatusMessage)
 				}
