@@ -41,11 +41,6 @@ type Fake struct {
 	// they succeed with empty output; on a site that isn't running they
 	// return provisioner.ErrSiteNotRunning.
 	WPCLI func(siteID string, args []string) (string, error)
-	// MailSwitch, if set, says whether a running site's image has the
-	// outbound mail switch (provisioner.MailSwitchCheckArgs), which
-	// ExecWPCLI answers itself instead of calling WPCLI. By default every
-	// image has it.
-	MailSwitch func(siteID string) bool
 	// RunTaskFunc, if set, handles RunTask calls for existing sites. By
 	// default tasks succeed with empty output.
 	RunTaskFunc func(siteID string, task provisioner.Task) (*provisioner.TaskResult, error)
@@ -273,12 +268,9 @@ func (f *Fake) ExecWPCLI(_ context.Context, siteID string, args []string) (strin
 		f.mu.Unlock()
 		return "", provisioner.ErrSiteNotRunning
 	}
-	handler, mailSwitch := f.WPCLI, f.MailSwitch
+	handler := f.WPCLI
 	f.mu.Unlock()
 
-	if slices.Equal(args, provisioner.MailSwitchCheckArgs()) {
-		return provisioner.MailSwitchAnswer(mailSwitch == nil || mailSwitch(siteID)), nil
-	}
 	// Call the handler without holding the lock so it may inspect the fake.
 	if handler == nil {
 		return "", nil

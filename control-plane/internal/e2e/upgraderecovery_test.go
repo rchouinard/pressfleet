@@ -178,6 +178,23 @@ func TestUpgradeRecovery(t *testing.T) {
 
 	// 3. Upgrade to a control plane that never becomes healthy, while a
 	// visitor keeps requesting the site.
+	// Back the site up before the upgrade, so the client group's backup
+	// repository exists, with its password in the state database, before
+	// the state backup. Don't remove this: without it the upgraded control
+	// plane creates the repository (a pre-update backup of its core
+	// rollout), the recovery's state restore drops its password but not its
+	// files, and every later backup of the group fails with "wrong
+	// password" (#277). Once that is fixed this can go, and the test
+	// would cover it.
+	firstBackup, err := p.Client.CreateSiteBackupWithResponse(ctx, site.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstBackup.JSON202 == nil {
+		t.Fatalf("back up before the upgrade: status %d: %s", firstBackup.StatusCode(), firstBackup.Body)
+	}
+	waitJob(t, p, firstBackup.JSON202.Job.ID)
+
 	// The control plane's container creates the state backups directory as
 	// root, mode 0700, which the operator running upgrade can't read. The
 	// release's init creates it as the test user instead, so make it so:

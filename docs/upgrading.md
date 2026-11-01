@@ -110,4 +110,10 @@ If no file is named pressfleet-<timestamp>-schemaNNNN.db with a timestamp of 202
 
 Don't skip the restore when there is such a file: <previous version> would crash-loop with "database schema is newer than this pressfleet binary supports".
 
+After the restore, a client group's backups can fail with `stored password doesn't open the repository: Fatal: wrong password or no key found` (#277). It happens to a group that had no backup repository before the upgrade and got one while the new control plane ran: the restore removed the repository's password, but the repository's files stayed, and the next backup made a new password. Move that repository aside (local backups; the files only hold what the failed upgrade backed up) and retry the backup, which creates a fresh repository:
+
+    docker compose --project-name pressfleet --project-directory /var/lib/pressfleet/platform exec control-plane mv /var/lib/pressfleet/backups/repositories/<client-group-id> /var/lib/pressfleet/backups/unopenable-<client-group-id>
+
+With S3 backups, move or delete the objects under the group's ID in the bucket instead.
+
 Alternatively, fix the cause and run `pressfleet upgrade` again. A retry keeps the platform project saved by the failed attempt, so the recovery steps still return to the release from before it. An end-to-end test runs these steps exactly as printed (#142).
