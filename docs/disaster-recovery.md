@@ -81,7 +81,7 @@ Run these steps as root on the new host. The data directory can be at another pa
 - **Dashboard sessions and API tokens** are restored with the users. Sessions from before the loss stay valid until they expire. If the old host may have been compromised, reset the users' passwords and revoke their API tokens.
 - **Metrics** (VictoriaMetrics) aren't backed up. History starts again on the new host.
 - **Uploads** and **exports** waiting to be downloaded aren't backed up.
-- **Failed recoveries:** a site whose `site.recover` job failed for good is marked `failed` with the reason, and what the job created is left in place. Fix the cause and restore the site from one of its backups once it runs, or delete it.
+- **Failed recoveries:** a site whose `site.recover` job failed for good is marked `failed` with the reason, and what the job created is left in place. Fix the cause and [restore the site](backups.md#recovering-a-failed-site) from one of its backups, or delete it.
 
 ## Rehearsing
 

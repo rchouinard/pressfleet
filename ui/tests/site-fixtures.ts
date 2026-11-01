@@ -7,7 +7,7 @@ export function site(over: Partial<Site> = {}): Site {
     resources: { cpu: '1.0', memory_reservation_mb: 128, memory_limit_mb: 512 },
     preview_protection: { enabled: false }, maintenance: false, status: 'running',
     environment: 'production', parent_site_id: null, staging: null,
-    admin_credentials_available: false, created_at: '2026-01-02T00:00:00Z', updated_at: '2026-01-02T00:00:00Z',
+    admin_credentials_available: false, provisioned: true, created_at: '2026-01-02T00:00:00Z', updated_at: '2026-01-02T00:00:00Z',
     ...over,
   } as Site
 }
