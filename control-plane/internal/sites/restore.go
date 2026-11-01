@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup"
+	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/id"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
@@ -26,8 +27,9 @@ import (
 // (each group has its own repository and key, and the MVP doesn't copy
 // snapshots between them), a site image must exist with at least the
 // snapshot's WordPress core version, and the target must be running, since
-// the job needs WP-CLI. It then sets the target's status to updating and
-// queues a [RestoreJobType] job on the target, with the target's lock key.
+// the job needs WP-CLI, or failed (see "Restoring a failed site" below). It
+// then sets the target's status to updating and queues a [RestoreJobType] job
+// on the target, with the target's lock key.
 // The job's steps are:
 //
 //  1. prepare: check the snapshot is still in the repository. Its Undo
@@ -97,7 +99,58 @@ import (
 //
 // A job that fails after the restore is complete (turning maintenance
 // mode off, or finishing) doesn't roll the restored site back: its status
-// message says the restore finished and maintenance mode may still be on.
+// message says the restore finished.
+//
+// A status message outlives the moment it was written: turning maintenance mode
+// off doesn't clear it. So it says only what happened and what to do about the
+// data, which stay true, and never whether the site is in maintenance mode. The
+// site's maintenance flag says that, and the dashboard shows the two together.
+// A job's warnings describe a moment in time, so they can say it.
+//
+// # Restoring a failed site
+//
+// A site marked failed that finished provisioning can be restored: it is the
+// way out of a failed restore, refresh, push, or core update whose rollback
+// failed too, and it is the only job of the pipeline that takes one. Refresh
+// and push still need a running target. The request records in the job's
+// payload that the target was failed, and the status message it had, because
+// the status is updating from then on. A payload without the mark, as in any
+// job queued before this existed, is a running site's. The site's containers
+// may be up or missing, its files and database half replaced, and its database
+// gone, so the job differs in these ways:
+//
+//   - prepare first does what site.recover does: it makes sure the database
+//     and object cache user exist, and renders and starts the stack with
+//     provisioner.CreateSite. All of that converges, and none of it touches
+//     data that is there. Neither of the containers' health checks depends on
+//     the site's files or database, so a stack that won't start is a platform
+//     problem, which fails the job before it changes the site's data.
+//   - take_snapshot still takes the pre-restore backup, since what is on the
+//     site may be all that is left of what happened since the last backup. A
+//     broken site may be impossible to back up, though, and that mustn't stand
+//     in the way of the only thing that can repair it. So after a permanent
+//     error, or a failure on attempt undoPointAttempts, the backup is marked
+//     failed, the reason is kept in the job's data (dataNoUndoPoint), a warning
+//     goes on the job, and the job goes on. A running site's failed backup still
+//     stops its restore: it has a working site to lose.
+//   - disable_maintenance leaves maintenance mode on if the site was in it
+//     when the restore started, as for any site, and says so with a warning.
+//     The status message says the restore recovered the site (restoreOutcome),
+//     which gives the dashboard's maintenance alert its reason. The flag can't
+//     tell an operator's choice from what a failed job left behind. It stays on
+//     rather than sending visitors to a site nobody has looked at yet, the same
+//     reasoning as §5.4 step 7, and the person who started the restore can turn
+//     it off.
+//   - A failed job leaves the site failed, whatever its containers are doing,
+//     unless the restore completed. The status message says what state the data
+//     is in and keeps the message the site had before. With no undo point there
+//     is nothing to roll back to once the restore started, so the data stays as
+//     the restore left it. Either way another restore can be started.
+//
+// While the job runs, the site's resume status (store.Sites.ResumeStatus) is
+// empty, since failed is neither running nor stopped. If the platform is
+// recovered on a new host meanwhile, the site comes back running, from its
+// newest snapshot, like any other site being updated from failed.
 //
 // # The shared pipeline
 //
@@ -152,7 +205,16 @@ const (
 	// old the data it brings is (store.Site.StagingDatabaseAsOf). Jobs queued
 	// before it existed lack it, which reads as unknown.
 	dataRestoreSnapshotTime = "restore_snapshot_time"
+	// dataNoUndoPoint is why a failed site's restore went on without a
+	// pre-restore backup; absent if it has one.
+	dataNoUndoPoint = "no_undo_point"
 )
+
+// undoPointAttempts is the job attempt from which a failed site's restore
+// stops retrying its pre-restore backup and goes on without it. Attempts are
+// the job's, not the step's, so retrying until the last one would leave
+// nothing for the restore. Two retries get past a passing failure.
+const undoPointAttempts = 3
 
 // snapshotTimeLayout formats a snapshot's time in job data. RFC 3339 with
 // nanoseconds round-trips exactly, as restic's times are finer than seconds.
@@ -211,6 +273,22 @@ type restorePayload struct {
 	// none, and restores all of it, as those queued before scopes existed
 	// do.
 	Scope *restoreScope `json:"scope,omitempty"`
+	// RecoversFailed marks a site.restore job whose target was failed when it
+	// was requested, and PreviousMessage is the status message the target had
+	// then, which the request replaced.
+	RecoversFailed  bool   `json:"recovers_failed,omitempty"`
+	PreviousMessage string `json:"previous_message,omitempty"`
+}
+
+// failedTarget returns what the job's payload says about a failed target. It
+// is for the rollback too, which must get to the end, so a payload it can't
+// read is a running site's.
+func failedTarget(r *jobs.Run) (recovering bool, previousMessage string) {
+	var p restorePayload
+	if err := r.Payload(&p); err != nil {
+		return false, ""
+	}
+	return p.RecoversFailed, p.PreviousMessage
 }
 
 // restoreScope is backup.RestoreOptions in a job's payload.
@@ -313,8 +391,9 @@ func (s *Service) restores() bool { return s.backups != nil && s.engine != nil }
 // the site as saved and the job. A snapshot that isn't the source site's,
 // a source in another client group, or a snapshot from a WordPress core
 // newer than any site image is a *ValidationError; nothing changes. A
-// target that isn't running is ErrNotRunning; one a job is working on, or
-// that never finished provisioning, ErrBusy or ErrNotProvisioned.
+// target that is neither running nor failed is ErrNotRunning; one a job is
+// working on, or that never finished provisioning, ErrBusy or
+// ErrNotProvisioned.
 func (s *Service) Restore(ctx context.Context, siteID string, req Restore) (store.Site, store.Job, error) {
 	if !s.restores() {
 		return store.Site{}, store.Job{}, ErrNoBackups
@@ -329,8 +408,8 @@ func (s *Service) Restore(ctx context.Context, siteID string, req Restore) (stor
 	if err != nil {
 		return store.Site{}, store.Job{}, err
 	}
-	if target.Status != store.SiteRunning {
-		return store.Site{}, store.Job{}, fmt.Errorf("%w (it is %s)", ErrNotRunning, target.Status)
+	if err := checkRestorable(target); err != nil {
+		return store.Site{}, store.Job{}, err
 	}
 	snap, err := s.checkRestore(ctx, target, source, req.SnapshotID)
 	if err != nil {
@@ -347,19 +426,27 @@ func (s *Service) Restore(ctx context.Context, siteID string, req Restore) (stor
 		if err != nil {
 			return err
 		}
-		if current.Status != store.SiteRunning {
-			return fmt.Errorf("%w (it is %s)", ErrNotRunning, current.Status)
-		}
-		if _, err := sites.SetStatus(ctx, siteID, store.SiteUpdating, ""); err != nil {
+		if err := checkRestorable(current); err != nil {
 			return err
 		}
+		// Conditional, so of two concurrent requests that both saw the site
+		// restorable, only one gets to queue.
+		changed, err := sites.SetStatus(ctx, siteID, store.SiteUpdating, "", current.Status)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return fmt.Errorf("%w: the site's status just changed", ErrBusy)
+		}
+		payload := restorePayload{SourceSiteID: source, SnapshotID: string(snap.ID), SnapshotWPCore: snap.WPCoreVersion}
+		if current.Status == store.SiteFailed {
+			payload.RecoversFailed, payload.PreviousMessage = true, current.StatusMessage
+		}
 		job, err = jobs.Enqueue(ctx, q, jobs.Spec{
-			Type:       RestoreJobType,
-			TargetType: store.JobTargetSite,
-			TargetID:   siteID,
-			Payload: restorePayload{
-				SourceSiteID: source, SnapshotID: string(snap.ID), SnapshotWPCore: snap.WPCoreVersion,
-			},
+			Type:            RestoreJobType,
+			TargetType:      store.JobTargetSite,
+			TargetID:        siteID,
+			Payload:         payload,
 			LockKey:         store.SiteLockKey(siteID),
 			CreatedByUserID: req.CreatedByUserID,
 		})
@@ -375,6 +462,17 @@ func (s *Service) Restore(ctx context.Context, siteID string, req Restore) (stor
 	s.log.InfoContext(ctx, "site restore queued", "site_id", siteID, "source_site_id", source,
 		"snapshot_id", snap.ID, "job_id", job.ID)
 	return site, job, nil
+}
+
+// checkRestorable reports whether a site no job is working on can be restored
+// into, which manageable has checked: a running site, or a failed one that
+// finished provisioning. A stopped site stays refused: starting it is the
+// operator's call, and the job would have to run it.
+func checkRestorable(site store.Site) error {
+	if site.Status != store.SiteRunning && site.Status != store.SiteFailed {
+		return fmt.Errorf("%w (it is %s)", ErrNotRunning, site.Status)
+	}
+	return nil
 }
 
 // checkRestore validates a restore of the source site's snapshot into the
@@ -495,7 +593,11 @@ func (s *Service) restoreHandler() jobs.Handler {
 // the times from before it would understate what a push loses. The restore is
 // always the full scope.
 func (s *Service) finishRestoreSite(ctx context.Context, r *jobs.Run) error {
-	if err := s.finishRestore(ctx, r); err != nil {
+	outcome, err := s.restoreOutcome(r)
+	if err != nil {
+		return err
+	}
+	if err := s.finishRestoreWith(ctx, r, "pre_restore_backup_id", outcome); err != nil {
 		return err
 	}
 	sites := store.NewSites(s.db)
@@ -513,6 +615,33 @@ func (s *Service) finishRestoreSite(ctx context.Context, r *jobs.Run) error {
 	return err
 }
 
+// restoreOutcome is the status message of a failed site that a restore just
+// recovered: what happened, for a site left in maintenance mode, whose alert
+// needs a reason, and that the restore can't be undone, if it can't. A site
+// with neither has none. It doesn't say whether the site is in maintenance mode,
+// since the message outlives that (see "Failure and rollback").
+func (s *Service) restoreOutcome(r *jobs.Run) (string, error) {
+	if recovering, _ := failedTarget(r); !recovering {
+		return "", nil
+	}
+	var noUndo string
+	if _, err := r.Get(dataNoUndoPoint, &noUndo); err != nil {
+		return "", err
+	}
+	var before bool
+	if _, err := r.Get(dataMaintenanceBefore, &before); err != nil {
+		return "", err
+	}
+	if noUndo == "" && !before {
+		return "", nil
+	}
+	msg := "the restore recovered the site from its failed state"
+	if noUndo != "" {
+		msg += "; no pre-restore backup could be taken, so this restore can't be undone (" + noUndo + ")"
+	}
+	return statusMessage(msg, ""), nil
+}
+
 // restoreFlowHandler builds a job type of the restore pipeline. Keep each job
 // type's step names and their order stable: a queued job resumes by step
 // name.
@@ -520,7 +649,12 @@ func (s *Service) restoreFlowHandler(f restoreFlow) jobs.Handler {
 	steps := []jobs.Step{{Name: stepPrepareUpdate, Do: f.prepare, Undo: func(ctx context.Context, r *jobs.Run) error {
 		return s.finishFailedRestore(ctx, r, f.noun)
 	}}}
-	steps = append(steps, s.backups.Steps(store.BackupPreRestore)...)
+	for _, st := range s.backups.Steps(store.BackupPreRestore) {
+		if st.Name == sitebackup.StepSnapshot {
+			st.Do = s.undoPointStep(st.Do)
+		}
+		steps = append(steps, st)
+	}
 	steps = append(steps,
 		jobs.Step{Name: stepEnableMaintenance, Do: s.enableRestoreMaintenance, Undo: s.revertRestoreMaintenance},
 		jobs.Step{
@@ -649,8 +783,66 @@ func (s *Service) prepareRestore(ctx context.Context, r *jobs.Run) error {
 	if src.SiteID != site.ID {
 		from = "a snapshot of site " + src.SiteID
 	}
+	if recovering, _ := failedTarget(r); recovering {
+		if err := s.readyFailedSite(ctx, r); err != nil {
+			return err
+		}
+	}
 	r.Logf("Restoring %s (%s) into %s, after taking a pre-restore backup.", from, shortSnapshot(src.SnapshotID), site.PreviewDomain)
 	return nil
+}
+
+// readyFailedSite gives a failed site what the rest of the job needs, in the
+// steps and with the code site.recover uses: its database and object cache
+// user, which a restore imports into and flushes, and its containers, whose
+// wp-content volume the restic tasks mount and which WP-CLI runs in. All of it
+// converges, so a retry and a site that has everything are fine.
+func (s *Service) readyFailedSite(ctx context.Context, r *jobs.Run) error {
+	r.Logf("The site is marked failed, so its database, object cache user, and containers are put in place first.")
+	if err := s.createDatabase(ctx, r); err != nil {
+		return err
+	}
+	if err := s.createObjectCache(ctx, r); err != nil {
+		return err
+	}
+	return s.startRecoveredStack(ctx, r)
+}
+
+// undoPointStep is the pre-restore backup's snapshot step. For a failed target
+// it goes on without the backup once that looks hopeless (see "Restoring a
+// failed site" above); for any other job it is do.
+func (s *Service) undoPointStep(do jobs.StepFunc) jobs.StepFunc {
+	return func(ctx context.Context, r *jobs.Run) error {
+		if recovering, _ := failedTarget(r); !recovering {
+			return do(ctx, r)
+		}
+		var reason string
+		found, err := r.Get(dataNoUndoPoint, &reason)
+		if err != nil {
+			return err
+		}
+		if found {
+			// An earlier attempt gave up, and may not have got to the record.
+			return s.backups.AbandonJobBackup(ctx, r, reason)
+		}
+		backupErr := do(ctx, r)
+		// A canceled step says nothing about the site: shutting down, or having
+		// lost the job's lease, mustn't cost it its undo point.
+		if backupErr == nil || ctx.Err() != nil {
+			return backupErr
+		}
+		if !jobs.IsPermanent(backupErr) && r.Job().Attempts < undoPointAttempts {
+			return backupErr
+		}
+		if err := r.Set(dataNoUndoPoint, backupErr.Error()); err != nil {
+			return err
+		}
+		if err := s.backups.AbandonJobBackup(ctx, r, backupErr.Error()); err != nil {
+			return err
+		}
+		r.Warnf("Couldn't take a pre-restore backup of the failed site, so this restore can't be rolled back or undone. Going on, because the restore is what can repair the site: %v", backupErr)
+		return nil
+	}
 }
 
 func shortSnapshot(snapID string) string {
@@ -706,7 +898,7 @@ func (s *Service) revertRestoreMaintenance(ctx context.Context, r *jobs.Run) err
 	case complete:
 		return nil
 	case started:
-		r.Warnf("The site stays in maintenance mode: its data was restored and rolled back. Turn maintenance mode off once it has been checked.")
+		r.Warnf("The site stays in maintenance mode, because the restore changed its data. Turn maintenance mode off once it has been checked.")
 		return nil
 	}
 	var before bool
@@ -864,6 +1056,16 @@ func (s *Service) rollbackRestore(ctx context.Context, r *jobs.Run, noun string)
 	}
 	if started, err := flag(r, dataRestoreStarted); err != nil || !started {
 		return err
+	}
+	var noUndo string
+	if _, err := r.Get(dataNoUndoPoint, &noUndo); err != nil {
+		return err
+	}
+	if noUndo != "" {
+		// Marked like a rollback that failed, so the core stays as it is too:
+		// the database may need the newer one.
+		r.Warnf("There is no pre-%s backup to roll back to; the site's data stays as the %s left it.", noun, noun)
+		return r.Set(dataRollbackError, "no pre-"+noun+" backup could be taken: "+noUndo)
 	}
 	rec, found, err := s.backups.JobBackup(ctx, r)
 	if err != nil {
@@ -1088,6 +1290,9 @@ func (s *Service) disableRestoreMaintenance(ctx context.Context, r *jobs.Run) er
 	}
 	if before {
 		r.Logf("The site was in maintenance mode before the restore, so it stays in it.")
+		if recovering, _ := failedTarget(r); recovering {
+			r.Warnf("The site is restored but not serving visitors yet: it stays in maintenance mode, which may be what its failure left on. Check it, then turn maintenance mode off.")
+		}
 		return nil
 	}
 	if _, err := store.NewSites(s.db).SetMaintenance(ctx, site.ID, false); err != nil {
@@ -1109,7 +1314,12 @@ func (s *Service) finishRestore(ctx context.Context, r *jobs.Run) error {
 // finishRestoreAs is finishRestore with the result key that names the job's
 // own backup, the one that undoes it.
 func (s *Service) finishRestoreAs(ctx context.Context, r *jobs.Run, backupKey string) error {
-	if err := s.finishUpdate(ctx, r); err != nil {
+	return s.finishRestoreWith(ctx, r, backupKey, "")
+}
+
+// finishRestoreWith is finishRestoreAs with the status message to set.
+func (s *Service) finishRestoreWith(ctx context.Context, r *jobs.Run, backupKey, message string) error {
+	if err := s.finishUpdateWith(ctx, r, message); err != nil {
 		return err
 	}
 	src, err := jobRestoreSource(r)
@@ -1119,7 +1329,8 @@ func (s *Service) finishRestoreAs(ctx context.Context, r *jobs.Run, backupKey st
 	result := map[string]string{"site_id": r.Job().TargetID, "source_site_id": src.SiteID, "snapshot_id": src.SnapshotID}
 	if rec, found, err := s.backups.JobBackup(ctx, r); err != nil {
 		return err
-	} else if found {
+	} else if found && rec.Status == store.BackupSucceeded {
+		// A failed site's restore can go on without it; then nothing undoes it.
 		result[backupKey] = rec.ID
 	}
 	for k, v := range result {
@@ -1132,7 +1343,8 @@ func (s *Service) finishRestoreAs(ctx context.Context, r *jobs.Run, backupKey st
 
 // finishFailedRestore is the last Undo of a failed job of the restore
 // pipeline: it sets the site's status and says in its status message what the
-// failed job left behind. A site being deleted is left alone.
+// failed job did, in words that stay true whatever happens to the maintenance
+// flag (see "Failure and rollback"). A site being deleted is left alone.
 func (s *Service) finishFailedRestore(ctx context.Context, r *jobs.Run, noun string) error {
 	siteID := r.Job().TargetID
 	var rollbackErr, revertErr string
@@ -1166,25 +1378,51 @@ func (s *Service) finishFailedRestore(ctx context.Context, r *jobs.Run, noun str
 			return err
 		}
 	}
+	var noUndo string
+	if _, err := r.Get(dataNoUndoPoint, &noUndo); err != nil {
+		return err
+	}
+	recovering, previous := failedTarget(r)
 	status := s.observedStatus(ctx, siteID)
 	var prefix string
 	switch {
 	case complete:
-		prefix = "the " + noun + " finished, but the job failed afterwards; the site may still be in maintenance mode"
+		prefix = "the " + noun + " finished, but the job failed afterwards"
+		r.Warnf("The site may still be in maintenance mode: the job failed after the %s finished.", noun)
+	case started && noUndo != "":
+		status = store.SiteFailed
+		prefix = noun + " failed, and there is no pre-" + noun + " backup to roll back to, because it couldn't be taken" +
+			"; the site's data may be partly restored. Restore a backup to try again"
 	case rollbackErr != "":
 		status = store.SiteFailed
-		prefix = noun + " failed, and rolling back to the pre-" + noun + " backup failed too" + backupNote +
-			"; the site stays in maintenance mode. Restore the pre-" + noun + " backup to try again"
+		again := "Restore a backup to try again"
+		if backupNote != "" {
+			again = "Restore the pre-" + noun + " backup to try again"
+		}
+		prefix = noun + " failed, and rolling back to the pre-" + noun + " backup failed too" + backupNote + ". " + again
 	case revertErr != "":
 		status = store.SiteFailed
-		prefix = noun + " failed and was rolled back" + backupNote + ", but the site's previous WordPress version couldn't be put back"
-	case started:
+		prefix = noun + " failed and was rolled back" + backupNote + ", but the site's previous WordPress version couldn't be put back" +
+			"; restore a backup to try again, which also puts the recorded version back on the containers"
+	case started && recovering:
+		// The undo point holds the state the site failed in, so getting back
+		// to it isn't getting better, whatever its containers are doing.
+		status = store.SiteFailed
 		prefix = noun + " failed and the site was rolled back to its pre-" + noun + " backup" + backupNote +
-			"; it stays in maintenance mode until you turn it off"
+			", which is the state it failed in. Restore a backup to try again"
+	case started:
+		prefix = noun + " failed and the site was rolled back to its pre-" + noun + " backup" + backupNote
+	case recovering:
+		status = store.SiteFailed
+		prefix = noun + " failed before changing the site's data. Restore a backup to try again"
 	default:
 		prefix = noun + " failed before changing the site"
 	}
-	msg := statusMessage(prefix, r.Job().Error)
+	detail := r.Job().Error
+	if recovering && !complete && previous != "" {
+		detail += "; before this " + noun + ": " + previous
+	}
+	msg := statusMessage(prefix, detail)
 	changed, err := store.NewSites(s.db).SetStatus(ctx, siteID, status, msg, store.SiteUpdating)
 	if err != nil {
 		return err

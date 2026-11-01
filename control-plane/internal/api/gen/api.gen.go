@@ -3445,6 +3445,11 @@ type Site struct {
 	// PrimaryDomain The domain the site is served on once live (`POST /api/v1/sites/{site_id}/go-live`); null until then.
 	PrimaryDomain *string `json:"primary_domain"`
 
+	// Provisioned False for a site whose provisioning or clone failed: its secrets
+	// are gone and it can only be deleted. A `failed` site for which this
+	// is true can be restored from a backup (`restoreSite`).
+	Provisioned bool `json:"provisioned"`
+
 	// Resources Limits for the site as a whole; the platform splits them between the site's containers.
 	Resources ResourceLimits `json:"resources"`
 
@@ -3467,7 +3472,10 @@ type Site struct {
 	// right now is the site's `runtime`.
 	Status SiteStatus `json:"status"`
 
-	// StatusMessage Details about the status, such as why the site failed.
+	// StatusMessage Details about the status, such as why the site failed: what happened,
+	// which stays true afterwards. It doesn't say whether the site is in
+	// maintenance mode (`maintenance` does), and turning that off doesn't
+	// clear it.
 	StatusMessage *string `json:"status_message,omitempty"`
 
 	// UpdatedAt Examples: 2026-09-26T17:25:00Z

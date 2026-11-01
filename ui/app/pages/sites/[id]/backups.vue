@@ -5,7 +5,7 @@
 // with <JobProgress> and the lists reload when it ends.
 import { toApiError, type ApiError } from '../../../utils/api-error'
 import {
-  canBackUpSite, canRestoreSite, restoreBlockedReason, restorePayload, scheduleFormPayload,
+  canBackUpSite, canRestoreSite, failedSiteNotice, maintenanceNote, restoreBlockedReason, restoreFinishedNotice, restorePayload, scheduleFormPayload,
   type Backup, type BackupSchedule, type ScheduleFormValues,
 } from '../../../utils/backup'
 import { createEndedJobs, followedJob, type Job } from '../../../utils/job'
@@ -132,7 +132,11 @@ const ended = createEndedJobs()
 async function onJobUpdate(job: Job) {
   if (!ended.add(job)) return
   await Promise.all([refreshSite(), backups.load(), loadSchedule()])
-  if (job.type === 'site.restore' && job.state === 'succeeded') notify.success('Restore finished', name.value)
+  if (job.type === 'site.restore' && job.state === 'succeeded') {
+    const notice = restoreFinishedNotice(name.value, site.value)
+    if (notice.stillInMaintenance) notify.info(notice.title, notice.description)
+    else notify.success(notice.title, notice.description)
+  }
 }
 const busyWithJob = computed(() => jobId.value !== undefined && !ended.has(jobId.value))
 
@@ -210,6 +214,7 @@ async function exportBackup(b: Backup) {
 const mayRestore = computed(() => can('backup.restore') && !!site.value && canRestoreSite(site.value) && !busyWithJob.value)
 const blockedReason = computed(() => (can('backup.restore') && site.value ? restoreBlockedReason(site.value) : undefined))
 const mayBackUp = computed(() => !!site.value && canBackUpSite(site.value) && !busyWithJob.value)
+const failedNotice = computed(() => (can('backup.restore') && site.value ? failedSiteNotice(site.value) : undefined))
 </script>
 
 <template>
@@ -232,9 +237,16 @@ const mayBackUp = computed(() => !!site.value && canBackUpSite(site.value) && !b
         <JobProgress :job-id="jobId" @update="onJobUpdate" />
       </section>
 
-      <p v-if="site.maintenance && site.status_message" class="rounded-md border border-default bg-elevated p-3 text-sm" role="status">
-        {{ site.status_message }}
-      </p>
+      <div v-if="site.status === 'failed'" class="rounded-md border border-default bg-elevated p-3 text-sm" role="alert" data-testid="failed-site">
+        <p class="font-medium">This site failed</p>
+        <p v-if="site.status_message" class="mt-1 whitespace-pre-line break-words text-muted">{{ site.status_message }}</p>
+        <p v-if="maintenanceNote(site)" class="mt-1" data-testid="maintenance-note">{{ maintenanceNote(site) }}</p>
+        <p v-if="failedNotice" class="mt-1">{{ failedNotice }}</p>
+      </div>
+      <div v-else-if="site.maintenance && site.status_message" class="rounded-md border border-default bg-elevated p-3 text-sm" role="status">
+        <p class="font-medium">{{ maintenanceNote(site) }}</p>
+        <p class="mt-1 whitespace-pre-line break-words text-muted">{{ site.status_message }}</p>
+      </div>
 
       <div v-if="marked" class="rounded-md border border-default bg-elevated p-3 text-sm" role="status" data-testid="marked-backup">
         <p class="font-medium">
@@ -297,6 +309,7 @@ const mayBackUp = computed(() => !!site.value && canBackUpSite(site.value) && !b
       <BackupRestoreDialog
         v-model:open="restoreOpen"
         :site-name="site.name"
+        :site="site"
         :backup="restoreTarget"
         :busy="restoreBusy"
         :error="restoreError"
