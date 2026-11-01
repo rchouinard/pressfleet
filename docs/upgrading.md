@@ -81,11 +81,13 @@ To fix it, get a current build of that image onto the host, and create the stagi
 
 #### Other changes in this release
 
-**CPU limits.** A site's CPU limit is now split between its `nginx` and `php` containers in multiples of 0.01 CPU. Docker's systemd cgroup driver rounds each container's limit up to a multiple of 10 ms per second, so a site set to 0.75 CPUs used to get 0.76. After the upgrade, existing sites move to the new split through the templates rollout, one site at a time with a health check. Only containers whose split changed are recreated, so a site on a limit that divides cleanly, such as the default of 1 CPU, isn't restarted.
+**CPU limits.** A site's CPU limit is now split between its `nginx` and `php` containers in multiples of 0.01 CPU. Docker's systemd cgroup driver rounds each container's limit up to a multiple of 10 ms per second, so a site set to 0.75 CPUs used to get 0.76. After the upgrade, a templates rollout goes through every site, one at a time with a health check. Only containers whose split changed are recreated, so a site on a limit that divides cleanly, such as the default of 1 CPU, isn't restarted.
+
+**Host CLI.** When a failed upgrade's recovery steps can't read the state backup directory on the host, the CLI now lists it through Docker, instead of wrongly saying that the state database needs no restore. Install the new CLI before upgrading, as usual ([Version skew](#version-skew)).
 
 **Database.** Migrations 0032 to 0035 add what staging sites keep: the job a job waits for (0032), a staging site's state and outbound mail switch (0033), the alert rule option `include_staging` (0034), and the ages of a staging site's database and uploads (0035). Like all migrations they are forward-only: the control plane can't be moved back to the previous release without restoring the state backup ([Recovering from a failed upgrade](#recovering-from-a-failed-upgrade)).
 
-**Not changed.** No new settings. The site templates are unchanged, so no template rollout runs. The oldest release this one upgrades from is unchanged, and the host CLI has no changes since the previous release, so the CLI and control plane skew rules are unaffected ([Version skew](#version-skew)). The built-in alert rules skip staging sites ([Alerts](configuration.md#alerts)).
+**Not changed.** No new settings. The oldest release this one upgrades from is unchanged, and so are the CLI and control plane skew rules ([Version skew](#version-skew)). The built-in alert rules skip staging sites ([Alerts](configuration.md#alerts)).
 
 ## PostgreSQL state databases
 
