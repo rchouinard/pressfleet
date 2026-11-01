@@ -371,6 +371,26 @@ func TestPurgeCacheDocker(t *testing.T) {
 	s.exec(t, ctx, "nginx", "touch", cacheDir+"/writable")
 }
 
+// TestMailSwitchCheckDocker runs the staging clone's mail switch check
+// (provisioner.HasMailSwitch) against a real site, before WordPress is
+// installed, and checks that provisioner.MailSwitchPath is a file in the
+// image. Set PRESSFLEET_TEST_SITE_PHP_IMAGE to try an older build, which is
+// expected to fail this test.
+func TestMailSwitchCheckDocker(t *testing.T) {
+	s := newDockerSite(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if _, err := s.prov.CreateSite(ctx, s.cfg); err != nil {
+		t.Fatal(err)
+	}
+	present, err := provisioner.HasMailSwitch(ctx, s.prov, s.cfg.ID)
+	if err != nil || !present {
+		t.Errorf("HasMailSwitch = %v, %v; want true", present, err)
+	}
+	s.exec(t, ctx, "php", "test", "-f", provisioner.MailSwitchPath)
+	s.exec(t, ctx, "nginx", "test", "-f", provisioner.MailSwitchPath)
+}
+
 // TestExecWPCLIDocker runs WP-CLI through the provisioner against a real
 // site: as the site UID, with hostile arguments reaching it verbatim, with
 // structured errors, bounded output, and a timeout that also ends the

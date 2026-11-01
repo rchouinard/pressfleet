@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 )
 
 // ErrNoContainer is returned by Project.ServiceContainer when the service
@@ -192,4 +193,105 @@ func InspectContainer(ctx context.Context, docker ExecFunc, container string) (C
 		d.Networks[name] = n.IPAddress
 	}
 	return d, nil
+}
+
+// HealthProbe is one run of a container's healthcheck.
+type HealthProbe struct {
+	Start    time.Time `json:"Start"`
+	End      time.Time `json:"End"`
+	ExitCode int       `json:"ExitCode"`
+	// Output is what the probe printed, cut to maxProbeOutput bytes.
+	Output string `json:"Output"`
+}
+
+// maxProbeOutput bounds the output kept per probe. Docker itself keeps at
+// most 4 KiB of it.
+const maxProbeOutput = 2048
+
+// ContainerHealth is the state of a container that has a healthcheck, as
+// far as explaining why it isn't healthy needs it.
+type ContainerHealth struct {
+	Name string
+	// Status is the container's state: "running", "exited", "restarting".
+	Status       string
+	ExitCode     int
+	OOMKilled    bool
+	RestartCount int
+	// Health is the healthcheck's status: "starting", "healthy", or
+	// "unhealthy".
+	Health        string
+	FailingStreak int
+	// Probes are the most recent runs of the healthcheck, oldest first
+	// (Docker keeps five).
+	Probes []HealthProbe
+}
+
+// Healthchecks reports the health of each container of the project (running
+// or not) that has a healthcheck. Docker forgets a failed probe's output
+// with the container, so a test that wants to know why a container never
+// became healthy has to ask before the project is taken down. Only the
+// container's state is read, never its configuration, which holds the
+// environment and so secrets.
+func (p Project) Healthchecks(ctx context.Context) ([]ContainerHealth, error) {
+	if err := p.validate(); err != nil {
+		return nil, err
+	}
+	out, err := p.docker()(ctx, nil, "container", "ls", "--all", "--no-trunc",
+		"--filter", "label=com.docker.compose.project="+p.Name, "--format", "{{.ID}}")
+	if err != nil {
+		return nil, fmt.Errorf("compose project %s: %w", p.Name, err)
+	}
+	ids := strings.Fields(string(out))
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	args := append([]string{"container", "inspect", "--format",
+		`{"Name":{{json .Name}},"RestartCount":{{json .RestartCount}},"State":{{json .State}}}`, "--"}, ids...)
+	out, err = p.docker()(ctx, nil, args...)
+	if err != nil {
+		return nil, fmt.Errorf("compose project %s: inspecting containers: %w", p.Name, err)
+	}
+	var all []ContainerHealth
+	for line := range strings.Lines(string(out)) {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var info struct {
+			Name         string
+			RestartCount int
+			State        struct {
+				Status    string
+				ExitCode  int
+				OOMKilled bool
+				Health    *struct {
+					Status        string
+					FailingStreak int
+					Log           []HealthProbe
+				}
+			}
+		}
+		if err := json.Unmarshal([]byte(line), &info); err != nil {
+			return nil, fmt.Errorf("compose project %s: parsing inspect output: %w", p.Name, err)
+		}
+		if info.State.Health == nil {
+			continue
+		}
+		h := ContainerHealth{
+			Name:          strings.TrimPrefix(info.Name, "/"),
+			Status:        info.State.Status,
+			ExitCode:      info.State.ExitCode,
+			OOMKilled:     info.State.OOMKilled,
+			RestartCount:  info.RestartCount,
+			Health:        info.State.Health.Status,
+			FailingStreak: info.State.Health.FailingStreak,
+			Probes:        info.State.Health.Log,
+		}
+		for i := range h.Probes {
+			if o := h.Probes[i].Output; len(o) > maxProbeOutput {
+				h.Probes[i].Output = o[:maxProbeOutput] + "... (cut)"
+			}
+		}
+		all = append(all, h)
+	}
+	return all, nil
 }

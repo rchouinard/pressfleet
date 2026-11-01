@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -41,8 +42,32 @@ type fakeUpgradePlatform struct {
 	// onUp runs on every Up, e.g. to write a migration backup.
 	onUp func()
 
+	// listDir answers a listing through a project's control plane
+	// container; nil lists the directory on the host.
+	listDir func(projectDir, dir string) ([]string, error)
+
 	ups   []compose.UpOptions
 	pulls int
+	// listed are the project directories listings ran in.
+	listed []string
+}
+
+func (p fakeUpgradeProject) ListDir(_ context.Context, service, dir string) ([]string, error) {
+	p.f.mu.Lock()
+	defer p.f.mu.Unlock()
+	if service != "control-plane" {
+		p.f.t.Errorf("listing a directory in service %q", service)
+	}
+	p.f.listed = append(p.f.listed, p.dir)
+	if p.f.listDir != nil {
+		return p.f.listDir(p.dir, dir)
+	}
+	entries, err := os.ReadDir(dir)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names, err
 }
 
 func (f *fakeUpgradePlatform) project(_, dir string, files []string) cli.UpgradeProject {
@@ -544,5 +569,94 @@ func TestUpgradeGuideHasRecoverySteps(t *testing.T) {
 	}
 	if !strings.Contains(string(guide), steps) {
 		t.Errorf("docs/upgrading.md must show the recovery steps exactly as upgrade prints them:\n\n%s", steps)
+	}
+}
+
+func TestUpgradeGuideHasUncheckedRecoveryStep(t *testing.T) {
+	step, err := cli.GuideRecoveryStepUnchecked()
+	if err != nil {
+		t.Fatal(err)
+	}
+	guide, err := os.ReadFile("../../../docs/upgrading.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(guide), step) {
+		t.Errorf("docs/upgrading.md must show step 2 of the recovery steps for a host that can't look for the backup exactly as upgrade prints it:\n\n%s", step)
+	}
+}
+
+// failedUpgrade runs an upgrade whose new control plane migrates, writing a
+// backup in the state backups directory, and then fails.
+func (e *upgradeEnv) failedUpgrade() (backup string, r result) {
+	e.t.Helper()
+	backups := e.path("state", "backups")
+	if err := os.MkdirAll(backups, 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	backup = fmt.Sprintf("pressfleet-%s-schema0029.db", time.Now().UTC().Format("20060102T150405.000Z"))
+	e.platform.onUp = func() {
+		if err := os.WriteFile(filepath.Join(backups, backup), nil, 0o600); err != nil {
+			e.t.Error(err)
+		}
+	}
+	e.platform.upErr = errors.New("container pressfleet-control-plane-1 is unhealthy")
+	return backup, e.upgrade("")
+}
+
+// The state backups directory belongs to root, so an operator who isn't root
+// can't read it: the recovery steps must still find the backup, through a
+// container of the previous control plane.
+func TestUpgradeRecoveryListsUnreadableBackupsThroughDocker(t *testing.T) {
+	e := newUpgradeEnv(t, "v1.2.2")
+	cli.HostListDir(t, func(dir string) ([]string, error) {
+		return nil, &fs.PathError{Op: "open", Path: dir, Err: fs.ErrPermission}
+	})
+	backup, r := e.failedUpgrade()
+	if r.code != 1 {
+		t.Fatalf("exit %d, want 1\n%s\n%s", r.code, r.stdout, r.stderr)
+	}
+	prev := e.path("upgrade", "previous-platform")
+	want := "--project-directory " + prev + " run --rm --no-deps control-plane state restore " + e.path("state", "backups", backup)
+	if !strings.Contains(r.stderr, want) {
+		t.Errorf("recovery steps lack %q:\n%s", want, r.stderr)
+	}
+	if strings.Contains(r.stderr, "needs no restore") || strings.Contains(r.stderr, "couldn't check") {
+		t.Errorf("recovery steps doubt a backup found through Docker:\n%s", r.stderr)
+	}
+	// The previous release's project lists first.
+	if len(e.platform.listed) != 1 || e.platform.listed[0] != prev {
+		t.Errorf("listings ran in %v, want only %s", e.platform.listed, prev)
+	}
+}
+
+func TestUpgradeRecoveryWhenBackupsCannotBeListed(t *testing.T) {
+	e := newUpgradeEnv(t, "v1.2.2")
+	cli.HostListDir(t, func(dir string) ([]string, error) {
+		return nil, &fs.PathError{Op: "open", Path: dir, Err: fs.ErrPermission}
+	})
+	e.platform.listDir = func(string, string) ([]string, error) { return nil, errors.New("docker: no such image") }
+	_, r := e.failedUpgrade()
+	if r.code != 1 {
+		t.Fatalf("exit %d, want 1\n%s\n%s", r.code, r.stdout, r.stderr)
+	}
+	prev := e.path("upgrade", "previous-platform")
+	for _, want := range []string{
+		"couldn't check whether the control plane migrated the state database",
+		"--project-directory " + prev + " run --rm --no-deps --no-TTY --entrypoint ls control-plane -1 " + e.path("state", "backups"),
+		"state restore " + e.path("state", "backups") + "/<file name from the listing>",
+		"database schema is newer than this pressfleet binary supports",
+		"looking for the pre-migration backup",
+	} {
+		if !strings.Contains(r.stderr, want) {
+			t.Errorf("recovery steps lack %q:\n%s", want, r.stderr)
+		}
+	}
+	if strings.Contains(r.stderr, "needs no restore") {
+		t.Errorf("recovery steps claim no restore is needed without knowing:\n%s", r.stderr)
+	}
+	// Both the previous and the current project were tried.
+	if len(e.platform.listed) != 2 {
+		t.Errorf("listings ran in %v, want two projects", e.platform.listed)
 	}
 }

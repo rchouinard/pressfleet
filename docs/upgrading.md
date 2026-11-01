@@ -93,8 +93,21 @@ The previous control plane image is named by digest when it was pulled from a re
 
 - With PostgreSQL, step 2 says to restore your own backup instead.
 - If the control plane didn't migrate the state database (no pre-migration backup was written after the upgrade started), step 2 says no restore is needed, and nothing is lost.
+- The backups directory belongs to root, so `upgrade` run by an operator in the docker group can't read it and lists it with a container instead; see below.
 - If the upgrade recreated a service only because a file it mounts changed, step 4 has a second command that recreates it on the previous files.
 - Sites keep serving throughout, unless the upgrade recreated Traefik, MariaDB, or the object cache and one of them is what failed. Recovering from those is not covered by these steps; look at `docker compose --project-name pressfleet --project-directory /var/lib/pressfleet/platform logs <service>` first.
 - Restoring the state database loses whatever the control plane recorded after the upgrade started.
+
+The backups directory (`<data_dir>/state/backups`) belongs to root, because the control plane's container creates it. When the user running `upgrade` can't read it, `upgrade` lists it with a container of the previous control plane image, which needs Docker as the rest of the recovery does. Only if that fails too does step 2 not say whether a restore is needed. It then reads as follows, and you must do the check: skipping a needed restore leaves the previous release's control plane crash-looping with `database schema is newer than this pressfleet binary supports`.
+
+2. This command couldn't check whether the control plane migrated the state database, so check it yourself by listing the state backups directory:
+
+    docker compose --project-name pressfleet --project-directory /var/lib/pressfleet/upgrade/previous-platform run --rm --no-deps --no-TTY --entrypoint ls control-plane -1 /var/lib/pressfleet/state/backups
+
+If no file is named pressfleet-<timestamp>-schemaNNNN.db with a timestamp of 20260101T120000.000Z or later (when the upgrade started), the control plane didn't migrate the database, and nothing needs restoring: go on to step 3. Otherwise restore the first such file, the backup from before the migration, with the previous control plane image (<previous control plane image>):
+
+    docker compose --project-name pressfleet --project-directory /var/lib/pressfleet/upgrade/previous-platform run --rm --no-deps control-plane state restore /var/lib/pressfleet/state/backups/<file name from the listing>
+
+Don't skip the restore when there is such a file: <previous version> would crash-loop with "database schema is newer than this pressfleet binary supports".
 
 Alternatively, fix the cause and run `pressfleet upgrade` again. A retry keeps the platform project saved by the failed attempt, so the recovery steps still return to the release from before it. An end-to-end test runs these steps exactly as printed (#142).
