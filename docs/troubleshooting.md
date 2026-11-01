@@ -106,6 +106,29 @@ Common causes:
 - **The disk is full.** `df -h /var/lib/pressfleet /var/lib/docker`.
 - **No preview base domain.** Creating a site returns `409` while `preview_base_domain` is unset.
 
+## A staging refresh or push failed
+
+A copy between a production site and a staging site is two jobs on the **Jobs** page: a `site.backup` job (the **Staging sync** backup of the source), and then `site.clone`, `site.refresh`, or `site.push`, which waits for it. Open the failed job: the step that failed and its error are on it, and the site's page shows the same in its status message. What state the site is left in depends on how far the job got. [Staging sites](staging.md) has the background.
+
+**It failed before changing the site.** The status message starts with `refresh failed before changing the site` or `push failed before changing the site`, and the site is back to `running`. Nothing needs undoing. The usual causes:
+
+- **The source's backup failed.** The copy job fails at its first step. Fix the backup first: look at the `site.backup` job ([Backups](#backups)). A push also fails when the staging site was deleted, was marked `failed`, or was being deleted while the push waited.
+- **A database push the production site's core policy doesn't allow.** The request is refused with `422` (the dialog says "The database can't be pushed: production's core policy doesn't allow it"), or, if the staging site's core changed while the job waited, the job fails with `refusing the database push`. Approve the branch on production's **WordPress core** card, or push without the database ([WordPress core](staging.md#wordpress-core)).
+- **The snapshot is gone.** A refresh from an existing backup fails if retention removed that backup meanwhile. Choose another, or a fresh copy.
+- **`409`, "another job is working on the site".** A job is running on the site (or, for a push, on either site), or the site isn't running: a refresh needs the staging site running, and a push needs the production site running. Wait for the job, or start the site.
+
+**It failed after changing the site, and was rolled back.** The status message reads `push failed and the site was rolled back to its pre-push backup (pre-push backup <id>)`, followed by the error (for a refresh, `refresh ...` and `pre-refresh`). The data is as it was before the job. The site is **left in maintenance mode on purpose** (visitors get the `503` page) so you can check it first. Look at the job's error, then turn maintenance mode off: the site's page, **Settings** > **Maintenance mode** > **Turn maintenance mode off**, or `PUT /api/v1/sites/{id}/maintenance` with `{"enabled": false}`. A push without the database rolls back if WordPress can't load the pushed code (`WordPress can't load the pushed code`): fix the code on the staging site and push again.
+
+**The site is marked `failed`.** The message says what went wrong and ends by telling you to restore a backup: rolling back failed too (`push failed, and rolling back to the pre-push backup failed too (pre-push backup <id>). Restore the pre-push backup to try again`), there was no backup to roll back to (`push failed, and there is no pre-push backup to roll back to, because it couldn't be taken; the site's data may be partly restored. Restore a backup to try again`), or the data was rolled back but not the WordPress version (`push failed and was rolled back (...), but the site's previous WordPress version couldn't be put back; restore a backup to try again, which also puts the recorded version back on the containers`). A restore of a site that was already `failed` can itself fail the same way, and says so. The way out is to restore a backup, which works on a failed site: usually the pre-push backup the message names. Follow [Recovering a failed site](backups.md#recovering-a-failed-site), and fix the cause first if it is still there (a full disk, an unreachable repository). If the site was in maintenance mode when the restore started, it stays in maintenance mode afterwards: check it, then turn maintenance mode off. [Export and import](backups.md#exporting-a-site) is only for moving a backup to another client group, or a last resort if a restore can't work. A staging site whose creation failed is different: see below.
+
+**It finished, but the job failed afterwards.** The message reads `the push finished, but the job failed afterwards`, followed by the error. The new content is in place and isn't rolled back. The site may still be in maintenance mode: check it and turn maintenance mode off.
+
+**You want to take a push back.** That is an [undo](staging.md#undoing-a-push), not a failure: restore the pre-push backup.
+
+**A staging site stays `failed` after it was created.** The `site.clone` job failed and rolled back what it built; the production site was not touched. The reason is on the staging site's page ("creating the staging site failed: ..."). A site whose provisioning or clone failed has nothing to recover and can only be deleted: delete the staging site and create it again.
+
+**The clone stopped with "doesn't include the outbound mail switch".** The host has a site image from before the switch, and the job refused to copy production's data into a site that could send real email. Get a current build of the image onto the host, then create the staging site again ([A staging site is only created on an image with the mail switch](upgrading.md#a-staging-site-is-only-created-on-an-image-with-the-mail-switch)).
+
 ## A site is down or slow
 
 1. Is it `running`? A site in `stopped`, `failed`, or `updating` isn't serving. The site page shows `status` and its message.

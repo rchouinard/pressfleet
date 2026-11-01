@@ -41,6 +41,7 @@ If someone loses their second factor, an Admin can reset it from the dashboard's
 | Create, import, start, stop sites; go live; maintenance mode; cache purge; deploy code; SFTP | | ✓ | ✓ |
 | Log in to a site's WordPress admin from the dashboard | | ✓ | ✓ |
 | Back up, restore, export sites; approve core updates; open read-only database sessions | | ✓ | ✓ |
+| Create, refresh, push, and delete staging sites ([Staging sites](staging.md)) | | ✓ | ✓ |
 | Create and edit client groups; manage alert rules | | ✓ | ✓ |
 | Delete sites (with or without their backups); delete or offboard client groups | | | ✓ |
 | Open read-write database sessions | | | ✓ |
@@ -119,5 +120,6 @@ If the client's domain points at a CDN or load balancer in front of this host, i
 
 - [Set up backups](backups.md) and look at the first backup that runs.
 - [Set up alerts](operating.md#alert-channels) so someone hears when a site goes down.
+- [Try changes on a staging site](staging.md) before they reach a live site: a copy on its own preview address that you can refresh from production and push back.
 - [Read the security notes](security.md), above all the part about API tokens.
 - Developers: each registers an SSH key under **Account & tokens** and connects with `sftp -P 2222 <site-slug>@<dashboard domain>` ([SFTP gateway](configuration.md#sftp-gateway)). Operators and Admins only.

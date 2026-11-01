@@ -100,7 +100,7 @@ The uptime check runs from the PressFleet host itself, so **it cannot tell you t
 
 ### Alert rules
 
-Eleven rules are created at first start and are on by default: site down, elevated 5xx rate, certificate expiring and certificate renewal failing, backup failed and backup stale, disk nearly full, container restart loop, PHP-FPM worker saturation, Redis eviction spike, and plugin or theme updates pending. You can edit their thresholds, durations, and text, or disable them, but not delete them. The table is in [Alerts](configuration.md#alerts). Operators and Admins add rules on the **Alerts** > **Rules** page (`/api/v1/alert-rules`): a PromQL expression, a threshold or an "is true" condition, a duration, and a severity.
+Eleven rules are created at first start and are on by default: site down, elevated 5xx rate, certificate expiring and certificate renewal failing, backup failed and backup stale, disk nearly full, container restart loop, PHP-FPM worker saturation, Redis eviction spike, and plugin or theme updates pending. You can edit their thresholds, durations, and text, or disable them, but not delete them. The table is in [Alerts](configuration.md#alerts). The site rules skip [staging sites](staging.md) unless a rule (a built-in one can be edited too) sets **Include staging sites**. Operators and Admins add rules on the **Alerts** > **Rules** page (`/api/v1/alert-rules`): a PromQL expression, a threshold or an "is true" condition, a duration, and a severity.
 
 An alert is `pending` until its duration has passed, then `firing`, then `resolved`. Resolved alerts are kept 90 days. If VictoriaMetrics is down, alerts stay as they are: nothing fires or resolves.
 
