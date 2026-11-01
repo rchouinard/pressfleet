@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { defineComponent } from 'vue'
+import { defineComponent, h } from 'vue'
 import {
   backupKindLabel, backupStatusView, canBackUpSite, canRestoreSite, describeSchedule, formatBytes,
-  intervalOptions, isRestorable, restoreBlockedReason, restoreConfirmed, restorePayload,
+  failedSiteNotice, intervalOptions, maintenanceNote, isRestorable, restoreBlockedReason, restoreConfirmed, restoreDialogNotes, restoreFinishedNotice, restorePayload,
   scheduleFormPayload, scheduleToForm, scheduleUnchanged, validateSchedule,
   type Backup, type BackupSchedule,
 } from '../app/utils/backup'
 import { can } from '../app/utils/permissions'
+import BackupRestoreDialog from '../app/components/backup/BackupRestoreDialog.vue'
 import BackupTable from '../app/components/backup/BackupTable.vue'
 import { uiStubs } from './stubs'
 
@@ -63,11 +64,61 @@ describe('restore rules', () => {
   })
 
   it('needs a running site, and explains why otherwise', () => {
-    expect(canRestoreSite({ status: 'running' })).toBe(true)
-    expect(canRestoreSite({ status: 'stopped' })).toBe(false)
-    expect(restoreBlockedReason({ status: 'running' })).toBeUndefined()
-    expect(restoreBlockedReason({ status: 'stopped' })).toMatch(/Start the site/)
-    expect(restoreBlockedReason({ status: 'updating' })).toMatch(/running/)
+    expect(canRestoreSite({ status: 'running', provisioned: true })).toBe(true)
+    expect(canRestoreSite({ status: 'stopped', provisioned: true })).toBe(false)
+    expect(restoreBlockedReason({ status: 'running', provisioned: true })).toBeUndefined()
+    expect(restoreBlockedReason({ status: 'stopped', provisioned: true })).toMatch(/Start the site/)
+    expect(restoreBlockedReason({ status: 'updating', provisioned: true })).toMatch(/running/)
+  })
+
+  it('takes a failed site only if it finished provisioning', () => {
+    expect(canRestoreSite({ status: 'failed', provisioned: true })).toBe(true)
+    expect(restoreBlockedReason({ status: 'failed', provisioned: true })).toBeUndefined()
+    expect(failedSiteNotice({ status: 'failed', provisioned: true })).toMatch(/recovers this site/)
+
+    expect(canRestoreSite({ status: 'failed', provisioned: false })).toBe(false)
+    expect(restoreBlockedReason({ status: 'failed', provisioned: false })).toMatch(/never finished provisioning/)
+    expect(failedSiteNotice({ status: 'failed', provisioned: false })).toBeUndefined()
+    expect(failedSiteNotice({ status: 'running', provisioned: true })).toBeUndefined()
+  })
+
+  it('tells the truth about restoring a failed site', () => {
+    const running = restoreDialogNotes({ status: 'running', maintenance: false }).join(' ')
+    expect(running).toMatch(/can be undone/)
+    expect(running).not.toMatch(/marked failed/)
+
+    const failed = restoreDialogNotes({ status: 'failed', maintenance: true }).join(' ')
+    expect(failed).toMatch(/marked failed/)
+    expect(failed).toMatch(/can't be undone or rolled back/)
+    expect(failed).toMatch(/stays in it after the restore/)
+    expect(failed).toMatch(/you can try again/)
+    expect(failed).not.toMatch(/restored automatically/)
+
+    const notInMaintenance = restoreDialogNotes({ status: 'failed', maintenance: false }).join(' ')
+    expect(notInMaintenance).toMatch(/serves visitors as soon as the restore finishes/)
+    expect(notInMaintenance).not.toMatch(/stays in it/)
+  })
+
+  it('takes what it says about maintenance mode from the live flag', () => {
+    expect(maintenanceNote({ status: 'running', maintenance: false })).toBeUndefined()
+    expect(maintenanceNote({ status: 'failed', maintenance: false })).toBeUndefined()
+    expect(maintenanceNote({ status: 'running', maintenance: true })).toMatch(/until it is turned off/)
+    expect(maintenanceNote({ status: 'failed', maintenance: true })).toMatch(/once the site is recovered/)
+  })
+
+  it('says after a restore whether visitors can see the site', () => {
+    const stillIn = restoreFinishedNotice('Acme', { maintenance: true })
+    expect(stillIn.stillInMaintenance).toBe(true)
+    expect(stillIn.description).toBe('Acme is still in maintenance mode: visitors see the maintenance page until you check it and turn it off.')
+    const serving = restoreFinishedNotice('Acme', { maintenance: false })
+    expect(serving.stillInMaintenance).toBe(false)
+    expect(serving.description).toBe('Acme is serving visitors.')
+  })
+
+  // ui/e2e/backups.spec.ts finds the toast by this exact title.
+  it('titles the toast of a running site\'s restore "Restore finished"', () => {
+    expect(restoreFinishedNotice('Acme', { maintenance: false }).title).toBe('Restore finished')
+    expect(restoreFinishedNotice('Acme', { maintenance: true }).title).toBe('Restore finished')
   })
 
   it('backs up settled sites but not provisioning, deleting or failed ones', () => {
@@ -129,6 +180,32 @@ describe('schedule', () => {
     expect(describeSchedule({ ...schedule, enabled: false })).toBe('Scheduled backups are off.')
     expect(describeSchedule(schedule)).toBe('Daily, within the platform backup window.')
     expect(describeSchedule({ ...schedule, interval_hours: 6, hour: 3 })).toBe('Every 6 hours, starting at 03:00 UTC.')
+  })
+})
+
+describe('BackupRestoreDialog', () => {
+  const UModal = defineComponent({
+    props: ['open'],
+    setup(props: { open: boolean }, { slots }) {
+      return () => (props.open ? h('div', { role: 'dialog' }, [slots.body?.(), slots.footer?.()]) : null)
+    },
+  })
+  const render = (site: { status: 'running' | 'failed', maintenance: boolean }) => mount(BackupRestoreDialog, {
+    props: { open: true, siteName: 'Acme', site, backup: backup() },
+    global: { stubs: { ...uiStubs, UModal, ProblemAlert: true } },
+  })
+
+  it('warns about the undo point and maintenance mode for a failed site', () => {
+    const text = render({ status: 'failed', maintenance: true }).text()
+    expect(text).toContain('can\'t be undone or rolled back')
+    expect(text).toContain('stays in it after the restore')
+    expect(text).not.toContain('restored automatically')
+  })
+
+  it('keeps the promises of a running site\'s restore', () => {
+    const text = render({ status: 'running', maintenance: false }).text()
+    expect(text).toContain('this can be undone by restoring it')
+    expect(text).toContain('restored automatically')
   })
 })
 

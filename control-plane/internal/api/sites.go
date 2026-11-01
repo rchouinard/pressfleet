@@ -671,6 +671,7 @@ func siteResponse(s store.Site, aliases []string) gen.Site {
 		Status:                    gen.SiteStatus(s.Status),
 		URL:                       &url,
 		AdminCredentialsAvailable: s.AdminPasswordSecretRef != "",
+		Provisioned:               s.WPSaltsSecretRef != "",
 		PreviewProtection:         gen.PreviewProtection{Enabled: s.PreviewProtection},
 		Maintenance:               s.Maintenance,
 		CreatedAt:                 s.CreatedAt,

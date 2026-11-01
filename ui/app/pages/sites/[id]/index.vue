@@ -11,6 +11,7 @@ import {
   type Site, type SiteAdminCredentials,
 } from '../../../utils/site'
 import { deleteBlockers } from '../../../utils/staging'
+import { canRestoreSite, maintenanceNote } from '../../../utils/backup'
 import { maintenanceLeftOn } from '../../../utils/staging-sync'
 import { countSnapshots, deleteSiteQuery, type SnapshotCount } from '../../../utils/site-delete'
 
@@ -42,7 +43,9 @@ const loadError = computed(() => loaded.value?.error ?? undefined)
 const name = computed(() => site.value?.name ?? id.value.slice(0, 8))
 const staging = computed(() => (site.value ? isStaging(site.value) : false))
 // A failed restore, refresh or push rolls back and leaves the site in
-// maintenance mode with a status message saying so (design doc §5.4 step 7).
+// maintenance mode. Its status message says what happened and stays after
+// maintenance mode is off, so the live flag decides what is said about visitors
+// (design doc §5.4 step 7).
 const maintenanceReason = computed(() => (site.value ? maintenanceLeftOn(site.value) : undefined))
 const productionId = computed(() => (site.value && staging.value ? productionIdOf(site.value) : undefined))
 
@@ -334,6 +337,12 @@ function when(iso: string): string {
       >
         <p class="font-medium">This site failed</p>
         <p class="mt-1 whitespace-pre-line break-words text-muted">{{ site.status_message }}</p>
+        <p v-if="maintenanceNote(site)" class="mt-1" data-testid="maintenance-note">{{ maintenanceNote(site) }}</p>
+        <p v-if="canRestoreSite(site)" class="mt-1" data-testid="failed-site-recovery">
+          To recover it, restore a backup on its
+          <NuxtLink :to="`/sites/${site.id}/backups`" class="text-primary underline">Backups</NuxtLink>
+          page.
+        </p>
       </div>
       <div
         v-else-if="maintenanceReason"
@@ -347,7 +356,7 @@ function when(iso: string): string {
           Visitors see the maintenance page until it is turned off. Check the site, then turn it off under
           <a href="#set-maint-heading" class="text-primary underline">Maintenance mode</a> in its settings.
           <NuxtLink :to="`/sites/${site.id}/backups`" class="text-primary underline">Backups</NuxtLink>
-          lists the backup taken before it, to restore.
+          lists the site's backups, to restore one.
         </p>
       </div>
       <p v-else-if="site.status_message" class="text-sm text-muted">{{ site.status_message }}</p>

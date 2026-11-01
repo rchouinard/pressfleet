@@ -113,6 +113,10 @@ type override struct {
 	// env is extra environment of the control plane, on top of the
 	// rendered one.
 	env map[string]string
+	// traefikMemory, if set, replaces Traefik's memory limit and sets
+	// GOMEMLIMIT to the given value, for releases older than the limit
+	// Traefik needs.
+	traefikMemory, traefikGoMemLimit string
 }
 
 // render returns the override file's contents.
@@ -125,6 +129,10 @@ services:
       - "127.0.0.1::80"
       - "127.0.0.1::443"
 `)
+	if o.traefikMemory != "" {
+		b.WriteString("    environment:\n      GOMEMLIMIT: " + strconv.Quote(o.traefikGoMemLimit) + "\n")
+		b.WriteString("    deploy:\n      resources:\n        limits:\n          memory: " + o.traefikMemory + "\n")
+	}
 	if len(o.traefikDependsOn) > 0 {
 		b.WriteString("    depends_on:\n")
 		for _, s := range o.traefikDependsOn {
@@ -325,6 +333,16 @@ func Image(t *testing.T) string {
 func WriteOverride(t *testing.T, dir string) {
 	t.Helper()
 	override{}.write(t, dir)
+}
+
+// WriteReleaseOverride is WriteOverride for a release older than the Traefik
+// memory limit raised in 6f4041a (96 MiB to 192 MiB). At 96 MiB, on a busy
+// runner, Traefik serves but every healthcheck exceeds its 5s timeout, which
+// fails the release's install; the tests that use this aren't about Traefik's
+// memory, so they run it with the current limit.
+func WriteReleaseOverride(t *testing.T, dir string) {
+	t.Helper()
+	override{traefikMemory: "192M", traefikGoMemLimit: "144MiB"}.write(t, dir)
 }
 
 // Restart recreates the control plane with extra PRESSFLEET_* environment
@@ -564,6 +582,9 @@ func (p *Platform) teardown(t *testing.T) {
 		} else {
 			t.Logf("container logs of %s:\n%s", p.Project.Name, logs)
 		}
+		// Logs don't show why a healthcheck failed. Docker keeps that
+		// with the container, so it has to be read before Down removes it.
+		p.logHealth(ctx, t)
 	}
 	// Hand anything the root container wrote back to the test user, so the
 	// temporary directory can be removed. It fails harmlessly if the control
@@ -589,6 +610,35 @@ func (p *Platform) teardown(t *testing.T) {
 	case !res.Empty():
 		t.Errorf("project %s left resources behind: %+v", p.Project.Name, res)
 	}
+}
+
+// logHealth logs the healthcheck state of the project's containers that
+// have one, with the output of the most recent probes: the whole log for a
+// container that isn't healthy, the last probe for one that is.
+func (p *Platform) logHealth(ctx context.Context, t *testing.T) {
+	health, err := p.Project.Healthchecks(ctx)
+	if err != nil {
+		t.Logf("collecting healthchecks: %v", err)
+		return
+	}
+	var b strings.Builder
+	for _, h := range health {
+		fmt.Fprintf(&b, "%s: health %s (failing streak %d), state %s, exit code %d, OOM killed %t, restarts %d\n",
+			h.Name, h.Health, h.FailingStreak, h.Status, h.ExitCode, h.OOMKilled, h.RestartCount)
+		probes := h.Probes
+		if h.Health == "healthy" && len(probes) > 1 {
+			probes = probes[len(probes)-1:]
+		}
+		for _, probe := range probes {
+			fmt.Fprintf(&b, "    probe %s to %s, %s, exit code %d: %s\n",
+				probe.Start.Format(time.RFC3339), probe.End.Format(time.RFC3339), probe.End.Sub(probe.Start).Round(time.Millisecond),
+				probe.ExitCode, strings.TrimSpace(probe.Output))
+		}
+	}
+	if b.Len() == 0 {
+		b.WriteString("no container of the project has a healthcheck\n")
+	}
+	t.Logf("container healthchecks of %s:\n%s", p.Project.Name, b.String())
 }
 
 // EnsureImages makes the images available to the local Docker daemon,
