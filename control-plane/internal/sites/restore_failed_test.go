@@ -82,11 +82,16 @@ func (e *restoreEnv) requireStep(t *testing.T, d store.JobDetail, wantInLog stri
 
 // requireNoMaintenanceClaim: a status message outlives the maintenance flag, so
 // it mustn't say whether the site is in maintenance mode, or to turn it off.
-// The earlier message it may quote is held to the same rule.
+// The earlier message it may quote is held to the same rule. A job error may
+// still name the step that failed, such as disable_maintenance, which is what
+// happened and stays true.
 func requireNoMaintenanceClaim(t *testing.T, site store.Site) {
 	t.Helper()
-	if strings.Contains(strings.ToLower(site.StatusMessage), "maintenance") {
-		t.Errorf("status message speaks of maintenance mode: %q", site.StatusMessage)
+	msg := strings.ToLower(site.StatusMessage)
+	for _, claim := range []string{"maintenance mode", "maintenance page", "turn it off", "turned off"} {
+		if strings.Contains(msg, claim) {
+			t.Errorf("status message says %q: %q", claim, site.StatusMessage)
+		}
 	}
 }
 
