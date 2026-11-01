@@ -273,6 +273,8 @@ func TestSomething(t *testing.T) {
 }
 ```
 
+A test that creates a staging site calls `e2e.EnsureStagingImages` on its `site-php` images before it creates the production site: a local image is otherwise used as it is, and a staging site is refused if its image predates the mail switch. It pulls such a tag once, and leaves an image with the switch alone.
+
 `e2e.Start` is slow (seconds locally, longer on a cold CI runner), so group related checks as subtests of one test. `p.NewClient` gives an unauthenticated client, `p.Login` logs in another user, and `p.BearerClient` uses an API token. `p.Project` is the platform's `compose.Project`, for checks on the containers themselves.
 
 Session clients (`p.Client`, and every client `p.Login` returns, including after `Restart`) reauthenticate on demand. The platform keeps `two_factor.reauthentication` on, as it ships, so sensitive actions (deleting sites, creating users, tokens, and SSH keys, read-write database sessions) are refused with the `reauthentication-required` problem type once the session's last check is older than 10 minutes, and many tests take them later than that. When that happens, the client posts the user's password to `POST /api/v1/auth/reauthenticate` and sends the request once more, body included. Harness users have no second factor, so the password is enough. Bearer clients are never asked.

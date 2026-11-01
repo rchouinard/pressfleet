@@ -122,6 +122,7 @@ func TestDisasterRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	e2e.EnsureImages(t, images.PHP, images.Nginx)
+	e2e.EnsureStagingImages(t, images.PHP)
 	groupID := createGroup(t, p, "E2E Recovery Agency")
 	created := createSite(t, p, groupID, "E2E Recovery", php)
 	siteProject = compose.Project{Name: compose.SiteProjectName(created.Site.ID), Dir: filepath.Join(dataDir, "sites", created.Site.ID)}

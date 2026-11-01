@@ -260,6 +260,8 @@ func siteImages(t *testing.T) (php, otherPHP string) {
 		t.Fatal(err)
 	}
 	e2e.EnsureImages(t, images.PHP, images.Nginx, other.PHP)
+	// Specs create staging sites through the dashboard (staging.spec.ts).
+	e2e.EnsureStagingImages(t, images.PHP, other.PHP)
 	return php, otherPHP
 }
 

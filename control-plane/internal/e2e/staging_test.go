@@ -77,18 +77,7 @@ func TestStagingSites(t *testing.T) {
 		t.Fatal(err)
 	}
 	e2e.EnsureImages(t, base.PHP, base.Nginx)
-	// The mail switch (#201) came after the first images of some WordPress
-	// releases, and local images are used as they are, so a host can hold a build
-	// from before it. Pull such a tag once; a build with the switch, such as one
-	// from `make images`, isn't touched. If that doesn't help, say what is wrong
-	// rather than failing on the mail check.
-	refreshed, err := compose.EnsureImageFile(ctx, nil, base.PHP, "/opt/pressfleet/mu-plugins/pressfleet-environment/mail-switch.php")
-	if err != nil {
-		t.Fatalf("%s has no mail switch; pull it or run `make images`: %v", base.PHP, err)
-	}
-	if refreshed {
-		t.Logf("refreshed %s: the local build had no mail switch", base.PHP)
-	}
+	e2e.EnsureStagingImages(t, base.PHP)
 
 	f := &stagingFlow{p: p, hc: p.IngressClient(t)}
 
