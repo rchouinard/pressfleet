@@ -56,4 +56,4 @@ CI (`.github/workflows/ci.yml`) runs lint, a `go mod tidy` check, tests, and the
 
 - Commit subject in the imperative, then a short bullet body. Reference issues with `Closes #N`.
 - End commit messages with the `Co-Authored-By` trailer.
-- Since 1.0, work on a branch per issue (from `origin/main`) and land it through a pull request; never commit to `main`. Add the `e2e` label to PRs that change site workflows.
+- Since 1.0, work on a branch per issue (from `origin/main`) and land it through a pull request; never commit to `main`. Add the `e2e` label (quick tier) to PRs that change site workflows, or `e2e:full` when a change reaches across them; a PR runs when the label is added, so re-add it to test new commits (docs/testing.md, "In CI").

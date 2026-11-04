@@ -6,8 +6,8 @@ PressFleet has four kinds of tests.
 | --- | --- | --- | --- |
 | Unit | `make test` | A C compiler (race detector) | Every push and PR |
 | Docker | `make test-platform`, `make images-test`, `PRESSFLEET_DOCKER_TESTS=1 go test ./...` | Docker Engine with Compose v2 | `images-test` in the Images workflow |
-| End to end | `make test-e2e` | Docker Engine with Compose v2 | Push to `main`, manual runs, and PRs labeled `e2e` |
-| Dashboard end to end | `make test-ui-e2e` | Docker Engine with Compose v2, Node.js and pnpm, Chromium | Push to `main`, manual runs, and PRs labeled `e2e` |
+| End to end | `make test-e2e`, `make test-e2e-smoke` | Docker Engine with Compose v2 | Nightly, manual runs, and PRs labeled `e2e` (quick tier) or `e2e:full` |
+| Dashboard end to end | `make test-ui-e2e` | Docker Engine with Compose v2, Node.js and pnpm, Chromium | Nightly, manual runs, PRs labeled `e2e:full`, and PRs labeled `e2e` that change `ui/` or `api/` |
 
 Unit tests never need Docker. Besides `make test-platform`, a few packages have Docker tests that start the pinned platform image they need, such as `sitedb/mariadb` and `objectcache/redis` (the object cache isolation test: one site can't read, list, or flush another's keys). Tests that do are skipped unless `PRESSFLEET_DOCKER_TESTS=1`. The `sitedb/mariadb` dump and import round trip also runs the `mariadb-dump` and `mariadb` client programs, from `PATH` or from the directory in `PRESSFLEET_TEST_MARIADB_CLIENT_DIR`, and is skipped if they aren't found. State database tests run against SQLite, and also against PostgreSQL when `PRESSFLEET_TEST_POSTGRES_DSN` is set.
 
@@ -60,9 +60,20 @@ When the test ends, pass or fail, the harness runs `docker compose down --volume
 mise exec -- make test-e2e
 ```
 
-This builds the control plane image as `pressfleet-control-plane:e2e`, runs the tests against it with verbose output, and removes the image afterwards. The first run also pulls MariaDB and Valkey.
+This builds the control plane image as `pressfleet-control-plane:e2e`, runs the tests against it with verbose output, and removes the image afterwards. The first run also pulls MariaDB and Valkey. The whole suite runs one test after another, which takes about 25 minutes on a workstation and about 40 on a CI runner.
 
-To run the tests against an image you already built, for example to rerun one test:
+`RUN` selects tests with `go test -run`, and `make test-e2e-smoke` runs the quick tier, the tests that labeled PRs run in CI:
+
+```sh
+mise exec -- make test-e2e RUN=TestStagingSites                  # one test
+mise exec -- make test-e2e RUN='^TestSite(Backup|Restore)$'      # a few
+mise exec -- make test-e2e RUN='TestSiteCreateDelete/object_cache' # subtests (spaces become _; the test's setup still runs)
+mise exec -- make test-e2e-smoke                                 # the quick tier, a few minutes
+```
+
+The quick tier is `E2E_SMOKE` in the Makefile: one test for each area that boots the platform, provisions a site, or goes through Traefik (`TestAPI`, `TestIngress`, `TestUploads`, `TestTwoFactor`, `TestInit`, `TestUpgrade`, `TestTenantIsolation`, `TestSecuritySetReachesExistingSites`, `TestSiteCreateDelete`). Add a test to it only if it's quick and catches breakage that the others don't. Everything else runs nightly, or on request.
+
+Each of these builds the image first. To skip that and run the tests against an image you already built:
 
 ```sh
 make image IMAGE=pressfleet-control-plane:dev
@@ -283,11 +294,30 @@ The harness never runs the `docker` CLI itself. It goes through `compose.Project
 
 ### In CI
 
-The `E2E` workflow (`.github/workflows/e2e.yml`) runs `make test-e2e` on the runner's own Docker Engine. Add the `e2e` label to a PR to run it there. When the push or PR changes `images/`, it first builds the site images the tests use from the tree (`make images SITE_PHP="<two newest PHP branches>"`), since the published ones are stale or, on `main`, still being published by the Images workflow; otherwise the tests pull them from GHCR. It doesn't use Docker-in-Docker: the control plane mounts the data directory at the host's path and drives the host's Docker daemon, and with a `docker:dind` service those paths would have to exist inside the dind container instead of on the runner.
+The `E2E` workflow (`.github/workflows/e2e.yml`) runs the tests on the runner's own Docker Engine. The whole suite takes most of an hour of runner time, so the workflow runs once for each request, not on every push:
+
+| Trigger | API suite | Dashboard suite |
+| --- | --- | --- |
+| Adding the `e2e` label to a PR | Quick tier (`make test-e2e-smoke`) | When the PR changes `ui/` or `api/` |
+| Adding the `e2e:full` label to a PR | Everything | Yes |
+| Nightly (06:17 UTC), on `main` | Everything, unless no commit has landed since the last nightly run | Yes |
+| Manual run (Actions → E2E → Run workflow, or `gh workflow run`) | The chosen tier, or a `go test -run` pattern | With the full tier |
+
+A PR runs when one of its labels is added, not on later pushes. To test new commits, remove the label and add it again; adding `e2e:full` to a PR that already has `e2e` runs everything and cancels the quick run. Use `e2e` for most PRs that touch site workflows, and `e2e:full` when a change reaches across them (the job runner, the provisioner, the harness) or before merging something risky. Anything the quick tier misses shows up in the next nightly run.
+
+A manual run tests any branch, which is the way to run one slow test in CI without running the rest:
+
+```sh
+gh workflow run e2e.yml --ref my-branch -f run=TestStagingSites
+gh workflow run e2e.yml --ref my-branch -f tier=full
+gh run watch "$(gh run list --workflow e2e.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+```
+
+The `Plan` job decides what runs and writes it to the run's summary. When the change under test touches `images/` (compared with the PR's base, the last passing nightly run, or, for a manual run, where the branch leaves `main`), it has the site images the tests use built from the tree (`make images SITE_PHP="<two newest PHP branches>"`), since the published ones are stale; otherwise the tests pull them from GHCR. A nightly run is skipped when a finished nightly run already tested the same commit, whether it passed or failed; rerun a failure by hand. It doesn't use Docker-in-Docker: the control plane mounts the data directory at the host's path and drives the host's Docker daemon, and with a `docker:dind` service those paths would have to exist inside the dind container instead of on the runner.
 
 The dashboard suite runs in the same workflow as its own job, `Dashboard E2E`, side by side with this one (see [Dashboard end-to-end tests](#dashboard-end-to-end-tests)).
 
-The tests run one after another. `make test-e2e` gives `go test` 60 minutes and the job 75, room for a cold runner that also builds the site images; raise both together when the suite outgrows them. Besides the site images, the tests pull the platform's pinned images, Pebble and its DNS server (`ghcr.io/letsencrypt`), and RustFS (Docker Hub) for `TestSiteBackupS3`. They need no MariaDB client on the runner: SQL runs in the platform's MariaDB container, or through the Go driver for database sessions.
+The tests run one after another. `make test-e2e` gives `go test` 60 minutes and the job 75 (30 for the quick tier), room for a cold runner that also builds the site images; raise both together when the suite outgrows them. Besides the site images, the tests pull the platform's pinned images, Pebble and its DNS server (`ghcr.io/letsencrypt`), and RustFS (Docker Hub) for `TestSiteBackupS3`. They need no MariaDB client on the runner: SQL runs in the platform's MariaDB container, or through the Go driver for database sessions.
 
 ## Dashboard end-to-end tests
 
@@ -432,7 +462,7 @@ Add an endpoint there, and a method to `harness.ts`, when a spec needs another s
 
 ### In CI
 
-The `Dashboard E2E` job of the E2E workflow (`.github/workflows/e2e.yml`) runs on the same events as the API suite (push to `main`, manual runs, and PRs labeled `e2e`), on its own runner, side by side with it. It installs the UI's dependencies (no browser: `TestDashboard` pulls Playwright's image), builds the site images from the tree when `images/` changed (as the `E2E` job does), and runs `make test-ui-e2e`. `make test-ui-e2e` gives `go test` 40 minutes and Playwright 20 (`globalTimeout`) for the first run and 6 for the second, and the job has 55; raise them together when the suite outgrows them. On failure it uploads the traces, screenshots, HTML report, and the platform's and browser server's logs as the `dashboard-e2e` artifact.
+The `Dashboard E2E` job of the E2E workflow (`.github/workflows/e2e.yml`) runs nightly, on manual runs of the full tier, on PRs labeled `e2e:full`, and on PRs labeled `e2e` that change `ui/` or `api/` (see the API suite's [In CI](#in-ci)), on its own runner, side by side with the API suite. It installs the UI's dependencies (no browser: `TestDashboard` pulls Playwright's image), builds the site images from the tree when the `Plan` job says to, and runs `make test-ui-e2e`. `make test-ui-e2e` gives `go test` 40 minutes and Playwright 20 (`globalTimeout`) for the first run and 6 for the second, and the job has 55; raise them together when the suite outgrows them. On failure it uploads the traces, screenshots, HTML report, and the platform's and browser server's logs as the `dashboard-e2e` artifact.
 
 ### Coverage
 
