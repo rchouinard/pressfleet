@@ -97,13 +97,30 @@ test-platform: ## Bring up the platform project with a local image against real 
 		go test -count=1 -v -run TestPlatformUp ./control-plane/internal/platform/; \
 		status=$$?; docker image rm pressfleet-control-plane:platform-test >/dev/null; exit $$status
 
+# RUN selects tests with `go test -run`, e.g. RUN=TestStagingSites or
+# RUN='^TestSite(Backup|Restore)$'; empty runs them all. $(value) keeps a `$`
+# in the pattern from being expanded by make, and the export hands it to the
+# shell as data, so a quote in it can't break the command.
+RUN ?=
+test-e2e: export E2E_RUN := $(value RUN)
+
+# E2E_SMOKE is the quick tier: one test per area that boots the platform,
+# provisions a site, or goes through Traefik, about four minutes in all.
+# Labeled PRs run it; the nightly run and `e2e:full` run everything (see
+# docs/testing.md, "In CI").
+E2E_SMOKE := ^(TestAPI|TestIngress|TestUploads|TestTwoFactor|TestInit|TestUpgrade|TestTenantIsolation|TestSecuritySetReachesExistingSites|TestSiteCreateDelete)$$
+
 .PHONY: test-e2e
-test-e2e: ## Run the end-to-end tests against a freshly built image and real Docker (see docs/testing.md)
+test-e2e: ## Run the end-to-end tests against a freshly built image and real Docker; RUN=<regexp> selects tests (see docs/testing.md)
 	$(MAKE) image IMAGE=pressfleet-control-plane:e2e
 	GH_TOKEN="$${GH_TOKEN:-$$(gh auth token 2>/dev/null)}" \
 	PRESSFLEET_DOCKER_TESTS=1 PRESSFLEET_TEST_CONTROL_PLANE_IMAGE=pressfleet-control-plane:e2e \
-		go test -count=1 -v -timeout 60m ./control-plane/internal/e2e/; \
+		go test -count=1 -v -timeout 60m -run "$$E2E_RUN" ./control-plane/internal/e2e/; \
 		status=$$?; docker image rm pressfleet-control-plane:e2e >/dev/null; exit $$status
+
+.PHONY: test-e2e-smoke
+test-e2e-smoke: ## Run the quick tier of the end-to-end tests (E2E_SMOKE), as labeled PRs do
+	$(MAKE) test-e2e RUN='$(E2E_SMOKE)'
 
 # TestBackupMemory, which the regular suite skips because it writes tens of GiB.
 # TMPDIR must be on disk: the test refuses tmpfs (see docs/testing.md).

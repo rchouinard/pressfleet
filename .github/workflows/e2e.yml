@@ -6,10 +6,19 @@ name: E2E
 # Chromium (ui/e2e with Playwright, job dashboard). The two jobs run side
 # by side, each on its own runner.
 #
-#   push to main       always
-#   manual             always
-#   pull requests      only when labeled `e2e` (booting the platform costs
-#                      minutes; add the label to a PR that needs it)
+# The suite costs most of an hour of runner time, so it runs once per
+# request rather than on every push (docs/testing.md, "In CI"):
+#
+#   PR labeled `e2e`       the quick tier (make test-e2e-smoke, a few
+#                          minutes); the dashboard suite too when the PR
+#                          changes ui/ or api/
+#   PR labeled `e2e:full`  everything
+#   nightly                everything, on main, unless main hasn't changed
+#                          since the last nightly run
+#   manual                 a tier, or a `go test -run` pattern, on any branch
+#
+# A PR runs only when one of those labels is added, not on later pushes:
+# remove and add the label again to test new commits.
 #
 # This is a separate workflow so that labeling a PR doesn't rerun CI.
 #
@@ -21,41 +30,137 @@ name: E2E
 # throwaway Docker host.
 #
 # Site images: the tests use local images and pull missing ones from GHCR,
-# where the Images workflow publishes them from main. When a push or PR
-# changes images/, the published images are stale (on main, the Images
-# workflow is still publishing the new ones while this runs), so this
-# workflow first builds the ones the tests use from the tree: the latest
-# WordPress on the two newest PHP branches. The M2 acceptance test also
-# pulls Pebble and its DNS server, public images on ghcr.io/letsencrypt.
+# where the Images workflow publishes them from main. When the change under
+# test touches images/, the published images are stale, so this workflow
+# first builds the ones the tests use from the tree: the latest WordPress on
+# the two newest PHP branches. The M2 acceptance test also pulls Pebble and
+# its DNS server, public images on ghcr.io/letsencrypt.
 
 on:
-  push:
-    branches: [main]
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [labeled]
+  schedule:
+    - cron: "17 6 * * *" # daily 06:17 UTC, after Image updates
   workflow_dispatch:
+    inputs:
+      tier:
+        description: Tests to run (`smoke` is the quick tier labeled PRs run)
+        type: choice
+        options: [full, smoke]
+        default: full
+      run:
+        description: Or a `go test -run` pattern for the API suite, e.g. TestStagingSites (replaces the tier; skips the dashboard suite)
+        type: string
+        default: ""
 
 permissions:
   contents: read
   packages: read # pull the site images published by images.yml
 
+# Adding any other label to a PR also triggers this workflow; such a run
+# gets a group of its own, so it doesn't cancel a run in progress.
 concurrency:
-  group: e2e-${{ github.ref }}
+  group: e2e-${{ github.ref }}-${{ (github.event_name == 'pull_request' && github.event.label.name != 'e2e' && github.event.label.name != 'e2e:full') && github.run_id || 'tests' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  e2e:
-    name: E2E
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e')
+  plan:
+    name: Plan
+    if: github.event_name != 'pull_request' || github.event.label.name == 'e2e' || github.event.label.name == 'e2e:full'
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
-    # The tests run one after another, about 25 minutes on a workstation
-    # (go test's own limit is 60m, in the Makefile); a cold runner that
-    # also builds the site images needs more.
-    timeout-minutes: 75
+    permissions:
+      contents: read
+      actions: read # find the last nightly run
+    outputs:
+      e2e: ${{ steps.plan.outputs.e2e }}
+      tier: ${{ steps.plan.outputs.tier }}
+      run: ${{ steps.plan.outputs.run }}
+      dashboard: ${{ steps.plan.outputs.dashboard }}
+      build_images: ${{ steps.plan.outputs.build_images }}
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0 # to diff against the base or previous commit
+          fetch-depth: 0 # to diff against the base or the last tested commit
+      - id: plan
+        name: Decide what to test
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          LABEL: ${{ github.event.label.name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          INPUT_TIER: ${{ inputs.tier }}
+          INPUT_RUN: ${{ inputs.run }}
+        run: |
+          set -euo pipefail
+          e2e=true tier=full pattern="" base="" skip=""
+          case "$EVENT" in
+          pull_request)
+            if [[ "$LABEL" == e2e:full ]]; then tier=full; else tier=smoke; fi
+            base="$BASE" ;;
+          schedule)
+            # A commit is tested once a night at most: skip when a finished
+            # nightly run already had this commit, whatever its result (rerun
+            # a failure by hand). Images are compared with the last commit a
+            # nightly run passed on.
+            nightly() {
+              gh run list --workflow e2e.yml --event schedule --branch main --status completed \
+                --limit 30 --json headSha,conclusion --jq "$1"
+            }
+            if nightly '.[] | select(.conclusion == "success" or .conclusion == "failure") | .headSha' |
+              grep -qxF "$GITHUB_SHA"; then
+              e2e=false skip="main is unchanged since the last nightly run"
+            fi
+            base="$(nightly 'map(select(.conclusion == "success"))[0].headSha // empty')" ;;
+          workflow_dispatch)
+            tier="$INPUT_TIER" pattern="$INPUT_RUN"
+            if [[ -n "$pattern" ]]; then tier=custom; fi
+            base="$(git merge-base origin/main HEAD)" ;;
+          esac
+
+          # Without a base to compare with, assume everything changed.
+          if [[ -n "$base" ]] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            changed="$(git diff --name-only "$base" HEAD)"
+          else
+            changed=$'images/\nui/'
+          fi
+          if grep -q '^images/' <<<"$changed"; then build_images=true; else build_images=false; fi
+          case "$tier" in
+          full) dashboard=true ;;
+          smoke) if grep -qE '^(ui|api)/' <<<"$changed"; then dashboard=true; else dashboard=false; fi ;;
+          *) dashboard=false ;;
+          esac
+          if [[ "$e2e" == false ]]; then dashboard=false; fi
+
+          {
+            echo "e2e=$e2e"
+            echo "tier=$tier"
+            echo "run=$pattern"
+            echo "dashboard=$dashboard"
+            echo "build_images=$build_images"
+          } >>"$GITHUB_OUTPUT"
+          {
+            if [[ -n "$skip" ]]; then echo "Skipped: $skip."; fi
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| API suite | \`$e2e\` |"
+            echo "| Tier | \`$tier\` |"
+            if [[ -n "$pattern" ]]; then echo "| \`-run\` | \`${pattern//|/\\|}\` |"; fi
+            echo "| Dashboard suite | \`$dashboard\` |"
+            echo "| Site images built from the tree | \`$build_images\` |"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  e2e:
+    name: E2E
+    needs: plan
+    if: needs.plan.outputs.e2e == 'true'
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    # The full suite runs one test after another, about 25 minutes on a
+    # workstation (go test's own limit is 60m, in the Makefile); a cold
+    # runner that also builds the site images needs more. The quick tier
+    # takes a few minutes.
+    timeout-minutes: ${{ needs.plan.outputs.tier == 'smoke' && 30 || 75 }}
+    steps:
+      - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4
       - uses: ./.github/actions/go-cache
       # The site images on GHCR may be private. The tests pull them when
@@ -69,40 +174,26 @@ jobs:
         run: |
           docker version
           docker compose version
-      - id: sites
-        name: Decide whether to build the site images
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha }}
-          BEFORE: ${{ github.event.before }}
-        run: |
-          case "$EVENT" in
-          pull_request)
-            changed="$(git diff --name-only "$BASE" HEAD)" ;;
-          push)
-            if git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-              changed="$(git diff --name-only "$BEFORE" HEAD)"
-            else
-              changed="images/"  # new branch or force push
-            fi ;;
-          *)
-            changed="images/" ;;  # manual runs always test the tree
-          esac
-          if grep -q '^images/' <<<"$changed"; then build=true; else build=false; fi
-          echo "build=$build" >>"$GITHUB_OUTPUT"
-          echo "Site images built from the tree: \`$build\`" >>"$GITHUB_STEP_SUMMARY"
-      - if: steps.sites.outputs.build == 'true'
+      - if: needs.plan.outputs.build_images == 'true'
         name: Build the site images the tests use
         run: make images SITE_PHP="$(images/matrix.sh php | head -n 2 | xargs)"
-      - run: make test-e2e
+      - name: Run the tests
         env:
           # TestUpgradeRecovery downloads the CLI of the minimum
           # upgradable-from release, from a private repository for now.
           GH_TOKEN: ${{ github.token }}
+          TIER: ${{ needs.plan.outputs.tier }}
+          RUN: ${{ needs.plan.outputs.run }}
+        run: |
+          case "$TIER" in
+          smoke) make test-e2e-smoke ;;
+          *) make test-e2e RUN="$RUN" ;;
+          esac
 
   dashboard:
     name: Dashboard E2E
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e')
+    needs: plan
+    if: needs.plan.outputs.dashboard == 'true'
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     # The suite takes about five minutes on a workstation, in two runs
     # (go test's own limit is 40m, in the Makefile); building the image and,
@@ -110,8 +201,6 @@ jobs:
     timeout-minutes: 55
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0 # to diff against the base or previous commit
       - uses: jdx/mise-action@v4
       - uses: ./.github/actions/go-cache
       - uses: ./.github/actions/pnpm-cache
@@ -124,30 +213,7 @@ jobs:
       # image for the installed version, which TestDashboard pulls and
       # starts (docs/testing.md, "Where the browser runs").
       - run: pnpm -C ui install --frozen-lockfile
-      # Same decision as the e2e job: test the tree's site images when
-      # images/ changed.
-      - id: sites
-        name: Decide whether to build the site images
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha }}
-          BEFORE: ${{ github.event.before }}
-        run: |
-          case "$EVENT" in
-          pull_request)
-            changed="$(git diff --name-only "$BASE" HEAD)" ;;
-          push)
-            if git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-              changed="$(git diff --name-only "$BEFORE" HEAD)"
-            else
-              changed="images/"
-            fi ;;
-          *)
-            changed="images/" ;;
-          esac
-          if grep -q '^images/' <<<"$changed"; then build=true; else build=false; fi
-          echo "build=$build" >>"$GITHUB_OUTPUT"
-      - if: steps.sites.outputs.build == 'true'
+      - if: needs.plan.outputs.build_images == 'true'
         name: Build the site images the suite uses
         run: make images SITE_PHP="$(images/matrix.sh php | head -n 2 | xargs)"
       - run: make test-ui-e2e
