@@ -90,7 +90,10 @@
 // time the group needs one, i.e. on its first backup. TaskAccess checks that
 // the repository exists without running restic (the config file, or the
 // config object on S3), so a backup of a group that has one costs no restic
-// task before the backup's own; Ensure also checks that it opens. Client group creation and deletion are synchronous API
+// task before the backup's own; Ensure also checks that it opens. Until
+// the stored password has opened a repository once, both open it first, and
+// set aside one it doesn't open, which a state restore can leave behind
+// (verify.go). Client group creation and deletion are synchronous API
 // calls rather than jobs, and running restic (possibly against a remote
 // bucket) doesn't belong there. Ensure is idempotent: it stores the
 // password with the record in one transaction before running restic init,
