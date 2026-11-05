@@ -46,6 +46,8 @@ func TestCheckDetectsViolations(t *testing.T) {
 		"control-plane/internal/x/testdata/x.go":               src("github.com/docker/docker/client"),
 
 		"control-plane/internal/cli/upgrade.go":                  src(compose),
+		"control-plane/internal/cli/commands.go":                 src(compose),
+		"control-plane/internal/driver/driver.go":                src(compose),
 		"control-plane/internal/sitedb/mariadb/x_test.go":        src(compose),
 		"control-plane/internal/sitedb/mariadb/x_docker_test.go": src(compose),
 	}
@@ -60,6 +62,7 @@ func TestCheckDetectsViolations(t *testing.T) {
 	}
 	want := map[string]string{
 		"control-plane/internal/sitedb/mariadb/x_test.go": compose,
+		"control-plane/internal/cli/commands.go":          compose,
 		"control-plane/internal/jobs/jobs.go":             "github.com/docker/docker/client",
 		"control-plane/internal/jobs/jobs_test.go":        "github.com/compose-spec/compose-go/v2/types",
 		"control-plane/internal/sites/sites.go":           "k8s.io/client-go/kubernetes",

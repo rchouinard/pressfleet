@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"net/netip"
-	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -20,11 +19,11 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/dbsession"
 	"github.com/rchouinard/pressfleet/control-plane/internal/domains"
+	"github.com/rchouinard/pressfleet/control-plane/internal/driver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/metrics"
 	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache/redis"
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
-	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sftpgw"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sitedb/mariadb"
@@ -35,8 +34,8 @@ import (
 // networks at startup.
 const reattachTimeout = 5 * time.Minute
 
-// siteRuntime returns the Compose provisioner and the site database manager.
-func (a *app) siteRuntime(ctx context.Context, cat *catalog.Catalog, secretStore secrets.Store, keys *secrets.Keyring, db *store.DB) (*compose.Provisioner, *mariadb.Manager, error) {
+// siteRuntime returns the configured site driver and the site database manager.
+func (a *app) siteRuntime(ctx context.Context, cat *catalog.Catalog, secretStore secrets.Store, keys *secrets.Keyring, db *store.DB) (*driver.Runtime, *mariadb.Manager, error) {
 	smtp, err := siteSMTP(a.cfg.SMTP, keys)
 	if err != nil {
 		return nil, nil, err
@@ -48,22 +47,13 @@ func (a *app) siteRuntime(ctx context.Context, cat *catalog.Catalog, secretStore
 	if err != nil {
 		return nil, nil, fmt.Errorf("platform login key: %w", err)
 	}
-	prov, err := compose.NewProvisioner(compose.ProvisionerConfig{
-		Layout:            a.cfg.Layout(),
-		Secrets:           secretStore,
-		Images:            cat,
-		MariaDBContainer:  platform.MariaDBContainer(a.cfg.PlatformProject),
-		RedisContainer:    platform.RedisContainer(a.cfg.PlatformProject),
-		TraefikContainer:  platform.TraefikContainer(a.cfg.PlatformProject),
-		TaskImage:         a.cfg.TaskImage,
-		TaskMemoryMB:      a.cfg.Backup.TaskMemoryMB,
-		PlatformProject:   a.cfg.PlatformProject,
-		BackupNetwork:     platform.BackupNetwork(a.cfg.PlatformProject),
-		TraefikDynamicDir: filepath.Join(a.cfg.Layout().PlatformDir(), platform.TraefikDynamicDir),
-		WordPressSecurity: a.cfg.WordPressSecurity,
-		Logger:            a.log.With("component", "provisioner"),
-		SMTP:              smtp,
-		LoginPublicKey:    loginSigner.PublicKeyBase64(),
+	rt, err := driver.New(driver.Options{
+		Config:         &a.cfg,
+		Secrets:        secretStore,
+		Images:         cat,
+		SMTP:           smtp,
+		LoginPublicKey: loginSigner.PublicKeyBase64(),
+		Logger:         a.log,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -76,7 +66,7 @@ func (a *app) siteRuntime(ctx context.Context, cat *catalog.Catalog, secretStore
 	if err != nil {
 		return nil, nil, err
 	}
-	return prov, siteDBs, nil
+	return rt, siteDBs, nil
 }
 
 // sftpHostKey returns the SFTP gateway's host key, or nil when the gateway
@@ -113,7 +103,7 @@ func (a *app) databaseSessions(db *store.DB, siteDBs *mariadb.Manager, hostKey s
 
 // metricsService returns the metrics collector service (§7), writing to
 // the configured VictoriaMetrics, with the built-in collectors registered.
-func (a *app) metricsService(db *store.DB, prov *compose.Provisioner, secretStore secrets.Store, repos *repository.Manager) (*metrics.Service, error) {
+func (a *app) metricsService(db *store.DB, rt *driver.Runtime, secretStore secrets.Store, repos *repository.Manager) (*metrics.Service, error) {
 	log := a.log.With("component", "metrics")
 	client, err := metrics.NewClient(metrics.Options{URL: a.cfg.Metrics.URL, Logger: log})
 	if err != nil {
@@ -129,10 +119,12 @@ func (a *app) metricsService(db *store.DB, prov *compose.Provisioner, secretStor
 	if err := svc.Register(metrics.InventoryCollector{}); err != nil {
 		return nil, err
 	}
-	if err := svc.Register(metrics.TraefikCollector{Reader: prov}); err != nil {
-		return nil, err
+	if rt.TraefikMetrics != nil {
+		if err := svc.Register(metrics.TraefikCollector{Reader: rt.TraefikMetrics}); err != nil {
+			return nil, err
+		}
 	}
-	if err := svc.Register(metrics.ContainerCollector{Stats: prov}); err != nil {
+	if err := svc.Register(metrics.ContainerCollector{Stats: rt.Driver}); err != nil {
 		return nil, err
 	}
 	uptime, err := metrics.NewUptimeCollector(metrics.UptimeOptions{
@@ -144,10 +136,11 @@ func (a *app) metricsService(db *store.DB, prov *compose.Provisioner, secretStor
 	if err := svc.Register(uptime); err != nil {
 		return nil, err
 	}
-	for _, c := range append([]metrics.Collector{
-		&metrics.PageCacheCollector{Logs: prov},
-		metrics.PHPFPMCollector{Status: prov},
-	}, a.hostStorageCollectors(prov, repos)...) {
+	collectors := []metrics.Collector{&metrics.PageCacheCollector{Logs: rt.Driver}}
+	if rt.FPMStatus != nil {
+		collectors = append(collectors, metrics.PHPFPMCollector{Status: rt.FPMStatus})
+	}
+	for _, c := range append(collectors, a.hostStorageCollectors(rt.Driver, repos)...) {
 		if err := svc.Register(c); err != nil {
 			return nil, err
 		}

@@ -14,8 +14,8 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/api"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/doctor"
+	"github.com/rchouinard/pressfleet/control-plane/internal/driver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
-	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 )
 
 // Exit codes for `pressfleet doctor`.
@@ -72,7 +72,8 @@ func (a *app) doctorOptions() doctor.Options {
 		opts.Host = doctor.System{}
 	}
 	if opts.Docker == nil {
-		opts.Docker = compose.HostInspector{}
+		// Validate has already rejected unknown drivers.
+		opts.Docker, _ = driver.NewHostProbe(&a.cfg)
 	}
 	// Validate has already rejected malformed addresses.
 	opts.PublicIP, _ = netip.ParseAddr(a.cfg.PublicIP)

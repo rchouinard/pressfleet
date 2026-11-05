@@ -28,13 +28,14 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/dbsession"
 	"github.com/rchouinard/pressfleet/control-plane/internal/deploy"
+	"github.com/rchouinard/pressfleet/control-plane/internal/driver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/export"
 	"github.com/rchouinard/pressfleet/control-plane/internal/httpserver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
 	"github.com/rchouinard/pressfleet/control-plane/internal/metrics"
 	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache/redis"
 	"github.com/rchouinard/pressfleet/control-plane/internal/pluginupdates"
-	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/releasecheck"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sftpgw"
@@ -95,7 +96,7 @@ type server struct {
 	siteDBs *mariadb.Manager
 
 	handler      http.Handler
-	prov         *compose.Provisioner
+	rt           *driver.Runtime
 	caches       *redis.Manager
 	secretStore  secrets.Store
 	repos        *repository.Manager
@@ -166,24 +167,26 @@ func (a *app) buildServer(ctx context.Context) (_ *server, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if s.prov, s.siteDBs, err = a.siteRuntime(ctx, cat, s.secretStore, keys, db); err != nil {
+	if s.rt, s.siteDBs, err = a.siteRuntime(ctx, cat, s.secretStore, keys, db); err != nil {
 		return nil, err
 	}
 	// Like the SMTP password, backup S3 credentials that don't decrypt
 	// stop the control plane now rather than at the first backup. restic
 	// runs in the driver's repository tasks, never in this process.
-	if s.repos, err = a.backupRepositories(db, s.secretStore, keys, s.prov); err != nil {
+	if s.repos, err = a.backupRepositories(db, s.secretStore, keys, s.rt.Driver); err != nil {
 		return nil, err
 	}
 	// Before any task runs: a crash can leave the secret files of a task
 	// that was running.
-	if err := compose.RemoveStaleTaskSecrets(layout); err != nil {
-		a.log.Warn("removing stale task secrets failed", "error", err)
+	if h, ok := s.rt.Driver.(driver.StartupHook); ok {
+		if err := h.Startup(ctx); err != nil {
+			a.log.Warn("the driver's startup work failed", "error", err)
+		}
 	}
 	if s.caches, err = a.objectCaches(s.secretStore, db); err != nil {
 		return nil, err
 	}
-	prov, siteDBs, caches := s.prov, s.siteDBs, s.caches
+	prov, siteDBs, caches := s.rt.Driver, s.siteDBs, s.caches
 	s.backupWindow = a.backupWindow()
 	engine, err := restic.New(restic.Options{
 		DB:                   db,
@@ -259,7 +262,7 @@ func (a *app) buildServer(ctx context.Context) (_ *server, err error) {
 		ImageUpdates:      a.imageUpdates(),
 		Prober:            prov,
 		ImagePinner:       prov,
-		Templates:         prov,
+		Templates:         templateDriver(s.rt),
 		Logger:            a.log.With("component", "sites"),
 	})
 	if err != nil {
@@ -471,7 +474,7 @@ func (s *server) run(ctx context.Context) error {
 	// or down: write failures are logged and counted, and the next run
 	// tries again.
 	if s.a.cfg.Metrics.Enabled {
-		collector, err := s.a.metricsService(s.db, s.prov, s.secretStore, s.repos)
+		collector, err := s.a.metricsService(s.db, s.rt, s.secretStore, s.repos)
 		if err != nil {
 			return err
 		}
@@ -497,7 +500,9 @@ func (s *server) run(ctx context.Context) error {
 	w.Once(func(ctx context.Context) {
 		ctx, cancel := context.WithTimeout(ctx, reattachTimeout)
 		defer cancel()
-		s.siteSvc.ReattachSharedServices(ctx, s.prov)
+		if a, ok := s.rt.Driver.(sites.SharedServiceAttacher); ok {
+			s.siteSvc.ReattachSharedServices(ctx, a)
+		}
 	})
 	// The object cache keeps site users only in memory: restore them now
 	// and whenever it restarts. (Sites created before it existed get theirs
@@ -565,3 +570,16 @@ func (w *workerGroup) Once(run func(context.Context)) {
 
 // Wait waits for every worker and task to return.
 func (w *workerGroup) Wait() { w.wg.Wait() }
+
+// templateDriver returns what the templates rollout needs of the driver, or
+// nil when the driver has no templates to roll out (a nil interface, not a
+// struct of nils, which sites.Options would take as on).
+func templateDriver(rt *driver.Runtime) sites.TemplateDriver {
+	if rt.Templates == nil || rt.Snapshots == nil {
+		return nil
+	}
+	return struct {
+		provisioner.TemplateFingerprinter
+		provisioner.RenderSnapshotter
+	}{rt.Templates, rt.Snapshots}
+}

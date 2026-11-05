@@ -76,6 +76,7 @@ func TestLoadPrecedence(t *testing.T) {
 		Backup:   config.Default().Backup,                          // default
 		SFTP:     config.DefaultSFTP(),                             // default
 		// default
+		Driver:            "compose",
 		PlatformProject:   "pressfleet",
 		WordPressSecurity: config.DefaultWordPressSecurity(),             // default
 		TwoFactor:         config.DefaultTwoFactor(),                     // default
