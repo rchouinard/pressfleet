@@ -146,10 +146,11 @@ func (r *repoDocker) waitRunning(t *testing.T, ctx context.Context) string {
 	return ""
 }
 
-// TestRunRepositoryTaskDocker runs restic init, snapshots, backup, and
-// check in repository tasks against a local repository: no site, no
-// network, as the repository's group.
-func TestRunRepositoryTaskDocker(t *testing.T) {
+// TestRunRepositoryTaskResticDocker runs restic init, snapshots, backup,
+// and check in repository tasks against a local repository, as the
+// repository's group. What a repository task sees is in the conformance
+// suite.
+func TestRunRepositoryTaskResticDocker(t *testing.T) {
 	r := newRepoDocker(t, "")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -200,36 +201,12 @@ func TestRunRepositoryTaskDocker(t *testing.T) {
 	if !errors.As(err, &ee) || ee.ExitCode != 12 {
 		t.Errorf("wrong password: %v, want exit code 12", err)
 	}
-
-	// The task is the repository's group, not root and not a site, has no
-	// network and no wp-content, and each run has a host name of its own.
-	probe := func(script string) string {
-		t.Helper()
-		res, err := r.prov.RunRepositoryTask(ctx, r.group, provisioner.Task{Command: []string{"sh", "-c", script}, RepositoryDir: r.repo})
-		if err != nil {
-			t.Fatalf("%s: %v", script, err)
-		}
-		return strings.TrimSpace(res.Stdout)
-	}
-	gid := strconv.Itoa(provisioner.RepositoryGID)
-	if got := probe(`echo "$(id -u):$(id -g)"`); got != gid+":"+gid {
-		t.Errorf("task user = %s, want %s:%s", got, gid, gid)
-	}
-	if got := probe(`ls /sys/class/net`); got != "lo" {
-		t.Errorf("network interfaces = %q, want only lo", got)
-	}
-	if got := probe(`test ! -e /site && ! touch /etc/x 2>/dev/null && echo ok`); got != "ok" {
-		t.Errorf("filesystem checks = %q", got)
-	}
-	if a, b := probe(`hostname`), probe(`hostname`); a == b || a == "" || !strings.HasPrefix(a, "pf-task-") {
-		t.Errorf("host names %q and %q, want distinct pf-task-* names", a, b)
-	}
 	r.noContainers(t, ctx)
 }
 
 // TestRunRepositoryTaskMemoryDocker checks that the memory limit reaches the
-// container (the default, the configured value, and a task's own), and that
-// the kernel enforces it.
+// container (the default, the configured value, and a task's own). That the
+// kernel enforces it is in the conformance suite.
 func TestRunRepositoryTaskMemoryDocker(t *testing.T) {
 	r := newRepoDocker(t, "")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -270,18 +247,6 @@ func TestRunRepositoryTaskMemoryDocker(t *testing.T) {
 		t.Errorf("configured limit = %s, want 256 MiB", m)
 	}
 
-	// The kernel enforces it: /tmp is a tmpfs, which counts as the
-	// container's memory, so writing more than the limit gets it killed.
-	_, err = r.prov.RunRepositoryTask(ctx, r.group, provisioner.Task{
-		Command:       []string{"sh", "-c", "dd if=/dev/zero of=/tmp/big bs=1M count=400 && echo survived"},
-		RepositoryDir: r.repo,
-		MemoryLimitMB: config.MinBackupTaskMemoryMB,
-		Timeout:       2 * time.Minute,
-	})
-	var ee *provisioner.ExecError
-	if !errors.As(err, &ee) || strings.Contains(ee.Stdout, "survived") {
-		t.Errorf("task over its memory limit: %v, want it killed", err)
-	}
 	r.noContainers(t, ctx)
 }
 

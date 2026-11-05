@@ -17,15 +17,11 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/sitedb"
 )
 
-// TestRunTaskDocker proves issue #50's acceptance criterion against real
-// Docker: a task reads a site's wp-content read-only through the driver. It
-// also checks that writes fail in read-only mode and work in read-write
-// mode, that the transfer directory is shared, that secrets reach the task
-// but not the container's argv, that non-zero exits and cancellation are
-// reported, that tasks work on a stopped site, and that every task container
-// is removed. The tasks use the site's php image, which is always present
-// here; TestRunTaskRepositoryDocker runs restic from the control plane image.
-func TestRunTaskDocker(t *testing.T) {
+// TestRunTaskContainerDocker checks how the Compose driver runs a site
+// task as a container: while it runs, its argv holds no secret, it has the
+// default memory limit with no swap on top, and it runs as the site's
+// UID and GID. What a task sees and does is in the conformance suite.
+func TestRunTaskContainerDocker(t *testing.T) {
 	s := newDockerSite(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -34,81 +30,17 @@ func TestRunTaskDocker(t *testing.T) {
 		t.Fatal(err)
 	}
 	image := s.docker(t, ctx, "inspect", "--format", "{{.Config.Image}}", s.project.Name+"-php-1")
-	s.exec(t, ctx, "php", "sh", "-c", "echo hello-from-wp-content > /var/www/wordpress/wp-content/pf-task.txt")
 
-	// Tests don't run as root, so RunTask can't give the transfer directory
-	// to the site's UID; open it up instead.
-	transfer := filepath.Join(s.layout.TmpDir(), "task-"+siteID)
-	if err := os.Mkdir(transfer, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(transfer, 0o777); err != nil {
-		t.Fatal(err)
-	}
 	const secret = "pf-task-secret-Value-9"
-	run := func(ctx context.Context, mode provisioner.MountMode, script string) (*provisioner.TaskResult, error) {
-		return s.prov.RunTask(ctx, siteID, provisioner.Task{
-			Image:       image,
-			Command:     []string{"sh", "-c", script},
-			Env:         map[string]string{"PF_PLAIN": "plain value"},
-			SecretFiles: map[string]redact.Secret{"pf-secret": secret},
-			WPContent:   mode,
-			TransferDir: transfer,
-			Timeout:     2 * time.Minute,
-		})
-	}
-
-	// Read-only: reads wp-content, can't write it, shares the transfer
-	// directory, and sees its environment.
-	res, err := run(ctx, provisioner.MountReadOnly, `
-		cat /site/wp-content/pf-task.txt
-		if touch /site/wp-content/pf-task-write 2>/dev/null; then echo wp-content is writable; exit 1; fi
-		cp /site/wp-content/pf-task.txt /transfer/copy.txt
-		cat /run/pressfleet/secrets/pf-secret > /transfer/secret.txt
-		echo "uid=$(id -u) plain=$PF_PLAIN"
-		echo to-stderr >&2`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "hello-from-wp-content\nuid=" + strconv.Itoa(s.cfg.UID) + " plain=plain value\n"
-	if res.Stdout != want || res.Stderr != "to-stderr\n" {
-		t.Errorf("read-only task = %+v, want stdout %q", res, want)
-	}
-	if b, err := os.ReadFile(filepath.Join(transfer, "copy.txt")); err != nil || string(b) != "hello-from-wp-content\n" {
-		t.Errorf("transfer copy = %q, %v", b, err)
-	}
-	if b, err := os.ReadFile(filepath.Join(transfer, "secret.txt")); err != nil || string(b) != secret {
-		t.Errorf("secret in task = %q, %v", b, err)
-	}
-	s.noTaskContainers(t, ctx)
-
-	// Read-write: the site sees what the task writes.
-	if _, err := run(ctx, provisioner.MountReadWrite, `echo restored > /site/wp-content/pf-task-rw.txt`); err != nil {
-		t.Fatal(err)
-	}
-	if got := s.exec(t, ctx, "php", "cat", "/var/www/wordpress/wp-content/pf-task-rw.txt"); got != "restored" {
-		t.Errorf("site sees %q after a read-write task", got)
-	}
-
-	// No mount: no wp-content.
-	if _, err := run(ctx, provisioner.MountNone, `test ! -e /site/wp-content`); err != nil {
-		t.Errorf("wp-content visible without a mount: %v", err)
-	}
-
-	// A non-zero exit is an ExecError.
-	_, err = run(ctx, provisioner.MountNone, `echo oops >&2; exit 4`)
-	var ee *provisioner.ExecError
-	if !errors.As(err, &ee) || ee.ExitCode != 4 || ee.Stderr != "oops\n" {
-		t.Errorf("failing task error = %v", err)
-	}
-	s.noTaskContainers(t, ctx)
-
-	// While a task runs, its argv holds no secret. Canceling ctx kills it
-	// and removes its container.
 	runCtx, stop := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() {
-		_, err := run(runCtx, provisioner.MountReadOnly, `sleep 300`)
+		_, err := s.prov.RunTask(runCtx, siteID, provisioner.Task{
+			Image:       image,
+			Command:     []string{"sh", "-c", "sleep 300"},
+			SecretFiles: map[string]redact.Secret{"pf-secret": secret},
+			WPContent:   provisioner.MountReadOnly,
+		})
 		done <- err
 	}()
 	var name string
@@ -143,20 +75,6 @@ func TestRunTaskDocker(t *testing.T) {
 	case <-time.After(2 * time.Minute):
 		t.Fatal("canceled task didn't return")
 	}
-	s.noTaskContainers(t, ctx)
-
-	// A stopped site's data is reachable too.
-	if err := s.prov.StopSite(ctx, siteID); err != nil {
-		t.Fatal(err)
-	}
-	if res, err := run(ctx, provisioner.MountReadOnly, `cat /site/wp-content/pf-task.txt`); err != nil || res.Stdout != "hello-from-wp-content\n" {
-		t.Errorf("task on a stopped site = %+v, %v", res, err)
-	}
-
-	if _, err := s.prov.RunTask(ctx, "pf-no-such-site", provisioner.Task{Image: image, Command: []string{"true"}}); !errors.Is(err, provisioner.ErrSiteNotFound) {
-		t.Errorf("task on a missing site: %v", err)
-	}
-
 	s.noTaskContainers(t, ctx)
 }
 
