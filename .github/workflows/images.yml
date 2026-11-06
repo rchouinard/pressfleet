@@ -277,6 +277,14 @@ jobs:
           VERBOSE: "1"
         run: images/test.sh "$PHP"
       - if: matrix.smoke
+        name: Restricted pod test
+        env:
+          SKIP_BUILD: "1"
+          WP_VERSION: ${{ matrix.wp }}
+          IMAGE_REPO: ${{ needs.plan.outputs.registry }}
+          PHP: ${{ matrix.php }}
+        run: images/test-restricted.sh "$PHP"
+      - if: matrix.smoke
         uses: ./.github/actions/trivy-scan
         with:
           fail-on: CRITICAL

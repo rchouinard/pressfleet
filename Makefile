@@ -190,6 +190,10 @@ images: ## Build the site image matrix from images/manifest.json (needs jq; SITE
 images-test: ## Build the site images and run their smoke test (needs Docker)
 	images/test.sh
 
+.PHONY: images-test-restricted
+images-test-restricted: ## Run the site images the way a Pod Security "restricted" pod does (needs Docker); CONTROL_PLANE_IMAGE=<tag> also checks task use
+	images/test-restricted.sh
+
 .PHONY: clean
 clean: ## Remove build artifacts
 	rm -rf bin/ dist/ coverage.out ui/.output ui/.nuxt
