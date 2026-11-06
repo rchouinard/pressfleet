@@ -13,11 +13,9 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repomaint"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/repository"
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
-	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
-	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
+	"github.com/rchouinard/pressfleet/control-plane/internal/driver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
-	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
@@ -112,30 +110,7 @@ func (a *app) repositoryTasks() (provisioner.RepositoryTaskRunner, error) {
 	if a.opts.RepositoryTasks != nil {
 		return a.opts.RepositoryTasks, nil
 	}
-	return compose.NewProvisioner(compose.ProvisionerConfig{
-		Layout:           a.cfg.Layout(),
-		Secrets:          noSiteSecrets{},
-		Images:           noSiteImages{},
-		MariaDBContainer: platform.MariaDBContainer(a.cfg.PlatformProject),
-		PlatformProject:  a.cfg.PlatformProject,
-		BackupNetwork:    platform.BackupNetwork(a.cfg.PlatformProject),
-		TaskImage:        a.cfg.TaskImage,
-		TaskMemoryMB:     a.cfg.Backup.TaskMemoryMB,
-		Logger:           a.log.With("component", "provisioner"),
-	})
-}
-
-// errNoSites is what the site parts of a repository-only driver return.
-var errNoSites = errors.New("this driver only runs repository tasks")
-
-type noSiteSecrets struct{}
-
-func (noSiteSecrets) Get(context.Context, secrets.Ref) (redact.Secret, error) { return "", errNoSites }
-
-type noSiteImages struct{}
-
-func (noSiteImages) Images(string, string) (catalog.Images, error) {
-	return catalog.Images{}, errNoSites
+	return driver.NewRepositoryTasks(&a.cfg, a.log)
 }
 
 // withRepositories opens the state database and runs fn with the

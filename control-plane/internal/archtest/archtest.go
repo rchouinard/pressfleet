@@ -45,15 +45,28 @@ var Rules = []Rule{
 		Allowed:   []string{"control-plane/internal/provisioner/kubernetes/"},
 	},
 	{
-		// Sites are orchestrated through provisioner.Provisioner. The host
-		// CLI, the doctor, and the platform package manage the platform's
-		// own Compose stack (§4.7), and tests that need Docker drive
-		// services with it.
-		Name:      "The Compose driver package is only imported to manage the platform stack (§4.2, §4.7)",
+		// Sites are orchestrated through provisioner.Provisioner, and the
+		// driver factory is the one place that builds a driver from
+		// configuration. The doctor and the platform package manage the
+		// platform's own Compose stack (§4.7), as do the host commands
+		// listed by file: init, upgrade, recover, and admin. Their tests
+		// and the e2e harness drive that stack too, and tests that need
+		// Docker drive services with it. List a new file here only if it
+		// manages the platform's stack.
+		Name:      "The Compose driver package is only imported to build the driver and manage the platform stack (§4.2, §4.7)",
 		Forbidden: []string{"github.com/rchouinard/pressfleet/" + composeDriver},
 		Allowed: []string{
 			composeDriver,
-			"control-plane/internal/cli/",
+			"control-plane/internal/driver/",
+			"control-plane/internal/cli/admin.go",
+			"control-plane/internal/cli/admin_test.go",
+			"control-plane/internal/cli/init.go",
+			"control-plane/internal/cli/init_acme.go",
+			"control-plane/internal/cli/init_test.go",
+			"control-plane/internal/cli/recover.go",
+			"control-plane/internal/cli/recover_test.go",
+			"control-plane/internal/cli/upgrade.go",
+			"control-plane/internal/cli/upgrade_test.go",
 			"control-plane/internal/doctor/",
 			"control-plane/internal/platform/",
 			"control-plane/internal/e2e/",

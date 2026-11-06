@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +35,12 @@ const DefaultPath = "/etc/pressfleet/pressfleet.yaml"
 
 // EnvConfigPath names the environment variable that selects the config file.
 const EnvConfigPath = "PRESSFLEET_CONFIG"
+
+// SiteDriverCompose is the Compose driver's name, the value of Config.Driver.
+const SiteDriverCompose = "compose"
+
+// SiteDrivers are the values Config.Driver accepts.
+var SiteDrivers = []string{SiteDriverCompose}
 
 // Config is the control plane configuration.
 type Config struct {
@@ -76,6 +83,10 @@ type Config struct {
 	Audit AuditConfig `yaml:"audit"`
 	// Metrics configures metrics storage and collection (§7).
 	Metrics MetricsConfig `yaml:"metrics"`
+	// Driver is the orchestrator that runs sites (§4.2): "compose", the only
+	// one so far. It is chosen at install time and never changes for that
+	// install.
+	Driver string `yaml:"driver"`
 	// PlatformProject is the Compose project name of the platform services,
 	// which names their containers: the provisioner connects the
 	// platform's MariaDB and object cache containers to each site network.
@@ -585,6 +596,7 @@ func Default() Config {
 		Database: DatabaseConfig{Driver: DriverSQLite},
 		Jobs:     JobsConfig{Concurrency: 4},
 		Audit:    AuditConfig{RetentionDays: 365},
+		Driver:   SiteDriverCompose,
 		// platform.ProjectName; config can't import package platform.
 		PlatformProject: "pressfleet",
 		MariaDB: MariaDBConfig{ //nolint:gosec // G101: the path of the password file, not a credential
@@ -707,6 +719,7 @@ var envVars = []struct {
 	{"PRESSFLEET_REDIS_ADDRESS", func(c *Config) *string { return &c.Redis.Address }},
 	{"PRESSFLEET_REDIS_ADMIN_USER", func(c *Config) *string { return &c.Redis.AdminUser }},
 	{"PRESSFLEET_REDIS_ADMIN_PASSWORD_FILE", func(c *Config) *string { return &c.Redis.AdminPasswordFile }},
+	{"PRESSFLEET_DRIVER", func(c *Config) *string { return &c.Driver }},
 	{"PRESSFLEET_PLATFORM_PROJECT", func(c *Config) *string { return &c.PlatformProject }},
 	{"PRESSFLEET_TASK_IMAGE", func(c *Config) *string { return &c.TaskImage }},
 	{"PRESSFLEET_SMTP_HOST", func(c *Config) *string { return &c.SMTP.Host }},
@@ -974,6 +987,9 @@ func (c Config) Validate() error {
 	}
 	if c.ACME.DNSProvider != "" && c.PreviewBaseDomain == "" {
 		errs = append(errs, errors.New("acme.dns_provider needs preview_base_domain: the DNS-01 challenge gets the preview wildcard certificate"))
+	}
+	if !slices.Contains(SiteDrivers, c.Driver) {
+		errs = append(errs, fmt.Errorf("driver must be one of %s, got %q", strings.Join(SiteDrivers, ", "), c.Driver))
 	}
 	if !composeProjectName.MatchString(c.PlatformProject) {
 		errs = append(errs, fmt.Errorf("platform_project must be a Compose project name (lowercase letters, digits, - and _), got %q", c.PlatformProject))

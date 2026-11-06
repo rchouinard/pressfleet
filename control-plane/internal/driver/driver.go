@@ -1,0 +1,184 @@
+// Package driver builds the site driver the configuration names (§4.2).
+//
+// It is the one place, with the host commands that manage the platform's own
+// stack, that names a driver's types: everything else depends on the
+// [provisioner] interfaces, so a second driver plugs in here. It lives in
+// its own package, not in cli, so that the control plane's wiring (serve and
+// the commands that run in its container) holds no driver types, and not in
+// provisioner, which the drivers import.
+package driver
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"path/filepath"
+
+	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
+	"github.com/rchouinard/pressfleet/control-plane/internal/config"
+	"github.com/rchouinard/pressfleet/control-plane/internal/doctor"
+	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
+	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
+	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
+	"github.com/rchouinard/pressfleet/control-plane/internal/wpconfig"
+)
+
+// ErrUnknownDriver is returned for a driver name that isn't supported.
+var ErrUnknownDriver = errors.New("driver: unknown driver")
+
+// Runtime is a driver and the optional capabilities it has. A capability the
+// driver lacks is nil, and consumers turn their feature off.
+type Runtime struct {
+	// Driver orchestrates sites and runs tasks. It may also implement
+	// optional interfaces, such as StartupHook and
+	// sites.SharedServiceAttacher, which callers find by type assertion.
+	Driver provisioner.Driver
+	// FPMStatus reads PHP-FPM's status for the metrics collector.
+	FPMStatus provisioner.FPMStatusReader
+	// TraefikMetrics reads the edge router's metrics.
+	TraefikMetrics provisioner.TraefikMetricsReader
+	// Templates fingerprints how the driver renders sites, for the
+	// templates rollout.
+	Templates provisioner.TemplateFingerprinter
+	// Snapshots undoes a re-render, for the same rollout.
+	Snapshots provisioner.RenderSnapshotter
+	// HostProbe reads facts about the host's container engine for the
+	// doctor.
+	HostProbe doctor.DockerProbe
+}
+
+// StartupHook is implemented by a driver that has work to do when the
+// control plane starts, before it runs tasks: the Compose driver removes the
+// secret files of tasks a crash left. Like sites.SharedServiceAttacher, it
+// is optional.
+type StartupHook interface {
+	Startup(ctx context.Context) error
+}
+
+// SecretReader reads the secrets sites need.
+type SecretReader interface {
+	Get(ctx context.Context, ref secrets.Ref) (redact.Secret, error)
+}
+
+// ImageResolver maps a site's PHP and WordPress versions to its images.
+type ImageResolver interface {
+	Images(php, wordpress string) (catalog.Images, error)
+}
+
+// Options are what the driver needs from the control plane besides the
+// configuration.
+type Options struct {
+	Config  *config.Config
+	Secrets SecretReader
+	Images  ImageResolver
+	// SMTP is the relay sites send email through; nil for none.
+	SMTP *wpconfig.SMTP
+	// LoginPublicKey is the platform login key's public half, base64.
+	LoginPublicKey string
+	Logger         *slog.Logger
+}
+
+// New builds the driver that opts.Config.Driver names.
+func New(opts Options) (*Runtime, error) {
+	switch opts.Config.Driver {
+	case config.SiteDriverCompose:
+		return newCompose(opts)
+	default:
+		return nil, fmt.Errorf("%w %q", ErrUnknownDriver, opts.Config.Driver)
+	}
+}
+
+// NewRepositoryTasks builds a driver for the commands that run outside the
+// serving control plane (`pressfleet repository`, `state`) and only run
+// repository tasks, so it has no sites to resolve.
+func NewRepositoryTasks(cfg *config.Config, log *slog.Logger) (provisioner.RepositoryTaskRunner, error) {
+	switch cfg.Driver {
+	case config.SiteDriverCompose:
+		return compose.NewProvisioner(compose.ProvisionerConfig{
+			Layout:           cfg.Layout(),
+			Secrets:          noSiteSecrets{},
+			Images:           noSiteImages{},
+			MariaDBContainer: platform.MariaDBContainer(cfg.PlatformProject),
+			PlatformProject:  cfg.PlatformProject,
+			BackupNetwork:    platform.BackupNetwork(cfg.PlatformProject),
+			TaskImage:        cfg.TaskImage,
+			TaskMemoryMB:     cfg.Backup.TaskMemoryMB,
+			Logger:           log.With("component", "provisioner"),
+		})
+	default:
+		return nil, fmt.Errorf("%w %q", ErrUnknownDriver, cfg.Driver)
+	}
+}
+
+// NewHostProbe returns the doctor's probe of the host for the configured
+// driver. The host CLI has no secrets or state, so it can't build a Runtime.
+func NewHostProbe(cfg *config.Config) (doctor.DockerProbe, error) {
+	switch cfg.Driver {
+	case config.SiteDriverCompose:
+		return compose.HostInspector{}, nil
+	default:
+		return nil, fmt.Errorf("%w %q", ErrUnknownDriver, cfg.Driver)
+	}
+}
+
+// composeDriver is the Compose driver with its startup work.
+type composeDriver struct {
+	*compose.Provisioner
+	layout config.Layout
+}
+
+// Startup removes the secret files that a crash left from tasks that were
+// running.
+func (c composeDriver) Startup(context.Context) error {
+	return compose.RemoveStaleTaskSecrets(c.layout)
+}
+
+func newCompose(opts Options) (*Runtime, error) {
+	cfg := opts.Config
+	prov, err := compose.NewProvisioner(compose.ProvisionerConfig{
+		Layout:            cfg.Layout(),
+		Secrets:           opts.Secrets,
+		Images:            opts.Images,
+		MariaDBContainer:  platform.MariaDBContainer(cfg.PlatformProject),
+		RedisContainer:    platform.RedisContainer(cfg.PlatformProject),
+		TraefikContainer:  platform.TraefikContainer(cfg.PlatformProject),
+		TaskImage:         cfg.TaskImage,
+		TaskMemoryMB:      cfg.Backup.TaskMemoryMB,
+		PlatformProject:   cfg.PlatformProject,
+		BackupNetwork:     platform.BackupNetwork(cfg.PlatformProject),
+		TraefikDynamicDir: filepath.Join(cfg.Layout().PlatformDir(), platform.TraefikDynamicDir),
+		WordPressSecurity: cfg.WordPressSecurity,
+		Logger:            opts.Logger.With("component", "provisioner"),
+		SMTP:              opts.SMTP,
+		LoginPublicKey:    opts.LoginPublicKey,
+	})
+	if err != nil {
+		return nil, err
+	}
+	// The wrapper adds the startup hook; the embedded Provisioner keeps its
+	// other optional methods (AttachSharedServices and the like).
+	return &Runtime{
+		Driver:         composeDriver{Provisioner: prov, layout: cfg.Layout()},
+		FPMStatus:      prov,
+		TraefikMetrics: prov,
+		Templates:      prov,
+		Snapshots:      prov,
+		HostProbe:      compose.HostInspector{},
+	}, nil
+}
+
+// errNoSites is what the site parts of a repository-only driver return.
+var errNoSites = errors.New("this driver only runs repository tasks")
+
+type noSiteSecrets struct{}
+
+func (noSiteSecrets) Get(context.Context, secrets.Ref) (redact.Secret, error) { return "", errNoSites }
+
+type noSiteImages struct{}
+
+func (noSiteImages) Images(string, string) (catalog.Images, error) {
+	return catalog.Images{}, errNoSites
+}
