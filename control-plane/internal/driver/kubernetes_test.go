@@ -3,6 +3,7 @@ package driver_test
 import (
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -100,5 +101,27 @@ func TestKubernetesRepositoryTasksAndHostProbe(t *testing.T) {
 	}
 	if _, err := p.ComposeVersion(t.Context()); err == nil {
 		t.Error("the Kubernetes driver's host probe found Docker Compose")
+	}
+}
+
+func TestNewClusterProbe(t *testing.T) {
+	probe, err := driver.NewClusterProbe(kubernetesConfig(t, true), discard())
+	if err != nil || probe == nil {
+		t.Fatalf("NewClusterProbe = %v, %v", probe, err)
+	}
+	v, err := probe.ServerVersion(t.Context())
+	if err != nil || v.Minor != 35 {
+		t.Errorf("version = %+v, %v", v, err)
+	}
+
+	if _, err := driver.NewClusterProbe(testConfig(t), discard()); !errors.Is(err, driver.ErrNotKubernetes) {
+		t.Errorf("Compose: err = %v, want ErrNotKubernetes", err)
+	}
+
+	cfg := kubernetesConfig(t, true)
+	cfg.Kubernetes.Kubeconfig = "/nonexistent/kubeconfig"
+	probe, err = driver.NewClusterProbe(cfg, discard())
+	if err == nil || probe != nil {
+		t.Errorf("a bad kubeconfig gave %v, %v; want a nil probe and an error", probe, err)
 	}
 }

@@ -76,7 +76,7 @@ var (
 
 // Checks returns every preflight check in the order they run.
 func Checks() []Check {
-	return []Check{
+	return append([]Check{
 		{ID: "platform", Name: "Linux on amd64", Severity: Required, Scopes: both, run: checkPlatform},
 		{ID: "docker", HostOnly: true, Name: "Docker Engine", Severity: Required, Scopes: both, run: checkDocker},
 		{ID: "compose", HostOnly: true, Name: "Docker Compose v2", Severity: Required, Scopes: both, run: checkCompose},
@@ -84,15 +84,15 @@ func Checks() []Check {
 		{ID: "address-pools", HostOnly: true, Name: "Docker address pools", Severity: Required, Scopes: both, run: checkAddressPools},
 		{ID: "ports", HostOnly: true, Name: "Ports 80 and 443 free", Severity: Required, Scopes: installOnly, run: checkPorts},
 		{ID: "sftp-port", HostOnly: true, Name: "SFTP gateway port free", Severity: Required, Scopes: installOnly, run: checkSFTPPort},
-		{ID: "dns-dashboard", Name: "Dashboard DNS", Severity: Required, Scopes: installOnly, run: checkDashboardDNS},
-		{ID: "dns-preview", Name: "Wildcard preview DNS", Severity: Required, Scopes: installOnly, run: checkPreviewDNS},
+		{ID: "dns-dashboard", ComposeOnly: true, Name: "Dashboard DNS", Severity: Required, Scopes: installOnly, run: checkDashboardDNS},
+		{ID: "dns-preview", ComposeOnly: true, Name: "Wildcard preview DNS", Severity: Required, Scopes: installOnly, run: checkPreviewDNS},
 		{ID: "log-rotation", HostOnly: true, Name: "Container log rotation", Severity: Recommended, Scopes: installOnly, run: checkLogRotation},
 		{ID: "disk", Name: "Free disk space", Severity: Recommended, Scopes: both, run: checkDisk},
-		{ID: "memory", Name: "Host memory", Severity: Recommended, Scopes: both, run: checkMemory},
+		{ID: "memory", ComposeOnly: true, Name: "Host memory", Severity: Recommended, Scopes: both, run: checkMemory},
 		{ID: "upgrade-rollouts", Name: "Rollouts not held by an upgrade", Severity: Recommended, Scopes: both, run: checkRolloutHold},
-		{ID: "site-reservations", Name: "Site memory reservations", Severity: Recommended, Scopes: runtimeOnly, run: checkReservations},
+		{ID: "site-reservations", ComposeOnly: true, Name: "Site memory reservations", Severity: Recommended, Scopes: runtimeOnly, run: checkReservations},
 		{ID: "webauthn-relying-party", Name: "Security keys and passkeys", Severity: Recommended, Scopes: runtimeOnly, run: checkWebAuthn},
-	}
+	}, clusterChecks()...)
 }
 
 func pass(format string, args ...any) outcome {

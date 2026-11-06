@@ -35,6 +35,9 @@ type Options struct {
 	// host and Docker. Tests inject fakes.
 	HostProbe   doctor.HostProbe
 	DockerProbe doctor.DockerProbe
+	// ClusterProbe feeds the Kubernetes install's preflight checks; nil
+	// means the real cluster. Tests inject fakes.
+	ClusterProbe doctor.ClusterProbe
 	// PlatformProject returns the platform Compose project `pressfleet init`
 	// starts; nil means the real one on the local Docker daemon. Tests
 	// inject fakes.

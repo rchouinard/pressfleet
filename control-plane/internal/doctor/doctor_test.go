@@ -402,8 +402,15 @@ func TestScopes(t *testing.T) {
 		}
 	}
 	all := doctor.Run(context.Background(), opts, doctor.ScopeInstall, doctor.ScopeRuntime)
-	if len(all.Results) != len(doctor.Checks()) {
-		t.Errorf("both scopes ran %d checks, want %d", len(all.Results), len(doctor.Checks()))
+	// The cluster checks only run on Kubernetes (cluster_test.go).
+	want := 0
+	for _, c := range doctor.Checks() {
+		if !c.ClusterOnly {
+			want++
+		}
+	}
+	if len(all.Results) != want {
+		t.Errorf("both scopes ran %d checks, want %d", len(all.Results), want)
 	}
 }
 
@@ -529,7 +536,7 @@ func TestKubernetesSkipsHostChecks(t *testing.T) {
 	f := newFixture()
 	f.docker.InfoErr = errors.New("must not be asked")
 	f.docker.ComposeErr = errors.New("must not be asked")
-	f.opts.Kubernetes = true
+	f.opts.Kubernetes, f.opts.Cluster = true, doctortest.HealthyCluster()
 	f.opts.Host, f.opts.Docker = f.host, f.docker
 	rep := doctor.Run(context.Background(), f.opts, doctor.ScopeRuntime)
 	for _, r := range rep.Results {

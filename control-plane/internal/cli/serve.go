@@ -327,7 +327,7 @@ func (a *app) buildServer(ctx context.Context) (_ *server, err error) {
 		Deployments:      deploys,
 		Logs:             prov,
 		JobChanges:       jobChanges,
-		Doctor:           a.platformDoctor(authn),
+		Doctor:           a.platformDoctor(authn, siteReservations{db}),
 		Metrics:          metricsSvc,
 		TrustedProxies:   proxies,
 		Build:            a.build(),
