@@ -83,6 +83,7 @@ type UpgradeProject interface {
 	FileMounts(ctx context.Context) (map[string][]string, error)
 	ImageDigests(ctx context.Context, image string) ([]string, error)
 	ListDir(ctx context.Context, service, dir string) ([]string, error)
+	ReadFile(ctx context.Context, service, path string) ([]byte, error)
 }
 
 // upgradeFlags are the flags of `pressfleet upgrade`.
@@ -717,14 +718,14 @@ func (u *upgrader) fail(cause error) error {
 	if !data.Postgres {
 		data.BackupsDir = u.layout.StateBackupsDir()
 		data.Since = u.record.StartedAt.UTC().Format(backupTimeLayout)
-		backup, err := u.findBackup()
+		mig, err := u.findMigration()
 		if err != nil {
 			// Not knowing is not the same as finding none: the steps
 			// must not tell the operator that no restore is needed.
 			u.a.warnf("looking for the pre-migration backup: %v", err)
 			data.BackupUnchecked = true
 		}
-		data.Backup = backup
+		data.Backup = mig.Backup
 	}
 	var buf bytes.Buffer
 	if err := recoveryTemplate.Execute(&buf, data); err != nil {
@@ -756,6 +757,16 @@ const backupClockSkew = 30 * time.Second
 // dirLister lists the names in a directory.
 type dirLister func(ctx context.Context, dir string) ([]string, error)
 
+// fileReader reads a file.
+type fileReader func(ctx context.Context, path string) ([]byte, error)
+
+// backupsReader reads the state backups directory one way: from the host,
+// or through a container of the control plane.
+type backupsReader struct {
+	list dirLister
+	read fileReader
+}
+
 // hostListDir lists a directory with the host's own permissions. Tests
 // replace it to simulate a directory the CLI can't read (as root, chmod
 // wouldn't).
@@ -771,52 +782,130 @@ var hostListDir dirLister = func(_ context.Context, dir string) ([]string, error
 	return names, nil
 }
 
-// findBackup looks for the pre-migration backup of this upgrade. The backups
-// directory belongs to root (the control plane container created it, mode
-// 0700), so a CLI run by an operator in the docker group can't read it:
-// then a container of the control plane lists it, the previous release's
-// first, because the new image may be the broken one.
-func (u *upgrader) findBackup() (string, error) {
+// hostReadFile reads a file with the host's own permissions.
+var hostReadFile fileReader = func(_ context.Context, path string) ([]byte, error) {
+	return os.ReadFile(path) //nolint:gosec // G304: a marker in the state backups directory
+}
+
+// upgradeMigration is what the CLI knows about the state database
+// migrations during an upgrade.
+type upgradeMigration struct {
+	// Markers are the migration markers the control plane wrote since the
+	// upgrade started, oldest first.
+	Markers []store.MigrationMarker
+	// Backup is the pre-migration backup holding the database as the
+	// previous release left it, or empty if there is none.
+	Backup string
+}
+
+// Migrated reports whether the upgrade may have migrated the state
+// database. Without markers, written by a control plane older than #246,
+// a pre-migration backup is the only sign.
+func (m upgradeMigration) Migrated() bool {
+	if len(m.Markers) == 0 {
+		return m.Backup != ""
+	}
+	return slices.ContainsFunc(m.Markers, store.MigrationMarker.Changed)
+}
+
+// findMigration looks for the state database migrations of this upgrade.
+// The backups directory belongs to root (the control plane container
+// created it, mode 0700), so a CLI run by an operator in the docker group
+// can't read it: then a container of the control plane reads it, the
+// previous release's first, because the new image may be the broken one.
+// Not through the admin interface: the control plane may be down.
+func (u *upgrader) findMigration() (upgradeMigration, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	via := func(p UpgradeProject) dirLister {
-		return func(ctx context.Context, dir string) ([]string, error) {
-			return p.ListDir(ctx, controlPlaneService, dir)
+	via := func(p UpgradeProject) backupsReader {
+		return backupsReader{
+			list: func(ctx context.Context, dir string) ([]string, error) {
+				return p.ListDir(ctx, controlPlaneService, dir)
+			},
+			read: func(ctx context.Context, path string) ([]byte, error) {
+				return p.ReadFile(ctx, controlPlaneService, path)
+			},
 		}
 	}
-	return migrationBackup(ctx, u.layout.StateBackupsDir(), u.record.StartedAt, hostListDir,
+	return findMigration(ctx, u.layout.StateBackupsDir(), u.record.StartedAt,
+		backupsReader{list: hostListDir, read: hostReadFile},
 		via(u.a.upgradeProject(u.name, filepath.Join(u.upgradeDir, previousPlatform), nil)),
 		via(u.project))
 }
 
-// migrationBackup returns the pre-migration backup the control plane wrote
-// at or after since (less the clock skew), the start of the upgrade, or ""
-// with a nil error if there is none, in which case no migration ran. It
-// goes by file names only: the host CLI never opens the state database
-// (§4.7). The names come from host, or if that fails for another reason
-// than a missing directory, from the first of fallbacks that works. If none
-// does, the error says so, and whether a migration ran isn't known.
-func migrationBackup(ctx context.Context, dir string, since time.Time, host dirLister, fallbacks ...dirLister) (string, error) {
-	names, err := host(ctx, dir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", nil
+// findMigration returns the migrations the control plane recorded in dir at
+// or after since (less the clock skew), the start of the upgrade. It reads
+// the migration markers, and falls back to the pre-migration backups' file
+// names when there are none, as a control plane older than the markers
+// leaves. It never opens the state database (§4.7). It reads dir with host,
+// or if that fails for another reason than a missing directory, with the
+// first of fallbacks that works. If none does, the error says so, and
+// whether a migration ran isn't known.
+func findMigration(ctx context.Context, dir string, since time.Time, host backupsReader, fallbacks ...backupsReader) (upgradeMigration, error) {
+	mig, missing, err := readMigration(ctx, host, dir, since)
+	if missing {
+		return upgradeMigration{}, nil
 	}
 	errs := []error{err}
-	for _, list := range fallbacks {
+	for _, r := range fallbacks {
 		if err == nil {
 			break
 		}
-		if names, err = list(ctx, dir); err != nil {
+		if mig, _, err = readMigration(ctx, r, dir, since); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	if err != nil {
-		return "", errors.Join(errs...)
+		return upgradeMigration{}, errors.Join(errs...)
 	}
-	if best := oldestBackup(names, since); best != "" {
-		return filepath.Join(dir, best), nil
+	return mig, nil
+}
+
+// readMigration reads the migrations since the upgrade's start from dir
+// with r. missing reports that dir doesn't exist, so nothing migrated.
+func readMigration(ctx context.Context, r backupsReader, dir string, since time.Time) (mig upgradeMigration, missing bool, err error) {
+	names, err := r.list(ctx, dir)
+	if err != nil {
+		return mig, errors.Is(err, fs.ErrNotExist), err
 	}
-	return "", nil
+	after := since.Add(-backupClockSkew).Truncate(time.Millisecond)
+	type found struct {
+		name string
+		at   time.Time
+	}
+	var markers []found
+	for _, name := range names {
+		if at, ok := store.MarkerTime(name); ok && !at.Before(after) {
+			markers = append(markers, found{name, at})
+		}
+	}
+	slices.SortFunc(markers, func(a, b found) int { return a.at.Compare(b.at) })
+	for _, f := range markers {
+		p := filepath.Join(dir, f.name)
+		data, err := r.read(ctx, p)
+		if err != nil {
+			return upgradeMigration{}, false, fmt.Errorf("reading %s: %w", p, err)
+		}
+		m, err := store.ParseMigrationMarker(data)
+		if err != nil {
+			return upgradeMigration{}, false, fmt.Errorf("%s: %w", p, err)
+		}
+		mig.Markers = append(mig.Markers, m)
+		// The oldest backup holds the database as the previous release
+		// left it; a later run's backs up what an earlier one migrated.
+		if mig.Backup == "" && m.Backup != "" {
+			// The control plane names the backup by its own path; the
+			// directory is mounted at the same path, but the name is all
+			// that needs to agree.
+			mig.Backup = filepath.Join(dir, filepath.Base(m.Backup))
+		}
+	}
+	if len(mig.Markers) == 0 {
+		if best := oldestBackup(names, since); best != "" {
+			mig.Backup = filepath.Join(dir, best)
+		}
+	}
+	return mig, false, nil
 }
 
 // oldestBackup picks, from the file names of a backups directory, the

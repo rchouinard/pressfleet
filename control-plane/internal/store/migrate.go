@@ -107,8 +107,10 @@ type MigrateResult struct {
 // Migrate brings the schema up to date. If migrations are pending and the
 // database already holds data, it first backs up an SQLite database into
 // backupDir; for PostgreSQL it logs a reminder that backups are the
-// operator's job. It returns ErrSchemaTooNew, changing nothing, if the
-// database was migrated by a newer binary.
+// operator's job. Each run with migrations pending, on either dialect,
+// records itself in a MigrationMarker in backupDir. It returns
+// ErrSchemaTooNew, changing nothing, if the database was migrated by a
+// newer binary.
 func (db *DB) Migrate(ctx context.Context, backupDir string) (MigrateResult, error) {
 	ms, err := Migrations(db.dialect)
 	if err != nil {
@@ -159,17 +161,42 @@ func (db *DB) migrate(ctx context.Context, backupDir string, ms []Migration) (Mi
 		return res, err
 	}
 
-	if _, err := q.ExecContext(ctx, createSchemaMigrations[db.dialect]); err != nil {
-		return res, fmt.Errorf("creating schema_migrations: %w", err)
+	// The marker must exist before anything changes: without one, the host
+	// CLI would conclude that an upgrade didn't migrate.
+	marker, err := newMarker(backupDir, MigrationMarker{
+		Status:        MigrationRunning,
+		StartedAt:     now(),
+		Version:       db.version,
+		Dialect:       db.dialect,
+		FromSchema:    res.From,
+		ToSchema:      latest,
+		ReachedSchema: res.From,
+		Backup:        res.BackupPath,
+	})
+	if err != nil {
+		return res, err
 	}
-	for _, m := range ms[res.From:] {
+	err = db.applyMigrations(ctx, conn, q, ms[res.From:], &res)
+	if merr := marker.finish(res.To, err); merr != nil {
+		// A marker left running still tells the CLI a migration may have
+		// run, so this isn't worth failing a successful migration for.
+		db.log.Warn("recording the end of the migrations failed", "path", marker.path, "error", merr)
+	}
+	return res, err
+}
+
+func (db *DB) applyMigrations(ctx context.Context, conn *sql.Conn, q querier, ms []Migration, res *MigrateResult) error {
+	if _, err := q.ExecContext(ctx, createSchemaMigrations[db.dialect]); err != nil {
+		return fmt.Errorf("creating schema_migrations: %w", err)
+	}
+	for _, m := range ms {
 		if err := applyMigration(ctx, conn, db.dialect, m); err != nil {
-			return res, err
+			return err
 		}
 		res.To = m.Version
 		db.log.Info("applied database migration", "version", m.Version, "name", m.Name)
 	}
-	return res, nil
+	return nil
 }
 
 // migrationLockKey is an arbitrary constant identifying PressFleet's

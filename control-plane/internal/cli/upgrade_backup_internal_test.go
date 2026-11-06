@@ -10,19 +10,28 @@ import (
 	"time"
 )
 
-func TestMigrationBackup(t *testing.T) {
+// Without markers, as a control plane from before them leaves, the backups'
+// names tell whether the upgrade migrated.
+func TestFindMigrationByBackupName(t *testing.T) {
 	const dir = "/data/state/backups"
 	start := time.Date(2026, 10, 31, 20, 25, 0, 0, time.UTC)
 	old := "pressfleet-20200101T000000.000Z-schema0001.db"
 	first := "pressfleet-20261031T202537.624Z-schema0029.db"
 	second := "pressfleet-20261031T202901.000Z-schema0035.db"
 
-	lister := func(names []string, err error, calls *int) dirLister {
-		return func(context.Context, string) ([]string, error) {
-			if calls != nil {
-				*calls++
-			}
-			return names, err
+	// lister reads names, none of them markers.
+	lister := func(names []string, err error, calls *int) backupsReader {
+		return backupsReader{
+			list: func(context.Context, string) ([]string, error) {
+				if calls != nil {
+					*calls++
+				}
+				return names, err
+			},
+			read: func(_ context.Context, p string) ([]byte, error) {
+				t.Errorf("reading %s, which isn't a marker", p)
+				return nil, fs.ErrNotExist
+			},
 		}
 	}
 	denied := &fs.PathError{Op: "open", Path: dir, Err: fs.ErrPermission}
@@ -30,8 +39,8 @@ func TestMigrationBackup(t *testing.T) {
 	tests := []struct {
 		name      string
 		since     time.Time
-		host      dirLister
-		fallbacks []dirLister
+		host      backupsReader
+		fallbacks []backupsReader
 		want      string
 		wantErr   bool
 		// fallbackCalls is how many of the fallbacks run.
@@ -62,20 +71,20 @@ func TestMigrationBackup(t *testing.T) {
 			name:      "unreadable, listed through Docker",
 			since:     start,
 			host:      lister(nil, denied, nil),
-			fallbacks: []dirLister{lister([]string{old, first}, nil, nil)},
+			fallbacks: []backupsReader{lister([]string{old, first}, nil, nil)},
 			want:      filepath.Join(dir, first),
 		},
 		{
 			name:      "unreadable, listed through Docker and empty",
 			since:     start,
 			host:      lister(nil, denied, nil),
-			fallbacks: []dirLister{lister([]string{old}, nil, nil)},
+			fallbacks: []backupsReader{lister([]string{old}, nil, nil)},
 		},
 		{
 			name:  "unreadable, the first Docker listing fails and the second works",
 			since: start,
 			host:  lister(nil, denied, nil),
-			fallbacks: []dirLister{
+			fallbacks: []backupsReader{
 				lister(nil, errors.New("pull access denied"), nil),
 				lister([]string{first}, nil, nil),
 			},
@@ -85,7 +94,7 @@ func TestMigrationBackup(t *testing.T) {
 			name:  "unreadable and every Docker listing fails",
 			since: start,
 			host:  lister(nil, denied, nil),
-			fallbacks: []dirLister{
+			fallbacks: []backupsReader{
 				lister(nil, errors.New("no such image"), nil),
 				lister(nil, errors.New("crash loop"), nil),
 			},
@@ -112,23 +121,23 @@ func TestMigrationBackup(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := migrationBackup(t.Context(), dir, tt.since, tt.host, tt.fallbacks...)
+			got, err := findMigration(t.Context(), dir, tt.since, tt.host, tt.fallbacks...)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("error = %v, want error: %t", err, tt.wantErr)
 			}
-			if got != tt.want {
-				t.Errorf("backup = %q, want %q", got, tt.want)
+			if got.Backup != tt.want || got.Migrated() != (tt.want != "") || len(got.Markers) != 0 {
+				t.Errorf("migration = %+v, want backup %q from its name", got, tt.want)
 			}
 		})
 	}
 }
 
 // A missing directory is decided on the host: Docker isn't asked.
-func TestMigrationBackupMissingDirSkipsDocker(t *testing.T) {
+func TestFindMigrationMissingDirSkipsDocker(t *testing.T) {
 	calls := 0
-	host := func(context.Context, string) ([]string, error) { return nil, fs.ErrNotExist }
-	via := func(context.Context, string) ([]string, error) { calls++; return nil, nil }
-	if _, err := migrationBackup(t.Context(), "/x", time.Now(), host, via); err != nil || calls != 0 {
+	host := backupsReader{list: func(context.Context, string) ([]string, error) { return nil, fs.ErrNotExist }}
+	via := backupsReader{list: func(context.Context, string) ([]string, error) { calls++; return nil, nil }}
+	if _, err := findMigration(t.Context(), "/x", time.Now(), host, via); err != nil || calls != 0 {
 		t.Errorf("error = %v, Docker listings = %d", err, calls)
 	}
 }

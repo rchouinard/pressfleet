@@ -22,6 +22,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/cli"
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
+	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
 
 // fakeUpgradePlatform stands in for the platform's Compose project and its
@@ -45,11 +46,16 @@ type fakeUpgradePlatform struct {
 	// listDir answers a listing through a project's control plane
 	// container; nil lists the directory on the host.
 	listDir func(projectDir, dir string) ([]string, error)
+	// readFile answers a read through a project's control plane
+	// container; nil reads the file on the host.
+	readFile func(projectDir, path string) ([]byte, error)
 
 	ups   []compose.UpOptions
 	pulls int
-	// listed are the project directories listings ran in.
+	// listed and read are the project directories listings and reads ran
+	// in.
 	listed []string
+	read   []string
 }
 
 func (p fakeUpgradeProject) ListDir(_ context.Context, service, dir string) ([]string, error) {
@@ -68,6 +74,19 @@ func (p fakeUpgradeProject) ListDir(_ context.Context, service, dir string) ([]s
 		names = append(names, e.Name())
 	}
 	return names, err
+}
+
+func (p fakeUpgradeProject) ReadFile(_ context.Context, service, path string) ([]byte, error) {
+	p.f.mu.Lock()
+	defer p.f.mu.Unlock()
+	if service != "control-plane" {
+		p.f.t.Errorf("reading a file in service %q", service)
+	}
+	p.f.read = append(p.f.read, p.dir)
+	if p.f.readFile != nil {
+		return p.f.readFile(p.dir, path)
+	}
+	return os.ReadFile(path)
 }
 
 func (f *fakeUpgradePlatform) project(_, dir string, files []string) cli.UpgradeProject {
@@ -602,6 +621,70 @@ func (e *upgradeEnv) failedUpgrade() (backup string, r result) {
 	}
 	e.platform.upErr = errors.New("container pressfleet-control-plane-1 is unhealthy")
 	return backup, e.upgrade("")
+}
+
+// failedUpgradeWithMarker is failedUpgrade with a control plane that records
+// its migration in a marker. A second backup, older than the marker's but
+// also from after the upgrade started, would win by file name alone.
+func (e *upgradeEnv) failedUpgradeWithMarker() (backup string, r result) {
+	e.t.Helper()
+	backups := e.path("state", "backups")
+	if err := os.MkdirAll(backups, 0o700); err != nil {
+		e.t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	decoy := fmt.Sprintf("pressfleet-%s-schema0028.db", now.Add(-10*time.Second).Format("20060102T150405.000Z"))
+	backup = fmt.Sprintf("pressfleet-%s-schema0029.db", now.Format("20060102T150405.000Z"))
+	marker, err := json.Marshal(store.MigrationMarker{
+		Status: store.MigrationSucceeded, StartedAt: now, FinishedAt: now, Version: "v1.2.3", Dialect: store.SQLite,
+		FromSchema: 29, ToSchema: 31, ReachedSchema: 31, Backup: filepath.Join(backups, backup),
+	})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	e.platform.onUp = func() {
+		for name, data := range map[string][]byte{
+			decoy: nil, backup: nil,
+			fmt.Sprintf("migration-%s-schema0029.json", now.Format("20060102T150405.000Z")): marker,
+		} {
+			if err := os.WriteFile(filepath.Join(backups, name), data, 0o600); err != nil {
+				e.t.Error(err)
+			}
+		}
+	}
+	e.platform.upErr = errors.New("container pressfleet-control-plane-1 is unhealthy")
+	return backup, e.upgrade("")
+}
+
+// The recovery steps restore the backup the migration marker names, read
+// through a container of the previous control plane when the host user
+// can't read the backups directory.
+func TestUpgradeRecoveryReadsMigrationMarker(t *testing.T) {
+	for _, readable := range []bool{true, false} {
+		t.Run(fmt.Sprintf("readable=%t", readable), func(t *testing.T) {
+			e := newUpgradeEnv(t, "v1.2.2")
+			if !readable {
+				cli.HostListDir(t, func(dir string) ([]string, error) {
+					return nil, &fs.PathError{Op: "open", Path: dir, Err: fs.ErrPermission}
+				})
+			}
+			backup, r := e.failedUpgradeWithMarker()
+			if r.code != 1 {
+				t.Fatalf("exit %d, want 1\n%s\n%s", r.code, r.stdout, r.stderr)
+			}
+			want := "control-plane state restore " + e.path("state", "backups", backup) + "\n"
+			if !strings.Contains(r.stderr, want) {
+				t.Errorf("recovery steps lack %q:\n%s", want, r.stderr)
+			}
+			wantRead := []string(nil)
+			if !readable {
+				wantRead = []string{e.path("upgrade", "previous-platform")}
+			}
+			if !slices.Equal(e.platform.read, wantRead) {
+				t.Errorf("reads through Docker ran in %v, want %v", e.platform.read, wantRead)
+			}
+		})
+	}
 }
 
 // The state backups directory belongs to root, so an operator who isn't root

@@ -56,14 +56,18 @@ type Config struct {
 	SQLitePath string
 	// PostgresDSN is the connection string for the postgres driver.
 	PostgresDSN redact.Secret
+	// Version is the release of the running binary, which Migrate records
+	// in its migration markers.
+	Version string
 }
 
 // DB is an open state database. It is a Querier outside any transaction.
 type DB struct {
 	querier
-	db     *sql.DB
-	log    *slog.Logger
-	unlock func() error
+	db      *sql.DB
+	log     *slog.Logger
+	unlock  func() error
+	version string
 }
 
 // Open connects to the database. It does not migrate; call Migrate.
@@ -101,6 +105,7 @@ func Open(ctx context.Context, cfg Config, log *slog.Logger) (*DB, error) {
 		db:      sqldb,
 		log:     log,
 		unlock:  unlock,
+		version: cfg.Version,
 	}, nil
 }
 

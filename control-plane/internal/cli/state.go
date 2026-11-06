@@ -20,6 +20,7 @@ func (a *app) storeConfig() store.Config {
 		Driver:      store.Dialect(a.cfg.Database.Driver),
 		SQLitePath:  a.cfg.SQLitePath(),
 		PostgresDSN: a.cfg.Database.PostgresDSN,
+		Version:     a.build().Version,
 	}
 }
 

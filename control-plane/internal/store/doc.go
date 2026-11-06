@@ -72,6 +72,12 @@
 // point-in-time recovery, or their own pg_dump schedule. For the same reason
 // [Restore] supports SQLite only.
 //
+// On both dialects, each [DB.Migrate] run with migrations pending writes a
+// [MigrationMarker] beside the backups: before the first migration, and
+// again when the run ends. It is how the host CLI, which never opens the
+// database (§4.7), learns whether an upgrade migrated it and which backup
+// holds the database as it was before.
+//
 // Disaster recovery backups are different: [DB.Dump] and [Load] (dump.go)
 // copy the whole database in a dialect-neutral format, for both drivers,
 // which package backup/statebackup keeps in the state repository (#96).
