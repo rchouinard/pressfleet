@@ -1,0 +1,21 @@
+{{- /*
+  The site's nginx, which Traefik routes the site's domains to (#217). php
+  is never reachable from outside the pod.
+*/ -}}
+{{ template "header" . }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  namespace: {{ q .Namespace }}
+  labels:
+{{- template "labels" . }}
+spec:
+  type: ClusterIP
+  selector:
+    pressfleet.io/component: site
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

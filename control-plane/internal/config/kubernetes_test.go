@@ -77,6 +77,9 @@ func TestValidateKubernetes(t *testing.T) {
 		{"pod CIDR", func(c *config.Config) { c.Kubernetes.PodCIDRs = []string{"10.42.0.0"} }, "kubernetes.pod_cidrs"},
 		{"pod CIDR with host bits", func(c *config.Config) { c.Kubernetes.PodCIDRs = []string{"10.42.0.1/16"} }, "kubernetes.pod_cidrs"},
 		{"pull secret", func(c *config.Config) { c.Kubernetes.ImagePullSecrets = []string{"ghcr_token"} }, "kubernetes.image_pull_secrets"},
+		{"volume size", func(c *config.Config) { c.Kubernetes.SiteVolumeSize = "50Gi" }, ""},
+		{"volume size in decimal units", func(c *config.Config) { c.Kubernetes.SiteVolumeSize = "10G" }, "kubernetes.site_volume_size"},
+		{"empty volume size", func(c *config.Config) { c.Kubernetes.SiteVolumeSize = "" }, "kubernetes.site_volume_size"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

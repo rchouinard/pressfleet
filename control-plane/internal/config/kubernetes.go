@@ -33,6 +33,10 @@ type KubernetesConfig struct {
 	// StorageClasses selects the storage classes of the volumes the driver
 	// and the chart create.
 	StorageClasses KubernetesStorageClasses `yaml:"storage_classes"`
+	// SiteVolumeSize is the size each site's wp-content volume asks for,
+	// a Kubernetes quantity in Mi, Gi, or Ti. A volume can grow, if its
+	// storage class allows expansion, but never shrink.
+	SiteVolumeSize string `yaml:"site_volume_size"`
 	// TraefikService is the name of Traefik's Service in the platform
 	// namespace, which uptime and certificate checks connect to.
 	TraefikService string `yaml:"traefik_service"`
@@ -57,11 +61,20 @@ type KubernetesStorageClasses struct {
 	Data string `yaml:"data"`
 }
 
+// DefaultSiteVolumeSize is the default kubernetes.site_volume_size.
+const DefaultSiteVolumeSize = "10Gi"
+
+// volumeSize matches the quantities kubernetes.site_volume_size accepts:
+// a whole number of binary units, which reads the same to operators and to
+// the API server.
+var volumeSize = regexp.MustCompile(`^[1-9][0-9]{0,5}(Mi|Gi|Ti)$`)
+
 // DefaultKubernetes matches the Helm chart's defaults.
 func DefaultKubernetes() KubernetesConfig {
 	return KubernetesConfig{
 		PlatformNamespace:   "pressfleet",
 		SiteNamespacePrefix: "pf-",
+		SiteVolumeSize:      DefaultSiteVolumeSize,
 		TraefikService:      "traefik",
 	}
 }
@@ -117,6 +130,9 @@ func (k KubernetesConfig) Validate() error {
 		if sc.value != "" && !dnsSubdomain.MatchString(sc.value) {
 			errs = append(errs, fmt.Errorf("%s must be a storage class name, got %q", sc.key, sc.value))
 		}
+	}
+	if !volumeSize.MatchString(k.SiteVolumeSize) {
+		errs = append(errs, fmt.Errorf("kubernetes.site_volume_size must be a whole number of Mi, Gi, or Ti, like 10Gi, got %q", k.SiteVolumeSize))
 	}
 	if !dnsLabel.MatchString(k.TraefikService) {
 		errs = append(errs, fmt.Errorf("kubernetes.traefik_service must be a Service name, got %q", k.TraefikService))

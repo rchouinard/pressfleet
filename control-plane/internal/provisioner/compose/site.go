@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -141,7 +140,7 @@ func RenderSite(dir string, in SiteRender) (RenderResult, error) {
 	if params.DBHost == "" {
 		params.DBHost = DefaultDBHost
 	}
-	params.Security = wpSecurity(in.Security)
+	params.Security = provisioner.WordPressSecurity(in.Security)
 	wpConfig, err := wpconfig.Render(params)
 	if err != nil {
 		return res, fmt.Errorf("%w: %w", ErrInvalidSite, err)
@@ -206,37 +205,15 @@ type siteTemplateData struct {
 	ClientGroupID  string
 	UID            int
 	Images         SiteImages
-	PHP            containerResources
-	Nginx          containerResources
+	PHP            provisioner.ContainerResources
+	Nginx          provisioner.ContainerResources
 	PHPMemoryLimit string
 	PHPMaxChildren int
 	EnableCache    bool
 	WPConfigFile   string
-	NginxSecurity  nginxSecurity
+	NginxSecurity  provisioner.NginxSecurity
 	// RoutingLabels are nginx's Traefik labels (routing.go).
 	RoutingLabels []label
-}
-
-// nginxSecurity is the nginx half of the WordPress security set (§6.1), as
-// the site-nginx image's environment variables (images/README.md).
-type nginxSecurity struct {
-	LoginRateLimit  bool
-	LoginRate       string // NGINX_LOGIN_RATE, e.g. "10r/m"
-	LoginBurst      int
-	SecurityHeaders bool
-}
-
-func nginxSecuritySettings(s config.WordPressSecurityConfig) (nginxSecurity, error) {
-	n := nginxSecurity{LoginRateLimit: s.LoginRateLimit.Enabled, SecurityHeaders: s.Headers}
-	if !n.LoginRateLimit {
-		return n, nil
-	}
-	if s.LoginRateLimit.RequestsPerMinute < 1 || s.LoginRateLimit.Burst < 0 {
-		return n, errors.New("security: the login rate limit needs a positive rate and a burst of at least 0")
-	}
-	n.LoginRate = strconv.Itoa(s.LoginRateLimit.RequestsPerMinute) + "r/m"
-	n.LoginBurst = s.LoginRateLimit.Burst
-	return n, nil
 }
 
 func siteData(dir string, in SiteRender) (siteTemplateData, error) {
@@ -256,11 +233,11 @@ func siteData(dir string, in SiteRender) (siteTemplateData, error) {
 	if in.Images.PHP == "" || in.Images.Nginx == "" {
 		errs = append(errs, errors.New("php and nginx images are required"))
 	}
-	split, err := splitResources(in.Site.Resources)
+	split, err := provisioner.SplitResources(in.Site.Resources)
 	if err != nil {
 		errs = append(errs, err)
 	}
-	nginx, err := nginxSecuritySettings(in.Security)
+	nginx, err := provisioner.NginxSecuritySettings(in.Security)
 	if err != nil {
 		errs = append(errs, err)
 	}
@@ -290,154 +267,6 @@ func siteData(dir string, in SiteRender) (siteTemplateData, error) {
 		WPConfigFile:   SiteWPConfigFile,
 		NginxSecurity:  nginx,
 	}, nil
-}
-
-// wpSecurity is the part of the security set that wp-config.php carries:
-// DISALLOW_FILE_EDIT and the must-use plugin modules' constants.
-func wpSecurity(s config.WordPressSecurityConfig) wpconfig.Security {
-	sec := wpconfig.Security{
-		DisallowFileEdit:            s.DisableFileEdit,
-		BlockUserEnumeration:        s.BlockUserEnumeration,
-		DisableApplicationPasswords: s.DisableApplicationPasswords,
-		// Optional two-factor needs nothing here: the control plane just
-		// installs the Two Factor plugin (package sites).
-		RequireTwoFactor: s.TwoFactor == config.TwoFactorRequiredForAdmins,
-	}
-	if s.PasswordPolicy.Enabled {
-		sec.PasswordMinLength = s.PasswordPolicy.MinLength
-	}
-	if s.PasswordHashing == config.PasswordHashingArgon2id {
-		sec.PasswordHashing = wpconfig.HashArgon2id
-	}
-	return sec
-}
-
-// containerResources are one container's share of the site's resources.
-type containerResources struct {
-	CPUs                string // Compose "cpus", e.g. "0.75"
-	MemoryLimitMB       int
-	MemoryReservationMB int
-}
-
-// resourceSplit is how a site's resources are divided, plus the PHP settings
-// derived from php's share.
-type resourceSplit struct {
-	Nginx, PHP       containerResources
-	PHPMemoryLimitMB int // PHP_MEMORY_LIMIT
-	PHPMaxChildren   int // PHP_FPM_MAX_CHILDREN
-}
-
-// Constants of the resource split formulas (see splitResources).
-const (
-	// phpOverheadMB is php's memory apart from its workers: the FPM
-	// master, and OPcache's shared memory (PHP_OPCACHE_MEMORY_CONSUMPTION,
-	// 64 MiB by default), which workers share rather than each hold.
-	phpOverheadMB = 64
-	// maxPHPMemoryLimitMB is PHP_MEMORY_LIMIT when php has room for it; it
-	// is the image default and what wp-admin asks for (WP_MAX_MEMORY_LIMIT).
-	maxPHPMemoryLimitMB = 256
-	minPHPMaxChildren   = 2
-	maxPHPMaxChildren   = 32
-)
-
-// splitResources divides a site's resources between nginx and php. nginx
-// (one worker, static files, FastCGI proxying) needs little and its needs
-// barely grow with the site, so it gets a small, bounded share and php the
-// rest:
-//
-//	nginx memory limit       = clamp(limit/8, 32, 128) MiB
-//	php memory limit         = limit - nginx memory limit
-//	nginx memory reservation = max(clamp(reservation/8, 8, 32), reservation - php memory limit) MiB
-//	php memory reservation   = reservation - nginx memory reservation
-//	nginx CPU                = clamp(floor(cpu/4, 0.01), 0.1, 0.5)
-//	php CPU                  = cpu - nginx CPU
-//
-// nginx's CPU is a whole number of hundredths because Docker's systemd cgroup
-// driver (the default on most hosts) can only express a CPU limit in
-// multiples of 10 ms per second and rounds every container's limit up to the
-// next one. A share like 0.187 would run as 0.19, and 0.563 as 0.57: a site
-// set to 0.75 CPUs would get 0.76. With nginx on a multiple of 0.01, php's
-// share is one too whenever the site's total is, so the site gets exactly
-// what was set. A total that is not a multiple of 0.01 (0.333) still gets
-// rounded up by up to 0.01, in php's share alone.
-//
-// The second term of the nginx reservation only matters when the reservation
-// is close to the limit; it keeps php's reservation within php's limit. The
-// shares always add up to the site's totals exactly. For the defaults (1 CPU,
-// 128 MiB reserved, 512 MiB limit) nginx gets 0.25 CPU, 16/64 MiB and php
-// 0.75 CPU, 112/448 MiB.
-//
-// PHP settings follow from php's memory limit P:
-//
-//	PHP_MEMORY_LIMIT     = min(256, floor32(P - 64)) MiB
-//	PHP_FPM_MAX_CHILDREN = clamp((P - 64) / max(PHP_MEMORY_LIMIT/4, 32), 2, 32)
-//
-// 64 MiB is the FPM master and OPcache. One request may use the whole
-// memory_limit, but a typical WordPress worker uses about a quarter of it,
-// so max_children sizes workers at a quarter (at least 32 MiB) instead of
-// assuming every worker peaks at once. If they all do, the kernel's OOM
-// killer ends a worker, which FPM replaces; the site stays up. Idle sites
-// hold no workers (pm = ondemand). The default site gets PHP_MEMORY_LIMIT
-// 256M and 6 children.
-func splitResources(r provisioner.ResourceLimits) (resourceSplit, error) {
-	var errs []error
-	cpu, err := parseCPUMillis(r.CPU)
-	if err != nil {
-		errs = append(errs, err)
-	} else if cpu < MinSiteCPUMillis {
-		errs = append(errs, fmt.Errorf("resources: CPU must be at least %s", formatCPUMillis(MinSiteCPUMillis)))
-	}
-	if r.MemoryLimitMB < MinSiteMemoryLimitMB {
-		errs = append(errs, fmt.Errorf("resources: memory limit must be at least %d MiB", MinSiteMemoryLimitMB))
-	}
-	if r.MemoryReservationMB < MinSiteMemoryReservationMB {
-		errs = append(errs, fmt.Errorf("resources: memory reservation must be at least %d MiB", MinSiteMemoryReservationMB))
-	}
-	if r.MemoryReservationMB > r.MemoryLimitMB {
-		errs = append(errs, errors.New("resources: memory reservation must not exceed the limit"))
-	}
-	if err := errors.Join(errs...); err != nil {
-		return resourceSplit{}, err
-	}
-
-	var s resourceSplit
-	s.Nginx.MemoryLimitMB = clamp(r.MemoryLimitMB/8, 32, 128)
-	s.PHP.MemoryLimitMB = r.MemoryLimitMB - s.Nginx.MemoryLimitMB
-	s.Nginx.MemoryReservationMB = max(clamp(r.MemoryReservationMB/8, 8, 32), r.MemoryReservationMB-s.PHP.MemoryLimitMB)
-	s.PHP.MemoryReservationMB = r.MemoryReservationMB - s.Nginx.MemoryReservationMB
-
-	nginxCPU := clamp(cpu/4/cpuQuotaStepMillis*cpuQuotaStepMillis, 100, 500)
-	s.Nginx.CPUs = formatCPUMillis(nginxCPU)
-	s.PHP.CPUs = formatCPUMillis(cpu - nginxCPU)
-
-	workerBudget := s.PHP.MemoryLimitMB - phpOverheadMB
-	s.PHPMemoryLimitMB = min(maxPHPMemoryLimitMB, workerBudget/32*32)
-	perWorker := max(s.PHPMemoryLimitMB/4, 32)
-	s.PHPMaxChildren = clamp(workerBudget/perWorker, minPHPMaxChildren, maxPHPMaxChildren)
-	return s, nil
-}
-
-// cpuQuotaStepMillis is the granularity, in thousandths of a CPU, of the CPU
-// limits that Docker's systemd cgroup driver applies exactly (10 ms of CPU
-// time per second).
-const cpuQuotaStepMillis = 10
-
-func clamp(v, lo, hi int) int { return min(max(v, lo), hi) }
-
-// parseCPUMillis parses a decimal CPU count ("1.0", "0.5", "2") into
-// thousandths of a CPU.
-func parseCPUMillis(s string) (int, error) {
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f <= 0 || f > 1024 {
-		return 0, fmt.Errorf("resources: CPU %q must be a positive decimal number of CPUs", s)
-	}
-	return int(math.Round(f * 1000)), nil
-}
-
-// formatCPUMillis renders thousandths of a CPU as a decimal ("0.75", "1").
-func formatCPUMillis(m int) string {
-	s := fmt.Sprintf("%d.%03d", m/1000, m%1000)
-	return strings.TrimSuffix(strings.TrimRight(s, "0"), ".")
 }
 
 // quoteYAML renders v as a double-quoted YAML scalar. JSON string syntax is

@@ -1,0 +1,119 @@
+{{- /*
+  The site's network isolation (§4.8, §6; decision 6 in #212), in place of
+  the Compose site network. Everything in the namespace is denied by
+  default; the site's pod may then be reached by Traefik alone, and reach
+  DNS, MariaDB, Valkey, the SMTP relay, and the internet, but not the rest
+  of the cluster: other sites, the API server, the nodes, or the cloud
+  metadata address. Other pods in the namespace (tasks, #219) bring their
+  own policies.
+*/ -}}
+{{ template "header" . }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: {{ q .Namespace }}
+  labels:
+{{- template "labels" . }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: site-ingress
+  namespace: {{ q .Namespace }}
+  labels:
+{{- template "labels" . }}
+spec:
+  podSelector:
+    matchLabels:
+      pressfleet.io/component: site
+  policyTypes:
+    - Ingress
+  ingress:
+    # Traefik's pods in the platform namespace, to nginx's site port. nginx
+    # trusts forwarded headers from the whole pod network
+    # (NGINX_TRUSTED_PROXIES); this is what narrows that to Traefik.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ q .PlatformNamespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pressfleet
+              app.kubernetes.io/component: traefik
+      ports:
+        - protocol: TCP
+          port: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: site-egress
+  namespace: {{ q .Namespace }}
+  labels:
+{{- template "labels" . }}
+spec:
+  podSelector:
+    matchLabels:
+      pressfleet.io/component: site
+  policyTypes:
+    - Egress
+  egress:
+    # DNS, wherever the cluster's resolver is (kube-system, a node-local
+    # cache).
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- if .Egress.PlatformPorts }}
+    # MariaDB and Valkey in the platform namespace.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ q .PlatformNamespace }}
+      ports:
+{{- range .Egress.PlatformPorts }}
+        - protocol: TCP
+          port: {{ . }}
+{{- end }}
+{{- end }}
+{{- range .Egress.Hosts }}
+    # An external platform service by address, which may be in a private
+    # range the internet rule leaves out.
+    - to:
+        - ipBlock:
+            cidr: {{ q .CIDR }}
+      ports:
+        - protocol: TCP
+          port: {{ .Port }}
+{{- end }}
+{{- if .Egress.SMTPPort }}
+    # The SMTP relay's port, at any address: the relay is named by host
+    # name, which a NetworkPolicy can't select, and may be in a private
+    # range.
+    - ports:
+        - protocol: TCP
+          port: {{ .Egress.SMTPPort }}
+{{- end }}
+    # The internet: everything but private, shared, and link-local ranges,
+    # which hold the cluster's pod, service, and node addresses and the
+    # metadata address, and the configured pod ranges.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+{{- range .Egress.ExceptV4 }}
+              - {{ q . }}
+{{- end }}
+        - ipBlock:
+            cidr: ::/0
+            except:
+{{- range .Egress.ExceptV6 }}
+              - {{ q . }}
+{{- end }}

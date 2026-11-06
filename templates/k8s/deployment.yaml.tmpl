@@ -1,0 +1,189 @@
+{{- /*
+  The site's pod (design doc §4.8): nginx and php as in the Compose project
+  (templates/compose/site.yaml.tmpl), following the site image runtime
+  contract in images/README.md, Kubernetes section.
+
+  replicas is left out on purpose: StartSite and StopSite own it, by
+  scaling the Deployment between 1 and 0, so applying the manifests again
+  never starts a stopped site. A new Deployment starts with 1.
+*/ -}}
+{{ template "header" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: site
+  namespace: {{ q .Namespace }}
+  labels:
+{{- template "labels" . }}
+spec:
+  # One pod at a time: wp-content is ReadWriteOnce, and two PHP versions
+  # must never write it together.
+  strategy:
+    type: Recreate
+  revisionHistoryLimit: 2
+  progressDeadlineSeconds: 600
+  selector:
+    matchLabels:
+      pressfleet.io/component: site
+  template:
+    metadata:
+      labels:
+{{- template "pod-labels" . }}
+        pressfleet.io/component: site
+      annotations:
+        # wp-config.php is mounted as a single file (subPath), which a
+        # running container never sees change: a new checksum rolls the pod.
+        pressfleet.io/wp-config-checksum: {{ q .WPConfigChecksum }}
+    spec:
+      # Both containers run as the site's UID and GID (§6), which must be
+      # the same in both: nginx reads what PHP writes to wp-content, and PHP
+      # deletes nginx's FastCGI cache files (§5.6). fsGroup gives the group
+      # the volumes.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ .UID }}
+        runAsGroup: {{ .UID }}
+        fsGroup: {{ .UID }}
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+{{- if .ImagePullSecrets }}
+      imagePullSecrets:
+{{- range .ImagePullSecrets }}
+        - name: {{ q . }}
+{{- end }}
+{{- end }}
+      containers:
+        - name: php
+          image: {{ q .Images.PHP }}
+          imagePullPolicy: IfNotPresent
+          env:
+            # Derived from php's memory limit (provisioner.SplitResources).
+            - name: PHP_MEMORY_LIMIT
+              value: {{ q .PHPMemoryLimit }}
+            - name: PHP_FPM_MAX_CHILDREN
+              value: {{ q .PHPMaxChildren }}
+          securityContext:
+{{- template "container-security" }}
+          resources:
+{{- template "resources" .PHP }}
+          volumeMounts:
+            - name: wp-content
+              mountPath: /var/www/wordpress/wp-content
+            - name: cache
+              mountPath: /var/cache/pressfleet/fastcgi
+            - name: tmp-php
+              mountPath: /tmp
+            - name: wp-config
+              mountPath: /var/www/wordpress/wp-config.php
+              subPath: wp-config.php
+              readOnly: true
+          # The first start seeds an empty wp-content, which may take a
+          # while on slow storage.
+          startupProbe:
+{{- template "probe" }}
+            periodSeconds: 2
+            failureThreshold: 150
+          readinessProbe:
+{{- template "probe" }}
+            periodSeconds: 10
+            failureThreshold: 3
+        - name: nginx
+          image: {{ q .Images.Nginx }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            # php is in the same pod, so the same network namespace.
+            - name: PHP_FPM_HOST
+              value: "127.0.0.1"
+            # The pod network's ranges, which the site's NetworkPolicy
+            # narrows to Traefik's pods (images/README.md).
+            - name: NGINX_TRUSTED_PROXIES
+              value: {{ q .TrustedProxies }}
+            # FastCGI page cache (SiteConfig.EnableCache).
+            - name: NGINX_FASTCGI_CACHE
+              value: {{ if .EnableCache }}"on"{{ else }}"off"{{ end }}
+            # WordPress security set (§6.1), install-wide.
+{{- if .NginxSecurity.LoginRateLimit }}
+            - name: NGINX_LOGIN_RATE_LIMIT
+              value: "on"
+            - name: NGINX_LOGIN_RATE
+              value: {{ q .NginxSecurity.LoginRate }}
+            - name: NGINX_LOGIN_BURST
+              value: {{ q .NginxSecurity.LoginBurst }}
+{{- else }}
+            - name: NGINX_LOGIN_RATE_LIMIT
+              value: "off"
+{{- end }}
+            - name: NGINX_SECURITY_HEADERS
+              value: {{ if .NginxSecurity.SecurityHeaders }}"on"{{ else }}"off"{{ end }}
+          securityContext:
+{{- template "container-security" }}
+          resources:
+{{- template "resources" .Nginx }}
+          volumeMounts:
+            - name: wp-content
+              mountPath: /var/www/wordpress/wp-content
+              readOnly: true
+            - name: cache
+              mountPath: /var/cache/pressfleet/fastcgi
+            - name: tmp-nginx
+              mountPath: /tmp
+          startupProbe:
+{{- template "probe" }}
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+{{- template "probe" }}
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+{{- template "probe" }}
+            periodSeconds: 30
+            failureThreshold: 3
+      volumes:
+        - name: wp-content
+          persistentVolumeClaim:
+            claimName: wp-content
+        # FastCGI page cache, shared so Nginx Helper in php can purge it
+        # (§5.6). Rebuilt after a restart, like a recreated Compose site.
+        - name: cache
+          emptyDir: {}
+        - name: tmp-php
+          emptyDir: {}
+        - name: tmp-nginx
+          emptyDir: {}
+        - name: wp-config
+          secret:
+            secretName: wp-config
+            # 0440 in decimal: readable by the site's group (fsGroup) and
+            # nobody else.
+            defaultMode: 288
+{{- define "container-security" }}
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+{{- end }}
+{{- define "resources" }}
+            requests:
+              cpu: {{ q .CPURequest }}
+              memory: {{ q .MemoryRequest }}
+            limits:
+              cpu: {{ q .CPULimit }}
+              memory: {{ q .MemoryLimit }}
+{{- end }}
+{{- define "probe" }}
+            # The images' own health check: nginx's /healthz or PHP-FPM's
+            # ping, from inside the container (images/README.md).
+            exec:
+              command:
+                - /usr/local/bin/pressfleet-healthcheck
+            timeoutSeconds: 5
+{{- end }}

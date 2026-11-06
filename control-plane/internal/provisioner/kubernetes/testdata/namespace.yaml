@@ -8,6 +8,7 @@ metadata:
   name: "pf-01hzy3k5q7m9c2v4b6n8r0t1wx"
   labels:
     app.kubernetes.io/managed-by: pressfleet
+    pressfleet.io/rendered: "true"
     pressfleet.io/site-id: "01hzy3k5q7m9c2v4b6n8r0t1wx"
     pressfleet.io/client-group-id: "01hzy3k0000000000000000000"
     pod-security.kubernetes.io/enforce: restricted

@@ -1,0 +1,22 @@
+{{- /*
+  The site's only persistent data (§5.5): wp-content, read-write in php and
+  read-only in nginx. ReadWriteOnce, so the tasks that mount it run on the
+  node of the site's pod (§4.8).
+*/ -}}
+{{ template "header" . }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wp-content
+  namespace: {{ q .Namespace }}
+  labels:
+{{- template "labels" . }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+{{- if .StorageClass }}
+  storageClassName: {{ q .StorageClass }}
+{{- end }}
+  resources:
+    requests:
+      storage: {{ q .VolumeSize }}

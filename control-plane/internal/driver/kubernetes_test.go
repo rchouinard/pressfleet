@@ -3,6 +3,7 @@ package driver_test
 import (
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/driver"
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 )
 
 // kubernetesConfig configures the Kubernetes driver for a fake API server
@@ -61,19 +63,21 @@ func TestNewKubernetes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rt.Driver == nil || rt.Templates == nil || rt.HostProbe == nil {
+	// The templates rollout needs both the fingerprint and the snapshots.
+	if rt.Driver == nil || rt.Templates == nil || rt.Snapshots == nil || rt.HostProbe == nil {
 		t.Errorf("the Kubernetes driver left a capability out: %+v", rt)
 	}
-	// Off until the driver has them (#216, #218), which turns their
-	// features off rather than failing them.
-	if rt.Snapshots != nil || rt.FPMStatus != nil || rt.TraefikMetrics != nil {
+	// Off until the driver has them (#218), which turns their features off
+	// rather than failing them.
+	if rt.FPMStatus != nil || rt.TraefikMetrics != nil {
 		t.Errorf("the Kubernetes driver claims capabilities it lacks: %+v", rt)
 	}
 	if fp := rt.Templates.TemplateFingerprint(); fp == "" {
 		t.Error("empty template fingerprint")
 	}
-	if _, err := rt.Driver.GetSite(t.Context(), "01hzy3k5q7m9c2v4b6n8r0t1wx"); err == nil {
-		t.Error("GetSite succeeded on a driver that doesn't implement it yet")
+	// The fake API server has no sites.
+	if _, err := rt.Driver.GetSite(t.Context(), "01hzy3k5q7m9c2v4b6n8r0t1wx"); !errors.Is(err, provisioner.ErrSiteNotFound) {
+		t.Errorf("GetSite = %v, want ErrSiteNotFound", err)
 	}
 	if _, err := rt.HostProbe.Engine(t.Context()); err == nil {
 		t.Error("the Kubernetes driver's host probe found a Docker engine")

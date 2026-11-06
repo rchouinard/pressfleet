@@ -6,25 +6,53 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"net/http"
 	"regexp"
+	"sync"
+	"time"
 
 	"k8s.io/client-go/rest"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
+	"github.com/rchouinard/pressfleet/control-plane/internal/objectcache"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
+	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
+	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
+	"github.com/rchouinard/pressfleet/control-plane/internal/sitedb"
+	"github.com/rchouinard/pressfleet/control-plane/internal/wpconfig"
 )
 
 // ErrNotImplemented is returned by the driver's operations that later
-// changes implement (#216 to #221).
+// changes implement (#217 to #221).
 var ErrNotImplemented = errors.New("not implemented by the Kubernetes driver yet")
 
-// ErrInvalidSite is returned for a site ID that can't name a namespace.
+// ErrInvalidSite is returned for a site the driver can't render: an ID
+// that can't name a namespace, or a configuration it can't use.
 var ErrInvalidSite = errors.New("kubernetes: invalid site")
 
 var (
 	_ provisioner.Driver                = (*Provisioner)(nil)
 	_ provisioner.TemplateFingerprinter = (*Provisioner)(nil)
+	_ provisioner.RenderSnapshotter     = (*Provisioner)(nil)
 )
+
+// DefaultWaitTimeout bounds how long the driver waits for a site's pod to
+// become ready, or to go away, unless Config.WaitTimeout says otherwise.
+// It covers pulling the site's images on a new node and seeding an empty
+// wp-content.
+const DefaultWaitTimeout = 5 * time.Minute
+
+// SecretReader reads stored secrets; secrets.Store implements it.
+type SecretReader interface {
+	Get(ctx context.Context, ref secrets.Ref) (redact.Secret, error)
+}
+
+// ImageResolver maps a site's PHP and WordPress versions to its images;
+// *catalog.Catalog implements it.
+type ImageResolver interface {
+	Images(php, wordpress string) (catalog.Images, error)
+}
 
 // Config configures the Kubernetes driver.
 type Config struct {
@@ -33,7 +61,33 @@ type Config struct {
 	Layout config.Layout
 	// Kubernetes holds the install's Kubernetes settings.
 	Kubernetes config.KubernetesConfig
-	Logger     *slog.Logger
+	// Secrets resolves SiteConfig's DBSecretRef, WPSaltsSecretRef, and
+	// RedisSecretRef, and Images its PHPVersion and WPCoreVersion. A
+	// driver without them (the repository task commands) can't render
+	// sites.
+	Secrets SecretReader
+	Images  ImageResolver
+	// MariaDBAddress and RedisAddress are the platform's MariaDB and
+	// Valkey as the control plane reaches them (mariadb.address,
+	// redis.address): a Service of the platform namespace, or an external
+	// address. Sites reach the same servers (platformAddress).
+	MariaDBAddress string
+	RedisAddress   string
+	// WordPressSecurity is the install-wide WordPress security set (§6.1).
+	WordPressSecurity config.WordPressSecurityConfig
+	// SMTP is the platform's outbound email relay, rendered into every
+	// site's wp-config.php; nil means sites send no email.
+	SMTP *wpconfig.SMTP
+	// LoginPublicKey is the platform's login public key in base64, for
+	// dashboard login (§5.9); empty omits it.
+	LoginPublicKey string
+	// WaitTimeout bounds waiting for a site's pod; zero means
+	// DefaultWaitTimeout.
+	WaitTimeout time.Duration
+	// Registry is the HTTP client PinImage asks registries with; nil means
+	// one with DefaultRegistryTimeout.
+	Registry *http.Client
+	Logger   *slog.Logger
 }
 
 // Provisioner is the Kubernetes driver.
@@ -43,6 +97,28 @@ type Provisioner struct {
 	platformNamespace string
 	namespacePrefix   string
 	log               *slog.Logger
+	waitTimeout       time.Duration
+
+	secrets      SecretReader
+	images       ImageResolver
+	security     config.WordPressSecurityConfig
+	smtp         *wpconfig.SMTP
+	loginKey     string
+	podCIDRs     []string
+	pullSecrets  []string
+	storageClass string
+	volumeSize   string
+	// dbHost and redis are where sites reach MariaDB and Valkey, and
+	// egress what their NetworkPolicy allows; setupErr is why they
+	// couldn't be worked out, which fails every render.
+	dbHost   string
+	redis    platformAddress
+	egress   egress
+	setupErr error
+
+	registry *http.Client
+	pinsMu   sync.Mutex
+	pins     map[string]string // tag reference -> pinned reference
 }
 
 // New builds the driver and its client from the kubeconfig file or the
@@ -66,13 +142,68 @@ func newWithREST(cfg Config, rc *rest.Config) (*Provisioner, error) {
 
 // newWithClient builds the driver around a client, real or fake.
 func newWithClient(cfg Config, c *Client) *Provisioner {
-	return &Provisioner{
+	k := cfg.Kubernetes
+	p := &Provisioner{
 		Client:            c,
 		layout:            cfg.Layout,
-		platformNamespace: cfg.Kubernetes.PlatformNamespace,
-		namespacePrefix:   cfg.Kubernetes.SiteNamespacePrefix,
+		platformNamespace: k.PlatformNamespace,
+		namespacePrefix:   k.SiteNamespacePrefix,
 		log:               cfg.logger(),
+		waitTimeout:       cfg.WaitTimeout,
+		secrets:           cfg.Secrets,
+		images:            cfg.Images,
+		security:          cfg.WordPressSecurity,
+		smtp:              cfg.SMTP,
+		loginKey:          cfg.LoginPublicKey,
+		podCIDRs:          k.PodCIDRs,
+		pullSecrets:       k.ImagePullSecrets,
+		storageClass:      k.StorageClasses.Sites,
+		volumeSize:        k.SiteVolumeSize,
+		registry:          cfg.Registry,
+		pins:              map[string]string{},
 	}
+	if p.waitTimeout <= 0 {
+		p.waitTimeout = DefaultWaitTimeout
+	}
+	if p.volumeSize == "" {
+		p.volumeSize = config.DefaultSiteVolumeSize
+	}
+	if p.registry == nil {
+		p.registry = &http.Client{Timeout: DefaultRegistryTimeout}
+	}
+	p.setupErr = p.setupNetwork(cfg)
+	return p
+}
+
+// setupNetwork works out how sites reach the platform's services.
+func (p *Provisioner) setupNetwork(cfg Config) error {
+	pods, err := cfg.Kubernetes.PodPrefixes()
+	if err != nil {
+		return err
+	}
+	var services []platformAddress
+	if cfg.MariaDBAddress != "" {
+		db, err := resolvePlatformAddress(cfg.MariaDBAddress, p.platformNamespace)
+		if err != nil {
+			return fmt.Errorf("mariadb.address: %w", err)
+		}
+		p.dbHost = db.HostPort
+		services = append(services, db)
+	}
+	if cfg.RedisAddress != "" {
+		r, err := resolvePlatformAddress(cfg.RedisAddress, p.platformNamespace)
+		if err != nil {
+			return fmt.Errorf("redis.address: %w", err)
+		}
+		p.redis = r
+		services = append(services, r)
+	}
+	smtpPort := 0
+	if cfg.SMTP != nil && cfg.SMTP.Host != "" {
+		smtpPort = cfg.SMTP.Port
+	}
+	p.egress = siteEgress(services, smtpPort, pods)
+	return nil
 }
 
 func (cfg Config) logger() *slog.Logger {
@@ -113,37 +244,77 @@ func (p *Provisioner) validSiteNamespace(siteID string) error {
 	return nil
 }
 
+// resolve reads what the site's references point at: its images and the
+// secrets wp-config.php is rendered from. Plaintext secrets go no further
+// than the rendered Secret.
+func (p *Provisioner) resolve(ctx context.Context, cfg *provisioner.SiteConfig) (siteInputs, error) {
+	if p.setupErr != nil {
+		return siteInputs{}, fmt.Errorf("%w: %w", ErrInvalidSite, p.setupErr)
+	}
+	if p.secrets == nil || p.images == nil {
+		return siteInputs{}, errors.New("this driver has no secrets or image catalog to render sites with")
+	}
+	if p.dbHost == "" {
+		return siteInputs{}, fmt.Errorf("%w: the MariaDB address isn't set", ErrInvalidSite)
+	}
+	images, err := p.images.Images(cfg.PHPVersion, cfg.WPCoreVersion)
+	if err != nil {
+		return siteInputs{}, fmt.Errorf("%w: %w", ErrInvalidSite, err)
+	}
+	in := siteInputs{images: siteImages{PHP: images.PHP, Nginx: images.Nginx}}
+	if ref := cfg.PinnedImages[provisioner.ComponentPHP]; ref != "" {
+		in.images.PHP = ref
+	}
+	if ref := cfg.PinnedImages[provisioner.ComponentNginx]; ref != "" {
+		in.images.Nginx = ref
+	}
+
+	dbSecret, err := p.secrets.Get(ctx, secrets.Ref(cfg.DBSecretRef))
+	if err != nil {
+		return siteInputs{}, fmt.Errorf("reading database credentials: %w", err)
+	}
+	creds, err := sitedb.UnmarshalCredentials(dbSecret)
+	if err != nil {
+		return siteInputs{}, fmt.Errorf("reading database credentials: %w", err)
+	}
+	saltsSecret, err := p.secrets.Get(ctx, secrets.Ref(cfg.WPSaltsSecretRef))
+	if err != nil {
+		return siteInputs{}, fmt.Errorf("reading WordPress salts: %w", err)
+	}
+	salts, err := wpconfig.UnmarshalSalts(saltsSecret)
+	if err != nil {
+		return siteInputs{}, fmt.Errorf("reading WordPress salts: %w", err)
+	}
+	params := p.wpConfigParams()
+	params.DB, params.Salts, params.TablePrefix = creds, salts, cfg.TablePrefix
+	params.Environment, params.DisableMail = string(cfg.Environment), cfg.DisableMail
+	if p.loginKey != "" {
+		params.SiteID = cfg.ID
+	}
+	if cfg.RedisSecretRef != "" {
+		if p.redis.Host == "" {
+			return siteInputs{}, fmt.Errorf("%w: the site has an object cache, but the Valkey address isn't set", ErrInvalidSite)
+		}
+		secret, err := p.secrets.Get(ctx, secrets.Ref(cfg.RedisSecretRef))
+		if err != nil {
+			return siteInputs{}, fmt.Errorf("reading object cache credentials: %w", err)
+		}
+		rc, err := objectcache.UnmarshalCredentials(secret)
+		if err != nil {
+			return siteInputs{}, fmt.Errorf("reading object cache credentials: %w", err)
+		}
+		params.Redis = &wpconfig.Redis{
+			Host: p.redis.Host, Port: p.redis.Port,
+			Username: rc.Username, Password: rc.Password, Database: rc.Database, Prefix: rc.KeyPrefix,
+		}
+	}
+	if in.wpConfig, err = wpconfig.Render(params); err != nil {
+		return siteInputs{}, fmt.Errorf("%w: %w", ErrInvalidSite, err)
+	}
+	return in, nil
+}
+
 func notImplemented(op string) error { return fmt.Errorf("%s: %w", op, ErrNotImplemented) }
-
-// CreateSite implements provisioner.Provisioner (#216).
-func (p *Provisioner) CreateSite(context.Context, *provisioner.SiteConfig) (*provisioner.SiteStatus, error) {
-	return nil, notImplemented("create site")
-}
-
-// UpdateSite implements provisioner.Provisioner (#216).
-func (p *Provisioner) UpdateSite(context.Context, *provisioner.SiteConfig) (*provisioner.SiteStatus, error) {
-	return nil, notImplemented("update site")
-}
-
-// GetSite implements provisioner.Provisioner (#216).
-func (p *Provisioner) GetSite(context.Context, string) (*provisioner.SiteStatus, error) {
-	return nil, notImplemented("get site")
-}
-
-// DeleteSite implements provisioner.Provisioner (#216).
-func (p *Provisioner) DeleteSite(context.Context, string) error {
-	return notImplemented("delete site")
-}
-
-// StartSite implements provisioner.Provisioner (#216).
-func (p *Provisioner) StartSite(context.Context, string) error {
-	return notImplemented("start site")
-}
-
-// StopSite implements provisioner.Provisioner (#216).
-func (p *Provisioner) StopSite(context.Context, string) error {
-	return notImplemented("stop site")
-}
 
 // SetMaintenance implements provisioner.Provisioner (#217).
 func (p *Provisioner) SetMaintenance(context.Context, string, bool) error {
@@ -195,14 +366,4 @@ func (p *Provisioner) RunSession(context.Context, string, provisioner.Session) e
 // ProbeHTTP implements provisioner.Prober (#218).
 func (p *Provisioner) ProbeHTTP(context.Context, string, provisioner.ProbeRequest) (*provisioner.ProbeResponse, error) {
 	return nil, notImplemented("probe a site")
-}
-
-// PinImage implements provisioner.ImagePinner (#216).
-func (p *Provisioner) PinImage(context.Context, string) (string, error) {
-	return "", notImplemented("pin an image")
-}
-
-// PullImage implements provisioner.ImagePinner (#216).
-func (p *Provisioner) PullImage(context.Context, string) error {
-	return notImplemented("pull an image")
 }

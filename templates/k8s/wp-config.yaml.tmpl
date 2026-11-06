@@ -1,0 +1,16 @@
+{{- /*
+  wp-config.php (images/README.md), mounted read-only into php alone. It
+  holds the site's database password and salts, so the rendered file is
+  readable by the control plane only.
+*/ -}}
+{{ template "header" . }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wp-config
+  namespace: {{ q .Namespace }}
+  labels:
+{{- template "labels" . }}
+type: Opaque
+data:
+  wp-config.php: {{ q .WPConfig }}

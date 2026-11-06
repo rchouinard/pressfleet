@@ -186,14 +186,20 @@ const connectTimeout = 30 * time.Second
 
 func kubernetesConfig(cfg *config.Config, log *slog.Logger) kubernetes.Config {
 	return kubernetes.Config{
-		Layout:     cfg.Layout(),
-		Kubernetes: cfg.Kubernetes,
-		Logger:     log.With("component", "provisioner"),
+		Layout:            cfg.Layout(),
+		Kubernetes:        cfg.Kubernetes,
+		MariaDBAddress:    cfg.MariaDB.Address,
+		RedisAddress:      cfg.Redis.Address,
+		WordPressSecurity: cfg.WordPressSecurity,
+		Logger:            log.With("component", "provisioner"),
 	}
 }
 
 func newKubernetes(ctx context.Context, opts Options) (*Runtime, error) {
-	prov, err := kubernetes.New(kubernetesConfig(opts.Config, opts.Logger))
+	kc := kubernetesConfig(opts.Config, opts.Logger)
+	kc.Secrets, kc.Images = opts.Secrets, opts.Images
+	kc.SMTP, kc.LoginPublicKey = opts.SMTP, opts.LoginPublicKey
+	prov, err := kubernetes.New(kc)
 	if err != nil {
 		return nil, err
 	}
@@ -202,12 +208,12 @@ func newKubernetes(ctx context.Context, opts Options) (*Runtime, error) {
 	if err := prov.Connect(ctx); err != nil {
 		return nil, err
 	}
-	// The render snapshots the templates rollout also needs, the PHP-FPM
-	// status, and Traefik's metrics come with the site lifecycle and exec
-	// (#216, #218); until then those features are off.
+	// The PHP-FPM status and Traefik's metrics come with exec (#218);
+	// until then those features are off.
 	return &Runtime{
 		Driver:    prov,
 		Templates: prov,
+		Snapshots: prov,
 		HostProbe: noDockerHost{},
 	}, nil
 }

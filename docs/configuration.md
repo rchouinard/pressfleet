@@ -61,6 +61,7 @@ platform_project: pressfleet
 #   storage_classes:
 #     sites: ""          # ReadWriteOnce; empty is the cluster's default
 #     data: ""           # ReadWriteMany
+#   site_volume_size: 10Gi
 #   traefik_service: traefik
 #   pod_cidrs: [10.42.0.0/16]
 #   image_pull_secrets: []
@@ -179,6 +180,7 @@ Old names are accepted for at least one minor release after the change, and unti
 | `kubernetes.site_namespace_prefix` | `PRESSFLEET_KUBERNETES_SITE_NAMESPACE_PREFIX` | | `pf-` | Put before a site's ID to name the site's namespace. Up to 37 lowercase letters, digits, and `-`, starting with a letter or digit. Changing it orphans the namespaces of existing sites. |
 | `kubernetes.storage_classes.sites` | `PRESSFLEET_KUBERNETES_STORAGE_CLASSES_SITES` | | the cluster's default | Storage class of each site's `wp-content` volume (ReadWriteOnce). It must honor `fsGroup`. |
 | `kubernetes.storage_classes.data` | `PRESSFLEET_KUBERNETES_STORAGE_CLASSES_DATA` | | the cluster's default | Storage class of the control plane's data directory (ReadWriteMany), which task pods mount too. |
+| `kubernetes.site_volume_size` | `PRESSFLEET_KUBERNETES_SITE_VOLUME_SIZE` | | `10Gi` | Size each site's `wp-content` volume asks for: a whole number of `Mi`, `Gi`, or `Ti`. A larger size reaches existing sites' volumes when they are next updated, if the storage class allows volume expansion; volumes never shrink, so lowering it fails for existing sites. |
 | `kubernetes.traefik_service` | `PRESSFLEET_KUBERNETES_TRAEFIK_SERVICE` | | `traefik` | Name of Traefik's Service in the platform namespace. |
 | `kubernetes.pod_cidrs` | `PRESSFLEET_KUBERNETES_POD_CIDRS` (comma-separated) | | (unset) | Required with `driver: kubernetes`. The cluster's pod network ranges, such as `10.42.0.0/16` on k3s or `10.244.0.0/16` on kind. Site nginx trusts forwarded headers from them, and each site's NetworkPolicy narrows that to Traefik's pods. |
 | `kubernetes.image_pull_secrets` | `PRESSFLEET_KUBERNETES_IMAGE_PULL_SECRETS` (comma-separated) | | (unset) | Names of image pull Secrets in the platform namespace, for site and task images in a private registry. The driver copies them into each site's namespace, because a pod can only use Secrets of its own. |
@@ -821,12 +823,15 @@ The platform master key is deliberately **not** stored in the data directory. Ke
 
 ## Kubernetes driver
 
-With `driver: kubernetes`, the control plane runs sites on a Kubernetes cluster instead of Docker Compose (design doc §4.8). The Helm chart installs it and sets the `kubernetes.*` settings. The driver is under construction: in this release it connects to the cluster at startup, and refuses to start if it can't, but doesn't run sites yet; site operations fail with an error saying so.
+With `driver: kubernetes`, the control plane runs sites on a Kubernetes cluster instead of Docker Compose (design doc §4.8). The Helm chart installs it and sets the `kubernetes.*` settings. The driver is under construction: in this release it connects to the cluster at startup, refuses to start if it can't, and creates, updates, starts, stops, and deletes sites, but doesn't route them, run WP-CLI or tasks, or read their logs and stats yet; those operations fail with an error saying so.
 
 - **State database.** The Kubernetes driver requires PostgreSQL (`database.driver: postgres`). SQLite isn't safe on the ReadWriteMany network storage that holds the data directory.
 - **Connecting.** In the cluster, the control plane uses its pod's service account. For development, `kubernetes.kubeconfig` points it at a kubeconfig file instead.
 - **Preflight checks.** The host checks (Docker Engine, Docker Compose, cgroup v2, address pools) don't apply to a cluster and are reported as unavailable.
-- **Rendered manifests.** Each site's manifests are rendered into `<data_dir>/sites/<site-id>/kubernetes/`, where you can inspect them, and applied with server-side apply under the field manager `pressfleet`. Don't edit them, or the objects, by hand: the control plane renders and applies them again.
+- **Rendered manifests.** Each site's manifests are rendered into `<data_dir>/sites/<site-id>/kubernetes/`, where you can inspect them, and applied with server-side apply under the field manager `pressfleet`. Don't edit them, or the objects, by hand: the control plane renders and applies them again, and deletes the objects of a site's namespace that it rendered before and no longer does.
+- **Sites.** Each site is the namespace `<site_namespace_prefix><site-id>`, with Pod Security `restricted` enforced: a single-replica Deployment whose pod runs nginx and php as the site's UID, its `wp-content` volume (`kubernetes.storage_classes.sites`, `kubernetes.site_volume_size`), `wp-config.php` in a Secret, a Service for nginx, and NetworkPolicies. Stopping a site scales it to zero; deleting it deletes the namespace, the volume included (the volume's PersistentVolume follows its storage class's reclaim policy).
+- **Network isolation.** A site's pod accepts connections from Traefik's pods alone. It may reach DNS, MariaDB and Valkey in the platform namespace (or at `mariadb.address` when that is an IP address), the SMTP relay's port, and the internet, but no private (RFC 1918), shared (100.64.0.0/10), or link-local address, nor the configured pod ranges: that keeps it away from other sites, the nodes, the API server, and the cloud metadata address. An external MariaDB named by a host name in a private range isn't reachable; give its address instead.
+- **Images.** Sites are pinned to image digests that the control plane asks the image registry for; nodes pull the images. The control plane asks anonymously, so in this release the site images must be public. `kubernetes.image_pull_secrets`, which the driver copies into each site's namespace, are what nodes pull with.
 
 ## State database
 

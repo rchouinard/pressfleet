@@ -7,51 +7,14 @@ import (
 	"slices"
 	"testing"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
-	kubefake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
-
-// fakeClient is a client on fake clientsets, and the dynamic one, whose
-// actions show what the driver applied.
-func fakeClient(t *testing.T, typed ...runtime.Object) (*Client, *dynamicfake.FakeDynamicClient) {
-	t.Helper()
-	listKinds := map[schema.GroupVersionResource]string{}
-	for gvk, k := range kinds {
-		listKinds[k.resource] = gvk.Kind + "List"
-	}
-	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds)
-	// The fake's tracker patches only objects that exist; server-side
-	// apply creates them too.
-	dyn.PrependReactor("patch", "*", func(a k8stesting.Action) (bool, runtime.Object, error) {
-		pa, ok := a.(k8stesting.PatchAction)
-		if !ok || pa.GetPatchType() != types.ApplyPatchType {
-			return false, nil, nil
-		}
-		obj := &unstructured.Unstructured{}
-		if err := obj.UnmarshalJSON(pa.GetPatch()); err != nil {
-			return true, nil, err
-		}
-		tracker, gvr, ns := dyn.Tracker(), pa.GetResource(), pa.GetNamespace()
-		_, err := tracker.Get(gvr, ns, pa.GetName())
-		switch {
-		case apierrors.IsNotFound(err):
-			err = tracker.Create(gvr, obj, ns)
-		case err == nil:
-			err = tracker.Update(gvr, obj, ns)
-		}
-		return true, obj, err
-	})
-	c := newClient(kubefake.NewClientset(typed...), dyn, nil)
-	c.poll = 5e6 // 5ms
-	return c, dyn
-}
 
 const siteManifests = `
 apiVersion: v1
