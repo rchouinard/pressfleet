@@ -1,6 +1,6 @@
 # Upgrade Rollback: Implementation Plan
 
-**Status:** Proposed, 2026-10-29. The decisions below wait on [#245](https://github.com/rchouinard/pressfleet/issues/245). Milestone: [Post-MVP: Upgrade Rollback](https://github.com/rchouinard/pressfleet/milestone/10); tracking issue: [#141](https://github.com/rchouinard/pressfleet/issues/141).
+**Status:** Accepted, 2026-11-04. Every decision in [#245](https://github.com/rchouinard/pressfleet/issues/245) was confirmed, with the additions in the decision log. The design doc describes the result in §4.7. Milestone: [Post-MVP: Upgrade Rollback](https://github.com/rchouinard/pressfleet/milestone/10); tracking issue: [#141](https://github.com/rchouinard/pressfleet/issues/141).
 
 MVP upgrades are forward-only. When `pressfleet upgrade` fails, it prints the commands that return the platform to the previous release, and the operator runs them by hand (design doc §4.7, #95). This plan makes the upgrade run those steps itself when it fails, and adds `pressfleet upgrade --rollback` for an upgrade that succeeded but is regretted. The manual steps stay as the fallback when a rollback can't finish.
 
@@ -23,7 +23,7 @@ What a rollback needs that isn't there:
 
 ## Decisions
 
-Proposed. Each one is confirmed or changed in [#245](https://github.com/rchouinard/pressfleet/issues/245), which lists the alternatives.
+Accepted in [#245](https://github.com/rchouinard/pressfleet/issues/245), which lists the alternatives.
 
 | Topic | Proposal |
 | --- | --- |
@@ -95,9 +95,9 @@ The rollout endpoints and the dashboard show `held` with the reason, and doctor 
 
 | Group | Changes | Why |
 | --- | --- | --- |
-| Blocking | Sites created, imported, or deleted; WordPress core updates; client groups deleted or offboarded | A created site's containers, database, and object cache user would be orphaned. A deleted site would be recreated empty. A core-updated site would move back to an older core than its database. A deleted repository is gone. |
+| Blocking | Sites created, imported, or deleted, staging sites included; WordPress core updates; client groups deleted or offboarded | A created site's containers, database, and object cache user would be orphaned. A deleted site would be recreated empty. A core-updated site would move back to an older core than its database. A deleted repository is gone. |
 | Converged | Site template and image updates, settings changes | The previous control plane's reconcile moves the sites back to match the restored records. |
-| Lost | Backup records, users, alert rules, jobs, and the like | Their records go with the restore; backup snapshots stay in the repositories. |
+| Lost | Backup records, users, alert rules, jobs, staging refreshes and pushes, and the like | Their records go with the restore; backup snapshots stay in the repositories, and copied content stays on the sites. |
 
 `--rollback` lists all three groups. It refuses blocking changes unless `--force` is given, saying what `--force` would leave behind, and otherwise asks for confirmation (or `--yes`). The confirmation names the upgrade's time, and says whether the state database will be restored. If the control plane doesn't answer, as after an upgrade that failed with `--no-rollback`, the CLI skips the changes check and says why that is safe: the rollout hold kept rollouts away from the sites.
 
@@ -127,25 +127,28 @@ Sizes and priorities follow the [roadmap](roadmap.md#conventions). All are in th
 | --- | --- | --- | --- | --- |
 | [#245](https://github.com/rchouinard/pressfleet/issues/245) | Decision: upgrade rollback behavior | P0 | S | — |
 | [#246](https://github.com/rchouinard/pressfleet/issues/246) | Control plane: record state database migrations in a marker file | P0 | S | #245 |
+| [#277](https://github.com/rchouinard/pressfleet/issues/277) | A repository created before a state restore can't be opened after it | P0 | M | — |
 | [#247](https://github.com/rchouinard/pressfleet/issues/247) | Control plane: hold rollouts while an upgrade is unconfirmed | P1 | S | #245 |
 | [#248](https://github.com/rchouinard/pressfleet/issues/248) | Admin interface: what changed since an upgrade | P1 | S | #245 |
-| [#249](https://github.com/rchouinard/pressfleet/issues/249) | Upgrade: roll back a failed upgrade automatically | P0 | L | #245, #246 |
+| [#249](https://github.com/rchouinard/pressfleet/issues/249) | Upgrade: roll back a failed upgrade automatically | P0 | L | #245, #246, #277 |
 | [#250](https://github.com/rchouinard/pressfleet/issues/250) | Upgrade: `pressfleet upgrade --rollback` | P0 | M | #248, #249 |
 | [#251](https://github.com/rchouinard/pressfleet/issues/251) | E2E: automatic and on-demand upgrade rollback | P0 | M | #247, #250 |
 | [#252](https://github.com/rchouinard/pressfleet/issues/252) | Docs: upgrade rollback | P1 | S | #250 |
 
 ### Order
 
-1. **Decisions (#245).** Then the three control plane pieces can be built in parallel: the marker (#246), the rollout hold (#247), and `admin changes` (#248).
+1. **Decisions (#245).** Then the three control plane pieces can be built in parallel: the marker (#246), the rollout hold (#247), and `admin changes` (#248). The repository fix (#277) needs no decision and can start at once; every automatic rollback on SQLite restores the state database, so without it a group whose first repository was created during the upgrade can't back up afterwards.
 2. **Automatic rollback (#249)**, the core of the milestone.
 3. **`--rollback` (#250)**, on the same sequence.
 4. **End-to-end tests (#251) and docs (#252).**
 
-The critical path is #245 → #246 → #249 → #250 → #251.
+The critical path is #245 → #246 → #249 → #250 → #251, with #277 beside #246.
+
+This milestone runs alongside the first waves of the [Kubernetes driver](kubernetes-driver-plan.md) and ships first, so the upgrade to the Kubernetes release is itself protected by automatic rollback. The two touch different halves of `cli/upgrade.go`: #249 the apply and failure path, the Kubernetes preflight hook (#224) the preflight.
 
 ### Working
 
-Each issue is worked on its own branch and merged through a pull request. PRs that touch the upgrade add the `e2e` label, since the upgrade tests run there.
+Each issue is worked on its own branch and merged through a pull request. PRs that touch the upgrade run `make test-e2e RUN=TestUpgrade` locally, or add the `e2e:full` label while CI runs: the rollback tests install a published release and upgrade more than once, so they are in the full tier, not the quick one (docs/testing.md).
 
 ### Testing
 
@@ -162,4 +165,23 @@ Each issue is worked on its own branch and merged through a pull request. PRs th
 
 ## Decision log
 
-Recorded here once [#245](https://github.com/rchouinard/pressfleet/issues/245) is resolved.
+**2026-11-04 ([#245](https://github.com/rchouinard/pressfleet/issues/245)):** all eight decisions were accepted as recommended:
+
+1. **Default:** a failed upgrade rolls back on its own; `--no-rollback` prints the manual steps. Exit codes `0`, `2` (rolled back), and `1` (not rolled back).
+2. **Triggers:** any failure after the platform starts to change, including SIGINT and SIGTERM. An interrupted upgrade can be retried or rolled back, not replaced by an upgrade to another release.
+3. **State database:** SQLite restores the pre-migration backup; PostgreSQL rolls back only when no migration ran, and otherwise prints the steps. A marker file records every migration. A logical PostgreSQL backup comes later.
+4. **`--rollback`:** shows what changed since the upgrade, refuses blocking changes without `--force`, and works once, for the most recent upgrade.
+5. **Rollout hold:** while an upgrade is in progress, failed, or rolling back. No grace period after a successful upgrade.
+6. **Platform project:** the rendered files are restored exactly; Traefik's dynamic directory is left to the previous control plane's reconcile.
+7. **MariaDB:** never roll back across a series change.
+8. **Kubernetes:** out of scope; `helm rollback` and the operator's database restore (#212).
+
+Additions from reviewing the plan against v1.1.0:
+
+- **Repositories created during the upgrade (#277)** block automatic rollback (#249). The rollout hold doesn't stop scheduled backups, so a group's first repository can still be created in the window.
+- **The marker (#246)** is read the way the CLI finds backups since #274: from the host, or through Docker when the host user can't read the root-owned backups directory.
+- **Staging sites (#248):** creating or deleting a staging site is a blocking change. Refreshes and pushes are lost changes: their records go, and the content they copied stays.
+- **Signals (#249):** the first signal cancels the CLI's context, so the rollback runs on a context of its own, which only the second signal cancels.
+- **Tests (#251)** run in the full e2e tier, not the quick one.
+
+The design doc records the result in §4.7 and §8.
