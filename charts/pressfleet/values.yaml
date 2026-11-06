@@ -1,0 +1,174 @@
+# PressFleet on Kubernetes (design doc §4.8).
+#
+# The chart installs into the release's namespace, which becomes the
+# platform namespace (kubernetes.platform_namespace). One release per
+# namespace: the services have fixed names (traefik, mariadb, redis, ...),
+# as on Compose.
+#
+# Settings that the chart and the control plane both need are set here and
+# passed to the control plane as PRESSFLEET_* environment variables, so the
+# two agree; each names the config key it sets (docs/configuration.md). Every
+# other setting (SMTP, S3 backups, the WordPress security set, ...) goes in
+# the config file, in the Secret named by config.secretName.
+
+# Domain serving the dashboard and API (dashboard_domain). Traefik routes it
+# to the control plane with an ACME HTTP-01 certificate.
+dashboardDomain: ""
+# Base domain whose wildcard record points at Traefik's Service
+# (preview_base_domain).
+previewBaseDomain: ""
+# Where custom domains must point for a site to go live (public_ip): the
+# address of Traefik's Service. Optional.
+publicIP: ""
+
+kubernetes:
+  # Put before a site's ID to name its namespace
+  # (kubernetes.site_namespace_prefix). The control plane may only create
+  # and delete namespaces with this prefix (templates/admission-policy.yaml).
+  siteNamespacePrefix: pf-
+  # Required: the cluster's pod network ranges (kubernetes.pod_cidrs), such
+  # as 10.42.0.0/16 on k3s or 10.244.0.0/16 on kind.
+  podCIDRs: []
+  storageClasses:
+    # ReadWriteOnce class of site volumes (kubernetes.storage_classes.sites),
+    # and of the chart's MariaDB, VictoriaMetrics, and Traefik volumes unless
+    # they name their own. Empty is the cluster's default.
+    sites: ""
+    # ReadWriteMany class of the control plane's data directory
+    # (kubernetes.storage_classes.data). Empty is the cluster's default.
+    data: ""
+  # Image pull Secrets in this namespace, for a private registry
+  # (kubernetes.image_pull_secrets). The chart's pods use them too.
+  imagePullSecrets: []
+
+# The operator's config file (PRESSFLEET_CONFIG), from a Secret that
+# `pressfleet init --target kubernetes` writes. Empty secretName: no config
+# file, only the settings below and the defaults.
+config:
+  secretName: pressfleet-config
+  key: pressfleet.yaml
+
+# The platform master key (design doc §4.1). Never in the data volume or
+# its backups: it is only mounted.
+masterKey:
+  secretName: pressfleet-master-key
+  key: master.key
+
+# The platform's generated credentials: the MariaDB root password, the
+# object cache admin password, and the SFTP gateway's SSH host key.
+platformSecrets:
+  secretName: pressfleet-platform
+  mariadbRootPasswordKey: mariadb-root-password
+  redisAdminPasswordKey: redis-admin-password
+  sshHostKeyKey: ssh-host-key
+
+# The state database: a PostgreSQL the operator provides (driver kubernetes
+# requires database.driver postgres). Its DSN comes from a Secret
+# (database.postgres_dsn).
+database:
+  postgresDSN:
+    secretName: pressfleet-postgres
+    key: dsn
+
+# Overrides of the images pinned for this release (images.yaml, generated
+# from templates/platform/images.yaml), e.g. for a registry mirror: full
+# references, repository:tag@digest. Empty uses the pinned image.
+images:
+  # Default: ghcr.io/rchouinard/pressfleet/control-plane:<appVersion>.
+  controlPlane: ""
+  mariadb: ""
+  redis: ""
+  traefik: ""
+  victoriaMetrics: ""
+
+controlPlane:
+  # The container's memory limit. GOMEMLIMIT stays at 96 MiB, as on Compose
+  # (design doc §4.1).
+  memoryMB: 256
+  # The user and group the control plane runs as. It is in the repository
+  # group (60000, provisioner.RepositoryGID) too, so it shares local backup
+  # repositories with tasks.
+  uid: 60001
+  gid: 60001
+  # The data directory (data_dir): a ReadWriteMany volume, mounted by the
+  # control plane and, as subpaths, by task pods. The state database's
+  # migration markers live in it too (state/backups).
+  data:
+    size: 50Gi
+    # An existing ReadWriteMany claim to use instead of creating one.
+    existingClaim: ""
+
+mariadb:
+  # false: use an external MariaDB at mariadb.address.
+  enabled: true
+  # host:port of an external MariaDB (mariadb.address), reachable from the
+  # control plane and every site namespace. Only with enabled false.
+  address: ""
+  memoryMB: 768
+  storage:
+    size: 20Gi
+    # Empty: kubernetes.storageClasses.sites.
+    storageClass: ""
+
+redis:
+  # Valkey's maxmemory; the container limit adds 64 MiB of headroom.
+  maxMemoryMB: 256
+
+metrics:
+  # How many days VictoriaMetrics keeps metrics (metrics.retention_days).
+  retentionDays: 90
+
+victoriaMetrics:
+  memoryMB: 256
+  storage:
+    size: 20Gi
+    storageClass: ""
+
+traefik:
+  memoryMB: 192
+  # Traefik's ACME storage (acme.json).
+  storage:
+    size: 128Mi
+    storageClass: ""
+  service:
+    # LoadBalancer or NodePort.
+    type: LoadBalancer
+    # Local keeps clients' addresses, which login rate limits and the audit
+    # log rely on.
+    externalTrafficPolicy: Local
+    annotations: {}
+    # Only with type NodePort; 0 lets Kubernetes choose.
+    nodePorts:
+      web: 0
+      websecure: 0
+      sftp: 0
+    # Also publish UDP 443 for HTTP/3. Not every load balancer accepts a
+    # Service with both TCP and UDP ports.
+    http3: false
+
+acme:
+  # Contact address of the ACME account (acme.email). Optional.
+  email: ""
+  # ACME directory URL (acme.ca_server). Empty: Let's Encrypt.
+  caServer: ""
+  # Let's Encrypt's staging environment (acme.staging).
+  staging: false
+  # lego DNS provider code for the preview wildcard certificate
+  # (acme.dns_provider), e.g. cloudflare.
+  dnsProvider: ""
+  # Secret holding the DNS provider's credentials, one key per environment
+  # variable the provider reads (e.g. CF_DNS_API_TOKEN). Traefik reads them
+  # as files (<VARIABLE>_FILE). Required with dnsProvider.
+  dnsCredentialsSecret: ""
+  # DNS servers (host:port) to check DNS-01 propagation with
+  # (acme.dns_resolvers).
+  dnsResolvers: []
+  # Extra root certificates to trust for the ACME server, as a Secret key
+  # holding PEM (acme.ca_certificates), e.g. Pebble's in tests.
+  caCertificates:
+    secretName: ""
+    key: ca.pem
+
+sftp:
+  # The SFTP gateway's port on Traefik's Service (sftp.port). Not 80 or 443.
+  port: 2222

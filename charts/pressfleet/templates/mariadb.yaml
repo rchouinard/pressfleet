@@ -1,0 +1,112 @@
+{{- /*
+The shared MariaDB server of site databases (design doc §3), configured as
+the Compose project configures it (mariadb-config.yaml).
+Without it, mariadb.address names an external server.
+*/ -}}
+{{- if .Values.mariadb.enabled }}
+{{- $memory := int .Values.mariadb.memoryMB }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: mariadb
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "mariadb") | nindent 4 }}
+spec:
+  selector:
+    {{- include "pressfleet.selector" (dict "root" . "component" "mariadb") | nindent 4 }}
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: mysql
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mariadb
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "mariadb") | nindent 4 }}
+spec:
+  replicas: 1
+  serviceName: mariadb
+  selector:
+    matchLabels:
+      {{- include "pressfleet.selector" (dict "root" . "component" "mariadb") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pressfleet.componentLabels" (dict "root" . "component" "mariadb") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/mariadb-config.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with include "pressfleet.imagePullSecrets" . }}{{ . | nindent 6 }}{{ end }}
+      # The image's mysql user, so the entrypoint needs no privileges.
+      {{- include "pressfleet.podSecurityContext" (dict "uid" 999 "gid" 999) | nindent 6 }}
+      # Time for InnoDB to flush on shutdown instead of being killed.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: mariadb
+          image: {{ include "pressfleet.image" (dict "root" . "value" "mariadb" "key" "mariadb") | quote }}
+          env:
+            - name: MARIADB_ROOT_PASSWORD_FILE
+              value: /run/secrets/mariadb_root_password
+            # Runs mariadb-upgrade after minor and patch image updates. Major
+            # version upgrades only ship in major PressFleet releases (§4.7).
+            - name: MARIADB_AUTO_UPGRADE
+              value: "1"
+          ports:
+            - name: mysql
+              containerPort: 3306
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+            - name: config
+              mountPath: /etc/mysql/conf.d/pressfleet.cnf
+              subPath: pressfleet.cnf
+              readOnly: true
+            - name: secrets
+              mountPath: /run/secrets
+              readOnly: true
+          {{- include "pressfleet.containerSecurityContext" (dict "readOnly" false) | nindent 10 }}
+          {{- include "pressfleet.memory" $memory | nindent 10 }}
+          startupProbe:
+            exec:
+              command: ["healthcheck.sh", "--connect", "--innodb_initialized"]
+            periodSeconds: 2
+            timeoutSeconds: 5
+            failureThreshold: 150
+          livenessProbe:
+            exec:
+              command: ["healthcheck.sh", "--connect", "--innodb_initialized"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command: ["healthcheck.sh", "--connect", "--innodb_initialized"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: config
+          configMap:
+            name: mariadb
+        - name: secrets
+          secret:
+            secretName: {{ .Values.platformSecrets.secretName | quote }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.platformSecrets.mariadbRootPasswordKey | quote }}
+                path: mariadb_root_password
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "pressfleet.selector" (dict "root" . "component" "mariadb") | nindent 10 }}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with include "pressfleet.storageClass" (dict "root" . "own" .Values.mariadb.storage.storageClass) }}{{ . | nindent 8 }}{{ end }}
+        resources:
+          requests:
+            storage: {{ .Values.mariadb.storage.size | quote }}
+{{- end }}

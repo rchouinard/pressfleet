@@ -1,0 +1,63 @@
+{{- /*
+The page Traefik shows for sites in maintenance mode (design doc §5.4): the
+control plane image serving a static page, with no data, secrets, API
+access, or writable filesystem, as on Compose. Maintenance routes name the
+Service (ingress.MaintenanceHost, ingress.MaintenancePort).
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: maintenance
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "maintenance") | nindent 4 }}
+spec:
+  selector:
+    {{- include "pressfleet.selector" (dict "root" . "component" "maintenance") | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maintenance
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "maintenance") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "pressfleet.selector" (dict "root" . "component" "maintenance") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pressfleet.componentLabels" (dict "root" . "component" "maintenance") | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with include "pressfleet.imagePullSecrets" . }}{{ . | nindent 6 }}{{ end }}
+      {{- include "pressfleet.podSecurityContext" (dict "uid" 65534 "gid" 65534) | nindent 6 }}
+      containers:
+        - name: maintenance
+          image: {{ include "pressfleet.controlPlaneImage" . | quote }}
+          args: ["maintenance-page", "--listen", ":8080"]
+          env:
+            - name: GOMEMLIMIT
+              value: "18MiB"
+          ports:
+            - name: http
+              containerPort: 8080
+          {{- include "pressfleet.containerSecurityContext" (dict "readOnly" true) | nindent 10 }}
+          {{- include "pressfleet.memory" 24 | nindent 10 }}
+          livenessProbe:
+            exec:
+              command: ["pressfleet", "maintenance-page", "--check", "--listen", ":8080"]
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["pressfleet", "maintenance-page", "--check", "--listen", ":8080"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3

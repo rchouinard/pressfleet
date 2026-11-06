@@ -1,0 +1,4 @@
+# The least a values file needs: the pod network. Everything else is the
+# chart's defaults.
+kubernetes:
+  podCIDRs: [10.244.0.0/16]

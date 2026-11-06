@@ -1,0 +1,17 @@
+PressFleet {{ .Chart.AppVersion }} is installing in namespace {{ .Release.Namespace }}.
+
+Watch the platform come up:
+
+  kubectl -n {{ .Release.Namespace }} get pods -w
+
+Traefik's external address, where the dashboard and preview domains must point:
+
+  kubectl -n {{ .Release.Namespace }} get service traefik
+{{- with .Values.dashboardDomain }}
+
+The dashboard: https://{{ . }}
+{{- end }}
+
+Run state commands in the control plane, for example to create the first user:
+
+  kubectl -n {{ .Release.Namespace }} exec deploy/control-plane -- pressfleet user create --help

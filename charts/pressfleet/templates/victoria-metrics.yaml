@@ -1,0 +1,83 @@
+{{- /*
+Metrics storage (design doc §3, §7): single-node VictoriaMetrics. Only the
+control plane's collector and dashboard reach it (networkpolicies.yaml);
+it has no route. Retention is metrics.retention_days.
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: victoria-metrics
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "victoria-metrics") | nindent 4 }}
+spec:
+  selector:
+    {{- include "pressfleet.selector" (dict "root" . "component" "victoria-metrics") | nindent 4 }}
+  ports:
+    - name: http
+      port: 8428
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: victoria-metrics
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "victoria-metrics") | nindent 4 }}
+spec:
+  replicas: 1
+  serviceName: victoria-metrics
+  selector:
+    matchLabels:
+      {{- include "pressfleet.selector" (dict "root" . "component" "victoria-metrics") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pressfleet.componentLabels" (dict "root" . "component" "victoria-metrics") | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with include "pressfleet.imagePullSecrets" . }}{{ . | nindent 6 }}{{ end }}
+      # The image runs as root on Compose; here nobody, which owns the data
+      # volume through fsGroup, is enough.
+      {{- include "pressfleet.podSecurityContext" (dict "uid" 65534 "gid" 65534) | nindent 6 }}
+      # Time to flush in-memory data to disk on shutdown.
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: victoria-metrics
+          image: {{ include "pressfleet.image" (dict "root" . "value" "victoriaMetrics" "key" "victoria-metrics") | quote }}
+          args:
+            - -storageDataPath=/victoria-metrics-data
+            - {{ printf "-retentionPeriod=%dd" (int .Values.metrics.retentionDays) | quote }}
+            - -httpListenAddr=:8428
+          ports:
+            - name: http
+              containerPort: 8428
+          volumeMounts:
+            - name: data
+              mountPath: /victoria-metrics-data
+          {{- include "pressfleet.containerSecurityContext" (dict "readOnly" true) | nindent 10 }}
+          {{- include "pressfleet.memory" .Values.victoriaMetrics.memoryMB | nindent 10 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "pressfleet.selector" (dict "root" . "component" "victoria-metrics") | nindent 10 }}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with include "pressfleet.storageClass" (dict "root" . "own" .Values.victoriaMetrics.storage.storageClass) }}{{ . | nindent 8 }}{{ end }}
+        resources:
+          requests:
+            storage: {{ .Values.victoriaMetrics.storage.size | quote }}

@@ -1,0 +1,81 @@
+{{- /*
+RBAC can't name namespaces that don't exist yet, so the control plane's
+namespace and RoleBinding rights are cluster-wide (rbac.yaml). This policy
+narrows them, for the control plane's ServiceAccount only, to the
+namespaces PressFleet owns (design doc §4.8, §6):
+
+- site namespaces, named <siteNamespacePrefix>... and labeled
+  app.kubernetes.io/managed-by=pressfleet;
+- doctor's short-lived probe namespaces, named <platform namespace>-doctor-...
+  and labeled pressfleet.io/doctor-probe=true (#225).
+
+A namespace it creates or changes must be one of them and enforce Pod
+Security "restricted"; one it changes or deletes must have been one of
+them. A RoleBinding it writes must be in one of them and bind the site
+ClusterRole. Without this, the control plane could bind the site
+ClusterRole in any namespace, or delete one.
+*/ -}}
+{{- $site := include "pressfleet.siteClusterRole" . }}
+{{- $sitePrefix := .Values.kubernetes.siteNamespacePrefix }}
+{{- $probePrefix := printf "%s-doctor-" .Release.Namespace }}
+{{- $owned := dict "sitePrefix" $sitePrefix "probePrefix" $probePrefix }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "pressfleet.admissionPolicy" . | quote }}
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "control-plane") | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [namespaces]
+      - apiGroups: [rbac.authorization.k8s.io]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [rolebindings]
+  matchConditions:
+    - name: control-plane
+      expression: {{ printf "request.userInfo.username == '%s'" (include "pressfleet.controlPlaneUser" .) | quote }}
+  variables:
+    - name: isNamespace
+      expression: "request.resource.resource == 'namespaces'"
+    # The namespace concerned: the one written, or the RoleBinding's.
+    - name: target
+      expression: "variables.isNamespace ? request.name : request.namespace"
+  validations:
+    - expression: >-
+        !variables.isNamespace || request.operation == 'DELETE' ||
+        ({{ include "pressfleet.celOwned" (merge (dict "obj" "object") $owned) | nindent 8 | trim }} &&
+        'pod-security.kubernetes.io/enforce' in object.metadata.labels &&
+        object.metadata.labels['pod-security.kubernetes.io/enforce'] == 'restricted')
+      messageExpression: >-
+        'the PressFleet control plane may only write site namespaces ({{ $sitePrefix }}..., labeled app.kubernetes.io/managed-by=pressfleet) and doctor probe namespaces ({{ $probePrefix }}..., labeled pressfleet.io/doctor-probe=true) that enforce Pod Security restricted, not ' + request.name
+    - expression: >-
+        !variables.isNamespace || request.operation == 'CREATE' ||
+        {{ include "pressfleet.celOwned" (merge (dict "obj" "oldObject") $owned) | nindent 8 | trim }}
+      messageExpression: >-
+        'the PressFleet control plane may only change or delete namespaces it created, not ' + request.name
+    - expression: >-
+        variables.isNamespace ||
+        (namespaceObject != null &&
+        {{ include "pressfleet.celOwned" (merge (dict "obj" "namespaceObject") $owned) | nindent 8 | trim }})
+      messageExpression: >-
+        'the PressFleet control plane may only write RoleBindings in its own namespaces, not in ' + request.namespace
+    - expression: >-
+        variables.isNamespace || request.operation == 'DELETE' ||
+        (object.roleRef.kind == 'ClusterRole' && object.roleRef.name == {{ printf "'%s'" $site }})
+      message: {{ printf "the PressFleet control plane may only bind the ClusterRole %s" $site | quote }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ include "pressfleet.admissionPolicy" . | quote }}
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "control-plane") | nindent 4 }}
+spec:
+  policyName: {{ include "pressfleet.admissionPolicy" . | quote }}
+  validationActions: [Deny]

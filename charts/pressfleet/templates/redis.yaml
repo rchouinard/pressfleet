@@ -1,0 +1,116 @@
+{{- /*
+The shared object cache: Valkey, which PressFleet calls "redis" (design doc
+§3, §6). Nothing is persisted, as on Compose: it is a cache.
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "redis") | nindent 4 }}
+spec:
+  selector:
+    {{- include "pressfleet.selector" (dict "root" . "component" "redis") | nindent 4 }}
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "redis") | nindent 4 }}
+spec:
+  replicas: 1
+  serviceName: redis
+  selector:
+    matchLabels:
+      {{- include "pressfleet.selector" (dict "root" . "component" "redis") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pressfleet.componentLabels" (dict "root" . "component" "redis") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/redis-config.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with include "pressfleet.imagePullSecrets" . }}{{ . | nindent 6 }}{{ end }}
+      # The image's own user, as on Compose.
+      {{- include "pressfleet.podSecurityContext" (dict "uid" 999 "gid" 999) | nindent 6 }}
+      initContainers:
+        # Writes valkey.conf with the SHA-256 of the admin password in the
+        # ACL rule ("#<hex>"), so the configuration holds no usable
+        # credential, as on Compose.
+        - name: config
+          image: {{ include "pressfleet.image" (dict "root" . "value" "redis" "key" "redis") | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              hash=$(printf %s "$(cat /run/secrets/redis_admin_password)" | sha256sum | cut -d' ' -f1)
+              sed "s/@REDIS_ADMIN_PASSWORD_HASH@/$hash/" /etc/valkey-template/valkey.conf > /etc/valkey/valkey.conf
+          volumeMounts:
+            - name: template
+              mountPath: /etc/valkey-template
+              readOnly: true
+            - name: config
+              mountPath: /etc/valkey
+            - name: secrets
+              mountPath: /run/secrets
+              readOnly: true
+          {{- include "pressfleet.containerSecurityContext" (dict "readOnly" true) | nindent 10 }}
+          resources:
+            limits:
+              memory: 16Mi
+      containers:
+        - name: redis
+          image: {{ include "pressfleet.image" (dict "root" . "value" "redis" "key" "redis") | quote }}
+          command: ["valkey-server", "/etc/valkey/valkey.conf"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          volumeMounts:
+            - name: config
+              mountPath: /etc/valkey
+              readOnly: true
+            - name: data
+              mountPath: /data
+          {{- include "pressfleet.containerSecurityContext" (dict "readOnly" true) | nindent 10 }}
+          {{- /* maxmemory plus headroom (platform.RedisOverheadMB). */}}
+          {{- include "pressfleet.memory" (add .Values.redis.maxMemoryMB 64) | nindent 10 }}
+          livenessProbe:
+            exec:
+              command: ["valkey-cli", "--no-auth-warning", "--user", "healthcheck", "--pass", "nopass", "-e", "ping"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "--no-auth-warning", "--user", "healthcheck", "--pass", "nopass", "-e", "ping"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: template
+          configMap:
+            name: redis
+        # The rendered configuration, in memory.
+        - name: config
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        # Valkey's working directory: nothing is persisted (valkey.conf).
+        - name: data
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Mi
+        - name: secrets
+          secret:
+            secretName: {{ .Values.platformSecrets.secretName | quote }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.platformSecrets.redisAdminPasswordKey | quote }}
+                path: redis_admin_password

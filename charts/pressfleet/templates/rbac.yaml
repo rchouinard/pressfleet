@@ -1,0 +1,163 @@
+{{- /*
+The control plane's rights (design doc §4.8, §6; decision 6 in #212). They
+replace the Docker socket:
+
+- cluster-wide, it may create and delete namespaces and bind the site
+  ClusterRole in them (admission-policy.yaml narrows both to site
+  namespaces and doctor's probe namespaces), and read what doctor and host
+  metrics need: nodes, their metrics, and storage classes;
+- in each of those namespaces, the site ClusterRole, which the driver (or
+  doctor) binds there;
+- in the platform namespace, the Role below: repository task pods, their
+  Secrets and NetworkPolicies, exec into Traefik, and maintenance routes.
+
+It has no nodes/proxy, no cluster-wide Secrets, and no rights in other
+namespaces.
+*/ -}}
+{{- $manage := list "get" "list" "watch" "create" "update" "patch" "delete" "deletecollection" }}
+{{- $read := list "get" "list" "watch" }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "pressfleet.controlPlaneClusterRole" . | quote }}
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "control-plane") | nindent 4 }}
+rules:
+  # Site namespaces, created and deleted with their sites, and doctor's
+  # probe namespaces.
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # The RoleBinding in each site namespace that gives the control plane the
+  # site ClusterRole there. Kubernetes lets it bind that ClusterRole only.
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [rolebindings]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    verbs: [bind]
+    resourceNames: [{{ include "pressfleet.siteClusterRole" . | quote }}]
+  # Doctor (architecture, cgroups, allocatable memory) and per-node host
+  # metrics (§7.2).
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: {{ toJson $read }}
+  - apiGroups: [metrics.k8s.io]
+    resources: [nodes]
+    verbs: [get, list]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "pressfleet.controlPlaneClusterRole" . | quote }}
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "control-plane") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "pressfleet.controlPlaneClusterRole" . | quote }}
+subjects:
+  - kind: ServiceAccount
+    name: control-plane
+    namespace: {{ .Release.Namespace | quote }}
+---
+# Everything of one site, in the site's namespace only: the driver binds it
+# there with a RoleBinding (ClusterRole name: pressfleet:<platform
+# namespace>:site). No ClusterRoleBinding ever names it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "pressfleet.siteClusterRole" . | quote }}
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "control-plane") | nindent 4 }}
+rules:
+  # The site's Deployment, its tasks and SFTP sessions (pods), wp-config.php
+  # and task Secrets, its Service and wp-content volume.
+  - apiGroups: [""]
+    resources: [pods, secrets, services, persistentvolumeclaims, configmaps]
+    verbs: {{ toJson $manage }}
+  # WP-CLI, probes, and cache purges (exec); task and session streams
+  # (attach); logs.
+  - apiGroups: [""]
+    resources: [pods/exec, pods/attach]
+    verbs: [get, create]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: {{ toJson $read }}
+  - apiGroups: [apps]
+    resources: [deployments, deployments/scale]
+    verbs: {{ toJson $manage }}
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: {{ toJson $read }}
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: {{ toJson $manage }}
+  # Routes: IngressRoute and Middleware objects, named as on Compose.
+  - apiGroups: [traefik.io]
+    resources: [ingressroutes, middlewares]
+    verbs: {{ toJson $manage }}
+  # Container stats (§7.2).
+  - apiGroups: [metrics.k8s.io]
+    resources: [pods]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: control-plane
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "control-plane") | nindent 4 }}
+rules:
+  # Repository tasks (pods), their Secret volumes, and the NetworkPolicies
+  # that deny them the network or allow S3 only. The control plane also
+  # reads the image pull Secrets here to copy them into site namespaces.
+  - apiGroups: [""]
+    resources: [pods, secrets]
+    verbs: {{ toJson $manage }}
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: {{ toJson $manage }}
+  # Traefik's metrics and repository task streams.
+  - apiGroups: [""]
+    resources: [pods/exec, pods/attach]
+    verbs: [get, create]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  # Routes that live with the platform services, such as maintenance routes.
+  - apiGroups: [traefik.io]
+    resources: [ingressroutes, middlewares]
+    verbs: {{ toJson $manage }}
+  # Doctor and uptime checks: Traefik's Service address, the platform's
+  # workloads and volumes.
+  - apiGroups: [""]
+    resources: [services, persistentvolumeclaims, events]
+    verbs: {{ toJson $read }}
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets]
+    verbs: {{ toJson $read }}
+  - apiGroups: [metrics.k8s.io]
+    resources: [pods]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: control-plane
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "control-plane") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: control-plane
+subjects:
+  - kind: ServiceAccount
+    name: control-plane
+    namespace: {{ .Release.Namespace | quote }}

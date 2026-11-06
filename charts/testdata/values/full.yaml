@@ -1,0 +1,94 @@
+# Every option the chart has, set away from its default: an external
+# MariaDB, a DNS provider for the preview wildcard certificate, an extra ACME
+# root (Pebble's, as the kind tests use), NodePorts with HTTP/3, a private
+# registry, and named storage classes.
+dashboardDomain: fleet.agency.example
+previewBaseDomain: preview.agency.example
+publicIP: 203.0.113.7
+
+kubernetes:
+  siteNamespacePrefix: site-
+  podCIDRs: [10.42.0.0/16, "fd00:10:42::/56"]
+  storageClasses:
+    sites: fast-rwo
+    data: shared-rwx
+  imagePullSecrets: [registry-credentials]
+
+config:
+  secretName: agency-pressfleet-config
+  key: config.yaml
+
+masterKey:
+  secretName: agency-master-key
+  key: key
+
+platformSecrets:
+  secretName: agency-platform
+  mariadbRootPasswordKey: mariadb
+  redisAdminPasswordKey: redis
+  sshHostKeyKey: ssh
+
+database:
+  postgresDSN:
+    secretName: agency-postgres
+    key: url
+
+images:
+  controlPlane: registry.agency.example/pressfleet/control-plane:1.2.0
+  redis: registry.agency.example/valkey/valkey:9.1.2
+  traefik: registry.agency.example/library/traefik:v3.7.16
+  victoriaMetrics: registry.agency.example/victoriametrics/victoria-metrics:v1.154.1
+
+controlPlane:
+  memoryMB: 384
+  uid: 61000
+  gid: 61000
+  data:
+    size: 200Gi
+    existingClaim: pressfleet-nfs
+
+mariadb:
+  enabled: false
+  address: db.agency.example:3306
+
+redis:
+  maxMemoryMB: 512
+
+metrics:
+  retentionDays: 30
+
+victoriaMetrics:
+  memoryMB: 512
+  storage:
+    size: 50Gi
+    storageClass: slow-rwo
+
+traefik:
+  memoryMB: 256
+  storage:
+    size: 256Mi
+    storageClass: ""
+  service:
+    type: NodePort
+    externalTrafficPolicy: Cluster
+    annotations:
+      metallb.universe.tf/address-pool: public
+    nodePorts:
+      web: 30080
+      websecure: 30443
+      sftp: 0
+    http3: true
+
+acme:
+  email: ops@agency.example
+  caServer: https://pebble.pressfleet.svc:14000/dir
+  staging: false
+  dnsProvider: cloudflare
+  dnsCredentialsSecret: cloudflare-credentials
+  dnsResolvers: ["1.1.1.1:53", "8.8.8.8:53"]
+  caCertificates:
+    secretName: pebble-ca
+    key: pebble.minica.pem
+
+sftp:
+  port: 2022

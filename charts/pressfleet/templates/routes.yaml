@@ -1,0 +1,66 @@
+{{- /*
+The platform's own routes, which the Compose project puts in the control
+plane's labels and Traefik's file provider. Site routes are the driver's.
+*/ -}}
+# The SFTP gateway (§5.8). SSH can't be routed by host name, so it has an
+# entry point and a Service port of its own.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: pf-sftp
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "control-plane") | nindent 4 }}
+spec:
+  entryPoints: [sftp]
+  routes:
+    - match: HostSNI(`*`)
+      services:
+        - name: control-plane
+          port: 2222
+{{- with .Values.dashboardDomain }}
+---
+# The dashboard and API.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: pf-dashboard
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" $ "component" "control-plane") | nindent 4 }}
+spec:
+  entryPoints: [websecure]
+  routes:
+    - kind: Rule
+      match: {{ printf "Host(`%s`)" . | quote }}
+      services:
+        - name: control-plane
+          port: 8080
+  tls:
+    certResolver: acme-http
+{{- end }}
+{{- if and .Values.acme.dnsProvider .Values.previewBaseDomain }}
+---
+# Makes Traefik obtain the preview wildcard certificate with DNS-01 as soon
+# as it starts, rather than when the first site appears
+# (ingress.PreviewWildcardRouter). The bare base domain itself hosts
+# nothing.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: pf-preview-wildcard
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "traefik") | nindent 4 }}
+spec:
+  entryPoints: [websecure]
+  routes:
+    - kind: Rule
+      match: {{ printf "Host(`%s`)" .Values.previewBaseDomain | quote }}
+      services:
+        - kind: TraefikService
+          name: noop@internal
+  tls:
+    certResolver: acme-preview
+    domains:
+      - main: {{ .Values.previewBaseDomain | quote }}
+        sans:
+          - {{ printf "*.%s" .Values.previewBaseDomain | quote }}
+{{- end }}

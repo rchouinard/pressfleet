@@ -29,6 +29,7 @@ CI (`.github/workflows/ci.yml`) runs lint, a `go mod tidy` check, tests, and the
 - `control-plane/internal/<pkg>`: all Go code. Test fakes live in `<pkg>/<pkg>test`.
 - `api/openapi.yaml`: API source of truth; generated code is never hand-edited
 - `templates/`: Compose templates. `go:embed` can't reach outside a package directory, so templates are embedded through Go files in `templates/` itself (package `github.com/rchouinard/pressfleet/templates`)
+- `charts/pressfleet/`: the Helm chart (§4.8). Its `files/` are generated from `templates/platform` by `make generate`; `go test ./charts/` lints it and compares `helm template` with golden files (`-update` rewrites them)
 - `images/<name>/`: container images (`site-php`, `site-nginx`)
 - `ui/`: Nuxt dashboard (M5), also the Go package that embeds its build (see `ui/README.md` for conventions)
 

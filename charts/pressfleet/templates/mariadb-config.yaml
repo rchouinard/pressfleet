@@ -1,0 +1,22 @@
+{{- /*
+MariaDB's tuning, rendered from the template the Compose project uses
+(files/mariadb.cnf.tmpl, a generated copy of templates/platform's), with the
+same buffer pool size (platform.bufferPoolMB).
+*/ -}}
+{{- if .Values.mariadb.enabled }}
+{{- $memory := int .Values.mariadb.memoryMB }}
+{{- $data := dict
+  "MariaDBMemoryMB" $memory
+  "MariaDBBufferPoolMB" (max 128 (mul (div (div $memory 2) 128) 128))
+  "Template" .Template }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mariadb
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "mariadb") | nindent 4 }}
+data:
+  pressfleet.cnf: |
+    {{- /* No indentation on blank lines. */}}
+    {{- regexReplaceAll "(?m)^ +$" (tpl (.Files.Get "files/mariadb.cnf.tmpl") $data | nindent 4) "" }}
+{{- end }}

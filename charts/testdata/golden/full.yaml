@@ -1,0 +1,1551 @@
+---
+# Source: pressfleet/templates/networkpolicies.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+
+---
+# Source: pressfleet/templates/networkpolicies.yaml
+# Traefik takes web and SFTP traffic from anywhere.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: traefik
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: traefik
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pressfleet
+      app.kubernetes.io/component: traefik
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - port: web
+        - port: websecure
+        - port: websecure-udp
+          protocol: UDP
+        - port: sftp
+
+---
+# Source: pressfleet/templates/networkpolicies.yaml
+# The dashboard, the API, and the SFTP gateway: from Traefik only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: control-plane
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: control-plane
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pressfleet
+      app.kubernetes.io/component: control-plane
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pressfleet
+              app.kubernetes.io/component: traefik
+      ports:
+        - port: http
+        - port: sftp
+
+---
+# Source: pressfleet/templates/networkpolicies.yaml
+# The maintenance page: from Traefik only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: maintenance
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: maintenance
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pressfleet
+      app.kubernetes.io/component: maintenance
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pressfleet
+              app.kubernetes.io/component: traefik
+      ports:
+        - port: http
+
+---
+# Source: pressfleet/templates/networkpolicies.yaml
+# The object cache: the control plane (site ACL users) and site pods.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: redis
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pressfleet
+      app.kubernetes.io/component: redis
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pressfleet
+              app.kubernetes.io/component: control-plane
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/managed-by: pressfleet
+            matchExpressions:
+              - key: pressfleet.io/site-id
+                operator: Exists
+      ports:
+        - port: redis
+
+---
+# Source: pressfleet/templates/networkpolicies.yaml
+# VictoriaMetrics: the control plane only, as on Compose.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: victoria-metrics
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: victoria-metrics
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pressfleet
+      app.kubernetes.io/component: victoria-metrics
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pressfleet
+              app.kubernetes.io/component: control-plane
+      ports:
+        - port: http
+
+---
+# Source: pressfleet/templates/control-plane.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: control-plane
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: control-plane
+
+---
+# Source: pressfleet/templates/traefik.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: traefik
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: traefik
+
+---
+# Source: pressfleet/templates/redis-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: redis
+data:
+  valkey.conf: |
+    # Generated by `make generate` from templates/platform/valkey.conf.tmpl. Do not edit.
+    # PressFleet object cache (Valkey) configuration. Generated by pressfleet; do
+    # not edit.
+    #
+    # One server is shared by every site (design doc §3, §6). The control plane
+    # gives each site its own ACL user, logical database, and key prefix at run
+    # time; this file only defines the server and the platform's own users.
+
+    # Only the platform network and site networks reach the server, and every
+    # client must authenticate (the default user is off), so protected mode, which
+    # refuses remote clients when the default user has no password, is not needed.
+    bind * -::*
+    protected-mode no
+    port 6379
+
+    # Each site gets one logical database (restricted with a db=<n> ACL rule), so
+    # one site's SCAN, DBSIZE, and FLUSHDB never see another's keys. Database 0 is
+    # left unused. Empty databases cost almost nothing.
+    databases 1024
+
+    # The cache is sized by the §4.1 capacity budget. WordPress stores most
+    # object cache entries without a TTL, so volatile-lru would find nothing to
+    # evict and writes would fail once memory is full; allkeys-lru evicts the
+    # least recently used entries of any site instead.
+    maxmemory 512mb
+    maxmemory-policy allkeys-lru
+
+    # No persistence: it is a cache, and WordPress rebuilds it on demand. RDB
+    # snapshots would fork the server (doubling memory under write load) and
+    # append-only files would add disk I/O for data nobody needs after a restart.
+    save ""
+    appendonly no
+
+    # Free memory in a background thread, so a site flushing its database or a
+    # burst of evictions doesn't stall every other site's requests.
+    lazyfree-lazy-user-flush yes
+    lazyfree-lazy-eviction yes
+
+    # Users. Passwords are given as SHA-256 hashes ("#<hex>"), so this file never
+    # holds a usable credential.
+    #
+    # The default user is disabled and stripped of all permissions.
+    user default off resetpass resetkeys resetchannels -@all
+    # The container healthcheck can only PING.
+    user healthcheck on nopass resetkeys resetchannels -@all +ping
+    # The control plane manages site users and databases.
+    user pressfleet on #@REDIS_ADMIN_PASSWORD_HASH@ ~* &* alldbs +@all
+
+
+---
+# Source: pressfleet/templates/traefik-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: traefik
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: traefik
+data:
+  traefik.yaml: |
+    global:
+      checkNewVersion: false
+      sendAnonymousUsage: false
+
+    log:
+      level: INFO
+      format: json
+
+    # Request headers are dropped: they carry session cookies and basic auth
+    # credentials.
+    accessLog:
+      format: json
+      fields:
+        headers:
+          defaultMode: drop
+
+    entryPoints:
+      web:
+        address: ":8000"
+        http:
+          redirections:
+            entryPoint:
+              # The Service's port, not the container's.
+              to: ":443"
+              scheme: https
+              permanent: true
+      websecure:
+        address: ":8443"
+        # Routers that name no entry point listen here only.
+        asDefault: true
+        http:
+          tls: {}
+        http3:
+          advertisedPort: 443
+      # The SFTP gateway in the control plane (sftp.port on the Service).
+      sftp:
+        address: ":2222"
+      # Ping (the probes) and Prometheus metrics, on loopback only, as on
+      # Compose (security review finding F5): the control plane reads the
+      # metrics through the exec API (provisioner.TraefikMetricsReader).
+      traefik:
+        address: "127.0.0.1:8082"
+
+    ping:
+      entryPoint: traefik
+
+    metrics:
+      prometheus:
+        entryPoint: traefik
+        addEntryPointsLabels: true
+        addRoutersLabels: true
+        addServicesLabels: true
+
+    providers:
+      # The IngressRoute and Middleware objects of the platform and of every
+      # site namespace. A route may only use services and middlewares of its
+      # own namespace.
+      kubernetesCRD:
+        allowCrossNamespace: false
+        allowExternalNameServices: false
+
+    certificatesResolvers:
+      # HTTP-01, one certificate per host name: the dashboard domain and,
+      # from go-live on, sites' primary domains and aliases.
+      acme-http:
+        acme:
+          email: "ops@agency.example"
+          caServer: "https://pebble.pressfleet.svc:14000/dir"
+          storage: /var/lib/traefik/acme.json
+          httpChallenge:
+            entryPoint: web
+      # Preview domains (<slug>.<preview base domain>).
+      acme-preview:
+        acme:
+          email: "ops@agency.example"
+          caServer: "https://pebble.pressfleet.svc:14000/dir"
+          storage: /var/lib/traefik/acme.json
+          # One wildcard certificate for every preview domain, with DNS-01
+          # (see routes.yaml). The provider's credentials come from the
+          # files the entrypoint names in <VARIABLE>_FILE variables.
+          dnsChallenge:
+            provider: "cloudflare"
+            resolvers:
+              - "1.1.1.1:53"
+              - "8.8.8.8:53"
+
+---
+# Source: pressfleet/templates/traefik.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: traefik-acme
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: traefik
+  annotations:
+    # ACME account keys and certificates: losing them means issuing every
+    # certificate again, against the CA's rate limits.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: "fast-rwo"
+  resources:
+    requests:
+      storage: "256Mi"
+
+---
+# Source: pressfleet/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: "pressfleet:pressfleet:control-plane"
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: control-plane
+rules:
+  # Site namespaces, created and deleted with their sites, and doctor's
+  # probe namespaces.
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # The RoleBinding in each site namespace that gives the control plane the
+  # site ClusterRole there. Kubernetes lets it bind that ClusterRole only.
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [rolebindings]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    verbs: [bind]
+    resourceNames: ["pressfleet:pressfleet:site"]
+  # Doctor (architecture, cgroups, allocatable memory) and per-node host
+  # metrics (§7.2).
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: ["get","list","watch"]
+  - apiGroups: [metrics.k8s.io]
+    resources: [nodes]
+    verbs: [get, list]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses]
+    verbs: [get, list]
+
+---
+# Source: pressfleet/templates/rbac.yaml
+# Everything of one site, in the site's namespace only: the driver binds it
+# there with a RoleBinding (ClusterRole name: pressfleet:<platform
+# namespace>:site). No ClusterRoleBinding ever names it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: "pressfleet:pressfleet:site"
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: control-plane
+rules:
+  # The site's Deployment, its tasks and SFTP sessions (pods), wp-config.php
+  # and task Secrets, its Service and wp-content volume.
+  - apiGroups: [""]
+    resources: [pods, secrets, services, persistentvolumeclaims, configmaps]
+    verbs: ["get","list","watch","create","update","patch","delete","deletecollection"]
+  # WP-CLI, probes, and cache purges (exec); task and session streams
+  # (attach); logs.
+  - apiGroups: [""]
+    resources: [pods/exec, pods/attach]
+    verbs: [get, create]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: ["get","list","watch"]
+  - apiGroups: [apps]
+    resources: [deployments, deployments/scale]
+    verbs: ["get","list","watch","create","update","patch","delete","deletecollection"]
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: ["get","list","watch"]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: ["get","list","watch","create","update","patch","delete","deletecollection"]
+  # Routes: IngressRoute and Middleware objects, named as on Compose.
+  - apiGroups: [traefik.io]
+    resources: [ingressroutes, middlewares]
+    verbs: ["get","list","watch","create","update","patch","delete","deletecollection"]
+  # Container stats (§7.2).
+  - apiGroups: [metrics.k8s.io]
+    resources: [pods]
+    verbs: [get, list]
+
+---
+# Source: pressfleet/templates/traefik.yaml
+# What Traefik's Kubernetes CRD provider reads, cluster-wide, as Traefik's
+# own RBAC for its release lists it. Secrets are among them: basicAuth
+# middlewares and TLS options name Secrets in sites' namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: "pressfleet:pressfleet:traefik"
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: traefik
+rules:
+  - apiGroups: [""]
+    resources: [services, secrets, nodes, configmaps]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [list, watch]
+  - apiGroups: [traefik.io]
+    resources:
+      - middlewares
+      - middlewaretcps
+      - ingressroutes
+      - traefikservices
+      - ingressroutetcps
+      - ingressrouteudps
+      - tlsoptions
+      - tlsstores
+      - serverstransports
+      - serverstransporttcps
+    verbs: [get, list, watch]
+
+---
+# Source: pressfleet/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: "pressfleet:pressfleet:control-plane"
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: control-plane
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: "pressfleet:pressfleet:control-plane"
+subjects:
+  - kind: ServiceAccount
+    name: control-plane
+    namespace: "pressfleet"
+
+---
+# Source: pressfleet/templates/traefik.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: "pressfleet:pressfleet:traefik"
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: traefik
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: "pressfleet:pressfleet:traefik"
+subjects:
+  - kind: ServiceAccount
+    name: traefik
+    namespace: "pressfleet"
+
+---
+# Source: pressfleet/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: control-plane
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: control-plane
+rules:
+  # Repository tasks (pods), their Secret volumes, and the NetworkPolicies
+  # that deny them the network or allow S3 only. The control plane also
+  # reads the image pull Secrets here to copy them into site namespaces.
+  - apiGroups: [""]
+    resources: [pods, secrets]
+    verbs: ["get","list","watch","create","update","patch","delete","deletecollection"]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: ["get","list","watch","create","update","patch","delete","deletecollection"]
+  # Traefik's metrics and repository task streams.
+  - apiGroups: [""]
+    resources: [pods/exec, pods/attach]
+    verbs: [get, create]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  # Routes that live with the platform services, such as maintenance routes.
+  - apiGroups: [traefik.io]
+    resources: [ingressroutes, middlewares]
+    verbs: ["get","list","watch","create","update","patch","delete","deletecollection"]
+  # Doctor and uptime checks: Traefik's Service address, the platform's
+  # workloads and volumes.
+  - apiGroups: [""]
+    resources: [services, persistentvolumeclaims, events]
+    verbs: ["get","list","watch"]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets]
+    verbs: ["get","list","watch"]
+  - apiGroups: [metrics.k8s.io]
+    resources: [pods]
+    verbs: [get, list]
+
+---
+# Source: pressfleet/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: control-plane
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: control-plane
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: control-plane
+subjects:
+  - kind: ServiceAccount
+    name: control-plane
+    namespace: "pressfleet"
+
+---
+# Source: pressfleet/templates/control-plane.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: control-plane
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: control-plane
+spec:
+  selector:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/component: control-plane
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    - name: sftp
+      port: 2222
+      targetPort: sftp
+
+---
+# Source: pressfleet/templates/maintenance.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: maintenance
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: maintenance
+spec:
+  selector:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/component: maintenance
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+
+---
+# Source: pressfleet/templates/redis.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: redis
+spec:
+  selector:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/component: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+
+---
+# Source: pressfleet/templates/traefik.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: traefik
+  annotations:
+    metallb.universe.tf/address-pool: public
+spec:
+  type: NodePort
+  externalTrafficPolicy: Cluster
+  selector:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/component: traefik
+  ports:
+    - name: web
+      port: 80
+      targetPort: web
+      protocol: TCP
+      nodePort: 30080
+    - name: websecure
+      port: 443
+      targetPort: websecure
+      protocol: TCP
+      nodePort: 30443
+    - name: websecure-udp
+      port: 443
+      targetPort: websecure-udp
+      protocol: UDP
+    - name: sftp
+      port: 2022
+      targetPort: sftp
+      protocol: TCP
+
+---
+# Source: pressfleet/templates/victoria-metrics.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: victoria-metrics
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: victoria-metrics
+spec:
+  selector:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/component: victoria-metrics
+  ports:
+    - name: http
+      port: 8428
+      targetPort: http
+
+---
+# Source: pressfleet/templates/control-plane.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-plane
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: control-plane
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pressfleet
+      app.kubernetes.io/component: control-plane
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pressfleet
+        app.kubernetes.io/instance: "pressfleet"
+        app.kubernetes.io/version: "0.0.0-dev"
+        app.kubernetes.io/managed-by: "Helm"
+        helm.sh/chart: "pressfleet-0.0.0-dev"
+        app.kubernetes.io/component: control-plane
+    spec:
+      serviceAccountName: control-plane
+      # The driver talks to the API server as this ServiceAccount (RBAC in
+      # rbac.yaml).
+      automountServiceAccountToken: true
+      imagePullSecrets:
+        - name: "registry-credentials"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 61000
+        runAsGroup: 61000
+        fsGroup: 61000
+        fsGroupChangePolicy: OnRootMismatch
+        supplementalGroups: [60000]
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: control-plane
+          image: "registry.agency.example/pressfleet/control-plane:1.2.0"
+          args: ["serve"]
+          env:
+            # The Go process's share of the memory limit, as on Compose (§4.1).
+            - name: GOMEMLIMIT
+              value: "96MiB"
+            - name: PRESSFLEET_DRIVER
+              value: kubernetes
+            - name: PRESSFLEET_DATA_DIR
+              value: "/var/lib/pressfleet"
+            - name: PRESSFLEET_LISTEN
+              value: ":8080"
+            - name: PRESSFLEET_MASTER_KEY_FILE
+              value: /run/secrets/master_key
+            # The operator's config file, for the settings not passed here.
+            # These variables take precedence over it.
+            - name: PRESSFLEET_CONFIG
+              value: /run/secrets/pressfleet_config
+            - name: PRESSFLEET_DATABASE_DRIVER
+              value: postgres
+            - name: PRESSFLEET_DATABASE_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: "agency-postgres"
+                  key: "url"
+            # Tasks run in the control plane's own image (§5.3).
+            - name: PRESSFLEET_TASK_IMAGE
+              value: "registry.agency.example/pressfleet/control-plane:1.2.0"
+            # Full names, so that sites in their own namespaces reach them too.
+            - name: PRESSFLEET_MARIADB_ADDRESS
+              value: "db.agency.example:3306"
+            - name: PRESSFLEET_REDIS_ADDRESS
+              value: "redis.pressfleet.svc:6379"
+            - name: PRESSFLEET_METRICS_URL
+              value: "http://victoria-metrics.pressfleet.svc:8428"
+            - name: PRESSFLEET_METRICS_RETENTION_DAYS
+              value: "30"
+            - name: PRESSFLEET_SFTP_PORT
+              value: "2022"
+            - name: PRESSFLEET_DASHBOARD_DOMAIN
+              value: "fleet.agency.example"
+            - name: PRESSFLEET_PREVIEW_BASE_DOMAIN
+              value: "preview.agency.example"
+            - name: PRESSFLEET_PUBLIC_IP
+              value: "203.0.113.7"
+            - name: PRESSFLEET_KUBERNETES_PLATFORM_NAMESPACE
+              value: "pressfleet"
+            - name: PRESSFLEET_KUBERNETES_SITE_NAMESPACE_PREFIX
+              value: "site-"
+            - name: PRESSFLEET_KUBERNETES_STORAGE_CLASSES_SITES
+              value: "fast-rwo"
+            - name: PRESSFLEET_KUBERNETES_STORAGE_CLASSES_DATA
+              value: "shared-rwx"
+            - name: PRESSFLEET_KUBERNETES_TRAEFIK_SERVICE
+              value: traefik
+            - name: PRESSFLEET_KUBERNETES_POD_CIDRS
+              value: "10.42.0.0/16,fd00:10:42::/56"
+            - name: PRESSFLEET_KUBERNETES_IMAGE_PULL_SECRETS
+              value: "registry-credentials"
+          ports:
+            - name: http
+              containerPort: 8080
+            # The SFTP gateway (§5.8); Traefik forwards sftp.port to it.
+            - name: sftp
+              containerPort: 2222
+          volumeMounts:
+            - name: data
+              mountPath: "/var/lib/pressfleet"
+            # The master key, the platform credentials, and the config file,
+            # at the paths the config defaults name, as on Compose.
+            - name: secrets
+              mountPath: /run/secrets
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              memory: 384Mi
+            limits:
+              memory: 384Mi
+          # Migrations run at startup, before the API answers.
+          startupProbe:
+            exec:
+              command: ["pressfleet", "healthcheck"]
+            periodSeconds: 2
+            timeoutSeconds: 5
+            failureThreshold: 300
+          livenessProbe:
+            exec:
+              command: ["pressfleet", "healthcheck"]
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["pressfleet", "healthcheck"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: "pressfleet-nfs"
+        - name: secrets
+          projected:
+            # Readable by the control plane's group (fsGroup) only.
+            defaultMode: 0440
+            sources:
+              - secret:
+                  name: "agency-master-key"
+                  items:
+                    - key: "key"
+                      path: master_key
+              - secret:
+                  name: "agency-platform"
+                  items:
+                    - key: "mariadb"
+                      path: mariadb_root_password
+                    - key: "redis"
+                      path: redis_admin_password
+                    - key: "ssh"
+                      path: ssh_host_key
+              - secret:
+                  name: "agency-pressfleet-config"
+                  items:
+                    - key: "config.yaml"
+                      path: pressfleet_config
+        - name: tmp
+          emptyDir: {}
+
+---
+# Source: pressfleet/templates/maintenance.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maintenance
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: maintenance
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pressfleet
+      app.kubernetes.io/component: maintenance
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pressfleet
+        app.kubernetes.io/instance: "pressfleet"
+        app.kubernetes.io/version: "0.0.0-dev"
+        app.kubernetes.io/managed-by: "Helm"
+        helm.sh/chart: "pressfleet-0.0.0-dev"
+        app.kubernetes.io/component: maintenance
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: "registry-credentials"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: maintenance
+          image: "registry.agency.example/pressfleet/control-plane:1.2.0"
+          args: ["maintenance-page", "--listen", ":8080"]
+          env:
+            - name: GOMEMLIMIT
+              value: "18MiB"
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              memory: 24Mi
+            limits:
+              memory: 24Mi
+          livenessProbe:
+            exec:
+              command: ["pressfleet", "maintenance-page", "--check", "--listen", ":8080"]
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["pressfleet", "maintenance-page", "--check", "--listen", ":8080"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+---
+# Source: pressfleet/templates/traefik.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traefik
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: traefik
+spec:
+  replicas: 1
+  # The ACME volume is ReadWriteOnce, and two Traefiks would both try to
+  # renew the same certificates.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pressfleet
+      app.kubernetes.io/component: traefik
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pressfleet
+        app.kubernetes.io/instance: "pressfleet"
+        app.kubernetes.io/version: "0.0.0-dev"
+        app.kubernetes.io/managed-by: "Helm"
+        helm.sh/chart: "pressfleet-0.0.0-dev"
+        app.kubernetes.io/component: traefik
+      annotations:
+        checksum/config: 985349fe8bd1e69e5b0f9e9887e46a9717d62aade1e1b27fbc9f2452fd82a372
+    spec:
+      serviceAccountName: traefik
+      imagePullSecrets:
+        - name: "registry-credentials"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: traefik
+          image: "registry.agency.example/library/traefik:v3.7.16"
+          # Points Traefik at each DNS provider credential file with a
+          # <VARIABLE>_FILE variable, so the values never appear in its
+          # environment, as the Compose entrypoint does.
+          command:
+            - /bin/sh
+            - -c
+            - |
+              found=0
+              for f in /run/secrets/acme-dns/*; do
+                [ -f "$f" ] || continue
+                export "${f##*/}_FILE=$f"
+                found=$((found + 1))
+              done
+              echo "pressfleet: starting Traefik with $found DNS provider credential(s)" >&2
+              exec traefik --configFile=/etc/traefik/traefik.yaml
+          env:
+            # Lets the Go runtime collect garbage harder before the memory
+            # limit is reached instead of being killed at it.
+            - name: GOMEMLIMIT
+              value: "192MiB"
+            # Extra roots to trust for the ACME server, on top of the system's.
+            - name: LEGO_CA_CERTIFICATES
+              value: /etc/traefik/acme-ca/ca.pem
+            - name: LEGO_CA_SYSTEM_CERT_POOL
+              value: "true"
+          ports:
+            - name: web
+              containerPort: 8000
+              protocol: TCP
+            - name: websecure
+              containerPort: 8443
+              protocol: TCP
+            - name: websecure-udp
+              containerPort: 8443
+              protocol: UDP
+            - name: sftp
+              containerPort: 2222
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/traefik/traefik.yaml
+              subPath: traefik.yaml
+              readOnly: true
+            - name: acme
+              mountPath: /var/lib/traefik
+            - name: tmp
+              mountPath: /tmp
+            - name: dns-credentials
+              mountPath: /run/secrets/acme-dns
+              readOnly: true
+            - name: acme-ca
+              mountPath: /etc/traefik/acme-ca
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              memory: 256Mi
+            limits:
+              memory: 256Mi
+          # The ping entry point is on loopback, so the probes run inside
+          # the container, as the Compose healthcheck does.
+          livenessProbe:
+            exec:
+              command: ["traefik", "healthcheck", "--configFile=/etc/traefik/traefik.yaml"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["traefik", "healthcheck", "--configFile=/etc/traefik/traefik.yaml"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: config
+          configMap:
+            name: traefik
+        - name: acme
+          persistentVolumeClaim:
+            claimName: traefik-acme
+        - name: tmp
+          emptyDir: {}
+        - name: dns-credentials
+          secret:
+            secretName: "cloudflare-credentials"
+            # Readable by Traefik's group (fsGroup) only.
+            defaultMode: 0440
+        - name: acme-ca
+          secret:
+            secretName: "pebble-ca"
+            items:
+              - key: "pebble.minica.pem"
+                path: ca.pem
+
+---
+# Source: pressfleet/templates/redis.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: redis
+spec:
+  replicas: 1
+  serviceName: redis
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pressfleet
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pressfleet
+        app.kubernetes.io/instance: "pressfleet"
+        app.kubernetes.io/version: "0.0.0-dev"
+        app.kubernetes.io/managed-by: "Helm"
+        helm.sh/chart: "pressfleet-0.0.0-dev"
+        app.kubernetes.io/component: redis
+      annotations:
+        checksum/config: 6cb5cfc7a30a8fa76a24d17da1044d023d8c0edf86e4ce555b79a9cd96fef167
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: "registry-credentials"
+      # The image's own user, as on Compose.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # Writes valkey.conf with the SHA-256 of the admin password in the
+        # ACL rule ("#<hex>"), so the configuration holds no usable
+        # credential, as on Compose.
+        - name: config
+          image: "registry.agency.example/valkey/valkey:9.1.2"
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              hash=$(printf %s "$(cat /run/secrets/redis_admin_password)" | sha256sum | cut -d' ' -f1)
+              sed "s/@REDIS_ADMIN_PASSWORD_HASH@/$hash/" /etc/valkey-template/valkey.conf > /etc/valkey/valkey.conf
+          volumeMounts:
+            - name: template
+              mountPath: /etc/valkey-template
+              readOnly: true
+            - name: config
+              mountPath: /etc/valkey
+            - name: secrets
+              mountPath: /run/secrets
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            limits:
+              memory: 16Mi
+      containers:
+        - name: redis
+          image: "registry.agency.example/valkey/valkey:9.1.2"
+          command: ["valkey-server", "/etc/valkey/valkey.conf"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          volumeMounts:
+            - name: config
+              mountPath: /etc/valkey
+              readOnly: true
+            - name: data
+              mountPath: /data
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              memory: 576Mi
+            limits:
+              memory: 576Mi
+          livenessProbe:
+            exec:
+              command: ["valkey-cli", "--no-auth-warning", "--user", "healthcheck", "--pass", "nopass", "-e", "ping"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "--no-auth-warning", "--user", "healthcheck", "--pass", "nopass", "-e", "ping"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: template
+          configMap:
+            name: redis
+        # The rendered configuration, in memory.
+        - name: config
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        # Valkey's working directory: nothing is persisted (valkey.conf).
+        - name: data
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Mi
+        - name: secrets
+          secret:
+            secretName: "agency-platform"
+            defaultMode: 0440
+            items:
+              - key: "redis"
+                path: redis_admin_password
+
+---
+# Source: pressfleet/templates/victoria-metrics.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: victoria-metrics
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: victoria-metrics
+spec:
+  replicas: 1
+  serviceName: victoria-metrics
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pressfleet
+      app.kubernetes.io/component: victoria-metrics
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pressfleet
+        app.kubernetes.io/instance: "pressfleet"
+        app.kubernetes.io/version: "0.0.0-dev"
+        app.kubernetes.io/managed-by: "Helm"
+        helm.sh/chart: "pressfleet-0.0.0-dev"
+        app.kubernetes.io/component: victoria-metrics
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: "registry-credentials"
+      # The image runs as root on Compose; here nobody, which owns the data
+      # volume through fsGroup, is enough.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      # Time to flush in-memory data to disk on shutdown.
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: victoria-metrics
+          image: "registry.agency.example/victoriametrics/victoria-metrics:v1.154.1"
+          args:
+            - -storageDataPath=/victoria-metrics-data
+            - "-retentionPeriod=30d"
+            - -httpListenAddr=:8428
+          ports:
+            - name: http
+              containerPort: 8428
+          volumeMounts:
+            - name: data
+              mountPath: /victoria-metrics-data
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              memory: 512Mi
+            limits:
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: pressfleet
+          app.kubernetes.io/component: victoria-metrics
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: "slow-rwo"
+        resources:
+          requests:
+            storage: "50Gi"
+
+---
+# Source: pressfleet/templates/routes.yaml
+# The dashboard and API.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: pf-dashboard
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: control-plane
+spec:
+  entryPoints: [websecure]
+  routes:
+    - kind: Rule
+      match: "Host(`fleet.agency.example`)"
+      services:
+        - name: control-plane
+          port: 8080
+  tls:
+    certResolver: acme-http
+
+---
+# Source: pressfleet/templates/routes.yaml
+# Makes Traefik obtain the preview wildcard certificate with DNS-01 as soon
+# as it starts, rather than when the first site appears
+# (ingress.PreviewWildcardRouter). The bare base domain itself hosts
+# nothing.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: pf-preview-wildcard
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: traefik
+spec:
+  entryPoints: [websecure]
+  routes:
+    - kind: Rule
+      match: "Host(`preview.agency.example`)"
+      services:
+        - kind: TraefikService
+          name: noop@internal
+  tls:
+    certResolver: acme-preview
+    domains:
+      - main: "preview.agency.example"
+        sans:
+          - "*.preview.agency.example"
+
+---
+# Source: pressfleet/templates/routes.yaml
+# The SFTP gateway (§5.8). SSH can't be routed by host name, so it has an
+# entry point and a Service port of its own.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: pf-sftp
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: control-plane
+spec:
+  entryPoints: [sftp]
+  routes:
+    - match: HostSNI(`*`)
+      services:
+        - name: control-plane
+          port: 2222
+
+---
+# Source: pressfleet/templates/admission-policy.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: "control-plane.pressfleet.pressfleet.io"
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: control-plane
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [namespaces]
+      - apiGroups: [rbac.authorization.k8s.io]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [rolebindings]
+  matchConditions:
+    - name: control-plane
+      expression: "request.userInfo.username == 'system:serviceaccount:pressfleet:control-plane'"
+  variables:
+    - name: isNamespace
+      expression: "request.resource.resource == 'namespaces'"
+    # The namespace concerned: the one written, or the RoleBinding's.
+    - name: target
+      expression: "variables.isNamespace ? request.name : request.namespace"
+  validations:
+    - expression: >-
+        !variables.isNamespace || request.operation == 'DELETE' ||
+        ((has(object.metadata.labels) && (
+        (variables.target.startsWith('site-') &&
+        'app.kubernetes.io/managed-by' in object.metadata.labels && object.metadata.labels['app.kubernetes.io/managed-by'] == 'pressfleet') ||
+        (variables.target.startsWith('pressfleet-doctor-') &&
+        'pressfleet.io/doctor-probe' in object.metadata.labels && object.metadata.labels['pressfleet.io/doctor-probe'] == 'true'))) &&
+        'pod-security.kubernetes.io/enforce' in object.metadata.labels &&
+        object.metadata.labels['pod-security.kubernetes.io/enforce'] == 'restricted')
+      messageExpression: >-
+        'the PressFleet control plane may only write site namespaces (site-..., labeled app.kubernetes.io/managed-by=pressfleet) and doctor probe namespaces (pressfleet-doctor-..., labeled pressfleet.io/doctor-probe=true) that enforce Pod Security restricted, not ' + request.name
+    - expression: >-
+        !variables.isNamespace || request.operation == 'CREATE' ||
+        (has(oldObject.metadata.labels) && (
+        (variables.target.startsWith('site-') &&
+        'app.kubernetes.io/managed-by' in oldObject.metadata.labels && oldObject.metadata.labels['app.kubernetes.io/managed-by'] == 'pressfleet') ||
+        (variables.target.startsWith('pressfleet-doctor-') &&
+        'pressfleet.io/doctor-probe' in oldObject.metadata.labels && oldObject.metadata.labels['pressfleet.io/doctor-probe'] == 'true')))
+      messageExpression: >-
+        'the PressFleet control plane may only change or delete namespaces it created, not ' + request.name
+    - expression: >-
+        variables.isNamespace ||
+        (namespaceObject != null &&
+        (has(namespaceObject.metadata.labels) && (
+        (variables.target.startsWith('site-') &&
+        'app.kubernetes.io/managed-by' in namespaceObject.metadata.labels && namespaceObject.metadata.labels['app.kubernetes.io/managed-by'] == 'pressfleet') ||
+        (variables.target.startsWith('pressfleet-doctor-') &&
+        'pressfleet.io/doctor-probe' in namespaceObject.metadata.labels && namespaceObject.metadata.labels['pressfleet.io/doctor-probe'] == 'true'))))
+      messageExpression: >-
+        'the PressFleet control plane may only write RoleBindings in its own namespaces, not in ' + request.namespace
+    - expression: >-
+        variables.isNamespace || request.operation == 'DELETE' ||
+        (object.roleRef.kind == 'ClusterRole' && object.roleRef.name == 'pressfleet:pressfleet:site')
+      message: "the PressFleet control plane may only bind the ClusterRole pressfleet:pressfleet:site"
+
+---
+# Source: pressfleet/templates/admission-policy.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: "control-plane.pressfleet.pressfleet.io"
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: control-plane
+spec:
+  policyName: "control-plane.pressfleet.pressfleet.io"
+  validationActions: [Deny]

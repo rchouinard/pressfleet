@@ -1,0 +1,253 @@
+{{- /*
+The edge router for all web traffic and the SFTP gateway (design doc §3,
+§4.8). One replica: its ACME storage is a ReadWriteOnce volume.
+*/ -}}
+{{- $dnsDir := "/run/secrets/acme-dns" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: traefik
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "traefik") | nindent 4 }}
+---
+# What Traefik's Kubernetes CRD provider reads, cluster-wide, as Traefik's
+# own RBAC for its release lists it. Secrets are among them: basicAuth
+# middlewares and TLS options name Secrets in sites' namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "pressfleet.traefikClusterRole" . | quote }}
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "traefik") | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [services, secrets, nodes, configmaps]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [list, watch]
+  - apiGroups: [traefik.io]
+    resources:
+      - middlewares
+      - middlewaretcps
+      - ingressroutes
+      - traefikservices
+      - ingressroutetcps
+      - ingressrouteudps
+      - tlsoptions
+      - tlsstores
+      - serverstransports
+      - serverstransporttcps
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "pressfleet.traefikClusterRole" . | quote }}
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "traefik") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "pressfleet.traefikClusterRole" . | quote }}
+subjects:
+  - kind: ServiceAccount
+    name: traefik
+    namespace: {{ .Release.Namespace | quote }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: traefik-acme
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "traefik") | nindent 4 }}
+  annotations:
+    # ACME account keys and certificates: losing them means issuing every
+    # certificate again, against the CA's rate limits.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with include "pressfleet.storageClass" (dict "root" . "own" .Values.traefik.storage.storageClass) }}{{ . | nindent 2 }}{{ end }}
+  resources:
+    requests:
+      storage: {{ .Values.traefik.storage.size | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "traefik") | nindent 4 }}
+  {{- with .Values.traefik.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.traefik.service.type }}
+  externalTrafficPolicy: {{ .Values.traefik.service.externalTrafficPolicy }}
+  selector:
+    {{- include "pressfleet.selector" (dict "root" . "component" "traefik") | nindent 4 }}
+  ports:
+    {{- $nodePorts := .Values.traefik.service.nodePorts }}
+    {{- $isNodePort := eq .Values.traefik.service.type "NodePort" }}
+    - name: web
+      port: 80
+      targetPort: web
+      protocol: TCP
+      {{- if and $isNodePort $nodePorts.web }}
+      nodePort: {{ $nodePorts.web }}
+      {{- end }}
+    - name: websecure
+      port: 443
+      targetPort: websecure
+      protocol: TCP
+      {{- if and $isNodePort $nodePorts.websecure }}
+      nodePort: {{ $nodePorts.websecure }}
+      {{- end }}
+    {{- if .Values.traefik.service.http3 }}
+    - name: websecure-udp
+      port: 443
+      targetPort: websecure-udp
+      protocol: UDP
+    {{- end }}
+    - name: sftp
+      port: {{ .Values.sftp.port }}
+      targetPort: sftp
+      protocol: TCP
+      {{- if and $isNodePort $nodePorts.sftp }}
+      nodePort: {{ $nodePorts.sftp }}
+      {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traefik
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "traefik") | nindent 4 }}
+spec:
+  replicas: 1
+  # The ACME volume is ReadWriteOnce, and two Traefiks would both try to
+  # renew the same certificates.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "pressfleet.selector" (dict "root" . "component" "traefik") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "pressfleet.componentLabels" (dict "root" . "component" "traefik") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/traefik-config.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: traefik
+      {{- with include "pressfleet.imagePullSecrets" . }}{{ . | nindent 6 }}{{ end }}
+      {{- include "pressfleet.podSecurityContext" (dict "uid" 65532 "gid" 65532) | nindent 6 }}
+      containers:
+        - name: traefik
+          image: {{ include "pressfleet.image" (dict "root" . "value" "traefik" "key" "traefik") | quote }}
+          {{- if .Values.acme.dnsProvider }}
+          # Points Traefik at each DNS provider credential file with a
+          # <VARIABLE>_FILE variable, so the values never appear in its
+          # environment, as the Compose entrypoint does.
+          command:
+            - /bin/sh
+            - -c
+            - |
+              found=0
+              for f in {{ $dnsDir }}/*; do
+                [ -f "$f" ] || continue
+                export "${f##*/}_FILE=$f"
+                found=$((found + 1))
+              done
+              echo "pressfleet: starting Traefik with $found DNS provider credential(s)" >&2
+              exec traefik --configFile=/etc/traefik/traefik.yaml
+          {{- else }}
+          command: ["traefik", "--configFile=/etc/traefik/traefik.yaml"]
+          {{- end }}
+          env:
+            # Lets the Go runtime collect garbage harder before the memory
+            # limit is reached instead of being killed at it.
+            - name: GOMEMLIMIT
+              value: {{ printf "%dMiB" (div (mul .Values.traefik.memoryMB 3) 4) | quote }}
+            {{- if .Values.acme.caCertificates.secretName }}
+            # Extra roots to trust for the ACME server, on top of the system's.
+            - name: LEGO_CA_CERTIFICATES
+              value: /etc/traefik/acme-ca/ca.pem
+            - name: LEGO_CA_SYSTEM_CERT_POOL
+              value: "true"
+            {{- end }}
+          ports:
+            - name: web
+              containerPort: 8000
+              protocol: TCP
+            - name: websecure
+              containerPort: 8443
+              protocol: TCP
+            {{- if .Values.traefik.service.http3 }}
+            - name: websecure-udp
+              containerPort: 8443
+              protocol: UDP
+            {{- end }}
+            - name: sftp
+              containerPort: 2222
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/traefik/traefik.yaml
+              subPath: traefik.yaml
+              readOnly: true
+            - name: acme
+              mountPath: /var/lib/traefik
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.acme.dnsProvider }}
+            - name: dns-credentials
+              mountPath: {{ $dnsDir }}
+              readOnly: true
+            {{- end }}
+            {{- if .Values.acme.caCertificates.secretName }}
+            - name: acme-ca
+              mountPath: /etc/traefik/acme-ca
+              readOnly: true
+            {{- end }}
+          {{- include "pressfleet.containerSecurityContext" (dict "readOnly" true) | nindent 10 }}
+          {{- include "pressfleet.memory" .Values.traefik.memoryMB | nindent 10 }}
+          # The ping entry point is on loopback, so the probes run inside
+          # the container, as the Compose healthcheck does.
+          livenessProbe:
+            exec:
+              command: ["traefik", "healthcheck", "--configFile=/etc/traefik/traefik.yaml"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["traefik", "healthcheck", "--configFile=/etc/traefik/traefik.yaml"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: config
+          configMap:
+            name: traefik
+        - name: acme
+          persistentVolumeClaim:
+            claimName: traefik-acme
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.acme.dnsProvider }}
+        - name: dns-credentials
+          secret:
+            secretName: {{ .Values.acme.dnsCredentialsSecret | quote }}
+            # Readable by Traefik's group (fsGroup) only.
+            defaultMode: 0440
+        {{- end }}
+        {{- with .Values.acme.caCertificates.secretName }}
+        - name: acme-ca
+          secret:
+            secretName: {{ . | quote }}
+            items:
+              - key: {{ $.Values.acme.caCertificates.key | quote }}
+                path: ca.pem
+        {{- end }}
