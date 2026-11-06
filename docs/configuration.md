@@ -758,6 +758,10 @@ One check needs the state database, so it runs only there; `pressfleet doctor` o
 
 - **Security keys and passkeys** (`webauthn-relying-party`, recommended) warns when security keys or passkeys are bound to another relying party ID than the current `dashboard_domain` (`localhost` without one), because they were registered before the domain changed. It reports how many there are and how many users have them. Those keys can't be used and don't count as a second factor (see [Settings to leave alone](#settings-to-leave-alone)). To clear it, the users register their keys again and remove the old ones, an Admin resets their second factors, or `dashboard_domain` goes back to the domain the keys were registered on.
 
+One check reads the upgrade record, and runs on the host and in the control plane:
+
+- **Rollouts not held by an upgrade** (`upgrade-rollouts`, recommended) warns while the core, image, and template rollouts are held because the last upgrade isn't confirmed (see [Held rollouts](upgrading.md#held-rollouts)). It says how to finish the upgrade or return to the previous release. It is skipped when the user running `doctor` can't read `<data_dir>/upgrade/`.
+
 The Docker check requires Docker Engine 28 or later. The Compose driver attaches platform services (MariaDB, the object cache, Traefik) to each site network with a lower gateway priority (`docker network connect --gw-priority -1`, API 1.48). Without it, Docker makes the site network Traefik's default gateway, because `pf-<id>` sorts before the platform network's name, and Traefik's published ports 80 and 443 stop answering.
 
 The DNS checks are skipped until `dashboard_domain` and `preview_base_domain` are set. For the wildcard, doctor resolves a random name under the preview base domain. A record that doesn't resolve, or resolves only to loopback, fails. Otherwise:

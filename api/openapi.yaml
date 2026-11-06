@@ -7647,8 +7647,19 @@ components:
 
     CoreRollout:
       type: object
-      required: [halted, consecutive_failures, max_failures, releases, failures]
+      required: [held, halted, consecutive_failures, max_failures, releases, failures]
       properties:
+        held:
+          type: boolean
+          description: >-
+            The rollout starts no site updates because a platform upgrade isn't
+            confirmed: it is in progress, failed, or being rolled back, or its
+            record can't be read. It resumes on its own once the upgrade
+            succeeds. Updates requested by hand still run. `hold_reason` says
+            why.
+        hold_reason:
+          type: string
+          description: Why the rollout is held; absent unless `held`.
         halted:
           type: boolean
         halted_at:
@@ -7817,8 +7828,19 @@ components:
 
     ImageRollout:
       type: object
-      required: [halted, consecutive_failures, max_failures, images, failures]
+      required: [held, halted, consecutive_failures, max_failures, images, failures]
       properties:
+        held:
+          type: boolean
+          description: >-
+            The rollout starts no site updates because a platform upgrade isn't
+            confirmed: it is in progress, failed, or being rolled back, or its
+            record can't be read. It resumes on its own once the upgrade
+            succeeds. Updates requested by hand still run. `hold_reason` says
+            why.
+        hold_reason:
+          type: string
+          description: Why the rollout is held; absent unless `held`.
         halted:
           type: boolean
         halted_at:
@@ -7842,8 +7864,19 @@ components:
 
     TemplateRollout:
       type: object
-      required: [halted, consecutive_failures, max_failures, templates, pending_sites, failures]
+      required: [held, halted, consecutive_failures, max_failures, templates, pending_sites, failures]
       properties:
+        held:
+          type: boolean
+          description: >-
+            The rollout starts no site updates because a platform upgrade isn't
+            confirmed: it is in progress, failed, or being rolled back, or its
+            record can't be read. It resumes on its own once the upgrade
+            succeeds. Updates requested by hand still run. `hold_reason` says
+            why.
+        hold_reason:
+          type: string
+          description: Why the rollout is held; absent unless `held`.
         halted:
           type: boolean
         halted_at:

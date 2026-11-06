@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -341,6 +343,34 @@ func TestWebAuthnRelyingParty(t *testing.T) {
 		}, wantStatus: doctor.StatusWarn, wantMessage: "1 security key or passkey of 1 user can't", wantFix: "reset their second factors"},
 		{name: "provider error", setup: func(f *fixture) { f.opts.WebAuthn = doctortest.WebAuthn{Err: errors.New("db down")} },
 			wantStatus: doctor.StatusWarn, wantMessage: "db down"},
+	})
+}
+
+func TestUpgradeRollouts(t *testing.T) {
+	record := func(content string) func(*fixture) {
+		return func(f *fixture) {
+			f.opts.DataDir = t.TempDir()
+			dir := filepath.Join(f.opts.DataDir, "upgrade")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "upgrade.json"), []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	runCases(t, "upgrade-rollouts", []checkCase{
+		{name: "never upgraded", setup: func(f *fixture) { f.opts.DataDir = t.TempDir() }, wantStatus: doctor.StatusPass},
+		{name: "succeeded", setup: record(`{"to":"1.2.0","status":"succeeded"}`), wantStatus: doctor.StatusPass},
+		{name: "rolled back", setup: record(`{"to":"1.2.0","status":"rolled-back"}`), wantStatus: doctor.StatusPass},
+		{name: "in progress", setup: record(`{"to":"1.2.0","status":"in-progress"}`),
+			wantStatus: doctor.StatusWarn, wantMessage: "upgrade to 1.2.0 is in progress", wantFix: "Wait for `pressfleet upgrade`"},
+		{name: "failed", setup: record(`{"to":"1.2.0","status":"failed"}`),
+			wantStatus: doctor.StatusWarn, wantMessage: "rollouts are held", wantFix: "Recovering from a failed upgrade"},
+		{name: "rolling back", setup: record(`{"to":"1.2.0","status":"rolling-back"}`),
+			wantStatus: doctor.StatusWarn, wantMessage: "being rolled back", wantFix: "rollback"},
+		{name: "unreadable", setup: record(`{`),
+			wantStatus: doctor.StatusWarn, wantMessage: "can't be read", wantFix: "pressfleet upgrade"},
 	})
 }
 

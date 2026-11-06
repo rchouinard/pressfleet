@@ -4,14 +4,18 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
+	"github.com/rchouinard/pressfleet/control-plane/internal/upgradestate"
 )
 
 // Capacity plan figures from design doc §4.1.
@@ -85,6 +89,7 @@ func Checks() []Check {
 		{ID: "log-rotation", HostOnly: true, Name: "Container log rotation", Severity: Recommended, Scopes: installOnly, run: checkLogRotation},
 		{ID: "disk", Name: "Free disk space", Severity: Recommended, Scopes: both, run: checkDisk},
 		{ID: "memory", Name: "Host memory", Severity: Recommended, Scopes: both, run: checkMemory},
+		{ID: "upgrade-rollouts", Name: "Rollouts not held by an upgrade", Severity: Recommended, Scopes: both, run: checkRolloutHold},
 		{ID: "site-reservations", Name: "Site memory reservations", Severity: Recommended, Scopes: runtimeOnly, run: checkReservations},
 		{ID: "webauthn-relying-party", Name: "Security keys and passkeys", Severity: Recommended, Scopes: runtimeOnly, run: checkWebAuthn},
 	}
@@ -420,6 +425,37 @@ func checkReservations(ctx context.Context, e *env) outcome {
 			sites, formatGiB(reserved), formatGiB(platformMemory), formatGiB(total))
 	}
 	return pass("%d sites reserve %s of %s", sites, formatGiB(reserved), formatGiB(total))
+}
+
+// checkRolloutHold warns while the control plane holds the core, image, and
+// template rollouts because the last upgrade isn't confirmed (#247). It
+// reads the same record the control plane does.
+func checkRolloutHold(_ context.Context, e *env) outcome {
+	if e.DataDir == "" {
+		return skip("no data directory to read the upgrade record from")
+	}
+	hold := upgradestate.Check(config.Layout{Root: e.DataDir}.UpgradeDir())
+	if errors.Is(hold.Err, fs.ErrPermission) {
+		// The host user may not own the upgrade directory; that says
+		// nothing about the upgrade, and the control plane's own check
+		// (the dashboard) can read it.
+		return skip("the upgrade record isn't readable by this user: %v", hold.Err)
+	}
+	if !hold.Held {
+		return pass("no unconfirmed upgrade")
+	}
+	var fix string
+	switch hold.Status {
+	case upgradestate.InProgress:
+		fix = "Wait for `pressfleet upgrade` to finish. If it was interrupted, run it again to retry, " +
+			"or follow \"Recovering from a failed upgrade\" in docs/upgrading.md to return to the previous release."
+	case upgradestate.RollingBack:
+		fix = "Wait for the rollback to finish. If it stopped, follow \"Recovering from a failed upgrade\" in docs/upgrading.md."
+	default:
+		fix = "Run `pressfleet upgrade` again to finish the upgrade, or follow \"Recovering from a failed upgrade\" " +
+			"in docs/upgrading.md to return to the previous release. The rollouts resume on their own once the upgrade succeeds."
+	}
+	return warn(fix, "the core, image, and template rollouts are held: %s. Sites change only when you ask", hold.Reason)
 }
 
 func checkWebAuthn(ctx context.Context, e *env) outcome {

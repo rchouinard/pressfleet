@@ -112,7 +112,7 @@ type siteEnv struct {
 	pool    *jobs.Pool
 }
 
-func newSiteEnv(t *testing.T, db *store.DB, previewBase string) *siteEnv {
+func newSiteEnv(t *testing.T, db *store.DB, previewBase string, opts ...func(*sites.Options)) *siteEnv {
 	t.Helper()
 	cat, err := catalog.Load()
 	if err != nil {
@@ -137,14 +137,18 @@ func newSiteEnv(t *testing.T, db *store.DB, previewBase string) *siteEnv {
 		t.Fatal(err)
 	}
 	e.uploads = newUploadService(t, db)
-	e.svc, err = sites.New(sites.Options{
+	siteOpts := sites.Options{
 		DB: db, Secrets: sec, Catalog: cat, PreviewBaseDomain: previewBase,
 		Provisioner: e.tmpl, Databases: e.dbs, ObjectCaches: objectcachetest.New(), Logger: storetest.Logger(),
 		DNSChecker: e.dns, Backups: e.backups, BackupEngine: e.engine,
 		Uploads: e.uploads, Tasks: e.prov, TmpDir: t.TempDir(),
 		// As serve does with the Compose driver.
 		Prober: e.tmpl, ImagePinner: e.tmpl, Templates: e.tmpl,
-	})
+	}
+	for _, o := range opts {
+		o(&siteOpts)
+	}
+	e.svc, err = sites.New(siteOpts)
 	if err != nil {
 		t.Fatal(err)
 	}

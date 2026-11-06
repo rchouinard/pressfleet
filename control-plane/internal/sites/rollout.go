@@ -53,6 +53,21 @@ import (
 // halt. Each runs one site at a time on its own; a site is only ever in one
 // update, since all of them need it running and set it updating.
 
+// RolloutHold reports whether the rollouts are held, and why. A hold keeps
+// the rollouts from queueing site updates; user-requested jobs and the
+// startup reconcile are unaffected.
+type RolloutHold func() (reason string, held bool)
+
+// Hold returns why the rollouts are held, if they are (#247): an upgrade is
+// in progress, failed, or being rolled back, and the platform isn't
+// confirmed on the release that is running, so it must not change sites.
+func (rt *Rollouts) Hold() (reason string, held bool) {
+	if rt.s.hold == nil {
+		return "", false
+	}
+	return rt.s.hold()
+}
+
 // RolloutJobType runs one pass of a rollout. Its target is the platform,
 // with the ID rollout_<name>.
 const RolloutJobType = "rollout.pass"
@@ -248,6 +263,13 @@ func (rt *Rollouts) rolloutPass(ctx context.Context, r *jobs.Run) error {
 	if !ok {
 		return jobs.Permanent(fmt.Errorf("%w %q", ErrUnknownRollout, r.Job().TargetID))
 	}
+	// Held before anything else: a pass during a hold changes no site. The
+	// schedule queues the next pass, and the first after the hold lifts
+	// resumes the rollout.
+	if reason, held := rt.Hold(); held {
+		r.Logf("The rollout is held: %s. It resumes once the upgrade is confirmed.", reason)
+		return r.SetResult("held", true)
+	}
 	fingerprint, err := src.fingerprint(ctx)
 	if err != nil {
 		return err
@@ -424,6 +446,10 @@ type RolloutStatus struct {
 	Window UpdateWindow
 	// Failures are the sites whose last update failed.
 	Failures []store.RolloutFailure
+	// Held says the rollout starts no site updates while an upgrade is
+	// unconfirmed (Rollouts.Hold), and HoldReason why.
+	Held       bool
+	HoldReason string
 }
 
 // Rollout returns the rollout's state.
@@ -440,6 +466,7 @@ func (rt *Rollouts) Rollout(ctx context.Context, name string) (RolloutStatus, er
 		return RolloutStatus{}, err
 	}
 	st := RolloutStatus{Rollout: ro, MaxFailures: rt.core.MaxFailures, Window: rt.core.Window, Failures: []store.RolloutFailure{}}
+	st.HoldReason, st.Held = rt.Hold()
 	for _, id := range slices.Sorted(maps.Keys(failures)) {
 		st.Failures = append(st.Failures, failures[id])
 	}

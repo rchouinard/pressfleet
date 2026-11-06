@@ -4564,6 +4564,10 @@ export interface components {
             failed_at: components["schemas"]["Timestamp"];
         };
         CoreRollout: {
+            /** @description The rollout starts no site updates because a platform upgrade isn't confirmed: it is in progress, failed, or being rolled back, or its record can't be read. It resumes on its own once the upgrade succeeds. Updates requested by hand still run. `hold_reason` says why. */
+            held: boolean;
+            /** @description Why the rollout is held; absent unless `held`. */
+            hold_reason?: string;
             halted: boolean;
             halted_at?: components["schemas"]["Timestamp"];
             halt_reason?: string;
@@ -4687,6 +4691,10 @@ export interface components {
             security_support_ends: string;
         };
         ImageRollout: {
+            /** @description The rollout starts no site updates because a platform upgrade isn't confirmed: it is in progress, failed, or being rolled back, or its record can't be read. It resumes on its own once the upgrade succeeds. Updates requested by hand still run. `hold_reason` says why. */
+            held: boolean;
+            /** @description Why the rollout is held; absent unless `held`. */
+            hold_reason?: string;
             halted: boolean;
             halted_at?: components["schemas"]["Timestamp"];
             halt_reason?: string;
@@ -4697,6 +4705,10 @@ export interface components {
             failures: components["schemas"]["ImageUpdateFailure"][];
         };
         TemplateRollout: {
+            /** @description The rollout starts no site updates because a platform upgrade isn't confirmed: it is in progress, failed, or being rolled back, or its record can't be read. It resumes on its own once the upgrade succeeds. Updates requested by hand still run. `hold_reason` says why. */
+            held: boolean;
+            /** @description Why the rollout is held; absent unless `held`. */
+            hold_reason?: string;
             halted: boolean;
             halted_at?: components["schemas"]["Timestamp"];
             halt_reason?: string;

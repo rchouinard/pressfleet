@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import {
-  assessCapacity, doctorRows, doctorSummary, fetchReadiness, platformHealth, summaryValue, worstDisk, type PlatformCapacity, type Readiness,
+  assessCapacity, doctorRows, doctorSummary, fetchReadiness, platformHealth, rolloutHold, rolloutNames, summaryValue, worstDisk, type PlatformCapacity, type Readiness,
 } from '../app/utils/overview'
 import CapacityWarning from '../app/components/overview/CapacityWarning.vue'
 import DoctorChecks from '../app/components/overview/DoctorChecks.vue'
 import ReadinessList from '../app/components/overview/ReadinessList.vue'
+import RolloutHold from '../app/components/overview/RolloutHold.vue'
 import { uiStubs } from './stubs'
 
 const cap = (reserved: number, level: PlatformCapacity['level'], host: number | null = 8192): PlatformCapacity => ({
@@ -123,6 +124,23 @@ describe('DoctorChecks', () => {
   })
 })
 
+describe('rolloutHold', () => {
+  it('is undefined unless a rollout is held', () => {
+    expect(rolloutHold({})).toBeUndefined()
+    expect(rolloutHold({ core: { held: false }, images: undefined })).toBeUndefined()
+  })
+
+  it('collects the held rollouts and the reason', () => {
+    const hold = rolloutHold({ core: { held: true, hold_reason: 'because' }, images: { held: false }, templates: { held: true } })
+    expect(hold).toEqual({ reason: 'because', rollouts: ['core', 'templates'] })
+    expect(rolloutNames(hold!.rollouts)).toBe('WordPress core and site template')
+  })
+
+  it('falls back to a generic reason', () => {
+    expect(rolloutHold({ images: { held: true } })?.reason).toContain('upgrade')
+  })
+})
+
 describe('components', () => {
   it('shows the over-commit warning as an alert', () => {
     const w = mount(CapacityWarning, {
@@ -132,6 +150,17 @@ describe('components', () => {
     expect(w.attributes('role')).toBe('alert')
     expect(w.text()).toContain('over-committed')
     expect(w.text()).toContain('3 sites')
+  })
+
+  it('shows held rollouts with the reason', () => {
+    const hold = rolloutHold({
+      core: { held: true, hold_reason: 'the upgrade to 1.2.0 failed' },
+      images: { held: true, hold_reason: 'the upgrade to 1.2.0 failed' },
+      templates: { held: true, hold_reason: 'the upgrade to 1.2.0 failed' },
+    })!
+    const w = mount(RolloutHold, { props: { hold }, global: { stubs: uiStubs } })
+    expect(w.get('[data-testid=rollout-hold]').text()).toContain('WordPress core, image, and site template rollouts')
+    expect(w.text()).toContain('the upgrade to 1.2.0 failed')
   })
 
   it('shows a failing check with its error', () => {

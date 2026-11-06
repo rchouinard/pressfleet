@@ -52,6 +52,7 @@ func (h *Handlers) templateRolloutResponse(ctx context.Context, ro sites.Rollout
 		return gen.TemplateRollout{}, err
 	}
 	out := gen.TemplateRollout{
+		Held:                ro.Held,
 		Halted:              ro.Halted(),
 		ConsecutiveFailures: ro.ConsecutiveFailures,
 		MaxFailures:         ro.MaxFailures,
@@ -59,6 +60,9 @@ func (h *Handlers) templateRolloutResponse(ctx context.Context, ro sites.Rollout
 		Templates:           templates,
 		PendingSites:        pending,
 		Failures:            []gen.TemplateUpdateFailure{},
+	}
+	if ro.Held {
+		out.HoldReason = &ro.HoldReason
 	}
 	if ro.Halted() {
 		out.HaltedAt, out.HaltReason = timePtr(ro.HaltedAt), &ro.HaltReason

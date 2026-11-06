@@ -26,6 +26,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 	"github.com/rchouinard/pressfleet/control-plane/internal/skew"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
+	"github.com/rchouinard/pressfleet/control-plane/internal/upgradestate"
 )
 
 // Platform upgrades (design doc §4.7, #95).
@@ -56,7 +57,7 @@ var interrupting = []string{ingress.TraefikService, mariaDBService, redisService
 
 // Files of the upgrade directory (config.Layout.UpgradeDir).
 const (
-	upgradeRecordFile  = "upgrade.json"
+	upgradeRecordFile  = upgradestate.RecordFile
 	previousPlatform   = "previous-platform"
 	stagedPlatform     = "next-platform"
 	upgradeReadyChecks = 30
@@ -66,11 +67,12 @@ const (
 // control plane; tests shorten it.
 var upgradeReadyInterval = 2 * time.Second
 
-// Status of an upgrade in its record.
+// Status of an upgrade in its record. They are a contract with the control
+// plane, which holds rollouts while one is unconfirmed (upgradestate).
 const (
-	upgradeInProgress = "in-progress"
-	upgradeFailed     = "failed"
-	upgradeSucceeded  = "succeeded"
+	upgradeInProgress = upgradestate.InProgress
+	upgradeFailed     = upgradestate.Failed
+	upgradeSucceeded  = upgradestate.Succeeded
 )
 
 // UpgradeProject is the part of a Compose project that upgrade drives.

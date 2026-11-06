@@ -39,12 +39,16 @@ func (h *Handlers) ResumeImageRollout(ctx context.Context, _ gen.ResumeImageRoll
 
 func (h *Handlers) imageRolloutResponse(ro sites.RolloutStatus) gen.ImageRollout {
 	out := gen.ImageRollout{
+		Held:                ro.Held,
 		Halted:              ro.Halted(),
 		ConsecutiveFailures: ro.ConsecutiveFailures,
 		MaxFailures:         ro.MaxFailures,
 		Window:              updateWindowResponse(ro.Window),
 		Images:              []gen.ImageBuild{},
 		Failures:            []gen.ImageUpdateFailure{},
+	}
+	if ro.Held {
+		out.HoldReason = &ro.HoldReason
 	}
 	if ro.Halted() {
 		out.HaltedAt, out.HaltReason = timePtr(ro.HaltedAt), &ro.HaltReason

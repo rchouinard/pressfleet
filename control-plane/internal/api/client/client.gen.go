@@ -2243,8 +2243,14 @@ type CoreRollout struct {
 	Halted              bool                `json:"halted"`
 
 	// HaltedAt Examples: 2026-09-26T17:25:00Z
-	HaltedAt    *Timestamp `json:"halted_at,omitempty"`
-	MaxFailures int        `json:"max_failures"`
+	HaltedAt *Timestamp `json:"halted_at,omitempty"`
+
+	// Held The rollout starts no site updates because a platform upgrade isn't confirmed: it is in progress, failed, or being rolled back, or its record can't be read. It resumes on its own once the upgrade succeeds. Updates requested by hand still run. `hold_reason` says why.
+	Held bool `json:"held"`
+
+	// HoldReason Why the rollout is held; absent unless `held`.
+	HoldReason  *string `json:"hold_reason,omitempty"`
+	MaxFailures int     `json:"max_failures"`
 
 	// Releases The WordPress releases with site images, newest first; one per branch.
 	Releases []CoreRelease `json:"releases"`
@@ -2681,7 +2687,13 @@ type ImageRollout struct {
 	Halted              bool                 `json:"halted"`
 
 	// HaltedAt Examples: 2026-09-26T17:25:00Z
-	HaltedAt    *Timestamp   `json:"halted_at,omitempty"`
+	HaltedAt *Timestamp `json:"halted_at,omitempty"`
+
+	// Held The rollout starts no site updates because a platform upgrade isn't confirmed: it is in progress, failed, or being rolled back, or its record can't be read. It resumes on its own once the upgrade succeeds. Updates requested by hand still run. `hold_reason` says why.
+	Held bool `json:"held"`
+
+	// HoldReason Why the rollout is held; absent unless `held`.
+	HoldReason  *string      `json:"hold_reason,omitempty"`
 	Images      []ImageBuild `json:"images"`
 	MaxFailures int          `json:"max_failures"`
 
@@ -4028,8 +4040,14 @@ type TemplateRollout struct {
 	Halted              bool                    `json:"halted"`
 
 	// HaltedAt Examples: 2026-09-26T17:25:00Z
-	HaltedAt    *Timestamp `json:"halted_at,omitempty"`
-	MaxFailures int        `json:"max_failures"`
+	HaltedAt *Timestamp `json:"halted_at,omitempty"`
+
+	// Held The rollout starts no site updates because a platform upgrade isn't confirmed: it is in progress, failed, or being rolled back, or its record can't be read. It resumes on its own once the upgrade succeeds. Updates requested by hand still run. `hold_reason` says why.
+	Held bool `json:"held"`
+
+	// HoldReason Why the rollout is held; absent unless `held`.
+	HoldReason  *string `json:"hold_reason,omitempty"`
+	MaxFailures int     `json:"max_failures"`
 
 	// PendingSites The running sites rendered with other templates, which the rollout still has to update, including those whose update failed.
 	PendingSites int `json:"pending_sites"`

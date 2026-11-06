@@ -163,3 +163,42 @@ export function doctorSummary(report: Pick<DoctorReport, 'outcome' | 'results'>)
     ? `${base} ${unavailable} ${unavailable === 1 ? 'check needs' : 'checks need'} the host: run pressfleet doctor there to see them.`
     : base
 }
+
+export type RolloutName = 'core' | 'images' | 'templates'
+
+/** The held state the three rollout endpoints share (`held`, `hold_reason`). */
+export interface RolloutState {
+  held: boolean
+  hold_reason?: string
+}
+
+export interface RolloutHold {
+  /** Why they are held: the reason the rollouts report (one upgrade holds all of them). */
+  reason: string
+  /** The held rollouts, by name. */
+  rollouts: RolloutName[]
+}
+
+const rolloutLabels: Record<RolloutName, string> = {
+  core: 'WordPress core',
+  images: 'image',
+  templates: 'site template',
+}
+
+/** "WordPress core, image, and site template" for the held rollouts. */
+export function rolloutNames(names: readonly RolloutName[]): string {
+  const labels = names.map(n => rolloutLabels[n])
+  return labels.length < 3 ? labels.join(' and ') : `${labels.slice(0, -1).join(', ')}, and ${labels.at(-1)}`
+}
+
+/**
+ * The hold on the fleet-wide rollouts while a platform upgrade isn't
+ * confirmed (#247), or undefined when none is held. The control plane
+ * decides; this only collects what the rollout endpoints report.
+ */
+export function rolloutHold(states: Partial<Record<RolloutName, RolloutState | undefined>>): RolloutHold | undefined {
+  const held = (Object.keys(rolloutLabels) as RolloutName[]).filter(n => states[n]?.held)
+  const first = held.length > 0 ? states[held[0]!] : undefined
+  if (!first) return undefined
+  return { reason: first.hold_reason ?? 'a platform upgrade is not confirmed', rollouts: held }
+}

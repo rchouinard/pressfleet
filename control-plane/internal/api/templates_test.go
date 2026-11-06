@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +15,53 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
 )
+
+// The three rollout endpoints report a hold with its reason, and none
+// without one.
+func TestRolloutEndpointsReportHold(t *testing.T) {
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		var held atomic.Bool
+		e := newSiteEnv(t, db, testPreviewBase, func(o *sites.Options) {
+			o.RolloutHold = func() (string, bool) {
+				if held.Load() {
+					return "the upgrade to 1.2.0 failed", true
+				}
+				return "", false
+			}
+		})
+		h := newHandler(t, api.Options{DB: db, Authenticator: &fakeAuth{}, Sites: e.svc, Backups: e.backups})
+		get := func(target string) (isHeld bool, reason string) {
+			t.Helper()
+			w := do(t, h, request{authed: true, method: http.MethodGet, target: target})
+			if w.Code != http.StatusOK {
+				t.Fatalf("GET %s: %d %s", target, w.Code, w.Body)
+			}
+			body := decodeJSON[struct {
+				Held       bool    `json:"held"`
+				HoldReason *string `json:"hold_reason"`
+			}](t, w.Body.Bytes())
+			if body.HoldReason != nil {
+				reason = *body.HoldReason
+			}
+			return body.Held, reason
+		}
+		for _, target := range []string{"/api/v1/core-rollout", "/api/v1/image-rollout", "/api/v1/template-rollout"} {
+			if isHeld, reason := get(target); isHeld || reason != "" {
+				t.Errorf("%s without a hold: held %v, %q", target, isHeld, reason)
+			}
+		}
+		held.Store(true)
+		for _, target := range []string{"/api/v1/core-rollout", "/api/v1/image-rollout", "/api/v1/template-rollout"} {
+			if isHeld, reason := get(target); !isHeld || reason != "the upgrade to 1.2.0 failed" {
+				t.Errorf("%s with a hold: held %v, %q", target, isHeld, reason)
+			}
+		}
+		held.Store(false)
+		if isHeld, _ := get("/api/v1/core-rollout"); isHeld {
+			t.Error("still held after the hold lifted")
+		}
+	})
+}
 
 func TestTemplateRolloutEndpoints(t *testing.T) {
 	ctx := context.Background()
