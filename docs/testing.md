@@ -11,6 +11,46 @@ PressFleet has four kinds of tests.
 
 Unit tests never need Docker. Besides `make test-platform`, a few packages have Docker tests that start the pinned platform image they need, such as `sitedb/mariadb` and `objectcache/redis` (the object cache isolation test: one site can't read, list, or flush another's keys). Tests that do are skipped unless `PRESSFLEET_DOCKER_TESTS=1`. The `sitedb/mariadb` dump and import round trip also runs the `mariadb-dump` and `mariadb` client programs, from `PATH` or from the directory in `PRESSFLEET_TEST_MARIADB_CLIENT_DIR`, and is skipped if they aren't found. State database tests run against SQLite, and also against PostgreSQL when `PRESSFLEET_TEST_POSTGRES_DSN` is set.
 
+## Driver conformance tests
+
+A second driver has to behave like the first, so the driver contract (`provisioner.Driver`) is tested once, against the interfaces, in `control-plane/internal/provisioner/conformance`. The package names no driver, and archtest keeps it from importing one. Each driver runs the suite from a `*_docker_test.go` file of its own package, behind `PRESSFLEET_DOCKER_TESTS=1`. For Compose that is `TestConformance` in `provisioner/compose/conformance_docker_test.go`:
+
+```sh
+make images SITE_PHP="8.4 8.3"          # the site images the suite runs sites from
+PRESSFLEET_DOCKER_TESTS=1 mise exec -- go test -timeout 30m -run TestConformance ./control-plane/internal/provisioner/compose/
+PRESSFLEET_DOCKER_TESTS=1 mise exec -- go test -timeout 30m -run 'TestConformance/Tasks' ./control-plane/internal/provisioner/compose/   # one group
+```
+
+The site images are `PRESSFLEET_TEST_SITE_PHP_IMAGE` (PHP 8.4), `PRESSFLEET_TEST_SITE_PHP83_IMAGE`, and `PRESSFLEET_TEST_SITE_NGINX_IMAGE`; the defaults are the published `wp7.1.2` tags, so build the same WordPress version locally or set the variables. The suite starts one MariaDB and one Valkey of the pinned platform images, which the sites of all its tests share (each site has a table prefix of its own), and removes them at the end.
+
+What the suite covers, as subtests of `Run`:
+
+| Group | Contract |
+| --- | --- |
+| `Lifecycle` | Create, update, get, start, stop, and delete, each idempotent (converging an unchanged site recreates nothing; wp-config.php changes recreate PHP only); data survives restarts; delete leaves nothing behind; every method reports a missing site as `ErrSiteNotFound` |
+| `Maintenance` | `SetMaintenance` on a running and a stopped site, surviving an update (`SiteConfig.Maintenance`), WP-CLI working meanwhile |
+| `ExecWPCLI` | The site's UID, hostile arguments verbatim, `*ExecError`, a deadline that ends the process, `ErrSiteNotRunning` |
+| `PurgeCache`, `ReloadCode`, `ProbeHTTP` | The page cache of a running and a stopped site; PHP running changed code after a reload without a restart; the probe's status, HTTPS, no redirects, and its errors |
+| `Environment` | `Environment` and `DisableMail` reach the site as `WP_ENVIRONMENT_TYPE` and `PRESSFLEET_DISABLE_MAIL` on a new site and through `UpdateSite`; `provisioner.HasMailSwitch` answers through `ExecWPCLI` |
+| `ObjectCache`, `PinImage` | A site uses the Valkey it is given; pinned images run |
+| `Isolation` | Two sites can't reach each other, nor a task of one the other |
+| `Tasks`, `RepositoryTasks` | Mounts, secret files and their removal, the memory limit, timeout, cancellation, stdout streaming, exit codes; repository tasks: the group's user, no network unless `BackupNetwork`, unique host names, the state repository |
+| `Sessions` | Streams, the site UID, no network, a read-only root file system, no capabilities |
+| `Logs`, `Stats` | Sources, components, since, until, tail, follow; cumulative CPU, memory limits, restarts |
+| `RenderSnapshots` | Skipped unless the driver implements `provisioner.RenderSnapshotter` |
+
+To run the suite against another driver, call `conformance.Run(t, conformance.Env{...})` from a test of that driver's package. `Env` carries the site images by PHP version, the credentials of the MariaDB (and, optionally, the Valkey) the driver points sites at, and `New`, which builds the driver for one test from a `conformance.Setup` (a fresh data directory, an in-memory secret store the driver resolves site secrets in, and the image resolver) and registers its cleanup with `t.Cleanup`. `New` returns a `conformance.Instance`: the driver plus the ways of looking inside it that the contract doesn't have, because the suite checks what a driver did with a command in the site's container, not with the driver's word for it.
+
+| `Instance` field | Needed | Does |
+| --- | --- | --- |
+| `Exec` | Yes | Runs a command in a component of a running site, as the component's user (`docker exec`, `kubectl exec`) |
+| `Get` | Yes | Sends a GET to the site's web server from inside the runtime, with a Host header, as the edge router would |
+| `Address` | No | `host:port` where a peer would reach the site's web server; without it the isolation checks are skipped |
+| `Leftovers` | No | Lists the runtime objects left for a site or client group (task containers, secrets, and, after a delete, everything of the site); without it those checks are skipped |
+| `InMaintenance` | No | Whether the edge sends the site's visitors to the maintenance page |
+
+Compose-specific behavior stays in the compose package's own tests: the project files, labels, and `docker inspect` checks (`TestRunTaskContainerDocker`, `TestRunTaskSecretsOutOfInspectDocker`, `TestLogRotationDocker`), the output cap (`TestExecWPCLIOutputLimitDocker`), the repository egress network and S3 (`TestRunRepositoryTaskNetworkDocker`, `TestRunRepositoryTaskS3Docker`), restic against a shared repository, and the rendering of `wp-config.php` (`TestSiteUp`). When a driver gains behavior that every driver must have, add it to the suite, not to the driver's tests.
+
 ## Building behind a TLS-intercepting proxy
 
 A proxy that re-signs TLS with its own CA (a corporate proxy, or a sandbox's egress proxy) breaks image builds: the build containers don't trust that CA, and can't reach a proxy listening on the host's loopback. Every image build in the repository reads three settings from the environment, so no Dockerfile needs editing:
