@@ -412,10 +412,18 @@ func TestEnsureErrors(t *testing.T) {
 			t.Errorf("rows left behind: %d", n)
 		}
 
-		// A repository that the stored password doesn't open (say, the
-		// state database was restored from an older backup) is left alone.
+		// A repository that the stored password doesn't open, where that
+		// password has opened the group's repository before (say, someone
+		// copied another one in), is left alone. One it never opened is set
+		// aside instead (verify_test.go).
 		groupID := f.group(t, "Acme")
+		if _, err := f.m.Ensure(ctx, groupID); err != nil {
+			t.Fatal(err)
+		}
 		dir, _ := f.layout.BackupRepositoryDir(groupID)
+		if err := os.RemoveAll(dir); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := restic(t, []string{"RESTIC_REPOSITORY=" + dir, "RESTIC_PASSWORD=someone else's"}, "init"); err != nil {
 			t.Fatal(err)
 		}

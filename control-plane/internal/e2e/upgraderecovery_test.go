@@ -184,8 +184,10 @@ func TestUpgradeRecovery(t *testing.T) {
 	// plane creates the repository (a pre-update backup of its core
 	// rollout), the recovery's state restore drops its password but not its
 	// files, and every later backup of the group fails with "wrong
-	// password" (#277). Once that is fixed this can go, and the test
-	// would cover it.
+	// password" (#277). The control plane now sets such a repository aside,
+	// but the recovery goes back to skew.MinUpgradeFrom, which predates
+	// that. Once MinUpgradeFrom is a release with the fix, this can go, and
+	// the test would cover it.
 	firstBackup, err := p.Client.CreateSiteBackupWithResponse(ctx, site.ID)
 	if err != nil {
 		t.Fatal(err)

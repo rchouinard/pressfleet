@@ -37,7 +37,7 @@ pressfleet init --backup-backend s3 \
 - Create the bucket first, or let restic create it on first use if the key may.
 - Give PressFleet its own bucket (or prefix) and an access key that can read, write, and delete only there. Backups run from the site's network, so the host needs outbound access to the endpoint.
 - The secret key is read from the first line of the file, encrypted with the master key, and only the encrypted value is written to the config file. Delete the file afterwards.
-- Each client group's repository is `<prefix>/<client group ID>`; the state repository is `<prefix>/state`.
+- Each client group's repository is `<prefix>/<client group ID>`; the state repository is `<prefix>/state`. A group whose repository was set aside after a state restore gets a new one at `<prefix>/<client group ID>-<time>` ([Troubleshooting](troubleshooting.md#backups)).
 - To run S3 on the same host (MinIO or RustFS), see [Self-hosted S3](configuration.md#self-hosted-s3). That protects against mistakes, not against losing the host.
 
 To change S3 credentials later, see [Rotating secrets](security.md#rotating-secrets).
@@ -160,6 +160,8 @@ Two other things are *not* in any backup and are yours to keep:
 - **The backup location itself**, if it is `local`: copy `<data_dir>/backups/` off the host.
 
 Metrics history, uploads, and exports waiting to be downloaded aren't backed up.
+
+A state backup holds the repository passwords as they were when it was taken. Restoring one that is older than a client group's repository leaves that repository without its password; the group's next backup then moves the repository aside, keeping its files, and starts a new one ([Troubleshooting](troubleshooting.md#backups)).
 
 ### The disaster recovery drill
 

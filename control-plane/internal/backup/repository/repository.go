@@ -208,6 +208,13 @@ type Repository struct {
 	Location  string
 	SecretRef secrets.Ref
 	CreatedAt time.Time
+	// PasswordVerifiedAt is when the stored password was first seen to open
+	// the repository, or restic init created it with that password; zero
+	// until then. A record without it may describe files its password never
+	// opened, left by a state restore that dropped their password (#277), so
+	// TaskAccess and Ensure open the repository first and set aside one the
+	// password doesn't open (verify.go).
+	PasswordVerifiedAt time.Time
 }
 
 // Get returns the group's repository record, or ErrNoRepository.
@@ -224,15 +231,22 @@ func (m *Manager) Get(ctx context.Context, clientGroupID string) (Repository, er
 
 // Ensure returns the group's repository, creating it if needed: it stores
 // a new random password with the group's record, then runs restic init
-// unless the repository already exists and opens with the password. It is
-// idempotent and safe to run concurrently for the same group within a
-// process: initialization is serialized per repository (see initialize).
+// unless the repository already exists and opens with the password. A
+// repository whose password has never opened it and doesn't is set aside
+// for a new one (verify). It is idempotent and safe to run concurrently for
+// the same group within a process: initialization is serialized per
+// repository (see initialize).
 func (m *Manager) Ensure(ctx context.Context, clientGroupID string) (Repository, error) {
 	rec, password, err := m.open(ctx, clientGroupID)
 	if err != nil {
 		return Repository{}, err
 	}
-	if err := m.initialize(ctx, rec, password); err != nil {
+	if rec.PasswordVerifiedAt.IsZero() {
+		rec, _, err = m.verify(ctx, rec, password)
+	} else {
+		err = m.initialize(ctx, rec, password)
+	}
+	if err != nil {
 		return Repository{}, fmt.Errorf("ensure backup repository of client group %s: %w", clientGroupID, err)
 	}
 	return rec, nil
@@ -652,18 +666,26 @@ type TaskAccess struct {
 
 // TaskAccess returns what a site task needs to use the group's repository,
 // creating the repository if it doesn't exist (see Ensure). A repository
-// that exists is not opened first: that would cost a restic task on every
-// backup, and a wrong password or a damaged repository shows soon enough in
-// the backup itself, with the same errors.
+// whose password has opened it before is not opened again: that would cost
+// a restic task on every backup, and a wrong password or a damaged
+// repository shows soon enough in the backup itself, with the same errors.
+// Until its password has opened it, the repository is opened first, even
+// if it looks initialized, and set aside if the password doesn't open it
+// (verify): only then can a repository left by a state restore be told
+// from the group's own (#277).
 func (m *Manager) TaskAccess(ctx context.Context, clientGroupID string) (TaskAccess, error) {
 	rec, password, err := m.open(ctx, clientGroupID)
 	if err != nil {
 		return TaskAccess{}, err
 	}
-	if !m.initialized(ctx, rec) {
-		if err := m.initialize(ctx, rec, password); err != nil {
-			return TaskAccess{}, fmt.Errorf("ensure backup repository of client group %s: %w", clientGroupID, err)
-		}
+	switch {
+	case rec.PasswordVerifiedAt.IsZero():
+		rec, password, err = m.verify(ctx, rec, password)
+	case !m.initialized(ctx, rec):
+		err = m.initialize(ctx, rec, password)
+	}
+	if err != nil {
+		return TaskAccess{}, fmt.Errorf("ensure backup repository of client group %s: %w", clientGroupID, err)
 	}
 	return m.taskAccess(rec, password)
 }

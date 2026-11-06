@@ -2,7 +2,9 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
@@ -13,17 +15,53 @@ import (
 // store.ErrNotFound.
 func getRecord(ctx context.Context, q store.Querier, groupID string) (Repository, error) {
 	var (
-		r   Repository
-		ref string
+		r        Repository
+		ref      string
+		verified sql.NullTime
 	)
 	err := q.QueryRowContext(ctx,
-		"SELECT client_group_id, backend, location, secret_ref, created_at FROM backup_repositories WHERE client_group_id = ?", groupID).
-		Scan(&r.ClientGroupID, &r.Backend, &r.Location, &ref, &r.CreatedAt)
+		"SELECT client_group_id, backend, location, secret_ref, created_at, password_verified_at FROM backup_repositories WHERE client_group_id = ?", groupID).
+		Scan(&r.ClientGroupID, &r.Backend, &r.Location, &ref, &r.CreatedAt, &verified)
 	if err != nil {
 		return Repository{}, fmt.Errorf("reading backup repository record: %w", err)
 	}
 	r.SecretRef = secrets.Ref(ref)
+	if verified.Valid {
+		r.PasswordVerifiedAt = verified.Time
+	}
 	return r, nil
+}
+
+// markVerified records that rec's password opens its repository. It
+// changes nothing if the record has changed since rec was read, so a
+// location or password other than the one that opened can't be marked.
+func markVerified(ctx context.Context, q store.Querier, rec Repository, at time.Time) error {
+	_, err := q.ExecContext(ctx,
+		"UPDATE backup_repositories SET password_verified_at = ? "+
+			"WHERE client_group_id = ? AND location = ? AND secret_ref = ? AND password_verified_at IS NULL",
+		at, rec.ClientGroupID, rec.Location, string(rec.SecretRef))
+	if err != nil {
+		return fmt.Errorf("marking backup repository password verified: %w", err)
+	}
+	return nil
+}
+
+// moveRecord points rec's record at location and reports whether it did:
+// false means the record has changed since rec was read, or its password
+// has been verified since, and was left alone.
+func moveRecord(ctx context.Context, q store.Querier, rec Repository, location string) (bool, error) {
+	res, err := q.ExecContext(ctx,
+		"UPDATE backup_repositories SET location = ? "+
+			"WHERE client_group_id = ? AND location = ? AND secret_ref = ? AND password_verified_at IS NULL",
+		location, rec.ClientGroupID, rec.Location, string(rec.SecretRef))
+	if err != nil {
+		return false, fmt.Errorf("moving backup repository record: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("moving backup repository record: %w", err)
+	}
+	return n == 1, nil
 }
 
 // insertRecord adds r. It returns store.ErrConflict if the group already
