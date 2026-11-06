@@ -31,6 +31,10 @@ import (
 // ErrUnknownDriver is returned for a driver name that isn't supported.
 var ErrUnknownDriver = errors.New("driver: unknown driver")
 
+// ErrNotKubernetes is returned for a Kubernetes-only operation on another
+// driver.
+var ErrNotKubernetes = errors.New("driver: the configured driver is not kubernetes")
+
 // Runtime is a driver and the optional capabilities it has. A capability the
 // driver lacks is nil, and consumers turn their feature off.
 type Runtime struct {
@@ -135,6 +139,25 @@ func NewHostProbe(cfg *config.Config) (doctor.DockerProbe, error) {
 	}
 }
 
+// NewClusterProbe returns the doctor's probe of the Kubernetes cluster, or
+// ErrNotKubernetes for another driver. It connects lazily: an unreachable
+// API server shows in the doctor's first cluster check, not here.
+func NewClusterProbe(cfg *config.Config, log *slog.Logger) (doctor.ClusterProbe, error) {
+	if cfg.Driver != config.SiteDriverKubernetes {
+		return nil, ErrNotKubernetes
+	}
+	probe, err := kubernetes.NewClusterProbe(kubernetes.ProbeConfig{
+		Kubernetes: cfg.Kubernetes,
+		Image:      cfg.TaskImage,
+		Logger:     log.With("component", "doctor"),
+	})
+	if err != nil {
+		// Not the typed nil pointer, which would make a non-nil interface.
+		return nil, err
+	}
+	return probe, nil
+}
+
 // composeDriver is the Compose driver with its startup work.
 type composeDriver struct {
 	*compose.Provisioner
@@ -213,7 +236,8 @@ func newKubernetes(ctx context.Context, opts Options) (*Runtime, error) {
 }
 
 // errNoDockerHost is what the doctor's Docker checks report on Kubernetes,
-// which has no Docker host; the cluster checks are its own (#225).
+// which has no Docker host; the doctor skips them there and runs the
+// cluster checks (doctor.ClusterProbe) instead.
 var errNoDockerHost = errors.New("the Kubernetes driver runs no Docker host")
 
 // noDockerHost is the doctor's Docker probe on Kubernetes.

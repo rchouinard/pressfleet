@@ -39,7 +39,7 @@ func TestPlatformDoctorWebAuthn(t *testing.T) {
 		svc := auth.NewService(db, a.authOptions(nil))
 		const id = "webauthn-relying-party"
 
-		if r := findResult(t, a.platformDoctor(svc)(ctx), id); r.Status != doctor.StatusPass {
+		if r := findResult(t, a.platformDoctor(svc, nil)(ctx), id); r.Status != doctor.StatusPass {
 			t.Errorf("nothing stale: %+v, want pass", r)
 		}
 
@@ -55,7 +55,7 @@ func TestPlatformDoctorWebAuthn(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		r := findResult(t, a.platformDoctor(svc)(ctx), id)
+		r := findResult(t, a.platformDoctor(svc, nil)(ctx), id)
 		if r.Status != doctor.StatusWarn || !strings.Contains(r.Message, "1 security key or passkey of 1 user") ||
 			!strings.Contains(r.Message, "new.example.com") || r.Fix == "" {
 			t.Errorf("one stale key: %+v", r)
@@ -64,6 +64,38 @@ func TestPlatformDoctorWebAuthn(t *testing.T) {
 		host := doctor.Run(ctx, a.doctorOptions(), doctor.ScopeInstall, doctor.ScopeRuntime)
 		if r := findResult(t, host, id); r.Status != doctor.StatusUnavailable {
 			t.Errorf("host doctor: %+v, want unavailable", r)
+		}
+	})
+}
+
+// TestPlatformDoctorKubernetes checks that the API's doctor runs the
+// cluster checks, but not the ones that create pods, and counts the
+// sites' reservations from the state database.
+func TestPlatformDoctorKubernetes(t *testing.T) {
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		ctx := context.Background()
+		cluster := doctortest.HealthyCluster()
+		a := &app{
+			cfg: config.Config{Driver: config.SiteDriverKubernetes, DataDir: "/data"},
+			log: slog.New(slog.DiscardHandler),
+			opts: Options{
+				HostProbe: doctortest.Healthy(), DockerProbe: &doctortest.Docker{}, ClusterProbe: cluster,
+			},
+		}
+		rep := a.platformDoctor(nil, siteReservations{db})(ctx)
+		if r := findResult(t, rep, "k8s-version"); r.Status != doctor.StatusPass {
+			t.Errorf("version: %+v", r)
+		}
+		for _, id := range []string{"k8s-cgroup", "k8s-networkpolicy"} {
+			if r := findResult(t, rep, id); r.Status != doctor.StatusUnavailable {
+				t.Errorf("%s: %+v, want unavailable in the API", id, r)
+			}
+		}
+		if r := findResult(t, rep, "k8s-capacity"); r.Status != doctor.StatusPass || !strings.Contains(r.Message, "0 sites") {
+			t.Errorf("capacity: %+v", r)
+		}
+		if cluster.PodProbes != 0 {
+			t.Errorf("the API ran %d pod probes", cluster.PodProbes)
 		}
 	})
 }

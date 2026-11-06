@@ -16,6 +16,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/doctor"
 	"github.com/rchouinard/pressfleet/control-plane/internal/driver"
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
+	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
 
 // Exit codes for `pressfleet doctor`.
@@ -68,6 +69,14 @@ func (a *app) doctorOptions() doctor.Options {
 		SFTPPort:          a.cfg.SFTP.Port,
 		Installed:         platformInstalled(a.cfg.Layout()),
 		Kubernetes:        a.cfg.Driver == config.SiteDriverKubernetes,
+		StorageClassSites: a.cfg.Kubernetes.StorageClasses.Sites,
+		StorageClassData:  a.cfg.Kubernetes.StorageClasses.Data,
+	}
+	if opts.Kubernetes {
+		opts.Cluster = a.opts.ClusterProbe
+		if opts.Cluster == nil {
+			opts.Cluster, opts.ClusterErr = driver.NewClusterProbe(&a.cfg, a.log)
+		}
 	}
 	if opts.Host == nil {
 		opts.Host = doctor.System{}
@@ -85,11 +94,16 @@ func (a *app) doctorOptions() doctor.Options {
 // container with no docker CLI, so host-only checks are reported as
 // unavailable rather than run (and failed). It has the state database, so
 // it runs the checks that need it, through webauthn.
-func (a *app) platformDoctor(webauthn doctor.WebAuthnProvider) api.DoctorFunc {
+func (a *app) platformDoctor(webauthn doctor.WebAuthnProvider, reservations doctor.ReservationProvider) api.DoctorFunc {
 	return func(ctx context.Context) doctor.Report {
 		opts := a.doctorOptions()
 		opts.SkipHostOnly = true
+		// Viewing the dashboard must not create namespaces and pods.
+		opts.SkipClusterPods = true
 		opts.WebAuthn = webauthn
+		if opts.Kubernetes {
+			opts.Reservations = reservations
+		}
 		return doctor.Run(ctx, opts, doctor.ScopeInstall, doctor.ScopeRuntime)
 	}
 }
@@ -126,6 +140,20 @@ func (a *app) preflight(ctx context.Context, skip bool) error {
 			"or pass --skip-preflight on a development machine)", strings.Join(names, ", "))
 	}
 	return nil
+}
+
+// siteReservations reads the sites' memory reservations from the state
+// database for the cluster capacity check.
+type siteReservations struct{ db *store.DB }
+
+// MemoryReservations implements doctor.ReservationProvider, counting the
+// sites that hold memory as the capacity endpoint does.
+func (r siteReservations) MemoryReservations(ctx context.Context) (uint64, int, error) {
+	mb, n, err := store.NewSites(r.db).MemoryReservations(ctx, store.SiteStopped, store.SiteDeleting)
+	if err != nil {
+		return 0, 0, err
+	}
+	return uint64(max(mb, 0)) << 20, n, nil
 }
 
 // platformInstalled reports whether init has rendered the platform project

@@ -246,6 +246,23 @@ Statuses: `PASS`; `FAIL` (a required check failed); `WARN` (a recommended check 
 
 `init` runs the same checks first and stops on a required failure. `--skip-preflight` installs anyway; it is for development machines.
 
+### Kubernetes checks
+
+With `driver: kubernetes`, `doctor` checks the cluster instead of the Docker host. It runs at control plane startup, in `pressfleet doctor` (which connects with `kubernetes.kubeconfig`, or the pod's service account), and as a Helm test. The Docker checks, the host memory check, and the host DNS checks are `UNAVAILABLE`, because a cluster has no single host. The dashboard's platform overview shows the same checks, except that the two that run pods (cgroup v2 and NetworkPolicy) are `UNAVAILABLE` there, so that opening the dashboard doesn't create pods.
+
+| Check | What it means | If it fails |
+| --- | --- | --- |
+| Kubernetes version | The API server answers and is Kubernetes 1.35 or later (the three newest minor releases when PressFleet ships). | Upgrade the cluster, or fix the connection. |
+| Nodes are linux/amd64 | Every ready, schedulable node is linux/amd64. | Cordon or remove the other nodes. |
+| Nodes use cgroup v2 | A short-lived pod on each node sees a cgroup v2 mount. It runs the `task_image`, so that must be set; without it the check warns. | Boot the nodes with cgroup v2. |
+| Control plane RBAC | The control plane may do what the driver needs (create namespaces, run pods and read Secrets in the platform namespace, read nodes and storage classes), and has no cluster-wide rights beyond that: no reading Secrets in every namespace, no `nodes/proxy`, no `pods/exec` everywhere, no free creation of cluster role bindings. A binding to `cluster-admin` fails it. | Use the chart's RBAC. |
+| Site and data storage class | The `kubernetes.storage_classes.sites` and `.data` classes exist, or the cluster has a default class. A storage class can't say which access modes it supports, so doctor only rejects provisioners known to lack ReadWriteMany for the data class (local-path, and block storage such as EBS, Persistent Disk, and Azure Disk). Whether the class really serves ReadWriteMany shows when the data volume binds. | Create the class, or choose a ReadWriteMany one for the data directory. |
+| metrics.k8s.io | metrics-server answers. | Install metrics-server. |
+| NetworkPolicy enforcement | Two pods try to reach the API server from a temporary namespace (`<platform namespace>-doctor-<random>`, deleted afterwards). A NetworkPolicy denies all egress for one of them. The check passes when that pod can't connect and the other can, and fails when the denied pod connects, which is how a CNI such as flannel or kindnet that ignores NetworkPolicy behaves. If the probe can't run, for example because the image can't be pulled, the check warns and says why. | Use a CNI that enforces NetworkPolicy, such as Calico or Cilium. |
+| Traefik external address (recommended) | Traefik's Service has a LoadBalancer address or external IPs. | Install a load balancer controller such as MetalLB. |
+| Dashboard DNS, Wildcard preview DNS (recommended) | The domains resolve to Traefik's external address (or `public_ip`). | Create the records. |
+| Cluster memory capacity (recommended) | The sites' reservations plus the platform's memory requests fit in the allocatable memory of the schedulable nodes. Only the running control plane can check it. | Add nodes or memory, or reduce sites. |
+
 ## Reinstalling
 
 `init` treats any of these as an existing installation and refuses to run: the config file, the master key file, `<data_dir>/platform/compose.yaml`, or the SQLite state database. With `--force` it runs anyway and:

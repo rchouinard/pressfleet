@@ -130,9 +130,20 @@ type Options struct {
 	SkipHostOnly bool
 	// Kubernetes says the platform runs on a Kubernetes cluster (§4.8),
 	// which has no Docker host: the host-only checks don't apply and are
-	// reported as unavailable, with that reason. The cluster's own checks
-	// come with the Kubernetes doctor (#225).
+	// reported as unavailable, with that reason, and the cluster checks
+	// (cluster.go) run in their place.
 	Kubernetes bool
+	// Cluster reads the cluster's facts when Kubernetes is set. If it is
+	// nil, ClusterErr says why (it could not connect).
+	Cluster    ClusterProbe
+	ClusterErr error
+	// StorageClassSites and StorageClassData name the storage classes of
+	// the site and data volumes; empty means the cluster's default.
+	StorageClassSites, StorageClassData string
+	// SkipClusterPods reports the checks that run pods in the cluster as
+	// unavailable. The API's doctor endpoint sets it, so viewing the
+	// dashboard doesn't create namespaces and pods.
+	SkipClusterPods bool
 	// RandomLabel returns a DNS label for probing the wildcard preview
 	// record; nil uses a random one.
 	RandomLabel func() string
@@ -146,7 +157,13 @@ type Check struct {
 	Scopes   []Scope
 	// HostOnly marks checks that only work from the host itself.
 	HostOnly bool
-	run      func(ctx context.Context, e *env) outcome
+	// ComposeOnly marks host checks that Kubernetes has its own versions
+	// of: they are reported as unavailable there.
+	ComposeOnly bool
+	// ClusterOnly marks the Kubernetes checks, which only run (and show) on
+	// a Kubernetes install.
+	ClusterOnly bool
+	run         func(ctx context.Context, e *env) outcome
 }
 
 // outcome is what a check's run function reports.
@@ -219,8 +236,13 @@ func Run(ctx context.Context, opts Options, scopes ...Scope) Report {
 		if !slices.ContainsFunc(c.Scopes, func(s Scope) bool { return slices.Contains(scopes, s) }) {
 			continue
 		}
+		if c.ClusterOnly && !opts.Kubernetes {
+			continue
+		}
 		var o outcome
 		switch {
+		case c.ComposeOnly && opts.Kubernetes:
+			o = outcome{status: StatusUnavailable, message: "a host check; the cluster checks cover this on Kubernetes"}
 		case c.HostOnly && opts.Kubernetes:
 			o = outcome{status: StatusUnavailable, message: "doesn't apply on Kubernetes, which has no Docker host"}
 		case c.HostOnly && opts.SkipHostOnly:
