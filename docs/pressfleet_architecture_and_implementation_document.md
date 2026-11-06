@@ -2,7 +2,7 @@
 
 **Project Codename:** PressFleet  
 **Status:** Draft  
-**Last Updated:** 2026-10-29  
+**Last Updated:** 2026-11-04  
 **Target Audience:** Agencies specializing in WordPress development and management  
 **Core Vision:** A self-hostable, containerized application server for WordPress—a smaller-scale, open-source alternative to WP Engine featuring one-click deployments, automatic TLS, page/object caching, built-in monitoring, file management, and automated backup/restore routines.
 
@@ -13,7 +13,7 @@
 PressFleet aims to simplify WordPress management for agencies by delivering:
 * **One Agency, One Platform:** Each PressFleet install serves a single agency. Sites are organized into client groups.
 * **One-Click Provisioning:** Spin up fully configured WordPress sites from a single API call or dashboard action, immediately reachable on a preview subdomain.
-* **Docker Compose First:** Docker Compose is the default deployment target for single-host, small, and demo installations. The architecture must not preclude a future Kubernetes deployment target (see §4.2).
+* **Docker Compose First:** Docker Compose is the default deployment target for single-host, small, and demo installations. Kubernetes is a second target, for agencies that run their own cluster (§4.8).
 * **Low Resource Footprint:** Shared platform services (database, object cache, metrics storage) are preferred over per-site copies wherever isolation can be preserved.
 * **Built-in Performance:** Pre-configured Nginx FastCGI page caching and Redis object caching for every site.
 * **Monitoring & Metrics as a Core Feature:** Uptime, performance, resource usage, and backup health for every site, with alerting.
@@ -26,7 +26,7 @@ PressFleet aims to simplify WordPress management for agencies by delivering:
 * **Client-group-scoped user access.** MVP roles apply platform-wide; restricting users to specific client groups is a future consideration that §4.6 keeps possible.
 * **Client access to the platform.** Only agency staff use the dashboard and API. Exposing platform features to clients (e.g. via WordPress plugins that call the platform API) is a future consideration (§4.2).
 * **Staging clones.** Not in the MVP, which reserved room for them in its data model and restore pipeline. They are the first post-MVP feature (§5.11, §8; decided 2026-10-29, #196).
-* **Kubernetes deployment.** Planned for a later release; the MVP only has to keep the door open (§4.2).
+* **Kubernetes deployment.** Not in the MVP, which only kept the door open (§4.2). It is a post-MVP milestone (§4.8, §8; decided 2026-11-04, #212).
 * **MCP server.** A built-in Model Context Protocol server that gives agentic clients the dashboard's operations is planned for after the MVP (§8). It goes through the same API authorization and audit log (§4.6), so the MVP needs nothing extra for it.
 * **WordPress Multisite.**
 * **Managing plugin and theme updates.** WordPress handles these natively; the dashboard only reports pending updates (§5.6).
@@ -49,7 +49,7 @@ PressFleet aims to simplify WordPress management for agencies by delivering:
 | **Control Plane** | The Go API server, background workers, metrics collector, and embedded dashboard UI. |
 | **Host CLI** | The `pressfleet` binary run on the host for `init`, `doctor`, and `upgrade`. The same binary runs as the control plane inside a container (§4.7). |
 | **Platform Services** | Shared infrastructure run once per install: Traefik, MariaDB, Redis, metrics storage, the SFTP gateway, control plane. |
-| **Site Stack** | The set of containers and volumes making up one site (one Compose project per site). |
+| **Site Stack** | The set of containers and volumes making up one site (one Compose project per site, or one namespace on Kubernetes). |
 | **Job** | An asynchronous unit of work (provision, go-live, backup, restore, delete) tracked by the control plane. |
 
 ---
@@ -95,18 +95,18 @@ PressFleet aims to simplify WordPress management for agencies by delivering:
 
 | Subsystem | Choice | Alternatives Considered | Rationale |
 | :--- | :--- | :--- | :--- |
-| **Control Plane API** | **Go** | — | Fast execution, low memory, single static binary, native Docker Engine API and Kubernetes `client-go` SDKs for the future K8s driver. |
+| **Control Plane API** | **Go** | — | Fast execution, low memory, single static binary, native Docker Engine API and Kubernetes `client-go` SDKs for the two drivers. |
 | **Control Plane UI** | **Nuxt (Vue 3) + Tailwind** | — | Dashboard for site management, client groups, monitoring, and job logs. Built as a static SPA (`nuxt generate`) and embedded into the Go binary via `embed`, so no Node.js runtime is required in production. |
 | **Orchestration (MVP)** | **Docker Compose** | Docker Engine API directly | One Compose project per site, rendered from templates. Human-readable, easy to inspect and debug on the host. |
-| **Orchestration (Future)** | **Kubernetes (`k8s.io/client-go`)** | — | Multi-node scale. Not an MVP goal. |
-| **Control Plane State** | **SQLite** (default) | PostgreSQL | SQLite for Compose installs (zero extra services); PostgreSQL supported for larger installs and required for the future K8s target. |
+| **Orchestration (Kubernetes)** | **Kubernetes (`k8s.io/client-go`), installed with a Helm chart** | `kubectl` in the control plane image; a hand-written REST client; plain manifests or an operator for packaging | Clusters an agency already runs (§4.8). The typed clientset, plus the dynamic client with server-side apply for Traefik's CRDs, and no informer caches. A `kubectl` child process per WP-CLI call, log read, or stats sample would cost the memory #178 measured for the docker CLI, and a hand-written client would reimplement exec, attach, and watch. |
+| **Control Plane State** | **SQLite** (default) | PostgreSQL | SQLite for Compose installs (zero extra services); PostgreSQL supported for larger installs and required on Kubernetes, where the operator provides it (§4.8). |
 | **Job Queue** | **Database-backed queue** | Redis-backed queue | Jobs are stored in the control plane database so the queue has no dependency on the shared Redis used by sites. |
-| **Edge Proxy & TLS** | **Traefik** | Caddy | Dynamic container routing via Docker labels (and Kubernetes CRDs later) with automatic Let's Encrypt certificates, including DNS-01 wildcard certificates for preview domains. |
+| **Edge Proxy & TLS** | **Traefik** | Caddy | Dynamic container routing via Docker labels (Traefik's Kubernetes CRDs on Kubernetes) with automatic Let's Encrypt certificates, including DNS-01 wildcard certificates for preview domains. |
 | **WP Web Server** | **Nginx + PHP-FPM** | OpenLiteSpeed | Web server tuned with `fastcgi_cache` pre-configured for WordPress page caching. |
 | **Site Database** | **MariaDB LTS (11.4+)** | MySQL 8.4 LTS | Shared database server with per-site databases and users. |
 | **Object Cache** | **Valkey** (Redis-compatible; shared, platform-managed) | Redis, Memcached, per-site Redis | A single server keeps memory usage low; per-site isolation is enforced with ACL users, per-site logical databases, and key prefixes (§6). Valkey is BSD-licensed (Redis 8 is AGPLv3/RSALv2/SSPLv1), publishes an official image, and speaks the Redis protocol, so the Redis Object Cache plugin works unchanged. Its per-database ACL rules (Valkey 9+), which Redis lacks, are what keep one site from listing another's keys (§6). "Redis" in PressFleet names the protocol and role, not the server. |
 | **Metrics Storage** | **VictoriaMetrics (single-node)** | Prometheus | Prometheus-compatible, markedly lower memory and disk usage, single binary. |
-| **Metrics Collection** | **Built-in Go collector** | cAdvisor, per-site exporter sidecars | The control plane scrapes Docker stats, Traefik, PHP-FPM, Nginx, MariaDB, and Redis directly, avoiding a sidecar per site. |
+| **Metrics Collection** | **Built-in Go collector** | cAdvisor, per-site exporter sidecars | The control plane scrapes container stats (Docker's, or `metrics.k8s.io` on Kubernetes), Traefik, PHP-FPM, Nginx, MariaDB, and Redis directly, avoiding a sidecar per site. |
 | **Backup Engine** | **Restic** | Borg, Duplicity | Encrypted, deduplicated snapshots of `wp-content` and DB dumps pushed to local disk or S3/MinIO. |
 
 ### 3.1. Project Conventions
@@ -118,7 +118,7 @@ PressFleet aims to simplify WordPress management for agencies by delivering:
 | **Go** | Latest stable release (currently Go 1.27); module path `github.com/rchouinard/pressfleet` |
 | **CI/CD** | GitHub Actions |
 | **Container registry** | GitHub Container Registry (`ghcr.io/rchouinard/pressfleet/...`) |
-| **Supported platforms** | Linux hosts on `amd64`. Other architectures (e.g. `arm64`) are not built or tested for the MVP. |
+| **Supported platforms** | Linux hosts on `amd64`, and Kubernetes clusters with `amd64` nodes (§4.8). Other architectures (e.g. `arm64`) are not built or tested. |
 
 ---
 
@@ -348,16 +348,16 @@ type RepositoryTaskRunner interface {
 
 Every task has a hard memory limit, `Task.MemoryLimitMB` (default `backup.task_memory_mb`, 512 MiB), with no swap on top: restic's memory grows with the size of the repository, so it is bounded where it runs instead of inside the control plane (#178). A task over its limit is killed and fails.
 
-`RepositoryTaskRunner` is `TaskRunner` keyed by repository, because `RunTask` borrows the site's network, UID, and wp-content volume. A repository task mounts the local repository directory (`Task.RepositoryDir`) at `/repository`, and gets secrets, environment, a transfer directory, and the memory limit as any task does; `Task.WPContent` must be `MountNone`. It runs as the user and group that own local repositories (`provisioner.RepositoryGID`), not as a site. It has no network, unless `Task.BackupNetwork` says the repository is on S3. In the Compose driver, that task joins a network of its own, a plain bridge shared only with other repository tasks (and not letting them talk to each other), which gives it a route to the internet without a path to MariaDB, Redis, the control plane, or any site; the platform's backup network is connected beside it, for a self-hosted S3 service. Each task has a unique host name, because restic records the host name in its locks and treats a lock of its own host as stale once its process is gone: with a shared host name, one container could remove another's live lock, and with unique ones only the lock's age (30 minutes without a refresh) counts across containers. A Kubernetes driver maps a repository task to a Job in the platform's namespace: it mounts the repositories' volume (local) or reads the S3 credentials from a Secret, with no site volume and a NetworkPolicy that allows egress to the S3 endpoint only.
+`RepositoryTaskRunner` is `TaskRunner` keyed by repository, because `RunTask` borrows the site's network, UID, and wp-content volume. A repository task mounts the local repository directory (`Task.RepositoryDir`) at `/repository`, and gets secrets, environment, a transfer directory, and the memory limit as any task does; `Task.WPContent` must be `MountNone`. It runs as the user and group that own local repositories (`provisioner.RepositoryGID`), not as a site. It has no network, unless `Task.BackupNetwork` says the repository is on S3. In the Compose driver, that task joins a network of its own, a plain bridge shared only with other repository tasks (and not letting them talk to each other), which gives it a route to the internet without a path to MariaDB, Redis, the control plane, or any site; the platform's backup network is connected beside it, for a self-hosted S3 service. Each task has a unique host name, because restic records the host name in its locks and treats a lock of its own host as stale once its process is gone: with a shared host name, one container could remove another's live lock, and with unique ones only the lock's age (30 minutes without a refresh) counts across containers. The Kubernetes driver maps a repository task to a pod in the platform's namespace: it mounts the repository directory from the data volume (local) or reads the S3 credentials from a Secret, with no site volume and a NetworkPolicy that denies all traffic or allows egress to the S3 endpoint only (§4.8).
 
 Site components are named by role (`nginx`, `php`), not by orchestrator object. Backups use `TaskRunner`: the control plane dumps the database into a transfer directory under its data directory, then runs `restic` in a task that mounts `wp-content` read-only plus the transfer directory. In the Compose driver, a task is a one-off container on the site's network. The data directory is mounted at the same path on the host and in the control plane container, so transfer directories can be bind-mounted into tasks. Task secrets (Restic repository passwords, S3 credentials) are never environment variables, because a container's configuration is readable through the socket proxy (§6): `Task.SecretFiles` holds them as files, which the driver mounts read-only at `/run/pressfleet/secrets` for the task's user alone and removes when the task ends, and the task's `Env` names their paths (`RESTIC_PASSWORD_FILE`, `AWS_SHARED_CREDENTIALS_FILE`). The Compose driver bind-mounts a directory in the data directory's `tmp/`; a Kubernetes driver mounts a Secret volume.
 
-| Interface | Compose driver | Future Kubernetes driver |
+| Interface | Compose driver | Kubernetes driver (§4.8) |
 | :--- | :--- | :--- |
 | `LogReader` | Container logs | Pod logs API, per container |
-| `StatsReader` | Docker stats (cumulative CPU) and container restart count | Kubelet summary API (cumulative CPU) and Pod status restart counts |
-| `TaskRunner` | One-off container mounting the site volume, a bind-mounted transfer directory, and a bind-mounted directory of secret files | Job whose Pod mounts the site PVC, a shared transfer volume, and a Secret volume |
-| `RepositoryTaskRunner` | One-off container as `RepositoryGID` with the repository directory bind-mounted, no network (local) or a bridge network with a route out and the backup network (S3), a unique host name, and a bind-mounted directory of secret files | Job in the platform namespace mounting the repositories' PVC or a Secret with the S3 credentials, a Secret volume, and an egress-only NetworkPolicy |
+| `StatsReader` | Docker stats (cumulative CPU) and container restart count | `metrics.k8s.io`, accumulated into cumulative CPU, and Pod status restart counts; no kubelet API, which needs `nodes/proxy` |
+| `TaskRunner` | One-off container mounting the site volume, a bind-mounted transfer directory, and a bind-mounted directory of secret files | Pod on the site's node mounting the site PVC, its transfer directory from the ReadWriteMany data volume, and a Secret volume |
+| `RepositoryTaskRunner` | One-off container as `RepositoryGID` with the repository directory bind-mounted, no network (local) or a bridge network with a route out and the backup network (S3), a unique host name, and a bind-mounted directory of secret files | Pod in the platform namespace, as `RepositoryGID`, mounting the repository directory from the data volume and a Secret volume, with a deny-all NetworkPolicy (local) or egress to the S3 endpoint only, and a unique host name |
 | `SessionRunner` | One-off container, attached to the gateway's streams, mounting only the site volume, with no network | Pod with `stdin`/`stdinOnce`, the site PVC, and a deny-all NetworkPolicy, attached through the API |
 
 ### 4.5. API Design
@@ -407,7 +407,7 @@ PressFleet uses semantic versioning. Each release bundles the control plane imag
 
 **Responsibilities:**
 * The **control plane** owns its state database: migrations, pre-migration backups, and restoring those backups.
-* The **host CLI** owns the platform definition and renders the platform Compose project from templates embedded in its binary. It never reads or writes the state database directly. Commands that operate on state (e.g. `pressfleet user create`) run inside the control plane container (`docker compose exec control-plane pressfleet …`), so their version always matches the database schema.
+* The **host CLI** owns the platform definition and renders the platform Compose project from templates embedded in its binary. It never reads or writes the state database directly. Commands that operate on state (e.g. `pressfleet user create`) run inside the control plane container (`docker compose exec control-plane pressfleet …`, or `kubectl exec` on Kubernetes), so their version always matches the database schema.
 
 **Migrations:**
 * Migrations are forward-only; there are no down migrations.
@@ -424,6 +424,7 @@ PressFleet uses semantic versioning. Each release bundles the control plane imag
 * Rolling back is for failed or immediately regretted upgrades. Anything recorded in the state database after the upgrade (e.g. new sites) is lost.
 * PressFleet doesn't take pre-migration backups of PostgreSQL state databases (operators do), so with PostgreSQL the state restore step uses the operator's own pre-upgrade backup, and the upgrade asks for confirmation (or `--yes`) after saying so. (The disaster recovery backups of §5.10 cover both drivers, but they are for rebuilding a lost host, not for rolling back an upgrade.)
 * Automatic rollback and `pressfleet upgrade --rollback` are post-MVP.
+* On Kubernetes, the Helm chart takes the place of the platform Compose project, and `helm upgrade` the place of `pressfleet upgrade`, with the same preflight in a pre-upgrade hook (§4.8).
 * Upgrading only the control plane doesn't interrupt site traffic. Recreating Traefik, MariaDB, or Redis briefly interrupts every site, so the upgrade asks for confirmation (or `--yes`) before it does.
 * MariaDB major version upgrades (a change of the X.Y release series) are one-way. In the MVP the upgrade refuses them, and each release pins MariaDB to one series (a unit test pins the series in `images.yaml`, since `MARIADB_AUTO_UPGRADE` would otherwise apply a change silently). Supporting them is future work, for a major PressFleet release: the upgrade would back up every site database and copy MariaDB's data volume so it can go back.
 * Config keys and `PRESSFLEET_*` variables that a release renames or removes stay accepted, with a deprecation warning, for at least one minor release and until the oldest release the upgrade accepts uses the new name: package `config` keeps a table of them and rewrites the old names before its strict decoding, so an existing config file doesn't stop the new CLI or control plane. Setting both an old and a new name is an error.
@@ -434,6 +435,32 @@ PressFleet uses semantic versioning. Each release bundles the control plane imag
 * From 1.0, the host CLI's minor version must be within one of the control plane's (n−1, n, or n+1, where n is the control plane's minor version). Before 1.0, the minor versions must match.
 * Before every command, the CLI checks the control plane's version. Outside the policy it refuses to run and explains how to fix it; there is no override. `pressfleet version` and `pressfleet upgrade` are exempt.
 * The host CLI talks to the control plane only through a small, versioned admin interface: it runs `pressfleet admin <command>` in the control plane container, which answers with JSON. Going through `docker exec` needs no network exposure or credentials of its own (Docker socket access is already root on the host) and works while Traefik is down. The interface version changes only on incompatible changes, and every version keeps reporting the control plane's version. If the control plane doesn't answer, the CLI reads its version from the container's image metadata. From 1.0, changes to that interface must stay backward compatible for at least one minor release, and CI tests the CLI against control planes at n−1, n, and n+1.
+
+### 4.8. Kubernetes
+
+PressFleet installs on a Kubernetes cluster with a Helm chart, and a Kubernetes driver runs every site operation in place of the Compose driver, behind the same interfaces (§4.4). The same control plane and site images serve both targets, from one binary. Compose stays the default for single-host installs (decided 2026-11-04, #212; plan: [kubernetes-driver-plan.md](kubernetes-driver-plan.md)).
+
+* **Scope:** one cluster per install. The orchestrator is chosen at install time (`driver`) and never changes for that install. One control plane replica, one replica per site, and `amd64` nodes. A highly available control plane, sites scaled out to several replicas, multi-cluster installs, arm64 nodes, and moving an install between Compose and Kubernetes are left for later; the move could go through state recovery (§5.10), whose backup loads into PostgreSQL.
+* **Client:** `k8s.io/client-go`, imported only in `provisioner/kubernetes` (§3). The driver renders each site's manifests from `/templates/k8s` into the site's directory under the data directory, where operators can inspect them, and applies them with server-side apply under the field manager `pressfleet`. Template changes reach running sites through the templates rollout (§4.7), with the driver's own render version.
+* **Packaging and lifecycle:**
+  * A Helm chart, published on GHCR as an OCI artifact with each release, pins every image by digest from the same `images.yaml` as the platform Compose project.
+  * `pressfleet init --target kubernetes` asks init's questions and writes a values file and the Secrets: the master key (with the §4.1 warning and confirmation), the MariaDB and Valkey admin passwords, and the SSH host key. It never talks to the cluster.
+  * `helm upgrade` runs a pre-upgrade hook on the new image that applies the upgrade preflight (§4.7): no downgrade, no MariaDB series change, and at least the minimum release it can upgrade from. The control plane migrates at startup, as on Compose. Backing up PostgreSQL before an upgrade is the operator's job, and rolling one back is `helm rollback` plus that backup.
+  * State commands run with `kubectl exec` in the control plane pod. The version skew rules don't apply, because the chart and the control plane always come from the same release.
+* **Platform services:** the chart runs Traefik, MariaDB, Valkey, VictoriaMetrics, and the maintenance page, configured as on Compose. The state database is a PostgreSQL the operator provides, with its DSN in a Secret, so `driver: kubernetes` requires `database.driver: postgres`. MariaDB can be external; Valkey can't, because the per-database ACL rules need Valkey 9 (§6).
+* **Layout:** the platform runs in its own namespace. Each site has a namespace, `pf-<site-id>`, holding what its Compose project holds: a single-replica Deployment (strategy `Recreate`) whose pod runs `nginx` and `php`, the FastCGI cache as an `emptyDir`, `wp-config.php` in a Secret volume, a Service for nginx, its routes, and its NetworkPolicies. Stopping a site scales it to zero; deleting it deletes the namespace.
+* **Storage:** a site's `wp-content` is a ReadWriteOnce PVC from a configurable storage class, so tasks and SFTP workers that mount it are scheduled on the node of the site's pod; for a stopped site, the volume's topology decides. The control plane's data directory is a ReadWriteMany volume, mounted by the control plane and, as subpaths, by task pods, so transfer directories, uploads, exports, and local backup repositories work as on Compose and the task contract (§4.4) is unchanged. Volume ownership comes from `fsGroup` (`fsGroupChangePolicy: OnRootMismatch`); storage that ignores `fsGroup` isn't supported. Streaming transfers through tasks' standard streams, and requiring S3 for backups, would remove the ReadWriteMany requirement later.
+* **Isolation (§6):**
+  * Each site namespace enforces Pod Security `restricted`. Site, task, and session pods run as the site's UID with no capabilities, a read-only root filesystem, and no service account token.
+  * Each site namespace denies all traffic by default. Ingress to nginx is allowed only from Traefik. Egress is allowed to DNS, MariaDB, Valkey, the SMTP relay, and the internet, but not to the cluster's pod, service, or node ranges, or the cloud metadata address. nginx trusts forwarded headers from the pod network's ranges (`NGINX_TRUSTED_PROXIES`), which the NetworkPolicy narrows to Traefik.
+  * The control plane's ServiceAccount can create and delete namespaces, and in each site namespace it creates binds a ClusterRole that covers the site's objects. It has no rights in other namespaces, no cluster-wide Secret access, and no `nodes/proxy`. This replaces the Docker socket (§6).
+  * The cluster's CNI must enforce NetworkPolicy, which doctor proves.
+  * One namespace for all sites, with policies selected by label, would need only a namespaced Role, but isolation would then depend on every label being right.
+* **Ingress and TLS:** the chart's Traefik, with its Kubernetes CRD provider. The driver writes IngressRoute and Middleware objects named as on Compose. Maintenance mode is a higher-priority IngressRoute to the maintenance page. Certificates are issued as on Compose (HTTP-01, and DNS-01 for the preview wildcard), with Traefik's ACME storage on a PVC, so Traefik runs as one replica. A LoadBalancer Service, or NodePorts, carries ports 80, 443, and the SFTP port. Standard Ingress, Gateway API, and cert-manager are left for later; basic auth, noindex, HSTS, redirects, and maintenance priorities would need work for each controller.
+* **Exec, tasks, and sessions:** WP-CLI, cache purges, code reloads, probes, the PHP-FPM status, and Traefik's metrics run through the exec API; Traefik's metrics entry point stays on loopback. Tasks and SFTP workers are pods, as §4.4 describes. Task secrets are Secret volumes readable by the task's user alone and deleted with the pod, and pods a control plane restart leaves behind are removed at startup.
+* **Metrics:** container CPU and memory come from `metrics.k8s.io` (metrics-server is required). The driver accumulates CPU usage into the cumulative CPU time `StatsReader` reports, and reads restarts from Pod status. The kubelet summary API would give cumulative CPU directly, but only through `nodes/proxy`, which can run commands on nodes. Host metrics become per-node CPU and memory (§7.2).
+* **Capacity (§4.1):** a site's memory reservation and limit become its pods' requests and limits, split between nginx and php as on Compose. The scheduler decides whether a site fits; doctor and the dashboard warn when requests exceed the cluster's allocatable memory.
+* **Supported clusters:** the three newest Kubernetes minor releases when a PressFleet release ships, with `amd64` nodes on cgroup v2, a CNI that enforces NetworkPolicy, a default ReadWriteOnce storage class and a ReadWriteMany one, metrics-server, and LoadBalancer Services or NodePorts. Doctor checks them at control plane startup and as a Helm test. CI tests on kind; the docs use k3s as the small-cluster example.
 
 ---
 
@@ -612,6 +639,7 @@ The client group repositories (§5.3) and the master key aren't enough to rebuil
 * **Restore:** `pressfleet init --force` on the new host, with the saved master key file and the same answers, installs an empty platform; `pressfleet recover` then stops the control plane and runs `pressfleet state recover` in a one-off control plane container (the host CLI never touches the state database, §4.7), and starts the control plane again. Before committing, the restore checks that the backup's master key check value matches and that the login key decrypts (an unusable one is discarded), fails the jobs the old host hadn't finished, and queues a `site.recover` job for every site that was running, stopped, or being updated. A site comes back stopped if it was stopped, including before the update in progress (the store records the status a site had when it went to `updating`), or if an unfinished stop job asked for it. It refuses to replace a state database that already has client groups or sites unless forced.
 * **Site recovery:** `site.recover` recreates a site's database and object cache user with the restored credentials, renders and starts its containers with the current configuration, restores the newest snapshot in the site's client group repository (which may be newer than the state backup), and runs `wp core update-db`. The login key reaches the site through that render: a restored key keeps every site's public key, and a key generated because the backup had none (or an unusable one) is pushed to every site as it is recreated, so one-click login recovers on its own. Sites that were being provisioned or deleted are marked failed for the operator.
 * Whatever the platform recorded after the last state backup is lost; metrics, uploads, and pending exports aren't backed up. An end-to-end test runs the whole drill: install, back up, delete everything but the backup location and the master key, reinstall, recover.
+* **On Kubernetes** (§4.8), `helm install` with the saved values and master key installs the empty platform, and `pressfleet state recover` runs as a one-off Job with the control plane scaled to zero. `site.recover` then rebuilds the sites as above.
 * **Staging sites** (§5.11) have no scheduled backups by default. A staging site without a snapshot of its own is recovered from its production site's newest snapshot, with its URLs rewritten to its preview domain, and the job carries a warning. If neither site has one, the staging site is marked failed.
 
 ### 5.11. Staging Sites
@@ -643,6 +671,7 @@ A staging site is a copy of a production site on its own preview domain, linked 
   * Redis runs with a `maxmemory` limit and an LRU eviction policy. One busy site can evict others' cache entries; this is an accepted trade-off for lower resource usage, and eviction rates are monitored (§7).
 * **Backups:** Each client group's Restic repository has its own encryption key.
 * **Secrets:** Database passwords, Redis ACL passwords, preview basic auth passwords, Restic repository keys, S3 credentials, and users' TOTP secrets (§6.2) are stored encrypted at rest in the control plane database using the platform master key, supplied via environment variable or file. Install-time secrets that `pressfleet init` collects before the state database exists (DNS provider credentials, the SMTP relay password) are encrypted with the same key and stored sealed in the configuration file; the control plane decrypts them at startup. Plaintext secrets are never logged. Losing the master key makes all backups unrecoverable; see the warning in §4.1.
+* **Kubernetes:** a namespace per site with default-deny NetworkPolicies, Pod Security `restricted`, no service account tokens, and a control plane whose RBAC reaches only PressFleet's namespaces (§4.8).
 * **Docker socket:** Access to the Docker socket is equivalent to root on the host. Traefik uses a read-only socket proxy, and only the control plane has write access. The proxy still lets Traefik inspect containers, which returns their environment, so no container the control plane creates gets a secret as an environment variable: backup tasks read theirs from files (§4.2).
 * **Developer access:** SFTP and database tunnels authenticate with SSH keys tied to platform users, not shared passwords. SFTP runs as the site's UID with only its `wp-content` mounted, and database sessions use temporary MariaDB users that are dropped at expiry, so the site's own database password is never revealed (§5.8).
 * **Dashboard login to WordPress:** platform users log in to wp-admin with signed tokens that expire after 60 seconds and work once, sent in a POST body rather than a URL. Sites hold only the platform's public key, and every login is audited (§5.9).
@@ -726,7 +755,7 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
 | **Updates** | Pending plugin and theme updates | Control plane update checks (WP-CLI) |
 
 ### 7.2. Platform Metrics
-* Host CPU, memory, disk usage, and disk I/O.
+* Host CPU, memory, disk usage, and disk I/O. On Kubernetes, per-node CPU and memory from `metrics.k8s.io`; disk metrics aren't available, so the built-in disk usage rule has nothing to evaluate, and the cluster's own monitoring covers them (§4.8).
 * MariaDB connections, slow queries, and buffer pool usage.
 * Redis memory usage, hit ratio, and evictions.
 * Job queue depth and failure rate.
@@ -795,8 +824,9 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
 * **Post-MVP (High Priority): Staging Clones**
   * Clone a production site to a linked staging site on a preview domain, refresh it from production, and push its code, files, or database back to production with a pre-push backup and automatic rollback (§5.11).
 * **Post-MVP: Kubernetes Driver**
-  * Implement `KubernetesProvisioner` using `client-go`, with templates in `/templates/k8s`.
-  * Test against kind or k3d.
+  * A Kubernetes driver using `client-go`, with templates in `/templates/k8s`, that passes the same conformance suite as the Compose driver (§4.8).
+  * A Helm chart for the platform; install, upgrade, and recovery on a cluster; doctor's cluster checks; and metrics on Kubernetes.
+  * **Done when:** on a kind cluster installed from the chart, a site can be provisioned, reached over HTTPS on its preview domain, taken live on a custom domain, backed up and restored (with automatic rollback on failure), reached over SFTP, and deleted with nothing left behind; two sites can't reach each other or the cluster's API; and an upgrade between two releases and a disaster recovery drill succeed.
 * **Post-MVP: Upgrade Rollback**
   * Automatic rollback of a failed `pressfleet upgrade`, and `pressfleet upgrade --rollback`, automating the manual recovery procedure (§4.7).
 * **Post-MVP: MCP Server**
@@ -826,4 +856,4 @@ Monitoring is a core feature, surfaced natively in the dashboard rather than req
 1. **Repository Setup:** Initialize a monorepo following the conventions in §3.1, containing `/api` (OpenAPI spec), `/control-plane` (Go backend), `/ui` (Nuxt frontend), `/images` (`site-nginx` and `site-php` images), and `/templates/compose` (site Compose templates). Reserve `/templates/k8s` for the future Kubernetes driver.
 2. **Interface Implementation:** Write the OpenAPI spec for Phase 1 endpoints (§4.5), the core Go interfaces from §4.4 (`Provisioner`, `DatabaseManager`, `BackupEngine`), the domain model from §4.3, and the job queue.
 3. **Integration Test Suite:** Build an integration test framework using Docker-in-Docker (dind) to validate site creation, WP-CLI execution, and teardown against the Compose driver.
-4. **Scope Discipline:** Build what the current milestone's issues and accepted plan describe (§8). Features listed under Non-Goals (§1.1) stay out until a milestone takes them on, as staging clones now have (§5.11). Raise open questions, and resolve the milestone's decision issues, before building features that depend on them.
+4. **Scope Discipline:** Build what the current milestone's issues and accepted plan describe (§8). Features listed under Non-Goals (§1.1) stay out until a milestone takes them on, as staging clones (§5.11) and Kubernetes (§4.8) now have. Raise open questions, and resolve the milestone's decision issues, before building features that depend on them.

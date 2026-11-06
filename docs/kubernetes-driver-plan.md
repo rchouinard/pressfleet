@@ -1,6 +1,6 @@
 # Kubernetes Driver: Implementation Plan
 
-**Status:** Proposed, 2026-10-28. The decisions below wait on [#212](https://github.com/rchouinard/pressfleet/issues/212). Milestone: [Post-MVP: Kubernetes Driver](https://github.com/rchouinard/pressfleet/milestone/8); tracking issue: [#102](https://github.com/rchouinard/pressfleet/issues/102).
+**Status:** Accepted, 2026-11-04. Every decision in [#212](https://github.com/rchouinard/pressfleet/issues/212) was confirmed as proposed; see the decision log. The design doc describes the result in §4.8. Milestone: [Post-MVP: Kubernetes Driver](https://github.com/rchouinard/pressfleet/milestone/8); tracking issue: [#102](https://github.com/rchouinard/pressfleet/issues/102).
 
 This plan adds Kubernetes as a second deployment target, next to Docker Compose. A Kubernetes install runs the same control plane and site images. A Helm chart installs it, and a Kubernetes driver manages sites in place of the Compose driver. The design doc has planned this since the start (§1.1, §3, §4.2, §8). Compose stays the default for single-host installs.
 
@@ -23,7 +23,7 @@ These pieces are missing:
 
 ## Decisions
 
-Proposed. Each one is confirmed or changed in [#212](https://github.com/rchouinard/pressfleet/issues/212), which lists the alternatives.
+Accepted in [#212](https://github.com/rchouinard/pressfleet/issues/212), which lists the alternatives.
 
 | Topic | Proposal |
 | --- | --- |
@@ -212,7 +212,8 @@ Host-only checks are skipped.
 - **Binary.** One binary serves both targets. #215 records the cost of client-go.
 - **Configuration.** `driver: kubernetes` requires `database.driver: postgres`. The new settings follow the `config.Config` convention and get rows in `docs/configuration.md`.
 - **Release.** Shipping it is a minor release with a new artifact, the chart. The host CLI's admin interface doesn't change, and the version skew rules (§4.7) don't apply to Kubernetes installs, whose chart and control plane always come from the same release.
-- **Staging clones.** The staging clones milestone adds `SiteConfig.Environment` and `DisableMail` (#198). Whichever milestone lands second renders them in both drivers, and the conformance suite covers them.
+- **Staging clones** landed first (v1.1.0), so this milestone covers them: the Kubernetes driver renders `SiteConfig.Environment` and `DisableMail` through the shared `wpconfig.Params` (#216), the conformance suite checks them and the mail switch (#214), and the kind tests clone, refresh, and push a staging site (#228). The mail switch check goes through `ExecWPCLI`, so it needs nothing driver-specific.
+- **Restic memory.** `GOMEMLIMIT` for restic tasks (#281) is set in the backup engine's task environment, not in a driver, so Kubernetes tasks get it unchanged; #219 checks that it reaches the pod.
 
 ## Issues
 
@@ -250,9 +251,25 @@ Sizes and priorities follow the [roadmap](roadmap.md#conventions). All are in th
 
 The critical path is #212 → #215 → #216 → #219 → #220 → #228 → #229, with the chart branch (#223 → #224) running alongside it.
 
+### Execution
+
+The issues land in waves; each wave starts once the previous one is merged.
+
+| Wave | Issues | Why together |
+| --- | --- | --- |
+| 0 | #212, #213, #214 | The decisions, and the groundwork that doesn't need them |
+| 1 | #215, #222 | The driver base, and the images, which need only the decisions |
+| 2 | #216, #223, #225 | Sites; the chart and doctor need only the driver base. The chart's RBAC covers everything the driver will need, so later PRs don't conflict over it |
+| 3 | #217, #218, #219, #221, #224, #227 | The rest of the driver, in separate files, and the lifecycle on top of the chart |
+| 4 | #220, #226 | Sessions follow tasks; metrics follow exec, tasks, and stats |
+| 5 | #228 | |
+| 6 | #229, #230 | |
+
+The MCP server milestone follows this one.
+
 ### Working
 
-Each issue is worked on its own branch and merged through a pull request. PRs that touch the Compose driver add the `e2e` label; PRs that touch the Kubernetes driver or the chart add `e2e-k8s` once #228 adds that job.
+Each issue is worked on its own branch and merged through a pull request. PRs that touch the Compose driver add the `e2e` label, or `e2e:full` when they reach across workflows (docs/testing.md). PRs that touch the Kubernetes driver or the chart add `e2e:k8s` once #228 adds that job, which also runs nightly.
 
 ### Testing
 
@@ -263,4 +280,17 @@ Each issue is worked on its own branch and merged through a pull request. PRs th
 
 ## Decision log
 
-Recorded here once [#212](https://github.com/rchouinard/pressfleet/issues/212) is resolved.
+**2026-11-04 ([#212](https://github.com/rchouinard/pressfleet/issues/212)):** all ten decisions were accepted as recommended, with no changes:
+
+1. **Scope:** one cluster per install, the orchestrator fixed at install time, one control plane replica, one replica per site, amd64 nodes.
+2. **Client:** `k8s.io/client-go`, only in `provisioner/kubernetes`: the typed clientset, plus the dynamic client and server-side apply for Traefik's CRDs. No informer caches.
+3. **Packaging and lifecycle:** a Helm chart published on GHCR; `pressfleet init --target kubernetes` writes the values and Secrets offline; `helm upgrade` with a preflight hook; state commands through `kubectl exec`.
+4. **Platform services:** the chart runs Traefik, MariaDB, Valkey, VictoriaMetrics, and the maintenance page. The operator provides PostgreSQL. MariaDB can be external; Valkey can't.
+5. **Storage:** ReadWriteOnce site PVCs, with tasks and SFTP workers on the site's node, and a ReadWriteMany data volume. Streaming transfers come later.
+6. **Isolation:** a namespace per site, default-deny NetworkPolicies, Pod Security `restricted`, no service account tokens, and RBAC with no rights outside PressFleet's namespaces.
+7. **Ingress and TLS:** Traefik's Kubernetes CRDs, named as on Compose; Traefik's ACME; maintenance as a higher-priority route; a LoadBalancer Service.
+8. **Metrics:** `metrics.k8s.io`, with no `nodes/proxy` access. Per-node host metrics, no disk metrics.
+9. **Supported clusters:** the three newest minor releases, with a NetworkPolicy-enforcing CNI, metrics-server, and ReadWriteOnce and ReadWriteMany storage classes. CI on kind; k3s in the docs.
+10. **Capacity:** reservations and limits become requests and limits; doctor and the dashboard warn when requests exceed allocatable memory.
+
+The design doc records them in §1, §1.1, §3, §3.1, §4.4, §4.7, the new §4.8, §5.10, §6, §7.2, §8, and §10.
