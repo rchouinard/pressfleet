@@ -36,12 +36,24 @@ type fakeUpgradePlatform struct {
 	ready   bool
 	// mariaDBImage is the image the MariaDB container runs.
 	mariaDBImage string
-	// upVersion is the version the control plane reports after an Up, and
-	// upErr fails Up instead.
+	// upVersion is the version the control plane reports after an Up of
+	// the upgraded project (one whose compose.yaml runs the control plane
+	// image of v1.2.3-test, the CLI's version), and upErr
+	// fails that Up instead.
 	upVersion string
 	upErr     error
+	// initial is the version the control plane reports after an Up of
+	// any other project, such as the previous one a rollback starts,
+	// unless rollbackVersion is set; rollbackUpErr fails that Up instead.
+	initial         string
+	rollbackVersion string
+	rollbackUpErr   error
 	// onUp runs on every Up, e.g. to write a migration backup.
 	onUp func()
+	// stopErr and runErr fail StopServices and RunService, after onStop
+	// and onRun run.
+	stopErr, runErr error
+	onStop, onRun   func()
 
 	// listDir answers a listing through a project's control plane
 	// container; nil lists the directory on the host.
@@ -52,6 +64,10 @@ type fakeUpgradePlatform struct {
 
 	ups   []compose.UpOptions
 	pulls int
+	// stops are the services stopped, and runs the commands run in
+	// one-off containers.
+	stops [][]string
+	runs  []fakeRun
 	// listed and read are the project directories listings and reads ran
 	// in.
 	listed []string
@@ -150,19 +166,77 @@ func (p fakeUpgradeProject) Pull(context.Context, compose.PullOptions) error {
 	return nil
 }
 
-func (p fakeUpgradeProject) Up(_ context.Context, opts compose.UpOptions) error {
+// fakeRun is a command run in a one-off container of a project.
+type fakeRun struct {
+	dir     string
+	command []string
+}
+
+func (p fakeUpgradeProject) Up(ctx context.Context, opts compose.UpOptions) error {
 	p.f.mu.Lock()
 	defer p.f.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	p.f.ups = append(p.f.ups, opts)
 	if p.f.onUp != nil {
 		p.f.onUp()
 	}
-	if p.f.upErr != nil {
+	if err := ctx.Err(); err != nil {
+		// Interrupted: Compose is killed.
 		p.f.ready = false
-		return p.f.upErr
+		return err
 	}
-	p.f.version, p.f.ready = p.f.upVersion, true
+	upgraded := strings.Contains(readFile(p.f.t, p.file), "control-plane:v1.2.3-test")
+	err, version := p.f.upErr, p.f.upVersion
+	if !upgraded {
+		err, version = p.f.rollbackUpErr, p.f.initial
+		if p.f.rollbackVersion != "" {
+			version = p.f.rollbackVersion
+		}
+	}
+	if err != nil {
+		p.f.ready = false
+		return err
+	}
+	p.f.version, p.f.ready = version, true
 	return nil
+}
+
+func (p fakeUpgradeProject) StopServices(ctx context.Context, services ...string) error {
+	p.f.mu.Lock()
+	defer p.f.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	p.f.stops = append(p.f.stops, services)
+	if p.f.onStop != nil {
+		p.f.onStop()
+	}
+	if p.f.stopErr != nil {
+		return p.f.stopErr
+	}
+	p.f.ready = false
+	return nil
+}
+
+func (p fakeUpgradeProject) RunService(ctx context.Context, service string, command ...string) ([]byte, error) {
+	p.f.mu.Lock()
+	defer p.f.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if service != "control-plane" {
+		p.f.t.Errorf("running a command in service %q", service)
+	}
+	p.f.runs = append(p.f.runs, fakeRun{dir: p.dir, command: command})
+	if p.f.onRun != nil {
+		p.f.onRun()
+	}
+	if p.f.runErr != nil {
+		return nil, p.f.runErr
+	}
+	return []byte("Restored\n"), nil
 }
 
 func (p fakeUpgradeProject) ImageDigests(_ context.Context, image string) ([]string, error) {
@@ -205,15 +279,22 @@ func newUpgradeEnv(t *testing.T, version string) *upgradeEnv {
 		t.Fatal(err)
 	}
 	return &upgradeEnv{initEnv: e, platform: &fakeUpgradePlatform{
-		t: t, version: version, ready: true, mariaDBImage: images.MariaDB, upVersion: "v1.2.3-test",
+		t: t, version: version, initial: version, ready: true, mariaDBImage: images.MariaDB, upVersion: "v1.2.3-test",
 	}}
 }
 
 func (e *upgradeEnv) upgrade(stdin string, args ...string) result {
 	e.t.Helper()
+	return e.upgradeCtx(context.Background(), "v1.2.3-test", stdin, args...)
+}
+
+// upgradeCtx runs upgrade on ctx, which an interrupt would cancel, with a
+// CLI of version.
+func (e *upgradeEnv) upgradeCtx(ctx context.Context, version, stdin string, args ...string) result {
+	e.t.Helper()
 	var stdout, stderr syncBuffer
-	code := cli.Run(context.Background(), append([]string{"upgrade", "--config", e.configPath}, args...), cli.Options{
-		Version: "v1.2.3-test",
+	code := cli.Run(ctx, append([]string{"upgrade", "--config", e.configPath}, args...), cli.Options{
+		Version: version,
 		Stdin:   strings.NewReader(stdin),
 		Stdout:  &stdout,
 		Stderr:  &stderr,
@@ -485,7 +566,7 @@ func TestUpgradeFailurePrintsRecoverySteps(t *testing.T) {
 	}
 	e.platform.upErr = errors.New("container pressfleet-control-plane-1 is unhealthy")
 
-	r := e.upgrade("")
+	r := e.upgrade("", "--no-rollback")
 	if r.code != 1 {
 		t.Fatalf("exit %d, want 1\n%s\n%s", r.code, r.stdout, r.stderr)
 	}
@@ -531,7 +612,7 @@ func TestUpgradeFailurePrintsRecoverySteps(t *testing.T) {
 func TestUpgradeFailureWithoutMigration(t *testing.T) {
 	e := newUpgradeEnv(t, "v1.2.2")
 	e.platform.upErr = errors.New("unhealthy")
-	r := e.upgrade("")
+	r := e.upgrade("", "--no-rollback")
 	if r.code != 1 || !strings.Contains(r.stderr, "The state database needs no restore") || strings.Contains(r.stderr, "state restore") {
 		t.Fatalf("exit %d\n%s", r.code, r.stderr)
 	}
@@ -541,7 +622,7 @@ func TestUpgradeWrongVersionFails(t *testing.T) {
 	e := newUpgradeEnv(t, "v1.2.2")
 	e.platform.upVersion = "v1.2.2" // the control plane kept its image
 	r := e.upgrade("")
-	if r.code != 1 || !strings.Contains(r.stderr, "the control plane runs v1.2.2, not v1.2.3-test") {
+	if r.code != 2 || !strings.Contains(r.stderr, "the control plane runs v1.2.2, not v1.2.3-test") {
 		t.Fatalf("exit %d\n%s", r.code, r.stderr)
 	}
 }
@@ -620,7 +701,7 @@ func (e *upgradeEnv) failedUpgrade() (backup string, r result) {
 		}
 	}
 	e.platform.upErr = errors.New("container pressfleet-control-plane-1 is unhealthy")
-	return backup, e.upgrade("")
+	return backup, e.upgrade("", "--no-rollback")
 }
 
 // failedUpgradeWithMarker is failedUpgrade with a control plane that records
@@ -653,7 +734,7 @@ func (e *upgradeEnv) failedUpgradeWithMarker() (backup string, r result) {
 		}
 	}
 	e.platform.upErr = errors.New("container pressfleet-control-plane-1 is unhealthy")
-	return backup, e.upgrade("")
+	return backup, e.upgrade("", "--no-rollback")
 }
 
 // The recovery steps restore the backup the migration marker names, read

@@ -27,13 +27,13 @@ func TestCheckStatuses(t *testing.T) {
 		{"in progress", upgradestate.InProgress, true},
 		{"failed", upgradestate.Failed, true},
 		{"rolling back", upgradestate.RollingBack, true},
-		{"rolling back with an underscore", "rolling_back", true},
+		{"rolling back with an underscore (unknown)", "rolling_back", true},
 		{"rollback failed", upgradestate.RollbackFailed, true},
 		{"empty", "", true},
 		{"unknown", "something-new", true},
 		{"succeeded", upgradestate.Succeeded, false},
 		{"rolled back", upgradestate.RolledBack, false},
-		{"rolled back with an underscore", "rolled_back", false},
+		{"rolled back with an underscore (unknown)", "rolled_back", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

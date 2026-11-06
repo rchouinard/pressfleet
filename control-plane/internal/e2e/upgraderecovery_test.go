@@ -43,11 +43,12 @@ RUN mv /usr/local/bin/pressfleet /usr/local/bin/pressfleet-real \
 
 // TestUpgradeRecovery installs the minimum upgradable-from release with its
 // own CLI, upgrades it with this tree's CLI to a control plane that never
-// becomes healthy, and recovers by running the commands the failed upgrade
-// prints, verbatim (#142). The platform must come back at the previous
-// release with its data, sites must serve throughout, and a later upgrade
-// to a working control plane must succeed, which also tests upgrading from
-// the previous release (#95).
+// becomes healthy, with --no-rollback, and recovers by running the commands
+// the failed upgrade prints, verbatim (#142). The platform must come back at
+// the previous release with its data, sites must serve throughout, and a
+// later upgrade to a working control plane must succeed, which also tests
+// upgrading from the previous release (#95). The automatic rollback has its
+// own tests (#251).
 func TestUpgradeRecovery(t *testing.T) {
 	image := e2e.Image(t)
 	releaseCLI := e2e.ReleaseCLI(t, skew.MinUpgradeFrom)
@@ -223,7 +224,7 @@ func TestUpgradeRecovery(t *testing.T) {
 	t.Cleanup(func() { _ = compose.RemoveImage(context.Background(), nil, broken) })
 	shared := sharedContainers(ctx, t, project)
 	traffic := e2e.ProbeTraffic(t, hc, siteURL)
-	code, stderr := upgrade("--control-plane-image", broken)
+	code, stderr := upgrade("--control-plane-image", broken, "--no-rollback")
 
 	// 4. The upgrade fails with the recovery steps, and the site served
 	// throughout.
