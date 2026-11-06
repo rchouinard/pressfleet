@@ -11,10 +11,12 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/changes"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/releasecheck"
 	"github.com/rchouinard/pressfleet/control-plane/internal/skew"
+	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 )
 
 // The admin interface is how the host CLI talks to the control plane
@@ -85,7 +87,7 @@ func (a *app) adminCommand() *cobra.Command {
 		Short:  "Admin interface for the host CLI (runs inside the control plane container)",
 		Hidden: true,
 	}
-	cmd.AddCommand(a.adminInfoCommand())
+	cmd.AddCommand(a.adminInfoCommand(), a.adminChangesCommand())
 	return cmd
 }
 
@@ -108,6 +110,44 @@ func (a *app) adminInfoCommand() *cobra.Command {
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(info)
 		},
 	}
+}
+
+func (a *app) adminChangesCommand() *cobra.Command {
+	var since string
+	cmd := &cobra.Command{
+		Use:   "changes --since <time>",
+		Short: "Print what the control plane changed since a time as JSON",
+		Long: `Print what the control plane changed since a time, from its jobs and its
+audit log, as one JSON object. The changes are grouped by what restoring
+the state database would do about them: blocking, converged, and lost
+(package changes). ` + "`pressfleet upgrade --rollback`" + ` asks this before it
+restores the state database (design doc §4.7).
+
+--since is an RFC 3339 time, such as 2026-11-05T12:00:00Z. The command
+only reads the state database: it doesn't migrate it.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			t, err := time.Parse(time.RFC3339Nano, since)
+			if err != nil {
+				return fmt.Errorf("--since must be an RFC 3339 time, such as 2026-11-05T12:00:00Z: %w", err)
+			}
+			// Opened without migrating: a report changes nothing, and
+			// the control plane it runs beside has migrated the database.
+			db, err := store.Open(cmd.Context(), a.storeConfig(), a.log)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = db.Close() }()
+			r, err := changes.Since(cmd.Context(), db, t)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(r)
+		},
+	}
+	cmd.Flags().StringVar(&since, "since", "", "list the changes at or after this RFC 3339 time (required)")
+	_ = cmd.MarkFlagRequired("since")
+	return cmd
 }
 
 // controlPlane is what the host CLI found out about the control plane.

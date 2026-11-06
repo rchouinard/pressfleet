@@ -286,6 +286,10 @@ func TestJobsList(t *testing.T) {
 		}{
 			{"target", store.JobFilter{TargetType: store.JobTargetSite, TargetID: site}, 3},
 			{"type", store.JobFilter{Types: []string{"test.b"}}, 2},
+			{"excluded type", store.JobFilter{ExcludeTypes: []string{"test.b", "test.c"}}, 3},
+			// Jobs 2, 3, and 4: the bound is inclusive.
+			{"created since", store.JobFilter{CreatedSince: all[2].CreatedAt}, 3},
+			{"created since, excluded type", store.JobFilter{CreatedSince: all[2].CreatedAt, ExcludeTypes: []string{"test.a"}}, 1},
 			{"state", store.JobFilter{States: []store.JobState{store.JobQueued}}, 5},
 			{"no match", store.JobFilter{States: []store.JobState{store.JobFailed}}, 0},
 		} {

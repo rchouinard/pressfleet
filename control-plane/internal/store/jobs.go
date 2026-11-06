@@ -366,11 +366,15 @@ func (r Jobs) Get(ctx context.Context, jobID string) (Job, error) {
 
 // JobFilter selects jobs for List. Zero fields don't filter.
 type JobFilter struct {
-	States     []JobState
-	Types      []string
-	TargetType string
-	TargetID   string
-	ScheduleID string
+	States []JobState
+	Types  []string
+	// ExcludeTypes leaves out jobs of these types.
+	ExcludeTypes []string
+	TargetType   string
+	TargetID     string
+	ScheduleID   string
+	// CreatedSince keeps the jobs created at or after it.
+	CreatedSince time.Time
 	// Before is a cursor: only jobs with a smaller ID (older ones) are
 	// returned. Pass the previous page's NextCursor.
 	Before string
@@ -410,6 +414,16 @@ func (r Jobs) List(ctx context.Context, f JobFilter) (JobPage, error) {
 		for _, t := range f.Types {
 			args = append(args, t)
 		}
+	}
+	if len(f.ExcludeTypes) > 0 {
+		where = append(where, "type NOT IN ("+placeholders(len(f.ExcludeTypes))+")")
+		for _, t := range f.ExcludeTypes {
+			args = append(args, t)
+		}
+	}
+	if !f.CreatedSince.IsZero() {
+		where = append(where, "created_at >= ?")
+		args = append(args, utc(f.CreatedSince))
 	}
 	for _, c := range []struct{ col, val string }{
 		{"target_type", f.TargetType}, {"target_id", f.TargetID}, {"schedule_id", f.ScheduleID},

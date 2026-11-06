@@ -397,6 +397,14 @@ func TestCreateStagingAndDeleteParent(t *testing.T) {
 		if got := e.site(t, out.Site.ID); got.Status != store.SiteRunning {
 			t.Fatalf("staging site = %s %q", got.Status, got.StatusMessage)
 		}
+		// Deleting the staging site records it as a staging site.
+		del, err := e.svc.Delete(ctx, out.Site.ID, "", sites.DeleteOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := sites.DeletedSite(del); !ok || got.Slug != out.Site.Slug || got.ParentSiteID != prod.ID {
+			t.Errorf("DeletedSite of the staging site = %+v, %t; want slug %s, parent %s", got, ok, out.Site.Slug, prod.ID)
+		}
 
 		other := e.productionSite(t, "Other")
 		if _, err := e.svc.Delete(ctx, other.ID, "", sites.DeleteOptions{}); err != nil {
