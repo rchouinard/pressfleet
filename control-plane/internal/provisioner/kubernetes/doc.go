@@ -6,13 +6,18 @@
 // with its dynamic client for server-side apply, which also covers Traefik's
 // CRDs. It keeps no informer caches.
 //
-// [Provisioner.RenderSite] renders a site's manifests from templates/k8s
-// into the site's directory under the data directory, where operators can
-// inspect them, and [Client.ApplyDir] applies them with server-side apply
-// under the field manager "pressfleet". [Client.WaitForRollout] and
-// [Client.WaitForNamespaceDeleted] wait for the cluster to converge.
+// Each site is the namespace pf-<site-id>, holding what the site's Compose
+// project holds: a single-replica Deployment whose pod runs nginx and php,
+// the wp-content PersistentVolumeClaim, wp-config.php in a Secret, a Service
+// for nginx, NetworkPolicies, and the RoleBinding that gives the control
+// plane its rights there. [Provisioner.RenderSite] renders them from
+// templates/k8s into the site's directory under the data directory, where
+// operators can inspect them; the site operations apply them with
+// server-side apply under the field manager "pressfleet", delete the
+// objects that the manifests no longer have ([Client.Prune]), and wait for
+// the cluster to converge. Starting and stopping a site scale its
+// Deployment between 1 and 0, and deleting it deletes its namespace.
 //
-// [Provisioner] implements provisioner.Driver. The site lifecycle, routing,
-// exec, tasks, sessions, logs, and stats come in later changes (#216 to
-// #221); until then those methods return [ErrNotImplemented].
+// Routing, exec, tasks, sessions, logs, and stats come in later changes
+// (#217 to #221); until then those methods return [ErrNotImplemented].
 package kubernetes

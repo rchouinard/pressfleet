@@ -1,0 +1,21 @@
+{{- /*
+  The control plane's rights in the site's namespace (§4.8, §6): the Helm
+  chart's site ClusterRole, bound in this namespace only. The driver
+  applies it right after the namespace, before anything else in it.
+*/ -}}
+{{ template "header" . }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pressfleet-control-plane
+  namespace: {{ q .Namespace }}
+  labels:
+{{- template "labels" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ q .SiteClusterRole }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ q .ControlPlaneServiceAccount }}
+    namespace: {{ q .PlatformNamespace }}

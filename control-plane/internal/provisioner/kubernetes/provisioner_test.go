@@ -14,12 +14,6 @@ func TestNotImplemented(t *testing.T) {
 	ctx := t.Context()
 	cfg := testSite()
 	ops := map[string]func() error{
-		"CreateSite": func() error { _, err := p.CreateSite(ctx, cfg); return err },
-		"UpdateSite": func() error { _, err := p.UpdateSite(ctx, cfg); return err },
-		"GetSite":    func() error { _, err := p.GetSite(ctx, cfg.ID); return err },
-		"DeleteSite": func() error { return p.DeleteSite(ctx, cfg.ID) },
-		"StartSite":  func() error { return p.StartSite(ctx, cfg.ID) },
-		"StopSite":   func() error { return p.StopSite(ctx, cfg.ID) },
 		"SetMaintenance": func() error {
 			return p.SetMaintenance(ctx, cfg.ID, true)
 		},
@@ -43,8 +37,6 @@ func TestNotImplemented(t *testing.T) {
 			_, err := p.ProbeHTTP(ctx, cfg.ID, provisioner.ProbeRequest{Host: cfg.PreviewDomain, Path: "/"})
 			return err
 		},
-		"PinImage":  func() error { _, err := p.PinImage(ctx, "ghcr.io/rchouinard/pressfleet/site-php:8.4"); return err },
-		"PullImage": func() error { return p.PullImage(ctx, "ghcr.io/rchouinard/pressfleet/site-php:8.4") },
 	}
 	for name, op := range ops {
 		if err := op(); !errors.Is(err, ErrNotImplemented) {

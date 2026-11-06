@@ -38,6 +38,9 @@ type Client struct {
 
 // newClient wraps clientsets, real or fake.
 func newClient(typed kubernetes.Interface, dyn dynamic.Interface, log *slog.Logger) *Client {
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
 	return &Client{typed: typed, dynamic: dyn, poll: defaultPollInterval, log: log}
 }
 

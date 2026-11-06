@@ -1,10 +1,8 @@
-package compose
+package provisioner
 
 import (
 	"strings"
 	"testing"
-
-	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 )
 
 func TestSplitResources(t *testing.T) {
@@ -12,48 +10,48 @@ func TestSplitResources(t *testing.T) {
 		name                 string
 		cpu                  string
 		reservation, limit   int
-		nginx, php           containerResources
+		nginx, php           ContainerResources
 		phpMemoryMB, workers int
 	}{
 		{
 			name: "platform default", cpu: "1.0", reservation: 128, limit: 512,
-			nginx: containerResources{"0.25", 64, 16}, php: containerResources{"0.75", 448, 112},
+			nginx: ContainerResources{"0.25", 64, 16}, php: ContainerResources{"0.75", 448, 112},
 			phpMemoryMB: 256, workers: 6,
 		},
 		{
 			name: "smallest site", cpu: "0.25", reservation: 32, limit: 256,
-			nginx: containerResources{"0.1", 32, 8}, php: containerResources{"0.15", 224, 24},
+			nginx: ContainerResources{"0.1", 32, 8}, php: ContainerResources{"0.15", 224, 24},
 			phpMemoryMB: 160, workers: 4,
 		},
 		{
 			name: "reservation equals limit", cpu: "2", reservation: 512, limit: 512,
-			nginx: containerResources{"0.5", 64, 64}, php: containerResources{"1.5", 448, 448},
+			nginx: ContainerResources{"0.5", 64, 64}, php: ContainerResources{"1.5", 448, 448},
 			phpMemoryMB: 256, workers: 6,
 		},
 		{
 			name: "1 GiB", cpu: "1.5", reservation: 256, limit: 1024,
-			nginx: containerResources{"0.37", 128, 32}, php: containerResources{"1.13", 896, 224},
+			nginx: ContainerResources{"0.37", 128, 32}, php: ContainerResources{"1.13", 896, 224},
 			phpMemoryMB: 256, workers: 13,
 		},
 		{
 			name: "large site hits the caps", cpu: "4", reservation: 1024, limit: 4096,
-			nginx: containerResources{"0.5", 128, 32}, php: containerResources{"3.5", 3968, 992},
+			nginx: ContainerResources{"0.5", 128, 32}, php: ContainerResources{"3.5", 3968, 992},
 			phpMemoryMB: 256, workers: 32,
 		},
 		{
 			name: "0.75 CPUs", cpu: "0.75", reservation: 192, limit: 640,
-			nginx: containerResources{"0.18", 80, 24}, php: containerResources{"0.57", 560, 168},
+			nginx: ContainerResources{"0.18", 80, 24}, php: ContainerResources{"0.57", 560, 168},
 			phpMemoryMB: 256, workers: 7,
 		},
 		{
 			name: "odd sizes", cpu: "0.333", reservation: 100, limit: 300,
-			nginx: containerResources{"0.1", 37, 12}, php: containerResources{"0.233", 263, 88},
+			nginx: ContainerResources{"0.1", 37, 12}, php: ContainerResources{"0.233", 263, 88},
 			phpMemoryMB: 192, workers: 4,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s, err := splitResources(provisioner.ResourceLimits{CPU: tt.cpu, MemoryReservationMB: tt.reservation, MemoryLimitMB: tt.limit})
+			s, err := SplitResources(ResourceLimits{CPU: tt.cpu, MemoryReservationMB: tt.reservation, MemoryLimitMB: tt.limit})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -73,22 +71,22 @@ func TestSplitResources(t *testing.T) {
 // reservation fits its limit, and one worker at the full memory_limit fits
 // next to the overhead.
 func TestSplitResourcesInvariants(t *testing.T) {
-	for limit := MinSiteMemoryLimitMB; limit <= 8192; limit += 37 {
-		for reservation := MinSiteMemoryReservationMB; reservation <= limit; reservation += 29 {
-			s, err := splitResources(provisioner.ResourceLimits{CPU: "1", MemoryReservationMB: reservation, MemoryLimitMB: limit})
+	for limit := MinMemoryLimitMB; limit <= 8192; limit += 37 {
+		for reservation := MinMemoryReservationMB; reservation <= limit; reservation += 29 {
+			s, err := SplitResources(ResourceLimits{CPU: "1", MemoryReservationMB: reservation, MemoryLimitMB: limit})
 			if err != nil {
 				t.Fatalf("%d/%d: %v", reservation, limit, err)
 			}
 			checkSplitInvariants(t, s, reservation, limit)
 		}
 	}
-	for cpu := MinSiteCPUMillis; cpu <= 16000; cpu += 13 {
-		s, err := splitResources(provisioner.ResourceLimits{CPU: formatCPUMillis(cpu), MemoryReservationMB: 128, MemoryLimitMB: 512})
+	for cpu := MinCPUMillis; cpu <= 16000; cpu += 13 {
+		s, err := SplitResources(ResourceLimits{CPU: FormatCPUMillis(cpu), MemoryReservationMB: 128, MemoryLimitMB: 512})
 		if err != nil {
 			t.Fatalf("cpu %d: %v", cpu, err)
 		}
-		n, _ := parseCPUMillis(s.Nginx.CPUs)
-		p, _ := parseCPUMillis(s.PHP.CPUs)
+		n, _ := ParseCPUMillis(s.Nginx.CPUs)
+		p, _ := ParseCPUMillis(s.PHP.CPUs)
 		// Systemd rounds each container's limit up to a multiple of 10 ms:
 		// together they must not get more than the site's total rounded up.
 		if up := func(m int) int { return (m + 9) / 10 * 10 }; up(n)+up(p) != up(cpu) {
@@ -100,13 +98,13 @@ func TestSplitResourcesInvariants(t *testing.T) {
 	}
 }
 
-func checkSplitInvariants(t *testing.T, s resourceSplit, reservation, limit int) {
+func checkSplitInvariants(t *testing.T, s ResourceSplit, reservation, limit int) {
 	t.Helper()
 	if s.Nginx.MemoryLimitMB+s.PHP.MemoryLimitMB != limit ||
 		s.Nginx.MemoryReservationMB+s.PHP.MemoryReservationMB != reservation {
 		t.Errorf("%d/%d: shares don't add up: %+v", reservation, limit, s)
 	}
-	for _, c := range []containerResources{s.Nginx, s.PHP} {
+	for _, c := range []ContainerResources{s.Nginx, s.PHP} {
 		if c.MemoryReservationMB <= 0 || c.MemoryReservationMB > c.MemoryLimitMB {
 			t.Errorf("%d/%d: reservation outside limit: %+v", reservation, limit, c)
 		}
@@ -122,20 +120,20 @@ func checkSplitInvariants(t *testing.T, s resourceSplit, reservation, limit int)
 func TestSplitResourcesInvalid(t *testing.T) {
 	tests := []struct {
 		name string
-		r    provisioner.ResourceLimits
+		r    ResourceLimits
 		want string
 	}{
-		{"cpu not a number", provisioner.ResourceLimits{CPU: "one", MemoryReservationMB: 128, MemoryLimitMB: 512}, "positive decimal"},
-		{"cpu negative", provisioner.ResourceLimits{CPU: "-1", MemoryReservationMB: 128, MemoryLimitMB: 512}, "positive decimal"},
-		{"cpu NaN", provisioner.ResourceLimits{CPU: "NaN", MemoryReservationMB: 128, MemoryLimitMB: 512}, "positive decimal"},
-		{"cpu too small", provisioner.ResourceLimits{CPU: "0.2", MemoryReservationMB: 128, MemoryLimitMB: 512}, "at least 0.25"},
-		{"limit too small", provisioner.ResourceLimits{CPU: "1", MemoryReservationMB: 128, MemoryLimitMB: 192}, "at least 256 MiB"},
-		{"reservation too small", provisioner.ResourceLimits{CPU: "1", MemoryReservationMB: 16, MemoryLimitMB: 512}, "at least 32 MiB"},
-		{"reservation above limit", provisioner.ResourceLimits{CPU: "1", MemoryReservationMB: 1024, MemoryLimitMB: 512}, "must not exceed"},
+		{"cpu not a number", ResourceLimits{CPU: "one", MemoryReservationMB: 128, MemoryLimitMB: 512}, "positive decimal"},
+		{"cpu negative", ResourceLimits{CPU: "-1", MemoryReservationMB: 128, MemoryLimitMB: 512}, "positive decimal"},
+		{"cpu NaN", ResourceLimits{CPU: "NaN", MemoryReservationMB: 128, MemoryLimitMB: 512}, "positive decimal"},
+		{"cpu too small", ResourceLimits{CPU: "0.2", MemoryReservationMB: 128, MemoryLimitMB: 512}, "at least 0.25"},
+		{"limit too small", ResourceLimits{CPU: "1", MemoryReservationMB: 128, MemoryLimitMB: 192}, "at least 256 MiB"},
+		{"reservation too small", ResourceLimits{CPU: "1", MemoryReservationMB: 16, MemoryLimitMB: 512}, "at least 32 MiB"},
+		{"reservation above limit", ResourceLimits{CPU: "1", MemoryReservationMB: 1024, MemoryLimitMB: 512}, "must not exceed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := splitResources(tt.r)
+			_, err := SplitResources(tt.r)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("err = %v, want it to mention %q", err, tt.want)
 			}
@@ -145,8 +143,8 @@ func TestSplitResourcesInvalid(t *testing.T) {
 
 func TestFormatCPUMillis(t *testing.T) {
 	for m, want := range map[int]string{1000: "1", 750: "0.75", 250: "0.25", 100: "0.1", 1125: "1.125", 16000: "16", 5: "0.005"} {
-		if got := formatCPUMillis(m); got != want {
-			t.Errorf("formatCPUMillis(%d) = %q, want %q", m, got, want)
+		if got := FormatCPUMillis(m); got != want {
+			t.Errorf("FormatCPUMillis(%d) = %q, want %q", m, got, want)
 		}
 	}
 }
