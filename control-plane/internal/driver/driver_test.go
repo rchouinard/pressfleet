@@ -31,7 +31,7 @@ func (noSecrets) Get(context.Context, secrets.Ref) (redact.Secret, error) {
 func discard() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
 func TestNewCompose(t *testing.T) {
-	rt, err := driver.New(driver.Options{Config: testConfig(t), Secrets: noSecrets{}, Images: &catalog.Catalog{}, Logger: discard()})
+	rt, err := driver.New(t.Context(), driver.Options{Config: testConfig(t), Secrets: noSecrets{}, Images: &catalog.Catalog{}, Logger: discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestNewCompose(t *testing.T) {
 
 func TestStartupRemovesStaleTaskSecrets(t *testing.T) {
 	cfg := testConfig(t)
-	rt, err := driver.New(driver.Options{Config: cfg, Secrets: noSecrets{}, Images: &catalog.Catalog{}, Logger: discard()})
+	rt, err := driver.New(t.Context(), driver.Options{Config: cfg, Secrets: noSecrets{}, Images: &catalog.Catalog{}, Logger: discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestStartupRemovesStaleTaskSecrets(t *testing.T) {
 func TestUnknownDriver(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.Driver = "nomad"
-	if _, err := driver.New(driver.Options{Config: cfg, Logger: discard()}); !errors.Is(err, driver.ErrUnknownDriver) {
+	if _, err := driver.New(t.Context(), driver.Options{Config: cfg, Logger: discard()}); !errors.Is(err, driver.ErrUnknownDriver) {
 		t.Errorf("New = %v, want ErrUnknownDriver", err)
 	}
 	if _, err := driver.NewRepositoryTasks(cfg, discard()); !errors.Is(err, driver.ErrUnknownDriver) {

@@ -1,15 +1,17 @@
-package compose
+package provisioner_test
 
 import (
 	"testing"
 	"testing/fstest"
+
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 )
 
 func TestFingerprintTemplates(t *testing.T) {
 	base := fstest.MapFS{"site.yaml.tmpl": {Data: []byte("services: {}\n")}}
 	fp := func(fsys fstest.MapFS, version int) string {
 		t.Helper()
-		s, err := fingerprintTemplates(fsys, version)
+		s, err := provisioner.FingerprintTemplates(fsys, version)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -30,9 +32,5 @@ func TestFingerprintTemplates(t *testing.T) {
 		if other == want {
 			t.Errorf("%s: the fingerprint didn't change", name)
 		}
-	}
-	// The embedded templates hash without error.
-	if templateFingerprint() == "" {
-		t.Error("empty fingerprint of the embedded templates")
 	}
 }

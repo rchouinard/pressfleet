@@ -2,7 +2,11 @@ package provisioner
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
+	"io/fs"
+	"strconv"
 )
 
 // ErrNoRenderSnapshot is returned by [RenderSnapshotter.RestoreRender] when
@@ -45,4 +49,31 @@ type RenderSnapshotter interface {
 	// ErrNoRenderSnapshot if there is no copy and ErrSiteNotFound if the
 	// site has no containers.
 	RestoreRender(ctx context.Context, siteID string) (*SiteStatus, error)
+}
+
+// FingerprintTemplates is how a driver computes its TemplateFingerprint:
+// it hashes every file of fsys, the driver's embedded site templates, by
+// path and content, with version, the driver's render version, which
+// stands for the Go code that renders them. The result is
+// r<version>-<16 hex digits>.
+func FingerprintTemplates(fsys fs.FS, version int) (string, error) {
+	h := sha256.New()
+	// WalkDir visits files in lexical order, so the hash is stable.
+	err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		content, err := fs.ReadFile(fsys, path)
+		if err != nil {
+			return err
+		}
+		// Length-prefixed, so no two different trees hash the same input.
+		_, _ = fmt.Fprintf(h, "%d:%s%d:", len(path), path, len(content))
+		_, _ = h.Write(content)
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("fingerprinting site templates: %w", err)
+	}
+	return "r" + strconv.Itoa(version) + "-" + fmt.Sprintf("%x", h.Sum(nil)[:8]), nil
 }

@@ -67,6 +67,7 @@ func (a *app) doctorOptions() doctor.Options {
 		PreviewBaseDomain: strings.TrimSuffix(a.cfg.PreviewBaseDomain, "."),
 		SFTPPort:          a.cfg.SFTP.Port,
 		Installed:         platformInstalled(a.cfg.Layout()),
+		Kubernetes:        a.cfg.Driver == config.SiteDriverKubernetes,
 	}
 	if opts.Host == nil {
 		opts.Host = doctor.System{}

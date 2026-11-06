@@ -128,6 +128,11 @@ type Options struct {
 	// plane sets it: it must not shell out to docker (§4.2) and can't see the
 	// host's listeners or daemon.json from its container.
 	SkipHostOnly bool
+	// Kubernetes says the platform runs on a Kubernetes cluster (§4.8),
+	// which has no Docker host: the host-only checks don't apply and are
+	// reported as unavailable, with that reason. The cluster's own checks
+	// come with the Kubernetes doctor (#225).
+	Kubernetes bool
 	// RandomLabel returns a DNS label for probing the wildcard preview
 	// record; nil uses a random one.
 	RandomLabel func() string
@@ -215,9 +220,12 @@ func Run(ctx context.Context, opts Options, scopes ...Scope) Report {
 			continue
 		}
 		var o outcome
-		if c.HostOnly && opts.SkipHostOnly {
+		switch {
+		case c.HostOnly && opts.Kubernetes:
+			o = outcome{status: StatusUnavailable, message: "doesn't apply on Kubernetes, which has no Docker host"}
+		case c.HostOnly && opts.SkipHostOnly:
 			o = outcome{status: StatusUnavailable, message: "needs the host; run `pressfleet doctor` on the host to see this check"}
-		} else {
+		default:
 			o = c.run(ctx, e)
 		}
 		rep.Results = append(rep.Results, Result{

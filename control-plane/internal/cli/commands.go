@@ -47,7 +47,7 @@ func (a *app) siteRuntime(ctx context.Context, cat *catalog.Catalog, secretStore
 	if err != nil {
 		return nil, nil, fmt.Errorf("platform login key: %w", err)
 	}
-	rt, err := driver.New(driver.Options{
+	rt, err := driver.New(ctx, driver.Options{
 		Config:         &a.cfg,
 		Secrets:        secretStore,
 		Images:         cat,

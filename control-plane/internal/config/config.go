@@ -40,7 +40,7 @@ const EnvConfigPath = "PRESSFLEET_CONFIG"
 const SiteDriverCompose = "compose"
 
 // SiteDrivers are the values Config.Driver accepts.
-var SiteDrivers = []string{SiteDriverCompose}
+var SiteDrivers = []string{SiteDriverCompose, SiteDriverKubernetes}
 
 // Config is the control plane configuration.
 type Config struct {
@@ -83,10 +83,12 @@ type Config struct {
 	Audit AuditConfig `yaml:"audit"`
 	// Metrics configures metrics storage and collection (§7).
 	Metrics MetricsConfig `yaml:"metrics"`
-	// Driver is the orchestrator that runs sites (§4.2): "compose", the only
-	// one so far. It is chosen at install time and never changes for that
-	// install.
+	// Driver is the orchestrator that runs sites (§4.2): "compose" or
+	// "kubernetes" (§4.8). It is chosen at install time and never changes
+	// for that install.
 	Driver string `yaml:"driver"`
+	// Kubernetes configures the Kubernetes driver.
+	Kubernetes KubernetesConfig `yaml:"kubernetes"`
 	// PlatformProject is the Compose project name of the platform services,
 	// which names their containers: the provisioner connects the
 	// platform's MariaDB and object cache containers to each site network.
@@ -590,13 +592,14 @@ type DatabaseConfig struct {
 // Default returns the built-in defaults.
 func Default() Config {
 	return Config{
-		DataDir:  "/var/lib/pressfleet",
-		Listen:   ":8080",
-		Log:      LogConfig{Level: "info", Format: logging.FormatText},
-		Database: DatabaseConfig{Driver: DriverSQLite},
-		Jobs:     JobsConfig{Concurrency: 4},
-		Audit:    AuditConfig{RetentionDays: 365},
-		Driver:   SiteDriverCompose,
+		DataDir:    "/var/lib/pressfleet",
+		Listen:     ":8080",
+		Log:        LogConfig{Level: "info", Format: logging.FormatText},
+		Database:   DatabaseConfig{Driver: DriverSQLite},
+		Jobs:       JobsConfig{Concurrency: 4},
+		Audit:      AuditConfig{RetentionDays: 365},
+		Driver:     SiteDriverCompose,
+		Kubernetes: DefaultKubernetes(),
 		// platform.ProjectName; config can't import package platform.
 		PlatformProject: "pressfleet",
 		MariaDB: MariaDBConfig{ //nolint:gosec // G101: the path of the password file, not a credential
@@ -693,6 +696,8 @@ var listEnvVars = []struct {
 }{
 	{envTrustedProxies, func(c *Config) *[]string { return &c.HTTP.TrustedProxies }},
 	{"PRESSFLEET_ACME_DNS_RESOLVERS", func(c *Config) *[]string { return &c.ACME.DNSResolvers }},
+	{"PRESSFLEET_KUBERNETES_POD_CIDRS", func(c *Config) *[]string { return &c.Kubernetes.PodCIDRs }},
+	{"PRESSFLEET_KUBERNETES_IMAGE_PULL_SECRETS", func(c *Config) *[]string { return &c.Kubernetes.ImagePullSecrets }},
 }
 
 // envVars maps environment variables to the fields they set.
@@ -720,6 +725,12 @@ var envVars = []struct {
 	{"PRESSFLEET_REDIS_ADMIN_USER", func(c *Config) *string { return &c.Redis.AdminUser }},
 	{"PRESSFLEET_REDIS_ADMIN_PASSWORD_FILE", func(c *Config) *string { return &c.Redis.AdminPasswordFile }},
 	{"PRESSFLEET_DRIVER", func(c *Config) *string { return &c.Driver }},
+	{"PRESSFLEET_KUBERNETES_KUBECONFIG", func(c *Config) *string { return &c.Kubernetes.Kubeconfig }},
+	{"PRESSFLEET_KUBERNETES_PLATFORM_NAMESPACE", func(c *Config) *string { return &c.Kubernetes.PlatformNamespace }},
+	{"PRESSFLEET_KUBERNETES_SITE_NAMESPACE_PREFIX", func(c *Config) *string { return &c.Kubernetes.SiteNamespacePrefix }},
+	{"PRESSFLEET_KUBERNETES_STORAGE_CLASSES_SITES", func(c *Config) *string { return &c.Kubernetes.StorageClasses.Sites }},
+	{"PRESSFLEET_KUBERNETES_STORAGE_CLASSES_DATA", func(c *Config) *string { return &c.Kubernetes.StorageClasses.Data }},
+	{"PRESSFLEET_KUBERNETES_TRAEFIK_SERVICE", func(c *Config) *string { return &c.Kubernetes.TraefikService }},
 	{"PRESSFLEET_PLATFORM_PROJECT", func(c *Config) *string { return &c.PlatformProject }},
 	{"PRESSFLEET_TASK_IMAGE", func(c *Config) *string { return &c.TaskImage }},
 	{"PRESSFLEET_SMTP_HOST", func(c *Config) *string { return &c.SMTP.Host }},
@@ -990,6 +1001,12 @@ func (c Config) Validate() error {
 	}
 	if !slices.Contains(SiteDrivers, c.Driver) {
 		errs = append(errs, fmt.Errorf("driver must be one of %s, got %q", strings.Join(SiteDrivers, ", "), c.Driver))
+	}
+	if err := c.Kubernetes.Validate(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.validateKubernetesDriver(); err != nil {
+		errs = append(errs, err)
 	}
 	if !composeProjectName.MatchString(c.PlatformProject) {
 		errs = append(errs, fmt.Errorf("platform_project must be a Compose project name (lowercase letters, digits, - and _), got %q", c.PlatformProject))

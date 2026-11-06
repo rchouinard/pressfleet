@@ -31,7 +31,7 @@ Reference and background:
 | [`ui/`](ui/) | Nuxt dashboard, embedded into the Go binary at build time |
 | [`images/`](images/) | `site-nginx` and `site-php` container images |
 | [`templates/compose/`](templates/compose/) | Per-site Docker Compose templates |
-| [`templates/k8s/`](templates/k8s/) | Reserved for the post-MVP Kubernetes driver |
+| [`templates/k8s/`](templates/k8s/) | Per-site Kubernetes manifest templates, rendered by the Kubernetes driver |
 | [`docs/`](docs/) | Operator guide, configuration reference, design documents, and roadmap |
 
 ## License

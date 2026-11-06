@@ -53,8 +53,17 @@ audit:
 metrics:
   retention_days: 90
   public_domain: metrics.agency.example   # optional; exposes the query API to Grafana
-driver: compose          # the orchestrator that runs sites; compose is the only one
+driver: compose          # the orchestrator that runs sites: compose, kubernetes
 platform_project: pressfleet
+# kubernetes:            # only with driver: kubernetes; see "Kubernetes driver"
+#   platform_namespace: pressfleet
+#   site_namespace_prefix: pf-
+#   storage_classes:
+#     sites: ""          # ReadWriteOnce; empty is the cluster's default
+#     data: ""           # ReadWriteMany
+#   traefik_service: traefik
+#   pod_cidrs: [10.42.0.0/16]
+#   image_pull_secrets: []
 smtp:                    # optional; without a host, sites send no email
   host: smtp.mailgun.org
   port: 587              # default: 587 for starttls, 465 for tls, 25 for none
@@ -164,7 +173,15 @@ Old names are accepted for at least one minor release after the change, and unti
 | `acme.dns_provider` | `PRESSFLEET_ACME_DNS_PROVIDER` | `--dns-provider` (`init` only) | (unset) | [lego DNS provider](https://go-acme.github.io/lego/dns/) code, such as `cloudflare`, `route53`, or `digitalocean`. With it, Traefik gets one wildcard certificate for the preview base domain with the DNS-01 challenge; without it, each preview domain gets its own HTTP-01 certificate. Needs `preview_base_domain`. See [Preview certificates](#preview-certificates). |
 | `acme.dns_credentials` | `PRESSFLEET_ACME_DNS_CREDENTIALS` | `--dns-credentials-file` (`init` only) | (unset) | The DNS provider's credentials, encrypted with the master key (`pfenc1:...`). `pressfleet init` reads them from `--dns-credentials-file` and writes only the encrypted value; a plaintext value is rejected. The control plane decrypts them at startup and refuses to start if it can't. |
 | `acme.dns_resolvers` | `PRESSFLEET_ACME_DNS_RESOLVERS` (comma-separated) | `--acme-dns-resolvers` (`init` only) | the host's resolvers | DNS servers (`host:port`) Traefik asks to check that a DNS-01 challenge record has propagated. Set public resolvers such as `1.1.1.1:53` if the host's resolver answers from a stale cache or a split-horizon zone. |
-| `driver` | `PRESSFLEET_DRIVER` | | `compose` | The orchestrator that runs sites and tasks. `compose` is the only driver so far. It is chosen at install time and never changes for that install. |
+| `driver` | `PRESSFLEET_DRIVER` | | `compose` | The orchestrator that runs sites and tasks: `compose` or `kubernetes`. It is chosen at install time and never changes for that install. `kubernetes` requires `database.driver: postgres` and `kubernetes.pod_cidrs`; see [Kubernetes driver](#kubernetes-driver). |
+| `kubernetes.kubeconfig` | `PRESSFLEET_KUBERNETES_KUBECONFIG` | | (unset) | A kubeconfig file the Kubernetes driver connects with, for development outside the cluster. Must be an absolute path. Unset, the control plane uses its pod's service account. |
+| `kubernetes.platform_namespace` | `PRESSFLEET_KUBERNETES_PLATFORM_NAMESPACE` | | `pressfleet` | Namespace of the platform services: the control plane, Traefik, MariaDB, and Valkey. Repository tasks run in it. |
+| `kubernetes.site_namespace_prefix` | `PRESSFLEET_KUBERNETES_SITE_NAMESPACE_PREFIX` | | `pf-` | Put before a site's ID to name the site's namespace. Up to 37 lowercase letters, digits, and `-`, starting with a letter or digit. Changing it orphans the namespaces of existing sites. |
+| `kubernetes.storage_classes.sites` | `PRESSFLEET_KUBERNETES_STORAGE_CLASSES_SITES` | | the cluster's default | Storage class of each site's `wp-content` volume (ReadWriteOnce). It must honor `fsGroup`. |
+| `kubernetes.storage_classes.data` | `PRESSFLEET_KUBERNETES_STORAGE_CLASSES_DATA` | | the cluster's default | Storage class of the control plane's data directory (ReadWriteMany), which task pods mount too. |
+| `kubernetes.traefik_service` | `PRESSFLEET_KUBERNETES_TRAEFIK_SERVICE` | | `traefik` | Name of Traefik's Service in the platform namespace. |
+| `kubernetes.pod_cidrs` | `PRESSFLEET_KUBERNETES_POD_CIDRS` (comma-separated) | | (unset) | Required with `driver: kubernetes`. The cluster's pod network ranges, such as `10.42.0.0/16` on k3s or `10.244.0.0/16` on kind. Site nginx trusts forwarded headers from them, and each site's NetworkPolicy narrows that to Traefik's pods. |
+| `kubernetes.image_pull_secrets` | `PRESSFLEET_KUBERNETES_IMAGE_PULL_SECRETS` (comma-separated) | | (unset) | Names of image pull Secrets in the platform namespace, for site and task images in a private registry. The driver copies them into each site's namespace, because a pod can only use Secrets of its own. |
 | `platform_project` | `PRESSFLEET_PLATFORM_PROJECT` | | `pressfleet` | Compose project name of the platform services. The control plane uses it to find the platform's MariaDB, object cache, and Traefik containers (`<project>-mariadb-1`, `<project>-redis-1`, `<project>-traefik-1`), which it connects to each site's network, and labels site containers with it so that this platform's Traefik routes them. The platform Compose project sets it for the control plane; change it only for a platform installed under another project name. `init` installs under it, writes it to the config file when it isn't the default, and refuses a name that a platform in another directory already runs under. |
 | `task_image` | `PRESSFLEET_TASK_IMAGE` | | (unset) | Image of the short-lived containers that run backup, restore, and site import tasks against a site's data (`restic`, `mariadb-dump`, `tar`). The platform Compose project sets it to the control plane's own image, which ships those tools; change it only to test another build. Unset means backups, restores, and site imports can't run. |
 | `smtp.host` | `PRESSFLEET_SMTP_HOST` | `--smtp-host` (`init` only) | (unset) | SMTP relay every site sends email through (host name or IP address). Unset means sites send no email: the site images have no local mail server. See [Outbound email](#outbound-email). |
@@ -779,6 +796,7 @@ The DNS checks are skipped until `dashboard_domain` and `preview_base_domain` ar
     upgrade.json      the last upgrade's versions, status, and previous images
     previous-platform/ the platform project from before it
   sites/<site-id>/    rendered per-site Compose project and wp-config.php
+    kubernetes/       the site's rendered manifests, with driver: kubernetes
   backups/
     repositories/<client-group-id>/
                       the client group's Restic repository (backup.backend local;
@@ -796,6 +814,15 @@ The DNS checks are skipped until `dashboard_domain` and `preview_base_domain` ar
 Operators may inspect rendered files here, but shouldn't edit them. The control plane regenerates them from its database.
 
 The platform master key is deliberately **not** stored in the data directory. Keep it separate from the host and its backups (see the master key warning in the design doc, §4.1).
+
+## Kubernetes driver
+
+With `driver: kubernetes`, the control plane runs sites on a Kubernetes cluster instead of Docker Compose (design doc §4.8). The Helm chart installs it and sets the `kubernetes.*` settings. The driver is under construction: in this release it connects to the cluster at startup, and refuses to start if it can't, but doesn't run sites yet; site operations fail with an error saying so.
+
+- **State database.** The Kubernetes driver requires PostgreSQL (`database.driver: postgres`). SQLite isn't safe on the ReadWriteMany network storage that holds the data directory.
+- **Connecting.** In the cluster, the control plane uses its pod's service account. For development, `kubernetes.kubeconfig` points it at a kubeconfig file instead.
+- **Preflight checks.** The host checks (Docker Engine, Docker Compose, cgroup v2, address pools) don't apply to a cluster and are reported as unavailable.
+- **Rendered manifests.** Each site's manifests are rendered into `<data_dir>/sites/<site-id>/kubernetes/`, where you can inspect them, and applied with server-side apply under the field manager `pressfleet`. Don't edit them, or the objects, by hand: the control plane renders and applies them again.
 
 ## State database
 

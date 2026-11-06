@@ -28,7 +28,10 @@ func TestRepository(t *testing.T) {
 }
 
 func TestCheckDetectsViolations(t *testing.T) {
-	const compose = "github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
+	const (
+		compose    = "github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
+		kubernetes = "github.com/rchouinard/pressfleet/control-plane/internal/provisioner/kubernetes"
+	)
 	src := func(imports ...string) *fstest.MapFile {
 		s := "package p\nimport (\n"
 		for _, imp := range imports {
@@ -50,6 +53,13 @@ func TestCheckDetectsViolations(t *testing.T) {
 		"control-plane/internal/driver/driver.go":                src(compose),
 		"control-plane/internal/sitedb/mariadb/x_test.go":        src(compose),
 		"control-plane/internal/sitedb/mariadb/x_docker_test.go": src(compose),
+
+		"control-plane/internal/provisioner/kubernetes/client.go":  src("k8s.io/client-go/kubernetes", "sigs.k8s.io/yaml"),
+		"control-plane/internal/provisioner/kubernetes/compose.go": src(compose),
+		"control-plane/internal/provisioner/compose/kubernetes.go": src(kubernetes),
+		"control-plane/internal/driver/kubernetes.go":              src(kubernetes),
+		"control-plane/internal/cli/serve.go":                      src(kubernetes),
+		"control-plane/internal/cli/init.go":                       src(kubernetes),
 	}
 
 	violations, err := archtest.Check(fsys, archtest.Rules)
@@ -66,6 +76,13 @@ func TestCheckDetectsViolations(t *testing.T) {
 		"control-plane/internal/jobs/jobs.go":             "github.com/docker/docker/client",
 		"control-plane/internal/jobs/jobs_test.go":        "github.com/compose-spec/compose-go/v2/types",
 		"control-plane/internal/sites/sites.go":           "k8s.io/client-go/kubernetes",
+		// The drivers don't import each other.
+		"control-plane/internal/provisioner/kubernetes/compose.go": compose,
+		"control-plane/internal/provisioner/compose/kubernetes.go": kubernetes,
+		// Only the factory imports the Kubernetes driver, not even the
+		// host commands that may import the Compose one.
+		"control-plane/internal/cli/serve.go": kubernetes,
+		"control-plane/internal/cli/init.go":  kubernetes,
 	}
 	if len(got) != len(want) {
 		t.Errorf("got %d violations %v, want %d", len(got), got, len(want))
