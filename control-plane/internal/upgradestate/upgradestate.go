@@ -19,7 +19,7 @@
 //	rolled-back      the platform is back on the previous release
 //
 // The first four hold the rollouts, as does any status not listed; the last
-// two release them. Underscores are accepted for hyphens (rolling_back).
+// two release them.
 package upgradestate
 
 import (
@@ -108,7 +108,7 @@ func Check(dir string) Hold {
 
 // Decide decides whether rollouts are held for the record.
 func Decide(rec Record) Hold {
-	status := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(rec.Status)), "_", "-")
+	status := strings.ToLower(strings.TrimSpace(rec.Status))
 	to := rec.To
 	if to == "" {
 		to = "a new release"

@@ -33,16 +33,20 @@ import (
 //
 // `pressfleet upgrade` moves the platform to the definition embedded in the
 // CLI running it: its templates and its images, the control plane at the
-// CLI's own version. Upgrades are forward-only. The upgrade keeps what a
-// manual recovery needs (a copy of the platform project from before it, and
-// the images the services ran), and if the platform doesn't come back
-// healthy it prints the recovery steps (recoveryTemplate) with the actual
-// paths filled in. docs/upgrading.md documents the same steps, and a test
-// keeps the two in sync. Automatic rollback is post-MVP (#141).
+// CLI's own version. Migrations are forward-only, but the upgrade keeps what
+// a rollback needs (a copy of the platform project from before it, and the
+// images the services ran), and if the platform doesn't come back healthy it
+// rolls back to the previous release on its own (upgrade_rollback.go,
+// #249). With --no-rollback, or when the rollback can't finish, it prints
+// the recovery steps (recoveryTemplate) with the actual paths filled in.
+// docs/upgrading.md documents the same steps, and a test keeps the two in
+// sync.
 //
 // The CLI never touches the state database: the control plane migrates it
-// when it starts, after backing up an SQLite database (store.DB.Migrate).
-// The recovery steps find that backup by its file name.
+// when it starts, after backing up an SQLite database (store.DB.Migrate),
+// and records the run in a marker (#246), which tells the CLI whether there
+// is a backup to restore. The CLI restores it with a one-off container of
+// the previous control plane image.
 
 // Upgrade service names. They name the platform's Compose services, whose
 // recreation interrupts every site (interrupting).
@@ -70,10 +74,18 @@ var upgradeReadyInterval = 2 * time.Second
 // Status of an upgrade in its record. They are a contract with the control
 // plane, which holds rollouts while one is unconfirmed (upgradestate).
 const (
-	upgradeInProgress = upgradestate.InProgress
-	upgradeFailed     = upgradestate.Failed
-	upgradeSucceeded  = upgradestate.Succeeded
+	upgradeInProgress     = upgradestate.InProgress
+	upgradeFailed         = upgradestate.Failed
+	upgradeSucceeded      = upgradestate.Succeeded
+	upgradeRollingBack    = upgradestate.RollingBack
+	upgradeRolledBack     = upgradestate.RolledBack
+	upgradeRollbackFailed = upgradestate.RollbackFailed
 )
+
+// exitRolledBack is the exit code of an upgrade that failed and was rolled
+// back. 0 means upgraded, and 1 failed and not rolled back, as any other
+// error exits (#245).
+const exitRolledBack = 2
 
 // UpgradeProject is the part of a Compose project that upgrade drives.
 // compose.Project implements it; tests inject fakes.
@@ -86,12 +98,18 @@ type UpgradeProject interface {
 	ImageDigests(ctx context.Context, image string) ([]string, error)
 	ListDir(ctx context.Context, service, dir string) ([]string, error)
 	ReadFile(ctx context.Context, service, path string) ([]byte, error)
+	// StopServices and RunService serve the rollback: it stops the
+	// control plane, and restores the state database with a one-off
+	// container of the previous release's.
+	StopServices(ctx context.Context, services ...string) error
+	RunService(ctx context.Context, service string, command ...string) ([]byte, error)
 }
 
 // upgradeFlags are the flags of `pressfleet upgrade`.
 type upgradeFlags struct {
 	yes               bool
 	skipPreflight     bool
+	noRollback        bool
 	controlPlaneImage string
 }
 
@@ -110,6 +128,12 @@ type upgradeRecord struct {
 	// recreates Forced on the previous files.
 	Recreated []string `json:"recreated"`
 	Forced    []string `json:"forced,omitempty"`
+	// MariaDBSeries is the release series (X.Y) MariaDB ran before the
+	// upgrade; a rollback never crosses a series change (#245). Empty in
+	// records of releases before #249, and when there was no MariaDB.
+	MariaDBSeries string `json:"mariadb_series,omitempty"`
+	// Rollback is the progress of the upgrade's rollback, if one started.
+	Rollback *rollbackRecord `json:"rollback,omitempty"`
 }
 
 // serviceImage is the image a service's container ran.
@@ -130,10 +154,22 @@ cache, Traefik, and VictoriaMetrics images. Only services whose definition
 changed are recreated, and the control plane migrates the state database
 when it starts, backing up an SQLite database first.
 
-Upgrades are forward-only. The platform project from before the upgrade is
-kept in <data_dir>/upgrade/previous-platform. If the platform doesn't come
-back healthy, upgrade exits non-zero and prints the steps that return it to
-the previous release (see docs/upgrading.md).
+The platform project from before the upgrade is kept in
+<data_dir>/upgrade/previous-platform. If the platform doesn't come back
+healthy, or upgrade is interrupted (SIGINT, SIGTERM) while applying it,
+upgrade rolls back to the previous release on its own: it stops the control
+plane, restores the state database if the upgrade migrated it (SQLite only;
+with PostgreSQL it stops and prints the steps), puts the platform project
+back, and starts the previous release's services. A second interrupt stops
+the rollback. If the rollback can't finish, or with --no-rollback, upgrade
+prints the steps that return the platform to the previous release instead
+(see docs/upgrading.md).
+
+Exit codes: 0 upgraded; 2 failed and rolled back; 1 failed and not rolled
+back.
+
+If the last upgrade was interrupted (its CLI was killed), upgrade offers to
+retry it or roll it back, and won't upgrade to another release over it.
 
 Before recreating Traefik, MariaDB, or the object cache, which interrupts
 every site, and before upgrading with a PostgreSQL state database, upgrade
@@ -146,6 +182,8 @@ asks for confirmation; --yes gives it.`,
 	}
 	fl := cmd.Flags()
 	fl.BoolVar(&f.yes, "yes", false, "don't ask for confirmation")
+	fl.BoolVar(&f.noRollback, "no-rollback", false,
+		"if the upgrade fails, don't roll back: leave the platform for debugging and print the steps that return it to the previous release")
 	fl.BoolVar(&f.skipPreflight, "skip-preflight", false,
 		"upgrade even if required host checks fail, and start the control plane without them (development only)")
 	fl.StringVar(&f.controlPlaneImage, "control-plane-image", "",
@@ -171,6 +209,12 @@ type upgrader struct {
 	record      upgradeRecord
 	// keepPrevious says a failed upgrade's saved project is kept.
 	keepPrevious bool
+	// rollBackInterrupted says the operator chose to roll back an
+	// interrupted upgrade rather than retry it.
+	rollBackInterrupted bool
+	// fromReady says the control plane answered ready when the upgrade
+	// started.
+	fromReady bool
 	// recreate are the services the upgrade recreates; forced are those
 	// recreated only because a file they mount changed.
 	recreate, forced []string
@@ -196,6 +240,13 @@ func (u *upgrader) run(ctx context.Context) error {
 
 	if err := u.preflight(ctx); err != nil {
 		return err
+	}
+	if u.rollBackInterrupted {
+		cause := errors.New("it was interrupted")
+		if rb := u.record.Rollback; rb != nil && rb.Cause != "" {
+			cause = errors.New(rb.Cause)
+		}
+		return u.rollBackFailed(ctx, cause)
 	}
 	if err := u.stage(); err != nil {
 		return err
@@ -228,10 +279,16 @@ func (u *upgrader) run(ctx context.Context) error {
 		return err
 	}
 
-	// From here on the platform changes, and a failure needs the recovery
-	// steps.
+	// From here on the platform changes, and a failure, including an
+	// interrupt (which cancels ctx), rolls it back.
 	if err := u.apply(ctx); err != nil {
-		return u.fail(err)
+		if ctx.Err() != nil {
+			err = fmt.Errorf("interrupted: %w", err)
+		}
+		if u.f.noRollback {
+			return u.fail(context.WithoutCancel(ctx), err)
+		}
+		return u.rollBackFailed(ctx, err)
 	}
 	u.record.Status = upgradeSucceeded
 	if err := u.writeRecord(); err != nil {
@@ -264,11 +321,17 @@ func (u *upgrader) preflight(ctx context.Context) error {
 			"--project-directory %s up --detach`, or reinstall with `pressfleet init --force`", u.name, u.platformDir)
 	}
 	u.from = cp.Version
+	u.fromReady = cp.Info != nil && cp.Info.Ready
 	if err := u.checkVersions(); err != nil {
 		return err
 	}
 	if err := u.loadRecord(); err != nil {
 		return err
+	}
+	if u.rollBackInterrupted {
+		// The rollback returns to what ran before; the checks of the new
+		// release don't apply.
+		return nil
 	}
 	if err := u.hostChecks(ctx); err != nil {
 		return err
@@ -314,21 +377,20 @@ func (u *upgrader) checkVersions() error {
 
 // loadRecord reads the last upgrade's record. If that upgrade didn't
 // finish and the platform project hasn't been put back since, this run is
-// a retry: it keeps the project saved by that upgrade, the one a recovery
-// must return to, rather than saving the failed upgrade's.
+// a retry: it keeps the project saved by that upgrade, the one a rollback
+// must return to, rather than saving the failed upgrade's. An upgrade that
+// was interrupted (its CLI killed while it applied the release or rolled it
+// back) can be retried or rolled back, but not replaced by an upgrade to
+// another release (#245).
 func (u *upgrader) loadRecord() error {
-	data, err := os.ReadFile(filepath.Join(u.upgradeDir, upgradeRecordFile))
+	rec, err := readUpgradeRecord(u.upgradeDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("reading the last upgrade's record: %w", err)
+		return err
 	}
-	var rec upgradeRecord
-	if err := json.Unmarshal(data, &rec); err != nil {
-		return fmt.Errorf("reading the last upgrade's record %s: %w", filepath.Join(u.upgradeDir, upgradeRecordFile), err)
-	}
-	if rec.Status == upgradeSucceeded {
+	if rec.Status == upgradeSucceeded || rec.Status == upgradeRolledBack {
 		return nil
 	}
 	same, err := sameFile(filepath.Join(u.platformDir, platform.ComposeFile),
@@ -336,14 +398,39 @@ func (u *upgrader) loadRecord() error {
 	if err != nil {
 		return err
 	}
-	if same {
+	// A rollback that stopped may have put the project back, or part of
+	// it, without starting the services, so it is resumed, unless the
+	// previous release's control plane runs and is ready: then the
+	// rollback, or the operator with the recovery steps, finished it.
+	stopped := rec.Status == upgradeRollingBack || rec.Status == upgradeRollbackFailed
+	if same && (!stopped || (u.fromReady && rec.From != "" && u.from == rec.From)) {
 		u.printf("The last upgrade, to %s, didn't finish, and its platform project was put back since.\n", rec.To)
 		return nil
+	}
+	if rec.Status != upgradeFailed {
+		return u.resolveInterrupted(rec)
 	}
 	u.printf("The last upgrade, to %s, didn't finish. Retrying; the platform project from before it (%s) stays in %s.\n",
 		rec.To, rec.From, filepath.Join(u.upgradeDir, previousPlatform))
 	u.record, u.keepPrevious = rec, true
 	return nil
+}
+
+// readUpgradeRecord reads the upgrade record in dir.
+func readUpgradeRecord(dir string) (upgradeRecord, error) {
+	path := filepath.Join(dir, upgradeRecordFile)
+	data, err := os.ReadFile(path) //nolint:gosec // G304: the upgrade record in the data directory
+	if errors.Is(err, fs.ErrNotExist) {
+		return upgradeRecord{}, err
+	}
+	if err != nil {
+		return upgradeRecord{}, fmt.Errorf("reading the last upgrade's record: %w", err)
+	}
+	var rec upgradeRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return upgradeRecord{}, fmt.Errorf("reading the last upgrade's record %s: %w", path, err)
+	}
+	return rec, nil
 }
 
 // hostChecks runs the doctor's runtime checks, which the upgraded control
@@ -582,6 +669,9 @@ func (u *upgrader) savePrevious(ctx context.Context) error {
 	if u.keepPrevious {
 		u.record.To = u.to
 		u.record.Status = upgradeInProgress
+		// A rollback of an earlier attempt, given up for this retry,
+		// starts over if this one fails too.
+		u.record.Rollback = nil
 		u.record.Recreated = union(u.record.Recreated, u.recreate)
 		u.record.Forced = union(u.record.Forced, u.forced)
 		return u.writeRecord()
@@ -617,6 +707,7 @@ func (u *upgrader) savePrevious(ctx context.Context) error {
 	u.record = upgradeRecord{
 		From: u.from, To: u.to, StartedAt: time.Now().UTC(), Status: upgradeInProgress,
 		PreviousImages: images, Recreated: u.recreate, Forced: u.forced,
+		MariaDBSeries: MariaDBSeries(images[mariaDBService].Image),
 	}
 	if err := u.writeRecord(); err != nil {
 		return err
@@ -662,13 +753,43 @@ func (u *upgrader) apply(ctx context.Context) error {
 	if err := u.project.Up(ctx, compose.UpOptions{Wait: true, WaitTimeout: platformStartTimeout}); err != nil {
 		return fmt.Errorf("starting the upgraded platform: %w", err)
 	}
-	return u.waitReady(ctx)
+	want := u.to
+	if u.f.controlPlaneImage != "" {
+		// A development image reports whatever version it was built as.
+		want = ""
+	}
+	return u.waitReady(ctx, want)
 }
 
-// waitReady waits for the control plane to answer ready at the version
-// being upgraded to. Compose's wait covers its healthcheck; this also
-// checks the version, so a control plane that kept its old image is caught.
-func (u *upgrader) waitReady(ctx context.Context) error {
+// upPlatform brings the platform project's services up, waiting until they
+// are healthy: all of them, or only forced, which are recreated even if
+// their definition didn't change.
+func (u *upgrader) upPlatform(ctx context.Context, forced []string) error {
+	opts := compose.UpOptions{Wait: true, WaitTimeout: platformStartTimeout}
+	if len(forced) > 0 {
+		opts.Services, opts.ForceRecreate = forced, true
+	}
+	return u.project.Up(ctx, opts)
+}
+
+// runningImage returns the image a service's container runs; found is false
+// if it has none.
+func (u *upgrader) runningImage(ctx context.Context, service string) (image string, found bool, err error) {
+	c, err := u.project.ServiceContainer(ctx, service)
+	if errors.Is(err, compose.ErrNoContainer) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return c.Image, true, nil
+}
+
+// waitReady waits for the control plane to answer ready at version want
+// (any version if want is empty). Compose's wait covers its healthcheck;
+// this also checks the version, so a control plane that kept its old image
+// is caught.
+func (u *upgrader) waitReady(ctx context.Context, want string) error {
 	var last error
 	for range upgradeReadyChecks {
 		cp, err := u.a.controlPlaneStatus(ctx)
@@ -679,8 +800,8 @@ func (u *upgrader) waitReady(ctx context.Context) error {
 			last = fmt.Errorf("the control plane doesn't answer: %w", cp.InfoErr)
 		case !cp.Info.Ready:
 			last = fmt.Errorf("the control plane isn't ready: %s", cp.Info.ReadyError)
-		case cp.Version != u.to && u.f.controlPlaneImage == "":
-			return fmt.Errorf("the control plane runs %s, not %s", cp.Version, u.to)
+		case want != "" && cp.Version != want:
+			return fmt.Errorf("the control plane runs %s, not %s", cp.Version, want)
 		default:
 			return nil
 		}
@@ -693,15 +814,38 @@ func (u *upgrader) waitReady(ctx context.Context) error {
 	return last
 }
 
-// fail records the failed upgrade and prints the recovery steps.
-func (u *upgrader) fail(cause error) error {
+// fail records the failed upgrade and prints the recovery steps, without
+// rolling back (--no-rollback). ctx must not be canceled.
+func (u *upgrader) fail(ctx context.Context, cause error) error {
 	u.record.Status = upgradeFailed
 	if err := u.writeRecord(); err != nil {
 		u.a.warnf("recording the failed upgrade: %v", err)
 	}
+	data := u.recoveryData()
+	if !data.Postgres {
+		mig, err := u.findMigration(ctx)
+		if err != nil {
+			// Not knowing is not the same as finding none: the steps
+			// must not tell the operator that no restore is needed.
+			u.a.warnf("looking for the pre-migration backup: %v", err)
+			data.BackupUnchecked = true
+		}
+		data.Backup = mig.Backup
+	}
+	steps, err := renderRecovery(data)
+	if err != nil {
+		return errors.Join(cause, err)
+	}
+	_, _ = fmt.Fprintf(u.a.opts.Stderr, "Error: the upgrade to %s failed: %v\n\n%s", u.record.To, cause, steps)
+	return &exitError{code: 1}
+}
+
+// recoveryData fills in the recovery steps from the upgrade record, except
+// for the state backup, which needs findMigration.
+func (u *upgrader) recoveryData() recoveryData {
 	data := recoveryData{
 		From:        u.record.From,
-		To:          u.to,
+		To:          u.record.To,
 		Project:     u.name,
 		PlatformDir: u.platformDir,
 		PreviousDir: filepath.Join(u.upgradeDir, previousPlatform),
@@ -720,21 +864,15 @@ func (u *upgrader) fail(cause error) error {
 	if !data.Postgres {
 		data.BackupsDir = u.layout.StateBackupsDir()
 		data.Since = u.record.StartedAt.UTC().Format(backupTimeLayout)
-		mig, err := u.findMigration()
-		if err != nil {
-			// Not knowing is not the same as finding none: the steps
-			// must not tell the operator that no restore is needed.
-			u.a.warnf("looking for the pre-migration backup: %v", err)
-			data.BackupUnchecked = true
-		}
-		data.Backup = mig.Backup
 	}
+	return data
+}
+
+// renderRecovery renders the recovery steps.
+func renderRecovery(data recoveryData) (string, error) {
 	var buf bytes.Buffer
-	if err := recoveryTemplate.Execute(&buf, data); err != nil {
-		return errors.Join(cause, err)
-	}
-	_, _ = fmt.Fprintf(u.a.opts.Stderr, "Error: the upgrade to %s failed: %v\n\n%s", u.to, cause, buf.String())
-	return &exitError{code: 1}
+	err := recoveryTemplate.Execute(&buf, data)
+	return buf.String(), err
 }
 
 // backupName matches the backups store.DB.Migrate takes before migrating:
@@ -816,8 +954,8 @@ func (m upgradeMigration) Migrated() bool {
 // can't read it: then a container of the control plane reads it, the
 // previous release's first, because the new image may be the broken one.
 // Not through the admin interface: the control plane may be down.
-func (u *upgrader) findMigration() (upgradeMigration, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+func (u *upgrader) findMigration(ctx context.Context) (upgradeMigration, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	via := func(p UpgradeProject) backupsReader {
 		return backupsReader{

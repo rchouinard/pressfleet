@@ -57,7 +57,7 @@ Accepted in [#245](https://github.com/rchouinard/pressfleet/issues/245), which l
 
 ## The rollback sequence
 
-Automatic rollback and `--rollback` share one sequence ([#249](https://github.com/rchouinard/pressfleet/issues/249)). Each step is idempotent, and the record's status moves from `rolling_back` to `rolled_back` or `rollback_failed`, so a rollback that stops can be run again:
+Automatic rollback and `--rollback` share one sequence ([#249](https://github.com/rchouinard/pressfleet/issues/249)). Each step is idempotent, and the record's status moves from `rolling-back` to `rolled-back` or `rollback-failed`, so a rollback that stops can be run again:
 
 1. **Stop the control plane.**
 2. **Restore the state database, if the upgrade migrated it.** The CLI reads the migration marker ([#246](https://github.com/rchouinard/pressfleet/issues/246)).
@@ -183,5 +183,7 @@ Additions from reviewing the plan against v1.1.0:
 - **Staging sites (#248):** creating or deleting a staging site is a blocking change. Refreshes and pushes are lost changes: their records go, and the content they copied stays.
 - **Signals (#249):** the first signal cancels the CLI's context, so the rollback runs on a context of its own, which only the second signal cancels.
 - **Tests (#251)** run in the full e2e tier, not the quick one.
+
+**2026-11-05 ([#249](https://github.com/rchouinard/pressfleet/issues/249)):** the record's new statuses are spelled with hyphens (`rolling-back`, `rolled-back`, `rollback-failed`), like the existing `in-progress`, through the constants of package `upgradestate`; its reader no longer accepts underscores.
 
 The design doc records the result in §4.7 and §8.

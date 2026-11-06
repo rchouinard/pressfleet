@@ -61,3 +61,12 @@ func FastUpgradeReadyChecks(t interface{ Cleanup(func()) }) {
 	upgradeReadyInterval = time.Millisecond
 	t.Cleanup(func() { upgradeReadyInterval = old })
 }
+
+// RollbackSignals replaces how a rollback gets its context for the test's
+// duration: with derives it from the context the rollback is given, in
+// place of one the next SIGINT or SIGTERM cancels.
+func RollbackSignals(t interface{ Cleanup(func()) }, with func(ctx context.Context) (context.Context, context.CancelFunc)) {
+	old := rollbackSignals
+	rollbackSignals = with
+	t.Cleanup(func() { rollbackSignals = old })
+}
