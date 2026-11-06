@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/catalog"
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
@@ -21,6 +22,7 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
+	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/kubernetes"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
 	"github.com/rchouinard/pressfleet/control-plane/internal/wpconfig"
@@ -81,11 +83,16 @@ type Options struct {
 	Logger         *slog.Logger
 }
 
-// New builds the driver that opts.Config.Driver names.
-func New(opts Options) (*Runtime, error) {
+// New builds the driver that opts.Config.Driver names. A driver that
+// talks to an orchestrator over the network (Kubernetes) connects to it
+// within ctx, and fails if it can't, so the control plane doesn't start
+// without its cluster.
+func New(ctx context.Context, opts Options) (*Runtime, error) {
 	switch opts.Config.Driver {
 	case config.SiteDriverCompose:
 		return newCompose(opts)
+	case config.SiteDriverKubernetes:
+		return newKubernetes(ctx, opts)
 	default:
 		return nil, fmt.Errorf("%w %q", ErrUnknownDriver, opts.Config.Driver)
 	}
@@ -108,6 +115,8 @@ func NewRepositoryTasks(cfg *config.Config, log *slog.Logger) (provisioner.Repos
 			TaskMemoryMB:     cfg.Backup.TaskMemoryMB,
 			Logger:           log.With("component", "provisioner"),
 		})
+	case config.SiteDriverKubernetes:
+		return kubernetes.New(kubernetesConfig(cfg, log))
 	default:
 		return nil, fmt.Errorf("%w %q", ErrUnknownDriver, cfg.Driver)
 	}
@@ -119,6 +128,8 @@ func NewHostProbe(cfg *config.Config) (doctor.DockerProbe, error) {
 	switch cfg.Driver {
 	case config.SiteDriverCompose:
 		return compose.HostInspector{}, nil
+	case config.SiteDriverKubernetes:
+		return noDockerHost{}, nil
 	default:
 		return nil, fmt.Errorf("%w %q", ErrUnknownDriver, cfg.Driver)
 	}
@@ -169,6 +180,50 @@ func newCompose(opts Options) (*Runtime, error) {
 		HostProbe:      compose.HostInspector{},
 	}, nil
 }
+
+// connectTimeout bounds connecting to the Kubernetes API server at startup.
+const connectTimeout = 30 * time.Second
+
+func kubernetesConfig(cfg *config.Config, log *slog.Logger) kubernetes.Config {
+	return kubernetes.Config{
+		Layout:     cfg.Layout(),
+		Kubernetes: cfg.Kubernetes,
+		Logger:     log.With("component", "provisioner"),
+	}
+}
+
+func newKubernetes(ctx context.Context, opts Options) (*Runtime, error) {
+	prov, err := kubernetes.New(kubernetesConfig(opts.Config, opts.Logger))
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, connectTimeout)
+	defer cancel()
+	if err := prov.Connect(ctx); err != nil {
+		return nil, err
+	}
+	// The render snapshots the templates rollout also needs, the PHP-FPM
+	// status, and Traefik's metrics come with the site lifecycle and exec
+	// (#216, #218); until then those features are off.
+	return &Runtime{
+		Driver:    prov,
+		Templates: prov,
+		HostProbe: noDockerHost{},
+	}, nil
+}
+
+// errNoDockerHost is what the doctor's Docker checks report on Kubernetes,
+// which has no Docker host; the cluster checks are its own (#225).
+var errNoDockerHost = errors.New("the Kubernetes driver runs no Docker host")
+
+// noDockerHost is the doctor's Docker probe on Kubernetes.
+type noDockerHost struct{}
+
+func (noDockerHost) Engine(context.Context) (compose.EngineInfo, error) {
+	return compose.EngineInfo{}, errNoDockerHost
+}
+
+func (noDockerHost) ComposeVersion(context.Context) (string, error) { return "", errNoDockerHost }
 
 // errNoSites is what the site parts of a repository-only driver return.
 var errNoSites = errors.New("this driver only runs repository tasks")

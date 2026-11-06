@@ -29,8 +29,11 @@ type Rule struct {
 	AllowedSuffixes []string // file name suffixes, e.g. "_docker_test.go"
 }
 
-// composeDriver is the Compose driver's directory.
-const composeDriver = "control-plane/internal/provisioner/compose/"
+// Driver directories.
+const (
+	composeDriver    = "control-plane/internal/provisioner/compose/"
+	kubernetesDriver = "control-plane/internal/provisioner/kubernetes/"
+)
 
 // Rules are the import rules enforced on this repository.
 var Rules = []Rule{
@@ -42,7 +45,7 @@ var Rules = []Rule{
 	{
 		Name:      "Kubernetes SDKs are only used by the Kubernetes driver (§4.2)",
 		Forbidden: []string{"k8s.io/", "sigs.k8s.io/"},
-		Allowed:   []string{"control-plane/internal/provisioner/kubernetes/"},
+		Allowed:   []string{kubernetesDriver},
 	},
 	{
 		// Sites are orchestrated through provisioner.Provisioner, and the
@@ -72,6 +75,15 @@ var Rules = []Rule{
 			"control-plane/internal/e2e/",
 		},
 		AllowedSuffixes: []string{"_docker_test.go"},
+	},
+	{
+		// The Kubernetes driver has no platform stack to manage from the
+		// host: the Helm chart installs it. The rule above keeps the
+		// Compose package out of it, and this one keeps it out of the
+		// Compose driver, so the two drivers don't import each other.
+		Name:      "The Kubernetes driver package is only imported to build the driver (§4.2, §4.8)",
+		Forbidden: []string{"github.com/rchouinard/pressfleet/" + kubernetesDriver},
+		Allowed:   []string{kubernetesDriver, "control-plane/internal/driver/"},
 	},
 }
 

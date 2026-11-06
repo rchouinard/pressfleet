@@ -209,7 +209,7 @@ Host-only checks are skipped.
 ## Compatibility and release
 
 - **Compose installs** behave the same. The refactor (#213) changes no behavior, and the conformance suite (#214) runs against Compose first.
-- **Binary.** One binary serves both targets. #215 records the cost of client-go.
+- **Binary.** One binary serves both targets. #215 measured the cost of client-go v0.37: the binary grew from 31 to 66 MiB (without the dashboard), and an idle Compose control plane's resident memory from about 43 to 61 MiB, well within its 256 MiB limit.
 - **Configuration.** `driver: kubernetes` requires `database.driver: postgres`. The new settings follow the `config.Config` convention and get rows in `docs/configuration.md`.
 - **Release.** Shipping it is a minor release with a new artifact, the chart. The host CLI's admin interface doesn't change, and the version skew rules (§4.7) don't apply to Kubernetes installs, whose chart and control plane always come from the same release.
 - **Staging clones** landed first (v1.1.0), so this milestone covers them: the Kubernetes driver renders `SiteConfig.Environment` and `DisableMail` through the shared `wpconfig.Params` (#216), the conformance suite checks them and the mail switch (#214), and the kind tests clone, refresh, and push a staging site (#228). The mail switch check goes through `ExecWPCLI`, so it needs nothing driver-specific.

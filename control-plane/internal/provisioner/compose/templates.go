@@ -2,13 +2,11 @@ package compose
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
@@ -42,7 +40,7 @@ const renderVersion = 2
 // renderVersion. The embedded files can't change while the process runs, so
 // it is computed once.
 var templateFingerprint = sync.OnceValue(func() string {
-	fp, err := fingerprintTemplates(templates.Compose(), renderVersion)
+	fp, err := provisioner.FingerprintTemplates(templates.Compose(), renderVersion)
 	if err != nil {
 		// The templates are embedded in the binary: failing to read them
 		// is a build defect.
@@ -50,30 +48,6 @@ var templateFingerprint = sync.OnceValue(func() string {
 	}
 	return fp
 })
-
-// fingerprintTemplates hashes every file of fsys, by path and content, with
-// version: r<version>-<16 hex digits>.
-func fingerprintTemplates(fsys fs.FS, version int) (string, error) {
-	h := sha256.New()
-	// WalkDir visits files in lexical order, so the hash is stable.
-	err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		content, err := fs.ReadFile(fsys, path)
-		if err != nil {
-			return err
-		}
-		// Length-prefixed, so no two different trees hash the same input.
-		_, _ = fmt.Fprintf(h, "%d:%s%d:", len(path), path, len(content))
-		_, _ = h.Write(content)
-		return nil
-	})
-	if err != nil {
-		return "", fmt.Errorf("fingerprinting site templates: %w", err)
-	}
-	return "r" + strconv.Itoa(version) + "-" + fmt.Sprintf("%x", h.Sum(nil)[:8]), nil
-}
 
 // TemplateFingerprint implements provisioner.TemplateFingerprinter: a hash
 // of templates/compose and renderVersion.

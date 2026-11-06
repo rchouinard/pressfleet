@@ -524,3 +524,23 @@ func TestSkipHostOnly(t *testing.T) {
 		t.Errorf("outcome = %v, want ok (unavailable is not a failure)", got)
 	}
 }
+
+func TestKubernetesSkipsHostChecks(t *testing.T) {
+	f := newFixture()
+	f.docker.InfoErr = errors.New("must not be asked")
+	f.docker.ComposeErr = errors.New("must not be asked")
+	f.opts.Kubernetes = true
+	f.opts.Host, f.opts.Docker = f.host, f.docker
+	rep := doctor.Run(context.Background(), f.opts, doctor.ScopeRuntime)
+	for _, r := range rep.Results {
+		if r.ID == "docker" && (r.Status != doctor.StatusUnavailable || !strings.Contains(r.Message, "Kubernetes")) {
+			t.Errorf("docker check = %+v, want unavailable on Kubernetes", r)
+		}
+	}
+	if f.docker.EngineCalls != 0 {
+		t.Errorf("Docker was asked %d times", f.docker.EngineCalls)
+	}
+	if got := rep.Outcome(); got != doctor.OK {
+		t.Errorf("outcome = %v, want ok", got)
+	}
+}

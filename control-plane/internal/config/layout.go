@@ -17,6 +17,7 @@ import (
 //	    upgrade.json      its versions, status, and the previous images
 //	    previous-platform/ the platform project before it, for recovery
 //	  sites/<site-id>/    rendered per-site Compose project and wp-config.php
+//	    kubernetes/       or, with the Kubernetes driver, its manifests
 //	  backups/
 //	    repositories/<client-group-id>/
 //	                      the group's Restic repository (local backend only)
