@@ -1,0 +1,22 @@
+{{- /*
+Valkey's configuration, rendered from the template the Compose project uses
+(files/valkey.conf.tmpl, a generated copy of templates/platform's). The
+admin password's hash is left as a placeholder: Helm never sees the
+password, so the pod's init container puts the hash in (redis.yaml).
+*/ -}}
+{{- $data := dict
+  "RedisDatabases" 1024
+  "RedisMaxMemoryMB" (int .Values.redis.maxMemoryMB)
+  "RedisAdminUser" "pressfleet"
+  "RedisAdminPasswordHash" "@REDIS_ADMIN_PASSWORD_HASH@"
+  "Template" .Template }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "redis") | nindent 4 }}
+data:
+  valkey.conf: |
+    {{- /* No indentation on blank lines. */}}
+    {{- regexReplaceAll "(?m)^ +$" (tpl (.Files.Get "files/valkey.conf.tmpl") $data | nindent 4) "" }}

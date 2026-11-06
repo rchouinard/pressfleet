@@ -1,5 +1,7 @@
 [tools]
 go = "1.27"
+# Lints, renders, and tests the Helm chart (charts/pressfleet).
+helm = "4.3"
 golangci-lint = "2"
 # The dashboard (ui/) is built with Node and pnpm; production needs neither.
 node = "24"

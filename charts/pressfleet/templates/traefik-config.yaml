@@ -1,0 +1,111 @@
+{{- /*
+Traefik's static configuration, as templates/platform/traefik.yaml.tmpl
+renders it for Compose, with the Kubernetes CRD provider in place of the
+Docker and file providers. Entry point and resolver names are package
+ingress's. Traefik doesn't run as root here, so the entry points listen on
+unprivileged ports, and the Service maps 80 and 443 to them.
+*/ -}}
+{{- if and .Values.acme.dnsProvider (not .Values.acme.dnsCredentialsSecret) }}
+{{- fail "acme.dnsCredentialsSecret is required with acme.dnsProvider" }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: traefik
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "traefik") | nindent 4 }}
+data:
+  traefik.yaml: |
+    global:
+      checkNewVersion: false
+      sendAnonymousUsage: false
+
+    log:
+      level: INFO
+      format: json
+
+    # Request headers are dropped: they carry session cookies and basic auth
+    # credentials.
+    accessLog:
+      format: json
+      fields:
+        headers:
+          defaultMode: drop
+
+    entryPoints:
+      web:
+        address: ":8000"
+        http:
+          redirections:
+            entryPoint:
+              # The Service's port, not the container's.
+              to: ":443"
+              scheme: https
+              permanent: true
+      websecure:
+        address: ":8443"
+        # Routers that name no entry point listen here only.
+        asDefault: true
+        http:
+          tls: {}
+        {{- if .Values.traefik.service.http3 }}
+        http3:
+          advertisedPort: 443
+        {{- end }}
+      # The SFTP gateway in the control plane (sftp.port on the Service).
+      sftp:
+        address: ":2222"
+      # Ping (the probes) and Prometheus metrics, on loopback only, as on
+      # Compose (security review finding F5): the control plane reads the
+      # metrics through the exec API (provisioner.TraefikMetricsReader).
+      traefik:
+        address: "127.0.0.1:8082"
+
+    ping:
+      entryPoint: traefik
+
+    metrics:
+      prometheus:
+        entryPoint: traefik
+        addEntryPointsLabels: true
+        addRoutersLabels: true
+        addServicesLabels: true
+
+    providers:
+      # The IngressRoute and Middleware objects of the platform and of every
+      # site namespace. A route may only use services and middlewares of its
+      # own namespace.
+      kubernetesCRD:
+        allowCrossNamespace: false
+        allowExternalNameServices: false
+
+    certificatesResolvers:
+      # HTTP-01, one certificate per host name: the dashboard domain and,
+      # from go-live on, sites' primary domains and aliases.
+      acme-http:
+        acme:
+          {{- include "pressfleet.acmeAccount" . | nindent 10 }}
+          httpChallenge:
+            entryPoint: web
+      # Preview domains (<slug>.<preview base domain>).
+      acme-preview:
+        acme:
+          {{- include "pressfleet.acmeAccount" . | nindent 10 }}
+          {{- if .Values.acme.dnsProvider }}
+          # One wildcard certificate for every preview domain, with DNS-01
+          # (see routes.yaml). The provider's credentials come from the
+          # files the entrypoint names in <VARIABLE>_FILE variables.
+          dnsChallenge:
+            provider: {{ .Values.acme.dnsProvider | quote }}
+            {{- with .Values.acme.dnsResolvers }}
+            resolvers:
+              {{- range . }}
+              - {{ . | quote }}
+              {{- end }}
+            {{- end }}
+          {{- else }}
+          # No DNS provider: one certificate per preview domain, with
+          # HTTP-01, subject to the CA's rate limits.
+          httpChallenge:
+            entryPoint: web
+          {{- end }}
