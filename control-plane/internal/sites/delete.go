@@ -2,6 +2,7 @@ package sites
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -40,6 +41,33 @@ type DeleteOptions struct {
 // it existed have none, which means the backups stay.
 type deletePayload struct {
 	DeleteBackups bool `json:"delete_backups,omitempty"`
+	// Site names the site being deleted, for when its row is gone:
+	// `pressfleet admin changes` (package changes) reports the deletion by
+	// slug. The steps don't read it. Jobs queued before it existed have
+	// none.
+	Site *deletedSite `json:"site,omitempty"`
+}
+
+// deletedSite is what a site.delete job records of its site.
+type deletedSite struct {
+	Slug          string `json:"slug"`
+	ClientGroupID string `json:"client_group_id"`
+	ParentSiteID  string `json:"parent_site_id,omitempty"`
+}
+
+// DeletedSite returns the site a site.delete job deletes, as the job
+// recorded it when it was queued: its ID, slug, client group, and parent
+// site. ok is false for a job of another type, or one queued before
+// deletion jobs recorded their site.
+func DeletedSite(j store.Job) (site store.Site, ok bool) {
+	if j.Type != DeleteJobType {
+		return store.Site{}, false
+	}
+	var p deletePayload
+	if err := json.Unmarshal(j.Payload, &p); err != nil || p.Site == nil {
+		return store.Site{}, false
+	}
+	return store.Site{ID: j.TargetID, Slug: p.Site.Slug, ClientGroupID: p.Site.ClientGroupID, ParentSiteID: p.Site.ParentSiteID}, true
 }
 
 // unfinished are the job states of a job that will still run.
@@ -111,7 +139,10 @@ func (s *Service) Delete(ctx context.Context, siteID, createdByUserID string, op
 			TargetID:        siteID,
 			LockKey:         store.SiteLockKey(siteID),
 			CreatedByUserID: createdByUserID,
-			Payload:         deletePayload(opts),
+			Payload: deletePayload{
+				DeleteBackups: opts.DeleteBackups,
+				Site:          &deletedSite{Slug: site.Slug, ClientGroupID: site.ClientGroupID, ParentSiteID: site.ParentSiteID},
+			},
 		})
 		return err
 	})

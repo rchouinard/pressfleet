@@ -5,14 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/cli"
 	"github.com/rchouinard/pressfleet/control-plane/internal/doctor/doctortest"
+	"github.com/rchouinard/pressfleet/control-plane/internal/id"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
+	"github.com/rchouinard/pressfleet/control-plane/internal/store"
+	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
 )
 
 // fakeControlPlane stands in for the platform's control plane container.
@@ -293,5 +298,70 @@ func TestAdminInfo(t *testing.T) {
 	}
 	if info.Interface != 1 || info.Version != "v1.2.3-test" || info.Ready || !strings.Contains(info.ReadyError, "unhealthy") {
 		t.Errorf("info = %+v", info)
+	}
+}
+
+// TestAdminChanges runs `admin changes` against a state database of each
+// dialect. Package changes tests what it lists; this tests the command.
+func TestAdminChanges(t *testing.T) {
+	ctx := context.Background()
+	for _, d := range storetest.Dialects {
+		t.Run(string(d), func(t *testing.T) {
+			cfg := storetest.Config(t, d)
+			db := storetest.OpenUnmigrated(t, cfg)
+			if _, err := db.Migrate(ctx, filepath.Join(t.TempDir(), "backups")); err != nil {
+				t.Fatal(err)
+			}
+			old := store.Job{Type: "site.create", TargetType: store.JobTargetSite, TargetID: id.New()}
+			if err := store.NewJobs(db).Enqueue(ctx, &old); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(2 * time.Millisecond)
+			since := time.Now().UTC()
+			created := store.Job{Type: "site.create", TargetType: store.JobTargetSite, TargetID: id.New()}
+			if err := store.NewJobs(db).Enqueue(ctx, &created); err != nil {
+				t.Fatal(err)
+			}
+			ev := store.AuditEvent{Action: "user.create", TargetType: "user", TargetID: id.New(), Result: store.AuditSuccess}
+			if err := store.NewAuditEvents(db).Insert(ctx, &ev); err != nil {
+				t.Fatal(err)
+			}
+
+			env := map[string]string{"PRESSFLEET_DATABASE_DRIVER": string(cfg.Driver)}
+			if cfg.Driver == store.Postgres {
+				env["PRESSFLEET_DATABASE_POSTGRES_DSN"] = cfg.PostgresDSN.Reveal()
+			} else {
+				env["PRESSFLEET_DATABASE_SQLITE_PATH"] = cfg.SQLitePath
+			}
+			r := run(t, ctx, []string{"admin", "changes", "--since", since.Format(time.RFC3339Nano)}, env)
+			if r.code != 0 {
+				t.Fatalf("exit %d, stderr: %s", r.code, r.stderr)
+			}
+			var got struct {
+				Blocking []struct {
+					Kind  string `json:"kind"`
+					JobID string `json:"job_id"`
+				} `json:"blocking"`
+				Converged []json.RawMessage `json:"converged"`
+				Lost      []struct {
+					Kind     string `json:"kind"`
+					TargetID string `json:"target_id"`
+				} `json:"lost"`
+			}
+			if err := json.Unmarshal([]byte(r.stdout), &got); err != nil {
+				t.Fatalf("invalid JSON: %v\n%s", err, r.stdout)
+			}
+			if len(got.Blocking) != 1 || got.Blocking[0].JobID != created.ID || got.Converged == nil || len(got.Converged) != 0 ||
+				len(got.Lost) != 1 || got.Lost[0].TargetID != ev.TargetID {
+				t.Errorf("changes = %s", r.stdout)
+			}
+		})
+	}
+
+	for _, args := range [][]string{{"--since", "yesterday"}, {}} {
+		r := run(t, ctx, append([]string{"admin", "changes"}, args...), nil)
+		if r.code == 0 || !strings.Contains(r.stderr, "since") {
+			t.Errorf("admin changes %v: exit %d, stderr: %s", args, r.code, r.stderr)
+		}
 	}
 }

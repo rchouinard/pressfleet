@@ -59,6 +59,11 @@ func TestDeletion(t *testing.T) {
 		if got := e.site(t, site.ID); got.Status != store.SiteDeleting {
 			t.Errorf("status = %s, want deleting", got.Status)
 		}
+		// The job names the site for when its row is gone.
+		if got, ok := sites.DeletedSite(job); !ok || got.ID != site.ID || got.Slug != site.Slug ||
+			got.ClientGroupID != site.ClientGroupID || got.ParentSiteID != "" {
+			t.Errorf("DeletedSite = %+v, %t; want the site %s (%s)", got, ok, site.ID, site.Slug)
+		}
 		// Asking again returns the queued job rather than a second one.
 		again, err := e.svc.Delete(ctx, site.ID, "", sites.DeleteOptions{})
 		if err != nil || again.ID != job.ID {
@@ -91,6 +96,13 @@ func TestDeletion(t *testing.T) {
 		e.runJobs(t)
 		if d := e.job(t, late.ID); d.Job.State != store.JobSucceeded {
 			t.Errorf("deleting a deleted site: job %s: %s", d.Job.State, d.Job.Error)
+		}
+		// A job queued before deletions recorded their site names none.
+		if _, ok := sites.DeletedSite(late); ok {
+			t.Error("DeletedSite of a job without its site: ok")
+		}
+		if _, ok := sites.DeletedSite(store.Job{Type: sites.CreateJobType, Payload: job.Payload}); ok {
+			t.Error("DeletedSite of a site.create job: ok")
 		}
 	})
 }

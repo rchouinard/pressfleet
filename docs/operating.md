@@ -80,7 +80,7 @@ pfc exec control-plane pressfleet user reset-password --email admin@agency.examp
 pfc exec -T control-plane pressfleet user create --email ops@agency.example --role operator --password-stdin <<<"$PASSWORD"
 ```
 
-For a shell, `pfc exec control-plane sh`. The container runs as root, with Docker access and `restic`; treat it that way. Use `pressfleet version --client` inside it to see its own version, and `pressfleet admin info` for its version and readiness.
+For a shell, `pfc exec control-plane sh`. The container runs as root, with Docker access and `restic`; treat it that way. Use `pressfleet version --client` inside it to see its own version, `pressfleet admin info` for its version and readiness, and `pressfleet admin changes --since <time>` for what it changed since then (see [CLI and control plane versions](installation.md#cli-and-control-plane-versions)).
 
 Everything else is done in the dashboard or the API.
 

@@ -283,6 +283,14 @@ Host commands (`init`, `recover`, `doctor`, `metrics-access`) check the installe
 
 The CLI asks the control plane for its version through a small admin interface: it runs `pressfleet admin info` in the control plane container, which prints its version and readiness as JSON. If the control plane doesn't answer, because it is stopped or failing, the CLI reads the version from the container's image instead (the `org.opencontainers.image.version` label, or else the image tag). If there is no control plane container, there is nothing to check. If the CLI can't reach Docker, or either side is a development build without a release version, the command runs with a warning; `doctor` is how such problems get diagnosed.
 
+The admin interface has one more command, for rolling back an upgrade: `pressfleet admin changes --since <time>` prints what the control plane changed since an RFC 3339 time, from its jobs and audit log, as one JSON object. It groups the changes by what restoring the state database would do about them:
+
+- `blocking`: sites created, imported, cloned (staging sites), or deleted; WordPress core updates; go-lives, whose URL rewrite stays in the site's database; and client groups deleted or offboarded. Restoring the records would leave resources orphaned or sites broken.
+- `converged`: template and image updates, and settings changes, which the previous release's reconcile undoes.
+- `lost`: backups, staging refreshes and pushes, restores, deploys, users, alert rules, and the like. Their records go; snapshots stay in the repositories, and content stays on the sites.
+
+Each change names its kind (the job type, such as `site.create`, or the audit action, such as `user.create`), its time, the job and its state or the audit event, and its target: the site's ID and slug, with `staging` for a staging site, and its client group. Jobs whose failure rolled back everything they did aren't listed. The command only reads the state database. New commands and fields don't change the interface's version.
+
 ## DNS for custom domains
 
 Sites start on their preview domain. Pointing a client's own domain at a site is a later step with its own checks: see [Go live on a custom domain](first-steps.md#7-go-live-on-a-custom-domain). Behind NAT, give `--public-ip` at install so the go-live DNS check knows the host's public address; behind a CDN or load balancer, see [skipping the check](first-steps.md#behind-a-cdn-or-load-balancer).
