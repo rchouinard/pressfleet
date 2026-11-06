@@ -53,6 +53,7 @@ The build context for both images is this `images/` directory (shared files live
 make images                    # build the whole matrix from manifest.json
 make images-test               # build, then smoke test (test.sh) every PHP branch on the latest WordPress
 images/test.sh 8.5             # smoke test a single PHP version; SKIP_BUILD=1 reuses existing images
+images/test-restricted.sh 8.5  # run the images as a Pod Security "restricted" pod would (Kubernetes); see below
 WP_VERSION=7.0.6 images/test.sh  # test a pinned WordPress version from the manifest
 images/matrix.sh php           # the PHP branches being built
 ```
@@ -85,11 +86,35 @@ The control plane (wp-config generation #21, Compose templates #24, provisioning
 
 nginx finds PHP-FPM at `PHP_FPM_HOST:PHP_FPM_PORT` (default `php:9000`), so the php service must be reachable as `php` on the site network (the Compose service name does this). nginx re-resolves the name through Docker's DNS every 10 s, so it can start before php and follows a recreated php container (for example after a PHP version change) without a restart.
 
+Under Kubernetes the two containers share a pod, and so a network namespace: set `PHP_FPM_HOST=127.0.0.1`. An address needs no DNS, so `NGINX_RESOLVER` can stay at its default, which nothing queries. nginx may start before php and the first requests fail until PHP-FPM listens; the pod's readiness probe (below) is what keeps them away.
+
 ### User
 
 - Both containers run as the site's UID and GID, set by Compose `user: "<uid>:<gid>"`. Any non-root UID works; it does not need to exist in `/etc/passwd`. Using the same UID in both containers is required: nginx must read files PHP writes to `wp-content`, and PHP must delete nginx's FastCGI cache files (§5.6).
 - Neither image needs root or any capabilities: `cap_drop: [ALL]` and `security_opt: [no-new-privileges:true]` are supported. The images default to `65534:65534` (nobody) only as a fallback when `user:` is not set.
 - The containers support a read-only root filesystem (`read_only: true`) provided `/tmp` is a writable tmpfs (`tmpfs: [/tmp]`). The smoke test runs them this way.
+
+### Kubernetes
+
+The images run unchanged under Kubernetes (design doc §4.8; decision 6 in #212). In a pod they meet Pod Security `restricted`, with this `securityContext`:
+
+| Setting | Value | Why the images allow it |
+| --- | --- | --- |
+| `runAsNonRoot`, `runAsUser`, `runAsGroup` | `true`, the site UID, the site GID | Any non-root UID works (see [User](#user)). The images' fallback `USER 65534:65534` is numeric, so `runAsNonRoot` verifies even without `runAsUser`. |
+| `fsGroup` | the site GID | Gives the group write access to the `wp-content` volume and the cache `emptyDir`; both images need only that. |
+| `allowPrivilegeEscalation` | `false` | Same as `no-new-privileges`; the images need no privilege gain. |
+| `capabilities.drop` | `[ALL]` | Neither image needs any capability. nginx listens on 8080 and 8081, PHP-FPM on 9000. |
+| `seccompProfile.type` | `RuntimeDefault` | Nothing the images run needs a syscall outside the runtime's default profile. |
+| `readOnlyRootFilesystem` | `true` | With `emptyDir` volumes at `/tmp` and, in both containers, `/var/cache/pressfleet/fastcgi`, and the same mounts as under Compose for `wp-content` (read-write in php, read-only in nginx) and `wp-config.php` (php only, a Secret volume). |
+| `automountServiceAccountToken` | `false` | The site containers never call the Kubernetes API. |
+
+**Probes.** Both containers have the same exec command that Compose's `HEALTHCHECK` uses, `/usr/local/bin/pressfleet-healthcheck`: use it as the `exec` probe in both. Do not use `httpGet` for nginx: kubelet's request comes from the node's address, and the status port (8081) answers only `NGINX_STATUS_ALLOW`, which is loopback by default; the exec runs inside the container. The check asks nginx's `/healthz` (which doesn't involve PHP) and PHP-FPM's `ping` respectively, so use it for the readiness and liveness probes of nginx, and for php's readiness; php's startup probe can use it too, with a failure threshold covering the `wp-content` seeding on first start. A php restart doesn't fail nginx's probe.
+
+**Trusted proxies.** `local` doesn't fit a pod. It reads the pod's connected routes from the kernel, and those describe the pod's own link, not the cluster, so Traefik's pods, which are not on that link, wouldn't be trusted and WordPress would see every request as plain HTTP from the proxy's address. The driver sets `NGINX_TRUSTED_PROXIES` to the pod network's CIDRs instead, and the site's NetworkPolicy, which admits ingress to nginx only from Traefik's pods, narrows that to Traefik. A site's nginx receives traffic from nothing else, so no other peer can make use of the trust. An entry in the list is an address or CIDR, as under Compose; the driver learns the ranges from the cluster, not the image.
+
+**Control plane image as the task image.** Tasks (backups, restores, exports, and SFTP session workers) run in the control plane image, as their own non-root user with the same `securityContext`. The image has `restic`, `mariadb`, `mariadb-dump`, and the `pressfleet` binary (`pressfleet sftp-server` is the SFTP worker), and a task needs none of the rest. Its `USER root` is for the control plane itself on Compose; a task pod sets `runAsUser`, and `HOME` points at a writable `emptyDir` (restic's cache goes there), as the Compose driver sets it to a tmpfs. The Docker CLI and Compose plugin in the image are for the Compose driver in the control plane. No task invokes them and none needs the socket, which the pods don't have.
+
+The Compose smoke test (`test.sh`) is unchanged. [`test-restricted.sh`](test-restricted.sh) runs the images the way a restricted pod does (arbitrary UID with a supplemental group, no capabilities, `RuntimeDefault` seccomp, read-only root filesystem, nginx and php in one network namespace, exec probes, a specific `NGINX_TRUSTED_PROXIES`), and, with `CONTROL_PLANE_IMAGE` set, runs the control plane image as a task would. Admission itself is checked against a cluster in the kind tests (#228).
 
 ### Filesystem
 
@@ -172,8 +197,8 @@ All are optional; defaults are shown.
 | --- | --- | --- |
 | `PHP_FPM_HOST` | `php` | Host name of the php container. |
 | `PHP_FPM_PORT` | `9000` | PHP-FPM port. |
-| `NGINX_RESOLVER` | `127.0.0.11` | DNS server used to resolve `PHP_FPM_HOST` (Docker's embedded DNS). |
-| `NGINX_TRUSTED_PROXIES` | `local` | Space/comma separated IPs/CIDRs whose `X-Forwarded-For` and `X-Forwarded-Proto` are trusted. `local` stands for the IPv4 networks the container is attached to when it starts (read from the kernel's routing table). A site's nginx is only on its site network, where the platform's Traefik is the only proxy, so `local` trusts Traefik without knowing the address Docker gives it; networks the container joins later are not trusted. If a CDN sits in front of Traefik, Traefik must be configured to trust it. |
+| `NGINX_RESOLVER` | `127.0.0.11` | DNS server used to resolve `PHP_FPM_HOST` (Docker's embedded DNS). Not queried when `PHP_FPM_HOST` is an address, as it is under Kubernetes. |
+| `NGINX_TRUSTED_PROXIES` | `local` | Space/comma separated IPs/CIDRs whose `X-Forwarded-For` and `X-Forwarded-Proto` are trusted. `local` stands for the IPv4 networks the container is attached to when it starts (read from the kernel's routing table). A site's nginx is only on its site network, where the platform's Traefik is the only proxy, so `local` trusts Traefik without knowing the address Docker gives it; networks the container joins later are not trusted. If a CDN sits in front of Traefik, Traefik must be configured to trust it. `local` is for Compose only: a pod's routes don't describe the cluster, so on Kubernetes the driver sets the pod network's CIDRs (see [Kubernetes](#kubernetes)). |
 | `NGINX_STATUS_ALLOW` | `127.0.0.1 ::1` | IPs/CIDRs allowed on the internal status port 8081. Widen it if the metrics collector (M4) scrapes over the network rather than exec. |
 | `NGINX_XMLRPC` | `deny` | `deny` returns 403 for `/xmlrpc.php`; `allow` passes it to PHP (needed by e.g. Jetpack and the mobile apps). |
 | `NGINX_CLIENT_MAX_BODY_SIZE` | `64m` | Maximum request body (uploads). |
@@ -225,8 +250,8 @@ Why not load them from the image, like the must-use plugins? The object cache dr
 
 | Check | How | Healthy when |
 | --- | --- | --- |
-| php container (image `HEALTHCHECK`) | `/usr/local/bin/pressfleet-healthcheck`: FastCGI request to `127.0.0.1:9000/fpm-ping` via `cgi-fcgi` | response contains `pong` |
-| nginx container (image `HEALTHCHECK`) | `GET http://127.0.0.1:8081/healthz` | `200 ok`. Independent of PHP, so a php restart does not mark nginx unhealthy. |
+| php container (image `HEALTHCHECK`; Kubernetes exec probe) | `/usr/local/bin/pressfleet-healthcheck`: FastCGI request to `127.0.0.1:9000/fpm-ping` via `cgi-fcgi` | response contains `pong` |
+| nginx container (image `HEALTHCHECK`; Kubernetes exec probe) | `/usr/local/bin/pressfleet-healthcheck`: `GET http://127.0.0.1:8081/healthz` | `200 ok`. Independent of PHP, so a php restart does not mark nginx unhealthy. |
 | nginx status | `GET :8081/nginx-status` | `stub_status` output |
 | PHP-FPM status | `GET :8081/fpm-status` (add `?json` or `?full`) | FPM pool status, proxied to php (M4 metrics) |
 | PHP-FPM ping | `GET :8081/fpm-ping` | `pong`, end-to-end nginx to PHP-FPM |

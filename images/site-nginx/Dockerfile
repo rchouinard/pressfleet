@@ -57,6 +57,7 @@ RUN rm -rf /docker-entrypoint.sh /docker-entrypoint.d /etc/nginx/conf.d /usr/sha
 # include directories.
 COPY site-nginx/conf/ /etc/nginx/pressfleet/
 COPY site-nginx/docker-entrypoint.sh /usr/local/bin/pressfleet-entrypoint
+COPY site-nginx/healthcheck.sh /usr/local/bin/pressfleet-healthcheck
 
 # The same core tree as site-php (PHP files included, so nginx can check that
 # a script exists before passing it to PHP), and the same mu-plugins at the
@@ -70,7 +71,7 @@ RUN set -eux; \
 	mkdir -p /var/cache/pressfleet/fastcgi; \
 	chmod 0755 /var/cache/pressfleet; \
 	chmod 1777 /var/cache/pressfleet/fastcgi; \
-	chmod 0755 /usr/local/bin/pressfleet-entrypoint
+	chmod 0755 /usr/local/bin/pressfleet-entrypoint /usr/local/bin/pressfleet-healthcheck
 
 ENV PHP_FPM_HOST=php \
 	PHP_FPM_PORT=9000 \
@@ -96,7 +97,7 @@ EXPOSE 8080 8081
 STOPSIGNAL SIGQUIT
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-	CMD ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/healthz"]
+	CMD ["/usr/local/bin/pressfleet-healthcheck"]
 
 ENTRYPOINT ["/usr/local/bin/pressfleet-entrypoint"]
 CMD ["nginx", "-e", "stderr", "-c", "/tmp/nginx/nginx.conf", "-g", "daemon off;"]
