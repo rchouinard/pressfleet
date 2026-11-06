@@ -195,11 +195,15 @@ func coreFailureResponse(f store.RolloutFailure) gen.CoreUpdateFailure {
 
 func (h *Handlers) coreRolloutResponse(ro sites.RolloutStatus) gen.CoreRollout {
 	out := gen.CoreRollout{
+		Held:                ro.Held,
 		Halted:              ro.Halted(),
 		ConsecutiveFailures: ro.ConsecutiveFailures,
 		MaxFailures:         ro.MaxFailures,
 		Releases:            []gen.CoreRelease{},
 		Failures:            []gen.CoreUpdateFailure{},
+	}
+	if ro.Held {
+		out.HoldReason = &ro.HoldReason
 	}
 	if ro.Halted() {
 		out.HaltedAt, out.HaltReason = timePtr(ro.HaltedAt), &ro.HaltReason

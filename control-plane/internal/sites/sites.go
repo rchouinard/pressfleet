@@ -356,6 +356,11 @@ type Options struct {
 	// Templates re-renders sites with new templates and undoes it; nil
 	// turns off the templates rollout (templateupdate.go).
 	Templates TemplateDriver
+	// RolloutHold says whether the core, image, and template rollouts are
+	// held, with the reason, while an upgrade is unconfirmed (#247). It is
+	// asked at every pass and API read, so a change takes effect without a
+	// restart. Nil never holds.
+	RolloutHold RolloutHold
 }
 
 // Service runs the site workflows.
@@ -386,6 +391,7 @@ type Service struct {
 	// off what needs them.
 	prober    provisioner.Prober
 	pinner    provisioner.ImagePinner
+	hold      RolloutHold
 	templates TemplateDriver
 	rollouts  *Rollouts
 }
@@ -460,6 +466,7 @@ func New(opts Options) (*Service, error) {
 		statusTimeout: opts.StatusTimeout,
 		prober:        opts.Prober,
 		pinner:        opts.ImagePinner,
+		hold:          opts.RolloutHold,
 		templates:     opts.Templates,
 
 		healthTimeout:  opts.CoreUpdates.HealthTimeout,

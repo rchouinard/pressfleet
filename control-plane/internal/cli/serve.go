@@ -263,6 +263,7 @@ func (a *app) buildServer(ctx context.Context) (_ *server, err error) {
 		Prober:            prov,
 		ImagePinner:       prov,
 		Templates:         templateDriver(s.rt),
+		RolloutHold:       rolloutHold(layout.UpgradeDir(), a.log.With("component", "rollouts")),
 		Logger:            a.log.With("component", "sites"),
 	})
 	if err != nil {

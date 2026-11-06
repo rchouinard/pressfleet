@@ -5,7 +5,7 @@
 // doesn't blank the page.
 import { formatValue } from '../utils/metrics'
 import {
-  assessCapacity, fetchReadiness, overviewMetricIds, summaryValue, worstDisk,
+  assessCapacity, fetchReadiness, overviewMetricIds, rolloutHold, summaryValue, worstDisk, type RolloutState,
 } from '../utils/overview'
 import { toApiError } from '../utils/api-error'
 
@@ -55,6 +55,24 @@ const { data: doctorResult, status: doctorStatus, refresh: reloadDoctor } = useA
   }
 })
 
+// The three rollouts are held together while an upgrade is unconfirmed
+// (#247). A failed read shows nothing: the hold is a warning, not a gate.
+const { data: rollouts, refresh: reloadRollouts } = useAsyncData('overview-rollouts', async () => {
+  const state = async <T extends RolloutState>(get: () => Promise<{ data?: T }>) => {
+    try {
+      return (await get()).data
+    } catch {
+      return undefined
+    }
+  }
+  const [core, images, templates] = await Promise.all([
+    state(() => api.GET('/api/v1/core-rollout')),
+    state(() => api.GET('/api/v1/image-rollout')),
+    state(() => api.GET('/api/v1/template-rollout')),
+  ])
+  return rolloutHold({ core, images, templates })
+})
+
 const assessment = computed(() =>
   capacity.value?.capacity ? assessCapacity(capacity.value.capacity) : undefined,
 )
@@ -83,6 +101,7 @@ function refreshAll() {
   void reloadCapacity()
   void reloadReady()
   void reloadDoctor()
+  void reloadRollouts()
 }
 const busy = computed(() => [metricsStatus.value, capacityStatus.value, readyStatus.value, doctorStatus.value].includes('pending'))
 </script>
@@ -98,6 +117,8 @@ const busy = computed(() => [metricsStatus.value, capacityStatus.value, readySta
         Refresh
       </UButton>
     </header>
+
+    <OverviewRolloutHold v-if="rollouts" :hold="rollouts" />
 
     <section aria-labelledby="capacity-heading" class="space-y-3">
       <h2 id="capacity-heading" class="font-medium">Capacity</h2>

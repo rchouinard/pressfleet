@@ -61,6 +61,29 @@ The host CLI never opens the state database itself. Running `upgrade` again when
 
 Sites aren't part of the platform project. If the release changes how sites are rendered, the upgraded control plane moves them to the new rendering one at a time, with a health check and a revert on failure ([Site template updates](configuration.md#site-template-updates)); `GET /api/v1/template-rollout` shows its progress.
 
+## Held rollouts
+
+An upgraded control plane that isn't confirmed healthy must not start changing sites. While the upgrade record `<data_dir>/upgrade/upgrade.json` has the status `in-progress` or `failed`, the control plane starts no site updates from the WordPress core, image, and site template rollouts. Updates you request by hand, and the reconciliation at startup, run as usual. When `upgrade` marks the record `succeeded` after the platform is healthy, the rollouts resume at their next pass (at most 15 minutes), without a restart.
+
+`GET /api/v1/core-rollout`, `/api/v1/image-rollout`, and `/api/v1/template-rollout` report `held: true` with a `hold_reason`, the dashboard's platform overview shows it, and `pressfleet doctor` warns (`upgrade-rollouts`). To lift the hold, run `pressfleet upgrade` again until it succeeds, or return to the previous release with the steps in [Recovering from a failed upgrade](#recovering-from-a-failed-upgrade).
+
+An installation that never upgraded has no record and no hold. A record the control plane can't read or parse holds the rollouts too, with a warning in its log, because it can't tell that the upgrade was confirmed.
+
+### The record as a contract
+
+The CLI writes the record and the control plane reads its `status` (and `to`, for the message). The statuses are a contract between the two, versioned like the admin interface (design doc §4.7; version 1, `upgradestate.ContractVersion`):
+
+| Status | Meaning | Rollouts |
+| --- | --- | --- |
+| `in-progress` | `upgrade` is applying the release, or was killed doing so | held |
+| `failed` | the apply failed and nothing has retried or rolled it back | held |
+| `rolling-back` | a rollback is running | held |
+| `rollback-failed` | a rollback stopped | held |
+| `succeeded` | the platform was healthy at the new version | run |
+| `rolled-back` | the platform is back on the previous release | run |
+
+A status a control plane doesn't know holds the rollouts. Fields can be added to the record; changing the meaning of a status, or what the control plane reads, raises the contract version.
+
 ## Notes for specific releases
 
 The GitHub release notes list the commits since the previous release ([Releasing](releasing.md)). What an operator needs to know or do for a release is kept here, so it is versioned with the release.
