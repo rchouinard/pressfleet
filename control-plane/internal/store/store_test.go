@@ -63,8 +63,9 @@ func TestMigrate(t *testing.T) {
 			if err != nil || res.From != latest || res.To != latest || res.BackupPath != "" {
 				t.Errorf("second Migrate = %+v, %v; want no-op", res, err)
 			}
-			if _, err := os.Stat(backups); !errors.Is(err, os.ErrNotExist) {
-				t.Errorf("backup directory created without a backup: %v", err)
+			// Only the migration marker: an empty database isn't backed up.
+			if matches, err := filepath.Glob(filepath.Join(backups, "*.db")); err != nil || len(matches) != 0 {
+				t.Errorf("backups of an empty database: %v, %v", matches, err)
 			}
 		})
 	}

@@ -192,6 +192,17 @@ func (p Project) ListDir(ctx context.Context, service, dir string) ([]string, er
 	return strings.Fields(string(out)), nil
 }
 
+// ReadFile returns a file's contents as a new container of a service sees
+// it (compose run --rm --no-deps, with cat as the entrypoint). Like ListDir,
+// it is for files only the container's root can read, such as the state
+// database's migration markers (§4.7). The service's image must ship cat.
+func (p Project) ReadFile(ctx context.Context, service, path string) ([]byte, error) {
+	if service == "" {
+		return nil, fmt.Errorf("%w: cat needs a service", ErrInvalidProject)
+	}
+	return p.run(ctx, nil, "run", "--rm", "--no-deps", "--no-TTY", "--entrypoint", "cat", service, "--", path)
+}
+
 // waitSeconds formats a wait timeout for Compose, which takes whole seconds
 // and reads 0 as no limit, so a positive timeout never rounds down to 0.
 func waitSeconds(d time.Duration) string {
