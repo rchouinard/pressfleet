@@ -47,8 +47,8 @@ const rollbackCause = "rolled back on demand (pressfleet upgrade --rollback)"
 // runRollback runs `pressfleet upgrade --rollback`. Like upgrade, it is
 // exempt from the version skew check (§4.7): the CLI is the release
 // upgraded to, and the control plane goes back to an older one. It exits
-// as a failed upgrade does: 2 when the platform was rolled back, 1 when it
-// wasn't.
+// with 0 when the platform was rolled back, as asked, and 1 when it wasn't;
+// exitRolledBack is only for an upgrade that failed (decided 2026-11-06).
 func (u *upgrader) runRollback(ctx context.Context) error {
 	if u.f.noRollback || u.f.skipPreflight || u.f.controlPlaneImage != "" {
 		return errors.New("--rollback can't be combined with --no-rollback, --skip-preflight, or --control-plane-image")
@@ -157,7 +157,7 @@ func (u *upgrader) runRollback(ctx context.Context) error {
 	if note := u.skewNote(u.record.From); note != "" {
 		u.printf("\n%s\n", note)
 	}
-	return &exitError{code: exitRolledBack}
+	return nil
 }
 
 // changesSince is the time from which the control plane's changes are

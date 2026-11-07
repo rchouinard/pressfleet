@@ -59,7 +59,7 @@ func TestRollbackAfterUpgrade(t *testing.T) {
 	e, original, backup := upgraded(t, store.SQLite)
 
 	r := e.upgrade("", "--rollback", "--yes")
-	e.checkRolledBack(r, original)
+	e.checkRolledBackExit(r, original, 0)
 	for _, want := range []string{
 		"Rolling back the upgrade from v1.2.2 to v1.2.3-test",
 		"What the control plane changed since",
@@ -139,7 +139,7 @@ func TestRollbackBlockingChanges(t *testing.T) {
 	}
 
 	r = e.upgrade("", "--rollback", "--yes", "--force")
-	e.checkRolledBack(r, original)
+	e.checkRolledBackExit(r, original, 0)
 	if !strings.Contains(r.stdout, "rolling back anyway (--force) leaves behind") {
 		t.Errorf("stdout doesn't say what --force leaves behind:\n%s", r.stdout)
 	}
@@ -160,7 +160,7 @@ func TestRollbackWithoutMigration(t *testing.T) {
 			e.platform.changes = blockingChanges
 
 			r := e.upgrade("", "--rollback", "--yes")
-			e.checkRolledBack(r, original)
+			e.checkRolledBackExit(r, original, 0)
 			if len(e.platform.changesAsked) != 0 || len(e.platform.runs) != 0 {
 				t.Errorf("asked changes %v, ran %v", e.platform.changesAsked, e.platform.runs)
 			}
@@ -201,7 +201,7 @@ func TestRollbackConfirmation(t *testing.T) {
 	}
 
 	r = e.upgrade("y\n", "--rollback")
-	e.checkRolledBack(r, original)
+	e.checkRolledBackExit(r, original, 0)
 }
 
 func TestRollbackControlPlaneNotAnswering(t *testing.T) {
@@ -216,7 +216,7 @@ func TestRollbackControlPlaneNotAnswering(t *testing.T) {
 
 		e.platform.onStop = func() { e.platform.infoErr = nil }
 		r = e.upgrade("", "--rollback", "--yes", "--force")
-		e.checkRolledBack(r, original)
+		e.checkRolledBackExit(r, original, 0)
 	})
 	t.Run("failed with no-rollback", func(t *testing.T) {
 		e := newUpgradeEnv(t, "v1.2.2")
@@ -231,7 +231,7 @@ func TestRollbackControlPlaneNotAnswering(t *testing.T) {
 		e.platform.onStop = func() { e.platform.infoErr = nil }
 
 		r := e.upgrade("", "--rollback", "--yes")
-		e.checkRolledBack(r, original)
+		e.checkRolledBackExit(r, original, 0)
 		if !strings.Contains(r.stdout, "held the WordPress core, image, and template rollouts") {
 			t.Errorf("stdout doesn't say why skipping the check is safe:\n%s", r.stdout)
 		}

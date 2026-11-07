@@ -96,7 +96,7 @@ The GitHub release notes list the commits since the previous release ([Releasing
 
 **Automatic rollback (#249).** `pressfleet upgrade` now rolls back a failed upgrade on its own ([Automatic rollback](#automatic-rollback)), and exits with `2` when it did. Scripts that took any non-zero exit for a platform left failed should accept `2` as "failed, and back on the previous release". `--no-rollback` keeps the previous behavior: the platform is left as it failed, and the recovery steps are printed. The upgrade record's statuses `rolling-back`, `rolled-back`, and `rollback-failed` are spelled with hyphens; a record with underscores is an unknown status, which holds the rollouts.
 
-**`pressfleet upgrade --rollback` (#250).** Returns the platform to the release before the last upgrade, after listing what the control plane changed since, and refusing changes it would leave behind unless `--force` is given ([Rolling back an upgrade](#rolling-back-an-upgrade)). It exits with `2` when it rolled back.
+**`pressfleet upgrade --rollback` (#250).** Returns the platform to the release before the last upgrade, after listing what the control plane changed since, and refusing changes it would leave behind unless `--force` is given ([Rolling back an upgrade](#rolling-back-an-upgrade)). It exits with `0` when it rolled back.
 
 **Backup repositories after a state restore (#277).** After a state restore that is older than a client group's backup repository, the group's backups used to fail for good with `wrong password or no key found`. The control plane now moves such a repository aside, keeping its files, and creates a new one ([Troubleshooting](troubleshooting.md#backups)). It only does this while a repository's stored password has never opened it.
 
@@ -181,7 +181,7 @@ The new control plane may have worked for a while since the upgrade, and restori
 - **PostgreSQL and a migration.** `--rollback` stops before changing anything and prints the [recovery steps](#recovering-from-a-failed-upgrade), whose step 2 restores [your own backup](#postgresql-state-databases).
 - **A control plane that doesn't answer.** After an upgrade that failed with `--no-rollback`, or was interrupted, the rollouts were [held](#held-rollouts), so the control plane changed sites only when asked: `--rollback` skips the check and says so. After a succeeded upgrade, it refuses until the control plane answers, or with `--force`.
 
-`--rollback` exits like a failed upgrade: `2` when the platform is back on the previous release, and `1` when it isn't, because it refused (nothing changed) or the rollback stopped (with the recovery steps printed, as for the automatic rollback). Afterwards, install the previous release's CLI again if this one is outside the [version skew](#version-skew) policy with it; `--rollback` says so. To upgrade again, run `pressfleet upgrade`.
+`--rollback` exits with `0` when the platform is back on the previous release, and `1` when it isn't, because it refused (nothing changed) or the rollback stopped (with the recovery steps printed, as for the automatic rollback). Afterwards, install the previous release's CLI again if this one is outside the [version skew](#version-skew) policy with it; `--rollback` says so. To upgrade again, run `pressfleet upgrade`.
 
 ## Recovering from a failed upgrade
 

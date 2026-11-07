@@ -183,8 +183,8 @@ asks for confirmation; --yes gives it.
 once, for an upgrade that succeeded but is regretted. It first lists what
 the control plane changed since the upgrade started, and refuses changes
 the rollback would leave behind (sites created or deleted, core updates,
-and the like) unless --force is given. Its exit codes are those of a failed
-upgrade: 2 rolled back; 1 not rolled back.`,
+and the like) unless --force is given. It exits with 0 when it rolled back, and 1 when
+it didn't (refused, or stopped).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			u := &upgrader{a: a, f: f, in: bufio.NewReader(a.opts.Stdin), out: a.opts.Stdout}
