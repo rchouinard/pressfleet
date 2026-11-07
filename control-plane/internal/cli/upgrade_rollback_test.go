@@ -97,8 +97,15 @@ func (e *upgradeEnv) rollback() (status string, rb rollback) {
 // project from before the upgrade.
 func (e *upgradeEnv) checkRolledBack(r result, original string) {
 	e.t.Helper()
-	if r.code != 2 {
-		e.t.Fatalf("exit %d, want 2\n%s\n%s", r.code, r.stdout, r.stderr)
+	e.checkRolledBackExit(r, original, 2)
+}
+
+// checkRolledBackExit is checkRolledBack for a run that exits with code:
+// 2 after an upgrade that failed, 0 after --rollback.
+func (e *upgradeEnv) checkRolledBackExit(r result, original string, code int) {
+	e.t.Helper()
+	if r.code != code {
+		e.t.Fatalf("exit %d, want %d\n%s\n%s", r.code, code, r.stdout, r.stderr)
 	}
 	if !strings.Contains(r.stdout, "the platform is back on v1.2.2 and healthy") {
 		e.t.Errorf("output doesn't say the platform is back:\n%s", r.stdout)

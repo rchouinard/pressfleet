@@ -3,7 +3,6 @@ The control plane (design doc §4.1, §4.8): one replica, replaced rather than
 rolled (two would run jobs against the same state), with the data directory
 on a ReadWriteMany volume that task pods mount too.
 */ -}}
-{{- $dataDir := "/var/lib/pressfleet" }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -57,7 +56,8 @@ metadata:
   labels:
     {{- include "pressfleet.componentLabels" (dict "root" . "component" "control-plane") | nindent 4 }}
 spec:
-  replicas: 1
+  # Zero while a state recovery runs (state-recover.yaml, §5.10).
+  replicas: {{ if .Values.recovery.enabled }}0{{ else }}1{{ end }}
   strategy:
     type: Recreate
   selector:
@@ -68,155 +68,4 @@ spec:
       labels:
         {{- include "pressfleet.componentLabels" (dict "root" . "component" "control-plane") | nindent 8 }}
     spec:
-      serviceAccountName: control-plane
-      # The driver talks to the API server as this ServiceAccount (RBAC in
-      # rbac.yaml).
-      automountServiceAccountToken: true
-      {{- with include "pressfleet.imagePullSecrets" . }}{{ . | nindent 6 }}{{ end }}
-      {{- /*
-        Non-root, unlike on Compose, where the control plane needs the
-        Docker socket. The repository group lets it share local backup
-        repositories with tasks (provisioner.RepositoryGID).
-      */}}
-      {{- include "pressfleet.podSecurityContext" (dict "uid" .Values.controlPlane.uid "gid" .Values.controlPlane.gid "supplementalGroups" (list 60000)) | nindent 6 }}
-      containers:
-        - name: control-plane
-          image: {{ include "pressfleet.controlPlaneImage" . | quote }}
-          args: ["serve"]
-          env:
-            # The Go process's share of the memory limit, as on Compose (§4.1).
-            - name: GOMEMLIMIT
-              value: "96MiB"
-            - name: PRESSFLEET_DRIVER
-              value: kubernetes
-            - name: PRESSFLEET_DATA_DIR
-              value: {{ $dataDir | quote }}
-            - name: PRESSFLEET_LISTEN
-              value: ":8080"
-            - name: PRESSFLEET_MASTER_KEY_FILE
-              value: /run/secrets/master_key
-            {{- if .Values.config.secretName }}
-            # The operator's config file, for the settings not passed here.
-            # These variables take precedence over it.
-            - name: PRESSFLEET_CONFIG
-              value: /run/secrets/pressfleet_config
-            {{- end }}
-            - name: PRESSFLEET_DATABASE_DRIVER
-              value: postgres
-            - name: PRESSFLEET_DATABASE_POSTGRES_DSN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.database.postgresDSN.secretName | quote }}
-                  key: {{ .Values.database.postgresDSN.key | quote }}
-            # Tasks run in the control plane's own image (§5.3).
-            - name: PRESSFLEET_TASK_IMAGE
-              value: {{ include "pressfleet.controlPlaneImage" . | quote }}
-            # Full names, so that sites in their own namespaces reach them too.
-            - name: PRESSFLEET_MARIADB_ADDRESS
-              value: {{ include "pressfleet.mariadbAddress" . | quote }}
-            - name: PRESSFLEET_REDIS_ADDRESS
-              value: {{ include "pressfleet.redisAddress" . | quote }}
-            - name: PRESSFLEET_METRICS_URL
-              value: {{ include "pressfleet.metricsURL" . | quote }}
-            - name: PRESSFLEET_METRICS_RETENTION_DAYS
-              value: {{ .Values.metrics.retentionDays | quote }}
-            - name: PRESSFLEET_SFTP_PORT
-              value: {{ .Values.sftp.port | quote }}
-            {{- with .Values.dashboardDomain }}
-            - name: PRESSFLEET_DASHBOARD_DOMAIN
-              value: {{ . | quote }}
-            {{- end }}
-            {{- with .Values.previewBaseDomain }}
-            - name: PRESSFLEET_PREVIEW_BASE_DOMAIN
-              value: {{ . | quote }}
-            {{- end }}
-            {{- with .Values.publicIP }}
-            - name: PRESSFLEET_PUBLIC_IP
-              value: {{ . | quote }}
-            {{- end }}
-            - name: PRESSFLEET_KUBERNETES_PLATFORM_NAMESPACE
-              value: {{ .Release.Namespace | quote }}
-            - name: PRESSFLEET_KUBERNETES_SITE_NAMESPACE_PREFIX
-              value: {{ .Values.kubernetes.siteNamespacePrefix | quote }}
-            - name: PRESSFLEET_KUBERNETES_STORAGE_CLASSES_SITES
-              value: {{ .Values.kubernetes.storageClasses.sites | quote }}
-            - name: PRESSFLEET_KUBERNETES_STORAGE_CLASSES_DATA
-              value: {{ .Values.kubernetes.storageClasses.data | quote }}
-            - name: PRESSFLEET_KUBERNETES_TRAEFIK_SERVICE
-              value: traefik
-            # Task pods mount it too (#219).
-            - name: PRESSFLEET_KUBERNETES_DATA_CLAIM
-              value: {{ .Values.controlPlane.data.existingClaim | default "control-plane-data" | quote }}
-            - name: PRESSFLEET_KUBERNETES_POD_CIDRS
-              value: {{ join "," .Values.kubernetes.podCIDRs | quote }}
-            - name: PRESSFLEET_KUBERNETES_IMAGE_PULL_SECRETS
-              value: {{ join "," .Values.kubernetes.imagePullSecrets | quote }}
-          ports:
-            - name: http
-              containerPort: 8080
-            # The SFTP gateway (§5.8); Traefik forwards sftp.port to it.
-            - name: sftp
-              containerPort: 2222
-          volumeMounts:
-            - name: data
-              mountPath: {{ $dataDir | quote }}
-            # The master key, the platform credentials, and the config file,
-            # at the paths the config defaults name, as on Compose.
-            - name: secrets
-              mountPath: /run/secrets
-              readOnly: true
-            - name: tmp
-              mountPath: /tmp
-          {{- include "pressfleet.containerSecurityContext" (dict "readOnly" true) | nindent 10 }}
-          {{- include "pressfleet.memory" .Values.controlPlane.memoryMB | nindent 10 }}
-          # Migrations run at startup, before the API answers.
-          startupProbe:
-            exec:
-              command: ["pressfleet", "healthcheck"]
-            periodSeconds: 2
-            timeoutSeconds: 5
-            failureThreshold: 300
-          livenessProbe:
-            exec:
-              command: ["pressfleet", "healthcheck"]
-            periodSeconds: 30
-            timeoutSeconds: 5
-            failureThreshold: 3
-          readinessProbe:
-            exec:
-              command: ["pressfleet", "healthcheck"]
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3
-      volumes:
-        - name: data
-          persistentVolumeClaim:
-            claimName: {{ .Values.controlPlane.data.existingClaim | default "control-plane-data" | quote }}
-        - name: secrets
-          projected:
-            # Readable by the control plane's group (fsGroup) only.
-            defaultMode: 0440
-            sources:
-              - secret:
-                  name: {{ .Values.masterKey.secretName | quote }}
-                  items:
-                    - key: {{ .Values.masterKey.key | quote }}
-                      path: master_key
-              - secret:
-                  name: {{ .Values.platformSecrets.secretName | quote }}
-                  items:
-                    - key: {{ .Values.platformSecrets.mariadbRootPasswordKey | quote }}
-                      path: mariadb_root_password
-                    - key: {{ .Values.platformSecrets.redisAdminPasswordKey | quote }}
-                      path: redis_admin_password
-                    - key: {{ .Values.platformSecrets.sshHostKeyKey | quote }}
-                      path: ssh_host_key
-              {{- with .Values.config.secretName }}
-              - secret:
-                  name: {{ . | quote }}
-                  items:
-                    - key: {{ $.Values.config.key | quote }}
-                      path: pressfleet_config
-              {{- end }}
-        - name: tmp
-          emptyDir: {}
+      {{- include "pressfleet.controlPlanePodSpec" (dict "root" . "args" (list "serve") "serve" true) | nindent 6 }}

@@ -5,18 +5,37 @@ Pushing a `v*` tag publishes a release ([`.github/workflows/release.yml`](../.gi
 1. The tag is checked: it must be a semantic version (`vMAJOR.MINOR.PATCH`, optionally `-PRERELEASE`), on a commit that is on `main`.
 2. The [Images](../.github/workflows/images.yml) workflow pushes `control-plane:<tag>` and the site image matrix to GHCR.
 3. The host CLI is built for linux/amd64 with the dashboard embedded. It embeds the release's platform templates and pinned image list ([`templates/`](../templates/)), and installs the control plane image tagged with its own version (design doc §4.7).
-4. A GitHub release is created with these assets:
+4. The Helm chart is packaged ([`scripts/package-chart.sh`](../scripts/package-chart.sh)) and pushed to `oci://ghcr.io/rchouinard/pressfleet/charts` (below).
+5. A GitHub release is created with these assets:
 
    | Asset | Contents |
    | --- | --- |
    | `pressfleet-linux-amd64` | The host CLI (the control plane image runs the same binary) |
+   | `pressfleet-<version>.tgz` | The Helm chart package, the same one pushed to GHCR |
    | `SHA256SUMS` | Checksums of the other assets |
    | `pressfleet-linux-amd64.spdx.json` | SPDX SBOM of the binary |
+   | `pressfleet-chart.spdx.json` | SPDX SBOM of the chart package |
    | `control-plane.spdx.json` | SPDX SBOM of the control plane image |
 
-   The notes, from [`scripts/release-notes.sh`](../scripts/release-notes.sh), name the oldest release the CLI upgrades from, the control plane image digest, the pinned platform images, and the commits since the previous release.
+   The notes, from [`scripts/release-notes.sh`](../scripts/release-notes.sh), name the oldest release the CLI upgrades from, how to install the chart and the Kubernetes version it needs, the control plane image digest, the pinned platform images, and the commits since the previous release.
 
 The release is created only after the images are pushed, so a published CLI never points at a missing control plane image. A tag with a pre-release suffix (`v1.2.0-rc.1`) becomes a GitHub pre-release. Pre-releases are left out when the notes look for the previous release.
+
+## The Helm chart
+
+The chart job runs after the images are pushed, so the chart never points at a missing control plane image. It stamps the chart's `version` and `appVersion` (`0.0.0-dev` in the source tree) with the tag without its `v`: `v1.2.0` is chart `1.2.0` with `appVersion: 1.2.0`. The chart tags the control plane image with `appVersion`, so a chart and the control plane it installs always come from the same release, and the platform image digests are those in `templates/platform/images.yaml` at the tag (design doc §4.8). The job lints and renders the packaged chart before it pushes.
+
+```sh
+helm install pressfleet oci://ghcr.io/rchouinard/pressfleet/charts/pressfleet --version 1.2.0 --values values.yaml
+```
+
+The chart's `kubeVersion` and `doctor.MinKubernetesMinor` (`control-plane/internal/doctor`) are the oldest supported Kubernetes release, the three newest minors, and move together each release; `TestKubeVersionMatchesDoctor` fails if they differ.
+
+The notes carry that command, the chart's digest, and the minimum Kubernetes version (`kubeVersion` in `Chart.yaml`). A tag with a pre-release suffix is a pre-release chart version (`1.2.0-rc.1`), which Helm installs only with an explicit `--version`.
+
+To try the packaging without a release: `mise exec -- scripts/package-chart.sh v0.0.1-test /tmp/dist`.
+
+If the chart job fails after pushing, the tag can't be pushed again with different content: delete the tag and the chart version from GHCR (the `charts/pressfleet` package's versions page) before tagging again. Charts, like images, aren't signed; the release's `SHA256SUMS` and SBOMs are the integrity check, as for the other assets.
 
 ## Cutting a release
 

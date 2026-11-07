@@ -1,20 +1,27 @@
 #!/usr/bin/env bash
 # Prints the notes of a release in Markdown (used by .github/workflows/release.yml):
 #
-#   scripts/release-notes.sh v1.2.3 [control plane image digest]
+#   scripts/release-notes.sh v1.2.3 [control plane image digest [chart digest]]
 #
 # The notes name the oldest release this one upgrades from (skew.MinUpgradeFrom,
 # design doc §4.7), the release's images, and the commits since the previous
-# release.
+# release, and the Helm chart's reference and minimum Kubernetes version.
 set -euo pipefail
 
 tag="${1:?usage: release-notes.sh <tag> [control plane image digest]}"
 digest="${2:-}"
+chart_digest="${3:-}"
 root="$(cd "$(dirname "$0")/.." && pwd)"
 
 min_upgrade_from="$(sed -n 's/^const MinUpgradeFrom = "\(.*\)"$/\1/p' "$root/control-plane/internal/skew/skew.go")"
 if [[ -z "$min_upgrade_from" ]]; then
 	echo "release-notes.sh: MinUpgradeFrom not found in control-plane/internal/skew/skew.go" >&2
+	exit 1
+fi
+# kubeVersion is a constraint such as ">=1.30.0-0"; the notes say "1.30".
+kube_version="$(sed -n 's/^kubeVersion: *"\{0,1\}>=\([0-9]*\.[0-9]*\).*$/\1/p' "$root/charts/pressfleet/Chart.yaml")"
+if [[ -z "$kube_version" ]]; then
+	echo "release-notes.sh: kubeVersion not found in charts/pressfleet/Chart.yaml" >&2
 	exit 1
 fi
 registry="$("$root/images/matrix.sh" registry)"
@@ -34,6 +41,18 @@ pressfleet init
 \`\`\`
 
 See [installation.md](https://github.com/rchouinard/pressfleet/blob/$tag/docs/installation.md).
+
+## Install on Kubernetes
+
+The Helm chart is published with this release. It needs Kubernetes **$kube_version** or later.
+
+\`\`\`sh
+helm install pressfleet oci://ghcr.io/rchouinard/pressfleet/charts/pressfleet --version ${tag#v}
+\`\`\`
+
+${chart_digest:+Chart digest: \`$chart_digest\`
+
+}The chart package (\`pressfleet-${tag#v}.tgz\`) and its SBOM are also release assets. See the [chart README](https://github.com/rchouinard/pressfleet/blob/$tag/charts/pressfleet/README.md).
 
 ## Upgrade
 
