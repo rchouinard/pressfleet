@@ -345,11 +345,6 @@ func (p *Provisioner) resolve(ctx context.Context, cfg *provisioner.SiteConfig) 
 
 func notImplemented(op string) error { return fmt.Errorf("%s: %w", op, ErrNotImplemented) }
 
-// SetMaintenance implements provisioner.Provisioner (#217).
-func (p *Provisioner) SetMaintenance(context.Context, string, bool) error {
-	return notImplemented("set maintenance mode")
-}
-
 // RunSession implements provisioner.SessionRunner (#220).
 func (p *Provisioner) RunSession(context.Context, string, provisioner.Session) error {
 	return notImplemented("run a session")

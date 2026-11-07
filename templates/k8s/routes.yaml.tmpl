@@ -1,0 +1,113 @@
+{{- /*
+  The site's routes (#217): the IngressRoutes and Middlewares that Traefik's
+  Kubernetes CRD provider reads, with the names package ingress defines for
+  Compose. Everything is in the site's namespace, because Traefik runs with
+  allowCrossNamespace: false. A router's middlewares are listed outermost
+  first. Maintenance routes are not here: they live in the platform
+  namespace (maintenance-routes.tmpl).
+*/ -}}
+{{ template "header" . }}
+{{- with .Routing }}
+{{- range .Routes }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ q .Name }}
+  namespace: {{ q $.Namespace }}
+  labels:
+{{- template "labels" $ }}
+spec:
+  entryPoints:
+    - {{ q $.Routing.EntryPoint }}
+  routes:
+    - kind: Rule
+      match: {{ q .Rule }}
+{{- if .Priority }}
+      priority: {{ .Priority }}
+{{- end }}
+{{- if .Middlewares }}
+      middlewares:
+{{- range .Middlewares }}
+        - name: {{ q . }}
+{{- end }}
+{{- end }}
+      services:
+        - name: nginx
+          port: 80
+  tls:
+    certResolver: {{ q .CertResolver }}
+{{- end }}
+---
+# Preview domains stay out of search engines (§5.1).
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ q .NoIndex }}
+  namespace: {{ q $.Namespace }}
+  labels:
+{{- template "labels" $ }}
+spec:
+  headers:
+    customResponseHeaders:
+      X-Robots-Tag: "noindex"
+{{- with .Auth }}
+---
+# Preview password protection (§5.1). The Authorization header is removed
+# before the request reaches WordPress, which would otherwise try it as an
+# application password and refuse REST API requests.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ q .Name }}
+  namespace: {{ q $.Namespace }}
+  labels:
+{{- template "labels" $ }}
+spec:
+  basicAuth:
+    secret: {{ q .Name }}
+    removeHeader: true
+    realm: "Preview"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ q .Name }}
+  namespace: {{ q $.Namespace }}
+  labels:
+{{- template "labels" $ }}
+type: Opaque
+stringData:
+  users: {{ q .Users }}
+{{- end }}
+{{- if .HSTS }}
+---
+# Without includeSubDomains: a client's other subdomains may not serve HTTPS
+# (§6.1).
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ q .HSTS }}
+  namespace: {{ q $.Namespace }}
+  labels:
+{{- template "labels" $ }}
+spec:
+  headers:
+    stsSeconds: {{ .HSTSMaxAge }}
+{{- end }}
+{{- range .Redirects }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ q .Name }}
+  namespace: {{ q $.Namespace }}
+  labels:
+{{- template "labels" $ }}
+spec:
+  redirectRegex:
+    regex: {{ q .Regex }}
+    replacement: {{ q .Replacement }}
+    permanent: true
+{{- end }}
+{{- end }}

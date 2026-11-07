@@ -14,9 +14,6 @@ func TestNotImplemented(t *testing.T) {
 	ctx := t.Context()
 	cfg := testSite()
 	ops := map[string]func() error{
-		"SetMaintenance": func() error {
-			return p.SetMaintenance(ctx, cfg.ID, true)
-		},
 		"RunSession": func() error { return p.RunSession(ctx, cfg.ID, provisioner.Session{}) },
 	}
 	for name, op := range ops {

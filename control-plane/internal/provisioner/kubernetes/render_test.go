@@ -144,7 +144,7 @@ func golden(t *testing.T, name string, got []byte) {
 // manifestFiles are the files RenderSite writes.
 var manifestFiles = []string{
 	"deployment.yaml", "namespace.yaml", "network-policies.yaml", "rbac.yaml",
-	"service.yaml", "volume.yaml", "wp-config.yaml",
+	"routes.yaml", "service.yaml", "volume.yaml", "wp-config.yaml",
 }
 
 func TestRenderSite(t *testing.T) {

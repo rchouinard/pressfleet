@@ -8,6 +8,7 @@ The Kubernetes driver (`control-plane/internal/provisioner/kubernetes`, design d
 - Only object kinds the driver knows can be applied (`kubernetes.kinds`). Add a kind there before a template uses it.
 - Every object must be in the site's namespace and carry the `labels` template, whose `pressfleet.io/rendered: "true"` is how the driver finds objects that a template no longer renders and deletes them (server-side apply doesn't). Rendering fails otherwise.
 - The Deployment leaves `replicas` out: starting and stopping a site scale it, and applying the manifests again must not undo that.
+- `maintenance-routes.tmpl` isn't a manifest of the site's namespace: it renders the site's maintenance routes (IngressRoutes in the platform namespace, next to the `maintenance` Service, because Traefik can't route across namespaces) into `<data_dir>/sites/<site-id>/kubernetes-maintenance.yaml`. `SetMaintenance` applies them and deletes them again, and `DeleteSite` deletes them with the site (`routing.go`).
 - The files are part of the template fingerprint: a change here moves running sites to the new manifests through the templates rollout, one site at a time (§4.7, §5.5). A change to the Go code that renders them, which changes the output for an existing site, bumps the driver's `renderVersion`.
 
 ## What the Helm chart must match
