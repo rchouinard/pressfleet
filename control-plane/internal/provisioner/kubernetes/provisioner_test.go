@@ -20,14 +20,7 @@ func TestNotImplemented(t *testing.T) {
 		"ExecWPCLI":  func() error { _, err := p.ExecWPCLI(ctx, cfg.ID, []string{"option", "get", "home"}); return err },
 		"PurgeCache": func() error { return p.PurgeCache(ctx, cfg.ID) },
 		"ReloadCode": func() error { return p.ReloadCode(ctx, cfg.ID) },
-		"Logs": func() error {
-			for _, err := range p.Logs(ctx, cfg.ID, provisioner.LogOptions{}) {
-				return err
-			}
-			return nil
-		},
-		"Stats":   func() error { _, err := p.Stats(ctx, cfg.ID); return err },
-		"RunTask": func() error { _, err := p.RunTask(ctx, cfg.ID, provisioner.Task{}); return err },
+		"RunTask":    func() error { _, err := p.RunTask(ctx, cfg.ID, provisioner.Task{}); return err },
 		"RunRepositoryTask": func() error {
 			_, err := p.RunRepositoryTask(ctx, provisioner.StateRepository, provisioner.Task{})
 			return err

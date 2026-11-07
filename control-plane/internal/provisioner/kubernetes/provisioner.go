@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"iter"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -117,6 +116,7 @@ type Provisioner struct {
 	setupErr error
 
 	registry *http.Client
+	observe  observers
 	pinsMu   sync.Mutex
 	pins     map[string]string // tag reference -> pinned reference
 }
@@ -334,18 +334,6 @@ func (p *Provisioner) PurgeCache(context.Context, string) error {
 // ReloadCode implements provisioner.Provisioner (#218).
 func (p *Provisioner) ReloadCode(context.Context, string) error {
 	return notImplemented("reload code")
-}
-
-// Logs implements provisioner.LogReader (#221).
-func (p *Provisioner) Logs(context.Context, string, provisioner.LogOptions) iter.Seq2[provisioner.LogEntry, error] {
-	return func(yield func(provisioner.LogEntry, error) bool) {
-		yield(provisioner.LogEntry{}, notImplemented("read logs"))
-	}
-}
-
-// Stats implements provisioner.StatsReader (#221).
-func (p *Provisioner) Stats(context.Context, string) ([]provisioner.ComponentStats, error) {
-	return nil, notImplemented("read stats")
 }
 
 // RunTask implements provisioner.TaskRunner (#219).
