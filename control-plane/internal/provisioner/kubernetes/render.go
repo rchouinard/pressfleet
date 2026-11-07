@@ -124,6 +124,9 @@ type manifestData struct {
 	StorageClass string
 	VolumeSize   string
 	Egress       egress
+	// Routing and Maintenance are the site's routes (routing.go).
+	Routing     routingData
+	Maintenance maintenanceData
 }
 
 // siteImages are a site's container images.
@@ -205,6 +208,9 @@ func (p *Provisioner) RenderSite(ctx context.Context, cfg *provisioner.SiteConfi
 	if err := renderManifests(dir, data); err != nil {
 		return "", fmt.Errorf("rendering site %s: %w", cfg.ID, err)
 	}
+	if err := renderMaintenance(siteDir, data); err != nil {
+		return "", fmt.Errorf("rendering site %s: %w", cfg.ID, err)
+	}
 	return dir, nil
 }
 
@@ -232,6 +238,10 @@ func (p *Provisioner) manifestData(cfg *provisioner.SiteConfig, in siteInputs) (
 		// every request as plain HTTP from Traefik.
 		return manifestData{}, fmt.Errorf("%w: kubernetes.pod_cidrs is not set", ErrInvalidSite)
 	}
+	routing, maintenance, err := siteRouting(cfg, p.security.Headers)
+	if err != nil {
+		return manifestData{}, err
+	}
 	sum := sha256.Sum256(in.wpConfig)
 	return manifestData{
 		SiteID:                     cfg.ID,
@@ -255,6 +265,8 @@ func (p *Provisioner) manifestData(cfg *provisioner.SiteConfig, in siteInputs) (
 		StorageClass:               p.storageClass,
 		VolumeSize:                 p.volumeSize,
 		Egress:                     p.egress,
+		Routing:                    routing,
+		Maintenance:                maintenance,
 	}, nil
 }
 

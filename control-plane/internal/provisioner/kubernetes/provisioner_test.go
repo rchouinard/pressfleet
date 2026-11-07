@@ -14,9 +14,6 @@ func TestNotImplemented(t *testing.T) {
 	ctx := t.Context()
 	cfg := testSite()
 	ops := map[string]func() error{
-		"SetMaintenance": func() error {
-			return p.SetMaintenance(ctx, cfg.ID, true)
-		},
 		"ExecWPCLI":  func() error { _, err := p.ExecWPCLI(ctx, cfg.ID, []string{"option", "get", "home"}); return err },
 		"PurgeCache": func() error { return p.PurgeCache(ctx, cfg.ID) },
 		"ReloadCode": func() error { return p.ReloadCode(ctx, cfg.ID) },

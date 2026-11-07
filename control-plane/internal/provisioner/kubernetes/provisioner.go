@@ -316,11 +316,6 @@ func (p *Provisioner) resolve(ctx context.Context, cfg *provisioner.SiteConfig) 
 
 func notImplemented(op string) error { return fmt.Errorf("%s: %w", op, ErrNotImplemented) }
 
-// SetMaintenance implements provisioner.Provisioner (#217).
-func (p *Provisioner) SetMaintenance(context.Context, string, bool) error {
-	return notImplemented("set maintenance mode")
-}
-
 // ExecWPCLI implements provisioner.Provisioner (#218).
 func (p *Provisioner) ExecWPCLI(context.Context, string, []string) (string, error) {
 	return "", notImplemented("run WP-CLI")
