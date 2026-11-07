@@ -17,13 +17,6 @@ func TestNotImplemented(t *testing.T) {
 		"SetMaintenance": func() error {
 			return p.SetMaintenance(ctx, cfg.ID, true)
 		},
-		"Logs": func() error {
-			for _, err := range p.Logs(ctx, cfg.ID, provisioner.LogOptions{}) {
-				return err
-			}
-			return nil
-		},
-		"Stats":      func() error { _, err := p.Stats(ctx, cfg.ID); return err },
 		"RunSession": func() error { return p.RunSession(ctx, cfg.ID, provisioner.Session{}) },
 	}
 	for name, op := range ops {

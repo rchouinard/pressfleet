@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"iter"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -130,6 +129,7 @@ type Provisioner struct {
 	wpcliMaxOutput int
 
 	registry *http.Client
+	observe  observers
 	pinsMu   sync.Mutex
 	pins     map[string]string // tag reference -> pinned reference
 
@@ -348,18 +348,6 @@ func notImplemented(op string) error { return fmt.Errorf("%s: %w", op, ErrNotImp
 // SetMaintenance implements provisioner.Provisioner (#217).
 func (p *Provisioner) SetMaintenance(context.Context, string, bool) error {
 	return notImplemented("set maintenance mode")
-}
-
-// Logs implements provisioner.LogReader (#221).
-func (p *Provisioner) Logs(context.Context, string, provisioner.LogOptions) iter.Seq2[provisioner.LogEntry, error] {
-	return func(yield func(provisioner.LogEntry, error) bool) {
-		yield(provisioner.LogEntry{}, notImplemented("read logs"))
-	}
-}
-
-// Stats implements provisioner.StatsReader (#221).
-func (p *Provisioner) Stats(context.Context, string) ([]provisioner.ComponentStats, error) {
-	return nil, notImplemented("read stats")
 }
 
 // RunSession implements provisioner.SessionRunner (#220).
