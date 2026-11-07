@@ -448,12 +448,13 @@ func checkRolloutHold(_ context.Context, e *env) outcome {
 	switch hold.Status {
 	case upgradestate.InProgress:
 		fix = "Wait for `pressfleet upgrade` to finish. If it was interrupted, run it again to retry, " +
-			"or follow \"Recovering from a failed upgrade\" in docs/upgrading.md to return to the previous release."
+			"or run `pressfleet upgrade --rollback` to return to the previous release."
 	case upgradestate.RollingBack:
-		fix = "Wait for the rollback to finish. If it stopped, follow \"Recovering from a failed upgrade\" in docs/upgrading.md."
+		fix = "Wait for the rollback to finish. If it was interrupted, run `pressfleet upgrade --rollback` to resume it."
 	default:
-		fix = "Run `pressfleet upgrade` again to finish the upgrade, or follow \"Recovering from a failed upgrade\" " +
-			"in docs/upgrading.md to return to the previous release. The rollouts resume on their own once the upgrade succeeds."
+		fix = "Run `pressfleet upgrade` again to finish the upgrade, or `pressfleet upgrade --rollback` to return to " +
+			"the previous release; if the rollback can't finish, follow \"Recovering from a failed upgrade\" in docs/upgrading.md. " +
+			"The rollouts resume on their own once the upgrade succeeds or is rolled back."
 	}
 	return warn(fix, "the core, image, and template rollouts are held: %s. Sites change only when you ask", hold.Reason)
 }
