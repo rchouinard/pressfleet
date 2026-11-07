@@ -48,9 +48,6 @@ var (
 	// ErrInvalidTask is returned by RunTask and RunRepositoryTask for a
 	// task they can't run as given.
 	ErrInvalidTask = errors.New("kubernetes: invalid task")
-	// ErrOutputTruncated is returned with the result of a task whose
-	// standard output exceeded what a result holds.
-	ErrOutputTruncated = errors.New("kubernetes: task output truncated")
 )
 
 const (
@@ -930,55 +927,8 @@ func objectNames[T any](items []T, name func(T) string) []string {
 	return out
 }
 
-// The buffers and the writer below are written by the attachment's copy
-// goroutines, which may outlive a failed attachment, and read by the
-// driver: they lock.
-
-// headBuffer keeps the first max bytes written to it and discards the
-// rest, without failing the writer.
-type headBuffer struct {
-	mu  sync.Mutex
-	buf []byte
-	max int
-}
-
-func (b *headBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if room := b.max - len(b.buf); room > 0 {
-		b.buf = append(b.buf, p[:min(room, len(p))]...)
-	}
-	return len(p), nil
-}
-
-func (b *headBuffer) Bytes() []byte {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return slices.Clone(b.buf)
-}
-
-// tailBuffer keeps the last max bytes written to it.
-type tailBuffer struct {
-	mu  sync.Mutex
-	buf []byte
-	max int
-}
-
-func (b *tailBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.buf = append(b.buf, p...)
-	if over := len(b.buf) - b.max; over > 0 {
-		b.buf = slices.Clone(b.buf[over:])
-	}
-	return len(p), nil
-}
-
-func (b *tailBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return string(b.buf)
-}
+// The writer below is written by the attachment's copy goroutines, which
+// may outlive a failed attachment, and read by the driver: it locks.
 
 // recordingWriter remembers the first error of the writer it wraps.
 type recordingWriter struct {
