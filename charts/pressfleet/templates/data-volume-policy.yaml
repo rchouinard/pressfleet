@@ -1,0 +1,145 @@
+{{- /*
+Site tasks mount the control plane's data volume (§4.4, §4.8), but its claim
+is in the platform namespace and a claim belongs to one namespace. The
+driver therefore creates, for each site namespace, a PersistentVolume that
+points at the same storage and a claim bound to it there (decision of
+2026-11-06 in #219). PersistentVolumes are cluster-wide, and one could point
+at anything, a node's root filesystem included, which Pod Security doesn't
+look at through a claim. These policies narrow the control plane's rights on
+PersistentVolumes (rbac.yaml) to that:
+
+- It may create only a clone: reclaim policy Retain (deleting it never
+  deletes the storage), no storage class, a CSI or NFS source, labeled as a
+  clone of this install's data volume, named <site namespace>-data, and
+  bound in advance to the claim pressfleet-data in a site namespace.
+- The clone's source and mount options must equal those of the data
+  volume's own PersistentVolume, which the second policy takes as its
+  parameter: the PersistentVolume labeled pressfleet.io/data-volume=<platform
+  namespace>. Without one, nothing is admitted.
+- The only change it may make is to put that label on the PersistentVolume
+  bound to the data claim, and nothing else about it; no other
+  PersistentVolume can get the label.
+- It may delete only clones.
+*/ -}}
+{{- $ns := .Release.Namespace }}
+{{- $sitePrefix := .Values.kubernetes.siteNamespacePrefix }}
+{{- $claim := .Values.controlPlane.data.existingClaim | default "control-plane-data" }}
+{{- $user := printf "request.userInfo.username == '%s'" (include "pressfleet.controlPlaneUser" .) }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ printf "data-volume.%s.pressfleet.io" $ns | quote }}
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "control-plane") | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [persistentvolumes]
+  matchConditions:
+    - name: control-plane
+      expression: {{ $user | quote }}
+  validations:
+    - expression: >-
+        request.operation != 'CREATE' ||
+        (object.spec.persistentVolumeReclaimPolicy == 'Retain' &&
+        (!has(object.spec.storageClassName) || object.spec.storageClassName == '') &&
+        (has(object.spec.csi) || has(object.spec.nfs)) &&
+        has(object.spec.claimRef) && has(object.spec.claimRef.namespace) && has(object.spec.claimRef.name) &&
+        object.spec.claimRef.namespace.startsWith({{ printf "'%s'" $sitePrefix }}) &&
+        object.spec.claimRef.name == 'pressfleet-data' &&
+        object.metadata.name == object.spec.claimRef.namespace + '-data' &&
+        has(object.metadata.labels) &&
+        'pressfleet.io/data-clone' in object.metadata.labels &&
+        object.metadata.labels['pressfleet.io/data-clone'] == {{ printf "'%s'" $ns }} &&
+        !('pressfleet.io/data-volume' in object.metadata.labels))
+      messageExpression: >-
+        'the PressFleet control plane may only create clones of its data volume (Retain, CSI or NFS, no storage class, labeled pressfleet.io/data-clone={{ $ns }}, bound to {{ $sitePrefix }}.../pressfleet-data and named after that namespace), not ' + object.metadata.name
+    - expression: >-
+        request.operation != 'UPDATE' ||
+        (has(oldObject.spec.claimRef) &&
+        oldObject.spec.claimRef.namespace == {{ printf "'%s'" $ns }} &&
+        oldObject.spec.claimRef.name == {{ printf "'%s'" $claim }} &&
+        object.spec == oldObject.spec &&
+        (has(object.metadata.finalizers) ? object.metadata.finalizers : []) ==
+        (has(oldObject.metadata.finalizers) ? oldObject.metadata.finalizers : []) &&
+        has(object.metadata.labels) &&
+        'pressfleet.io/data-volume' in object.metadata.labels &&
+        object.metadata.labels['pressfleet.io/data-volume'] == {{ printf "'%s'" $ns }} &&
+        object.metadata.labels.all(k, k == 'pressfleet.io/data-volume' ||
+        (has(oldObject.metadata.labels) && k in oldObject.metadata.labels && oldObject.metadata.labels[k] == object.metadata.labels[k])) &&
+        (!has(oldObject.metadata.labels) || oldObject.metadata.labels.all(k, k in object.metadata.labels)))
+      messageExpression: >-
+        'the PressFleet control plane may only label the data volume ({{ $ns }}/{{ $claim }}) as such, not change ' + oldObject.metadata.name
+    - expression: >-
+        request.operation != 'DELETE' ||
+        (has(oldObject.metadata.labels) &&
+        'pressfleet.io/data-clone' in oldObject.metadata.labels &&
+        oldObject.metadata.labels['pressfleet.io/data-clone'] == {{ printf "'%s'" $ns }} &&
+        oldObject.spec.persistentVolumeReclaimPolicy == 'Retain' &&
+        has(oldObject.spec.claimRef) && has(oldObject.spec.claimRef.namespace) &&
+        oldObject.spec.claimRef.namespace.startsWith({{ printf "'%s'" $sitePrefix }}))
+      messageExpression: >-
+        'the PressFleet control plane may only delete clones of its data volume, not ' + oldObject.metadata.name
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ printf "data-volume.%s.pressfleet.io" $ns | quote }}
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "control-plane") | nindent 4 }}
+spec:
+  policyName: {{ printf "data-volume.%s.pressfleet.io" $ns | quote }}
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ printf "data-volume-clones.%s.pressfleet.io" $ns | quote }}
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "control-plane") | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  # The data volume's own PersistentVolume (the binding selects it).
+  paramKind:
+    apiVersion: v1
+    kind: PersistentVolume
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [persistentvolumes]
+  matchConditions:
+    - name: control-plane
+      expression: {{ $user | quote }}
+  validations:
+    - expression: >-
+        has(object.spec.csi) == has(params.spec.csi) &&
+        (!has(object.spec.csi) || object.spec.csi == params.spec.csi) &&
+        has(object.spec.nfs) == has(params.spec.nfs) &&
+        (!has(object.spec.nfs) || object.spec.nfs == params.spec.nfs) &&
+        (has(object.spec.mountOptions) ? object.spec.mountOptions : []) ==
+        (has(params.spec.mountOptions) ? params.spec.mountOptions : [])
+      messageExpression: >-
+        'a PersistentVolume the PressFleet control plane creates must have the source and mount options of its data volume, ' + params.metadata.name + '; ' + object.metadata.name + ' does not'
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ printf "data-volume-clones.%s.pressfleet.io" $ns | quote }}
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "control-plane") | nindent 4 }}
+spec:
+  policyName: {{ printf "data-volume-clones.%s.pressfleet.io" $ns | quote }}
+  paramRef:
+    selector:
+      matchLabels:
+        pressfleet.io/data-volume: {{ $ns | quote }}
+    # Until the control plane has labeled the data volume, it may create no
+    # PersistentVolume at all.
+    parameterNotFoundAction: Deny
+  validationActions: [Deny]

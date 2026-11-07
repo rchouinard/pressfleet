@@ -61,9 +61,15 @@ metadata:
     pressfleet.io/site-id: "01hzy3k5q7m9c2v4b6n8r0t1wx"
     pressfleet.io/client-group-id: "01hzy3k0000000000000000000"
 spec:
+  # The site's pod and its tasks (backups, restores, imports), which reach
+  # what the site reaches: the platform services and S3 (§4.4).
   podSelector:
-    matchLabels:
-      pressfleet.io/component: site
+    matchExpressions:
+      - key: pressfleet.io/component
+        operator: In
+        values:
+          - site
+          - task
   policyTypes:
     - Egress
   egress:
