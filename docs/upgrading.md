@@ -8,6 +8,8 @@
 
 Run it as root, like `init`. If the upgraded platform doesn't come back healthy, `upgrade` **rolls back** to the previous release on its own ([Automatic rollback](#automatic-rollback)). If it can't, or with `--no-rollback`, it prints the commands that return the platform to the previous release ([Recovering from a failed upgrade](#recovering-from-a-failed-upgrade)). `upgrade` exits with `0` when the platform is upgraded, `2` when the upgrade failed and was rolled back, and `1` when it failed and wasn't.
 
+To return to the previous release after an upgrade that succeeded, run `pressfleet upgrade --rollback` ([Rolling back an upgrade](#rolling-back-an-upgrade)).
+
 ## Release check
 
 The control plane asks GitHub for new releases when it starts and once a day. When a newer stable release exists (not a draft or pre-release):
@@ -67,7 +69,7 @@ Sites aren't part of the platform project. If the release changes how sites are 
 
 An upgraded control plane that isn't confirmed healthy must not start changing sites. While the upgrade record `<data_dir>/upgrade/upgrade.json` has the status `in-progress`, `failed`, `rolling-back`, or `rollback-failed`, the control plane starts no site updates from the WordPress core, image, and site template rollouts. Updates you request by hand, and the reconciliation at startup, run as usual. When `upgrade` marks the record `succeeded` after the platform is healthy, or `rolled-back` after a rollback, the rollouts resume at their next pass (at most 15 minutes), without a restart.
 
-`GET /api/v1/core-rollout`, `/api/v1/image-rollout`, and `/api/v1/template-rollout` report `held: true` with a `hold_reason`, the dashboard's platform overview shows it, and `pressfleet doctor` warns (`upgrade-rollouts`). To lift the hold, run `pressfleet upgrade` again until it succeeds or rolls back, or return to the previous release with the steps in [Recovering from a failed upgrade](#recovering-from-a-failed-upgrade).
+`GET /api/v1/core-rollout`, `/api/v1/image-rollout`, and `/api/v1/template-rollout` report `held: true` with a `hold_reason`, the dashboard's platform overview shows it, and `pressfleet doctor` warns (`upgrade-rollouts`). To lift the hold, run `pressfleet upgrade` again until it succeeds or rolls back, or return to the previous release with `pressfleet upgrade --rollback` ([Rolling back an upgrade](#rolling-back-an-upgrade)) or, if that can't finish, the steps in [Recovering from a failed upgrade](#recovering-from-a-failed-upgrade).
 
 An installation that never upgraded has no record and no hold. A record the control plane can't read or parse holds the rollouts too, with a warning in its log, because it can't tell that the upgrade was confirmed.
 
@@ -93,6 +95,8 @@ The GitHub release notes list the commits since the previous release ([Releasing
 ### The next release (after 1.1.0)
 
 **Automatic rollback (#249).** `pressfleet upgrade` now rolls back a failed upgrade on its own ([Automatic rollback](#automatic-rollback)), and exits with `2` when it did. Scripts that took any non-zero exit for a platform left failed should accept `2` as "failed, and back on the previous release". `--no-rollback` keeps the previous behavior: the platform is left as it failed, and the recovery steps are printed. The upgrade record's statuses `rolling-back`, `rolled-back`, and `rollback-failed` are spelled with hyphens; a record with underscores is an unknown status, which holds the rollouts.
+
+**`pressfleet upgrade --rollback` (#250).** Returns the platform to the release before the last upgrade, after listing what the control plane changed since, and refusing changes it would leave behind unless `--force` is given ([Rolling back an upgrade](#rolling-back-an-upgrade)). It exits with `2` when it rolled back.
 
 **Backup repositories after a state restore (#277).** After a state restore that is older than a client group's backup repository, the group's backups used to fail for good with `wrong password or no key found`. The control plane now moves such a repository aside, keeping its files, and creates a new one ([Troubleshooting](troubleshooting.md#backups)). It only does this while a repository's stored password has never opened it.
 
@@ -151,7 +155,33 @@ The rollback refuses to start, and changes nothing, when it can't finish safely:
 
 ### An interrupted upgrade
 
-If `upgrade` was killed while it applied the release or rolled it back (`kill -9`, a reboot, a lost SSH session without `nohup`), its record still says `in-progress` or `rolling-back`. The next `pressfleet upgrade` asks whether to retry the upgrade or roll it back; `--yes` retries an interrupted upgrade and resumes an interrupted rollback. It won't upgrade to another release over an interrupted upgrade: with the CLI of another release, it can only roll it back, after which you can upgrade.
+If `upgrade` was killed while it applied the release or rolled it back (`kill -9`, a reboot, a lost SSH session without `nohup`), its record still says `in-progress` or `rolling-back`. The next `pressfleet upgrade` asks whether to retry the upgrade or roll it back; `--yes` retries an interrupted upgrade and resumes an interrupted rollback. It won't upgrade to another release over an interrupted upgrade: with the CLI of another release, it can only roll it back, after which you can upgrade. `pressfleet upgrade --rollback` rolls it back, or resumes the rollback, without asking which.
+
+## Rolling back an upgrade
+
+If an upgrade succeeded but you regret it, run, with the CLI that upgraded:
+
+```console
+# pressfleet upgrade --rollback
+```
+
+It returns the platform to the release before the upgrade, with the same steps as the [automatic rollback](#automatic-rollback). Only the most recent upgrade can be rolled back, and only once: `upgrade` keeps one platform project from before an upgrade, and the rollback puts it back. Like `upgrade`, `--rollback` is exempt from the [version skew](#version-skew) check. It also rolls back an upgrade that failed with `--no-rollback`, or that was interrupted, and resumes a rollback that stopped.
+
+The new control plane may have worked for a while since the upgrade, and restoring the state database undoes what it recorded, but not what it did to sites. So when the upgrade migrated the state database, `--rollback` first asks the running control plane what changed since the upgrade started (`pressfleet admin changes`, run in its container), and lists the changes in three groups:
+
+| Group | Changes | After the rollback |
+| --- | --- | --- |
+| Blocking | Sites created, imported, or deleted, staging sites included; WordPress core updates; go-lives; client groups deleted or offboarded | A created site's containers, database, and object cache user are orphaned; a deleted site is recreated empty; a core-updated site runs an older core than its database; a site that went live keeps the live URLs in its database while its record routes the old domains; a deleted group's repository is gone. |
+| Converged | Site template and image updates, settings changes | The previous control plane's reconcile moves the sites back to match the restored records. |
+| Lost | Backup records, users, alert rules, jobs, staging refreshes and pushes, restores, and the like | Their records go with the restore. Backup snapshots stay in the repositories, and content copied to sites stays. |
+
+`--rollback` refuses blocking changes, says what each would leave behind, and changes nothing. Undo them first where you can (delete a site created since the upgrade, for instance), or pass `--force` to roll back anyway and clean up after it. Otherwise it says what it will do (the upgrade's start time, and whether the state database will be restored and from which backup) and asks for confirmation; `--yes` gives it.
+
+- **No migration.** If the upgrade didn't migrate the state database, the rollback keeps it, with everything recorded since, so there is nothing to check, and nothing is lost. This holds for PostgreSQL too.
+- **PostgreSQL and a migration.** `--rollback` stops before changing anything and prints the [recovery steps](#recovering-from-a-failed-upgrade), whose step 2 restores [your own backup](#postgresql-state-databases).
+- **A control plane that doesn't answer.** After an upgrade that failed with `--no-rollback`, or was interrupted, the rollouts were [held](#held-rollouts), so the control plane changed sites only when asked: `--rollback` skips the check and says so. After a succeeded upgrade, it refuses until the control plane answers, or with `--force`.
+
+`--rollback` exits like a failed upgrade: `2` when the platform is back on the previous release, and `1` when it isn't, because it refused (nothing changed) or the rollback stopped (with the recovery steps printed, as for the automatic rollback). Afterwards, install the previous release's CLI again if this one is outside the [version skew](#version-skew) policy with it; `--rollback` says so. To upgrade again, run `pressfleet upgrade`.
 
 ## Recovering from a failed upgrade
 
