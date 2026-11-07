@@ -120,3 +120,43 @@ func TestFloorDiv(t *testing.T) {
 		}
 	}
 }
+
+// TestTestMigration checks the hook the e2emigration build tag sets
+// (migrate_e2e.go): its migration comes after the embedded ones, in both
+// dialects, and applies like any other.
+func TestTestMigration(t *testing.T) {
+	ctx := context.Background()
+	embedded := map[Dialect]int{}
+	for _, d := range []Dialect{SQLite, Postgres} {
+		ms, err := Migrations(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		embedded[d] = len(ms)
+	}
+	old := testMigration
+	testMigration = "SELECT 1"
+	t.Cleanup(func() { testMigration = old })
+	for _, d := range []Dialect{SQLite, Postgres} {
+		ms, err := Migrations(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if last := ms[len(ms)-1]; len(ms) != embedded[d]+1 || last.Version != len(ms) || last.Name != "e2e_noop" {
+			t.Errorf("%s: the last of %d migrations is %+v, want e2e_noop after %d", d, len(ms), last, embedded[d])
+		}
+	}
+
+	db, err := Open(ctx, Config{Driver: SQLite, SQLitePath: filepath.Join(t.TempDir(), "pressfleet.db")}, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	res, err := db.Migrate(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.To != embedded[SQLite]+1 {
+		t.Errorf("migrated to schema version %d, want %d", res.To, embedded[SQLite]+1)
+	}
+}

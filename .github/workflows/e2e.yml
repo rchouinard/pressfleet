@@ -154,11 +154,11 @@ jobs:
     needs: plan
     if: needs.plan.outputs.e2e == 'true'
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
-    # The full suite runs one test after another, about 25 minutes on a
-    # workstation (go test's own limit is 60m, in the Makefile); a cold
+    # The full suite runs one test after another, about 35 minutes on a
+    # workstation (go test's own limit is 75m, in the Makefile); a cold
     # runner that also builds the site images needs more. The quick tier
     # takes a few minutes.
-    timeout-minutes: ${{ needs.plan.outputs.tier == 'smoke' && 30 || 75 }}
+    timeout-minutes: ${{ needs.plan.outputs.tier == 'smoke' && 30 || 90 }}
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4
