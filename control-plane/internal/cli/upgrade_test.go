@@ -61,6 +61,14 @@ type fakeUpgradePlatform struct {
 	// readFile answers a read through a project's control plane
 	// container; nil reads the file on the host.
 	readFile func(projectDir, path string) ([]byte, error)
+	// changes is the control plane's answer to `admin changes` (an empty
+	// report if empty), and changesErr fails it instead; changesAsked are
+	// the arguments it was asked with.
+	changes      string
+	changesErr   error
+	changesAsked [][]string
+	// infoErr fails `admin info`: the control plane doesn't answer.
+	infoErr error
 
 	ups   []compose.UpOptions
 	pulls int
@@ -255,9 +263,22 @@ func (p fakeUpgradeProject) ServiceContainer(_ context.Context, service string) 
 	return compose.ContainerDetails{}, compose.ErrNoContainer
 }
 
-func (p fakeUpgradeProject) ExecService(context.Context, string, ...string) ([]byte, error) {
+func (p fakeUpgradeProject) ExecService(_ context.Context, _ string, command ...string) ([]byte, error) {
 	p.f.mu.Lock()
 	defer p.f.mu.Unlock()
+	if slices.Equal(command[:min(3, len(command))], []string{"pressfleet", "admin", "changes"}) {
+		p.f.changesAsked = append(p.f.changesAsked, command[3:])
+		if p.f.changesErr != nil {
+			return nil, p.f.changesErr
+		}
+		if p.f.changes == "" {
+			return []byte(`{"since":"2026-11-05T12:00:00Z","blocking":[],"converged":[],"lost":[]}` + "\n"), nil
+		}
+		return []byte(p.f.changes), nil
+	}
+	if p.f.infoErr != nil {
+		return nil, p.f.infoErr
+	}
 	return fmt.Appendf(nil, `{"interface":1,"version":%q,"ready":%t}`+"\n", p.f.version, p.f.ready), nil
 }
 

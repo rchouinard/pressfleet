@@ -35,6 +35,7 @@ var (
 	_ provisioner.Driver                = (*Provisioner)(nil)
 	_ provisioner.TemplateFingerprinter = (*Provisioner)(nil)
 	_ provisioner.RenderSnapshotter     = (*Provisioner)(nil)
+	_ provisioner.Prober                = (*Provisioner)(nil)
 )
 
 // DefaultWaitTimeout bounds how long the driver waits for a site's pod to
@@ -81,6 +82,11 @@ type Config struct {
 	// LoginPublicKey is the platform's login public key in base64, for
 	// dashboard login (§5.9); empty omits it.
 	LoginPublicKey string
+	// WPCLITimeout bounds each ExecWPCLI call, in addition to its context;
+	// zero means DefaultWPCLITimeout. WPCLIMaxOutput is the most standard
+	// output it keeps, in bytes; zero means DefaultWPCLIMaxOutput.
+	WPCLITimeout   time.Duration
+	WPCLIMaxOutput int
 	// WaitTimeout bounds waiting for a site's pod; zero means
 	// DefaultWaitTimeout.
 	WaitTimeout time.Duration
@@ -116,6 +122,11 @@ type Provisioner struct {
 	egress   egress
 	setupErr error
 
+	// exec runs commands in containers; newWithREST connects it.
+	exec           executor
+	wpcliTimeout   time.Duration
+	wpcliMaxOutput int
+
 	registry *http.Client
 	pinsMu   sync.Mutex
 	pins     map[string]string // tag reference -> pinned reference
@@ -137,7 +148,9 @@ func newWithREST(cfg Config, rc *rest.Config) (*Provisioner, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newWithClient(cfg, c), nil
+	p := newWithClient(cfg, c)
+	p.exec = newRemoteExecutor(c.typed, rc)
+	return p, nil
 }
 
 // newWithClient builds the driver around a client, real or fake.
@@ -161,9 +174,17 @@ func newWithClient(cfg Config, c *Client) *Provisioner {
 		volumeSize:        k.SiteVolumeSize,
 		registry:          cfg.Registry,
 		pins:              map[string]string{},
+		wpcliTimeout:      cfg.WPCLITimeout,
+		wpcliMaxOutput:    cfg.WPCLIMaxOutput,
 	}
 	if p.waitTimeout <= 0 {
 		p.waitTimeout = DefaultWaitTimeout
+	}
+	if p.wpcliTimeout <= 0 {
+		p.wpcliTimeout = DefaultWPCLITimeout
+	}
+	if p.wpcliMaxOutput <= 0 {
+		p.wpcliMaxOutput = DefaultWPCLIMaxOutput
 	}
 	if p.volumeSize == "" {
 		p.volumeSize = config.DefaultSiteVolumeSize
@@ -316,21 +337,6 @@ func (p *Provisioner) resolve(ctx context.Context, cfg *provisioner.SiteConfig) 
 
 func notImplemented(op string) error { return fmt.Errorf("%s: %w", op, ErrNotImplemented) }
 
-// ExecWPCLI implements provisioner.Provisioner (#218).
-func (p *Provisioner) ExecWPCLI(context.Context, string, []string) (string, error) {
-	return "", notImplemented("run WP-CLI")
-}
-
-// PurgeCache implements provisioner.Provisioner (#218).
-func (p *Provisioner) PurgeCache(context.Context, string) error {
-	return notImplemented("purge the page cache")
-}
-
-// ReloadCode implements provisioner.Provisioner (#218).
-func (p *Provisioner) ReloadCode(context.Context, string) error {
-	return notImplemented("reload code")
-}
-
 // Logs implements provisioner.LogReader (#221).
 func (p *Provisioner) Logs(context.Context, string, provisioner.LogOptions) iter.Seq2[provisioner.LogEntry, error] {
 	return func(yield func(provisioner.LogEntry, error) bool) {
@@ -356,9 +362,4 @@ func (p *Provisioner) RunRepositoryTask(context.Context, string, provisioner.Tas
 // RunSession implements provisioner.SessionRunner (#220).
 func (p *Provisioner) RunSession(context.Context, string, provisioner.Session) error {
 	return notImplemented("run a session")
-}
-
-// ProbeHTTP implements provisioner.Prober (#218).
-func (p *Provisioner) ProbeHTTP(context.Context, string, provisioner.ProbeRequest) (*provisioner.ProbeResponse, error) {
-	return nil, notImplemented("probe a site")
 }

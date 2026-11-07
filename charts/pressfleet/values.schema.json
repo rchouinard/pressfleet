@@ -68,7 +68,7 @@
       ]
     }
   },
-  "required": ["kubernetes", "masterKey", "platformSecrets", "database", "controlPlane", "mariadb", "traefik", "sftp"],
+  "required": ["kubernetes", "masterKey", "platformSecrets", "database", "controlPlane", "mariadb", "traefik", "sftp", "recovery"],
   "properties": {
     "global": {
       "description": "Helm's own; unused.",
@@ -280,6 +280,21 @@
           "maximum": 65535,
           "not": { "enum": [80, 443] }
         }
+      }
+    },
+    "recovery": {
+      "description": "Disaster recovery (§5.10): enabled scales the control plane to zero and runs `pressfleet state recover` in a Job.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "snapshot", "force"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "snapshot": {
+          "description": "A state backup's ID (8 characters or more), or latest.",
+          "type": "string",
+          "pattern": "^(latest|[0-9a-f]{8,64})$"
+        },
+        "force": { "type": "boolean" }
       }
     }
   }

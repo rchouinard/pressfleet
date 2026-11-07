@@ -59,6 +59,13 @@ func SiteClusterRole(platformNamespace string) string {
 	return "pressfleet:" + platformNamespace + ":site"
 }
 
+// loopbackCIDR is trusted as a proxy beside the pod network: the probes
+// (ProbeHTTP) reach nginx from the php container over the pod's loopback,
+// and X-Forwarded-Proto must count for them as it does for Traefik. Only
+// the pod's own containers share its loopback, and php, which holds the
+// site's code and secrets, gains nothing by forging a header.
+const loopbackCIDR = "127.0.0.0/8"
+
 // renderVersion is the part of the template fingerprint that the embedded
 // templates don't cover: the Go code that renders a site's manifests.
 //
@@ -70,7 +77,7 @@ func SiteClusterRole(platformNamespace string) string {
 // fingerprint by themselves, and changes that render nothing differently
 // need no bump. It is the Compose driver's rule, with the Kubernetes
 // driver's own counter.
-const renderVersion = 1
+const renderVersion = 2
 
 // templateFingerprint hashes the embedded templates with renderVersion,
 // once: they can't change while the process runs.
@@ -258,7 +265,7 @@ func (p *Provisioner) manifestData(cfg *provisioner.SiteConfig, in siteInputs) (
 		PHPMaxChildren:             split.PHPMaxChildren,
 		EnableCache:                cfg.EnableCache,
 		NginxSecurity:              security,
-		TrustedProxies:             strings.Join(p.podCIDRs, " "),
+		TrustedProxies:             strings.Join(append([]string{loopbackCIDR}, p.podCIDRs...), " "),
 		WPConfig:                   base64.StdEncoding.EncodeToString(in.wpConfig),
 		WPConfigChecksum:           hex.EncodeToString(sum[:]),
 		ImagePullSecrets:           p.pullSecrets,

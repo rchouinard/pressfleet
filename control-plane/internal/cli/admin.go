@@ -87,7 +87,7 @@ func (a *app) adminCommand() *cobra.Command {
 		Short:  "Admin interface for the host CLI (runs inside the control plane container)",
 		Hidden: true,
 	}
-	cmd.AddCommand(a.adminInfoCommand(), a.adminChangesCommand())
+	cmd.AddCommand(a.adminInfoCommand(), a.adminChangesCommand(), a.adminUpgradePreflightCommand())
 	return cmd
 }
 

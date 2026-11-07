@@ -14,9 +14,6 @@ func TestNotImplemented(t *testing.T) {
 	ctx := t.Context()
 	cfg := testSite()
 	ops := map[string]func() error{
-		"ExecWPCLI":  func() error { _, err := p.ExecWPCLI(ctx, cfg.ID, []string{"option", "get", "home"}); return err },
-		"PurgeCache": func() error { return p.PurgeCache(ctx, cfg.ID) },
-		"ReloadCode": func() error { return p.ReloadCode(ctx, cfg.ID) },
 		"Logs": func() error {
 			for _, err := range p.Logs(ctx, cfg.ID, provisioner.LogOptions{}) {
 				return err
@@ -30,10 +27,6 @@ func TestNotImplemented(t *testing.T) {
 			return err
 		},
 		"RunSession": func() error { return p.RunSession(ctx, cfg.ID, provisioner.Session{}) },
-		"ProbeHTTP": func() error {
-			_, err := p.ProbeHTTP(ctx, cfg.ID, provisioner.ProbeRequest{Host: cfg.PreviewDomain, Path: "/"})
-			return err
-		},
 	}
 	for name, op := range ops {
 		if err := op(); !errors.Is(err, ErrNotImplemented) {
