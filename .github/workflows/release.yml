@@ -6,9 +6,13 @@ name: Release
 #   2. The host CLI is built for linux/amd64 with the dashboard embedded. It
 #      embeds the release's platform templates and pinned image list
 #      (templates/), and installs control-plane:<tag> (design doc §4.7).
-#   3. The GitHub release gets the binary, SHA256SUMS, SPDX SBOMs of the
-#      binary and the control plane image, and notes that name the oldest
-#      release it upgrades from (scripts/release-notes.sh).
+#   3. The Helm chart is packaged with the release's version
+#      (scripts/package-chart.sh) and pushed to
+#      oci://ghcr.io/rchouinard/pressfleet/charts (design doc §4.8).
+#   4. The GitHub release gets the binary, the chart package, SHA256SUMS, SPDX
+#      SBOMs of the binary, the chart, and the control plane image, and notes
+#      that name the oldest release it upgrades from and the chart's
+#      reference (scripts/release-notes.sh).
 #
 # The release is created only after the images are pushed, so a published
 # CLI never points at a control plane image that doesn't exist. Tags with a
@@ -96,9 +100,52 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # After the images, so the chart never points at a control plane image that
+  # doesn't exist.
+  chart:
+    name: Helm chart
+    needs: [check, images]
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      packages: write # push the chart
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    env:
+      TAG: ${{ github.ref_name }}
+      REPOSITORY: oci://ghcr.io/rchouinard/pressfleet/charts
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v4
+      - id: package
+        name: Package the chart
+        run: echo "path=$(scripts/package-chart.sh "$TAG" dist)" >>"$GITHUB_OUTPUT"
+      - name: Log in to GHCR
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: helm registry login ghcr.io --username "$REGISTRY_USER" --password-stdin <<<"$REGISTRY_TOKEN"
+      - id: push
+        name: Push the chart
+        env:
+          CHART: ${{ steps.package.outputs.path }}
+        run: |
+          helm push "$CHART" "$REPOSITORY" 2>&1 | tee push.log
+          digest="$(sed -n 's/^Digest: \(sha256:[0-9a-f]\{64\}\)$/\1/p' push.log)"
+          [[ -n "$digest" ]] || { echo "::error::helm push reported no digest"; exit 1; }
+          echo "digest=$digest" >>"$GITHUB_OUTPUT"
+          # What a user installs must be this release.
+          helm show chart "$REPOSITORY/pressfleet" --version "${TAG#v}" | grep -qx "appVersion: ${TAG#v}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: chart
+          path: dist/pressfleet-*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
   release:
     name: Publish the release
-    needs: [check, platform-images, images, ui]
+    needs: [check, platform-images, images, ui, chart]
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: write # create the release
@@ -116,6 +163,10 @@ jobs:
         with:
           name: ui-dist
           path: ui/.output/public
+      - uses: actions/download-artifact@v8
+        with:
+          name: chart
+          path: chart-dist
       - name: Build the CLI
         run: |
           make build UI=prebuilt VERSION="$TAG"
@@ -125,6 +176,7 @@ jobs:
           [[ "$got" == "pressfleet $TAG "* ]] || { echo "::error::the binary reports a version other than $TAG"; exit 1; }
           mkdir dist
           cp bin/pressfleet dist/pressfleet-linux-amd64
+          cp chart-dist/pressfleet-*.tgz dist/
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -145,6 +197,15 @@ jobs:
           output-file: dist/pressfleet-linux-amd64.spdx.json
           upload-artifact: false
           upload-release-assets: false
+      - name: Name the chart package
+        run: echo "CHART_FILE=$(basename dist/pressfleet-*.tgz)" >>"$GITHUB_ENV"
+      - uses: anchore/sbom-action@v0
+        with:
+          file: dist/${{ env.CHART_FILE }}
+          format: spdx-json
+          output-file: dist/pressfleet-chart.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
       - uses: anchore/sbom-action@v0
         with:
           image: ${{ env.IMAGE }}@${{ steps.image.outputs.digest }}
@@ -157,9 +218,10 @@ jobs:
       - name: Write checksums and notes
         env:
           DIGEST: ${{ steps.image.outputs.digest }}
+          CHART_DIGEST: ${{ needs.chart.outputs.digest }}
         run: |
           (cd dist && sha256sum -- * >SHA256SUMS && cat SHA256SUMS)
-          scripts/release-notes.sh "$TAG" "$DIGEST" >notes.md
+          scripts/release-notes.sh "$TAG" "$DIGEST" "$CHART_DIGEST" >notes.md
           cat notes.md >>"$GITHUB_STEP_SUMMARY"
       - name: Create the release
         env:
