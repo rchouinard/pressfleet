@@ -1,0 +1,58 @@
+{{- /*
+The upgrade preflight (design doc §4.7, §4.8): before helm upgrade changes
+anything, this hook runs on the new control plane image and refuses a
+downgrade, an upgrade from below the oldest release this one upgrades from,
+and a change of MariaDB's release series, as `pressfleet upgrade` does on
+Compose. It reads what runs now with lookup, so it needs no access to the
+API server. lookup finds nothing in helm template or a client-side dry run;
+then there is nothing to compare, and the check passes.
+
+A failed check fails the upgrade before anything changed; the Job is kept
+so that `kubectl logs job/upgrade-preflight` shows why.
+*/ -}}
+{{- $fromVersion := "" }}
+{{- with lookup "apps/v1" "Deployment" .Release.Namespace "control-plane" }}
+{{- $fromVersion = index (.metadata.labels | default dict) "app.kubernetes.io/version" | default "" }}
+{{- end }}
+{{- $fromMariaDB := "" }}
+{{- with lookup "apps/v1" "StatefulSet" .Release.Namespace "mariadb" }}
+{{- range .spec.template.spec.containers }}
+{{- if eq .name "mariadb" }}{{ $fromMariaDB = .image }}{{ end }}
+{{- end }}
+{{- end }}
+{{- $toMariaDB := "" }}
+{{- if .Values.mariadb.enabled }}
+{{- $toMariaDB = include "pressfleet.image" (dict "root" . "value" "mariadb" "key" "mariadb") }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: upgrade-preflight
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "upgrade-preflight") | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "pressfleet.componentLabels" (dict "root" . "component" "upgrade-preflight") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      # It reads nothing from the API server: the chart passes what runs.
+      automountServiceAccountToken: false
+      {{- with include "pressfleet.imagePullSecrets" . }}{{ . | nindent 6 }}{{ end }}
+      {{- include "pressfleet.podSecurityContext" (dict "uid" .Values.controlPlane.uid "gid" .Values.controlPlane.gid) | nindent 6 }}
+      containers:
+        - name: upgrade-preflight
+          image: {{ include "pressfleet.controlPlaneImage" . | quote }}
+          args:
+            - admin
+            - upgrade-preflight
+            - {{ printf "--from-version=%s" $fromVersion | quote }}
+            - {{ printf "--from-mariadb-image=%s" $fromMariaDB | quote }}
+            - {{ printf "--to-mariadb-image=%s" $toMariaDB | quote }}
+          {{- include "pressfleet.containerSecurityContext" (dict "readOnly" true) | nindent 10 }}
+          {{- include "pressfleet.memory" 128 | nindent 10 }}

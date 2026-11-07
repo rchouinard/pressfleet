@@ -168,12 +168,17 @@ var flagOverrides = []struct {
 }
 
 // preRun loads the configuration and, for host commands, checks that the
-// CLI can manage the installed control plane (§4.7).
+// CLI can manage the installed control plane (§4.7). On Kubernetes the
+// chart and the control plane come from one release, so there is no skew to
+// check (§4.8), and the Compose-only commands are refused.
 func (a *app) preRun(cmd *cobra.Command, args []string) error {
 	if err := a.loadConfig(cmd, args); err != nil {
 		return err
 	}
-	if requiresSkewCheck(cmd) {
+	if err := a.refuseOnKubernetes(cmd); err != nil {
+		return err
+	}
+	if requiresSkewCheck(cmd) && !a.onKubernetes(cmd) {
 		return a.enforceSkew(cmd.Context())
 	}
 	return nil

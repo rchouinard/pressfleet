@@ -24,7 +24,6 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
-	"github.com/rchouinard/pressfleet/control-plane/internal/skew"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 	"github.com/rchouinard/pressfleet/control-plane/internal/upgradestate"
 )
@@ -371,24 +370,22 @@ func (u *upgrader) checkVersions() error {
 		u.a.warnf("can't tell which version the control plane runs; not checking the upgrade order")
 		return nil
 	}
-	to, toErr := skew.Parse(u.to)
-	from, fromErr := skew.Parse(u.from)
-	if toErr != nil || fromErr != nil {
-		u.a.warnf("not checking the upgrade order from %s to %s: development build", u.from, u.to)
-		return nil
-	}
-	oldest, err := skew.Parse(skew.MinUpgradeFrom)
+	order, err := classifyUpgrade(u.from, u.to)
 	if err != nil {
 		return err
 	}
-	switch {
-	case to.Compare(from) < 0:
+	from, to, oldest := order.From, order.To, order.Oldest
+	switch order.Step {
+	case stepUnordered:
+		u.a.warnf("not checking the upgrade order from %s to %s: development build", u.from, u.to)
+		return nil
+	case stepDown:
 		return fmt.Errorf("the control plane runs %s, newer than this CLI (%s); the control plane can't be downgraded. "+
 			"Use a pressfleet CLI %s or later", from, to, from)
-	case from.Compare(oldest) < 0:
+	case stepTooOld:
 		return fmt.Errorf("%s upgrades control planes from %s or later, and this one runs %s. "+
 			"Upgrade it with the CLI of an intermediate release first (see the release notes)", to, oldest, from)
-	case to.Compare(from) == 0:
+	case stepSame:
 		u.printf("The control plane already runs %s; applying this release's platform definition again.\n", to)
 	default:
 		u.printf("Upgrading the platform from %s to %s.\n", from, to)

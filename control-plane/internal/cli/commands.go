@@ -221,6 +221,10 @@ sense inside the control plane container.`,
 			if cfg, err := config.Load(a.configPath, a.opts.Env); err == nil {
 				a.cfg = cfg
 			}
+			if a.cfg.Driver == config.SiteDriverKubernetes {
+				_, err := fmt.Fprintln(out, kubernetesVersionNote)
+				return err
+			}
 			return a.writeControlPlaneVersion(cmd.Context(), out)
 		},
 	}

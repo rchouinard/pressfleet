@@ -172,3 +172,17 @@ acme:
 sftp:
   # The SFTP gateway's port on Traefik's Service (sftp.port). Not 80 or 443.
   port: 2222
+
+# Disaster recovery (design doc §5.10, docs/disaster-recovery.md). true
+# scales the control plane to zero and, once the install or upgrade has
+# applied, restores a state backup with `pressfleet state recover` in the
+# Job state-recover. Another helm upgrade with false starts the control
+# plane, which then recreates the sites from their backups.
+recovery:
+  enabled: false
+  # The state backup to restore: its ID (8 characters or more), or latest.
+  # `kubectl exec deploy/control-plane -- pressfleet state backups` lists
+  # them.
+  snapshot: latest
+  # Replace a state database that already has client groups or sites.
+  force: false

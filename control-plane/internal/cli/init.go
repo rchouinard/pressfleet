@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -76,6 +77,10 @@ type initFlags struct {
 	// acmeStaging is --acme-staging; acmeStagingSet says it was given.
 	acmeStaging    bool
 	acmeStagingSet bool
+	// target is --target: compose, or kubernetes, which writes the Helm
+	// chart's values and Secrets into outputDir instead of installing.
+	target    string
+	outputDir string
 }
 
 // initAnswers are the settings init collects. Later milestones add the
@@ -92,6 +97,7 @@ type initAnswers struct {
 	ACMEEmail    string
 	ACMECAServer string
 	dnsAnswers
+	kubernetesAnswers
 }
 
 // initQuestion is one setting init collects: from its flag if given, else by
@@ -246,10 +252,18 @@ automation; --confirm-key-stored is then required.
 init refuses to run over an existing installation unless --force is given.
 Even then it never replaces an existing master key: it reuses it.
 
+With --target kubernetes, init installs nothing and never talks to the
+cluster: it asks the questions for a Kubernetes install and writes the Helm
+chart's values.yaml and the Secrets it reads, secrets.yaml, into
+--output-dir, then prints the commands that install the chart.
+
 See docs/installation.md.`,
 		Args:        cobra.NoArgs,
 		Annotations: map[string]string{skipConfig: "true", checkSkew: "true"},
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := checkTargetFlags(f.target, cmd.Flags().Changed); err != nil {
+				return err
+			}
 			given := map[string]string{}
 			for name := range flagValues {
 				if fl := cmd.Flags().Lookup(name); fl != nil && fl.Changed {
@@ -260,11 +274,14 @@ See docs/installation.md.`,
 				given["data-dir"] = fl.Value.String()
 			}
 			f.acmeStagingSet = cmd.Flags().Changed("acme-staging")
+			if f.target == targetKubernetes {
+				return a.runKubernetesInit(f, given)
+			}
 			return a.runInit(cmd.Context(), f, given)
 		},
 	}
 	fl := cmd.Flags()
-	for _, q := range allInitQuestions() {
+	for _, q := range slices.Concat(allInitQuestions(), kubernetesInitQuestions) {
 		if q.usage != "" {
 			flagValues[q.flag] = fl.String(q.flag, "", q.usage)
 		}
@@ -278,6 +295,10 @@ See docs/installation.md.`,
 	fl.BoolVar(&f.skipPreflight, "skip-preflight", false, "install even if required host checks fail (development only)")
 	fl.StringVar(&f.controlPlaneImage, "control-plane-image", "",
 		"control plane image (development only; default: the image released with this CLI)")
+	fl.StringVar(&f.target, targetFlag, targetCompose,
+		"compose installs on this host; kubernetes writes the Helm chart's values and Secrets for a cluster, offline (see docs/installation.md)")
+	fl.StringVar(&f.outputDir, "output-dir", defaultKubernetesOutputDir,
+		"where --target kubernetes writes values.yaml and secrets.yaml")
 	fl.BoolVar(&f.acmeStaging, "acme-staging", false,
 		"get certificates from Let's Encrypt's staging environment, which browsers don't trust (also $PRESSFLEET_ACME_STAGING)")
 	return cmd
@@ -293,6 +314,8 @@ type installer struct {
 	// metricsPassword is the password of a public metrics credential
 	// startPlatform just created, which is shown once.
 	metricsPassword redact.Secret
+	// questions are the questions to ask; nil means allInitQuestions.
+	questions []initQuestion
 }
 
 func (a *app) runInit(ctx context.Context, f initFlags, given map[string]string) error {
@@ -500,7 +523,11 @@ func (i *installer) defaults() (initAnswers, error) {
 
 // ask fills answers from the given flag values, prompts, or defaults.
 func (i *installer) ask(answers *initAnswers, given map[string]string) error {
-	for _, q := range allInitQuestions() {
+	questions := i.questions
+	if questions == nil {
+		questions = allInitQuestions()
+	}
+	for _, q := range questions {
 		field := q.field(answers)
 		if v, ok := given[q.flag]; ok {
 			if err := q.validate(v, answers); err != nil {
