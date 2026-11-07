@@ -127,6 +127,8 @@ func TestK8sStorage(t *testing.T) {
 			wantStatus: doctor.StatusPass, wantMessage: `"rwx"`},
 		{name: "node-local class", setup: func(f *k8sFixture) { f.opts.StorageClassData = "local" },
 			wantStatus: doctor.StatusFail, wantMessage: "ReadWriteOnce volumes only", wantFix: "storage_classes.data"},
+		{name: "unshareable class", setup: func(f *k8sFixture) { f.opts.StorageClassData = "azure" },
+			wantStatus: doctor.StatusWarn, wantMessage: "several PersistentVolumes", wantFix: "storage_classes.data"},
 	})
 }
 

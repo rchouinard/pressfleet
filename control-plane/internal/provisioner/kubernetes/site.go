@@ -203,8 +203,9 @@ func (p *Provisioner) StopSite(ctx context.Context, siteID string) error {
 }
 
 // DeleteSite deletes the site's namespace, which deletes everything in it,
-// the wp-content volume included, waits until it is gone, and removes the
-// site's rendered directory. Deleting a site that doesn't exist succeeds. A
+// the wp-content volume included, waits until it is gone, deletes the
+// site's clone of the data volume (never the data volume's storage), and
+// removes the site's rendered directory. Deleting a site that doesn't exist succeeds. A
 // namespace of the site's name that PressFleet didn't create is refused.
 func (p *Provisioner) DeleteSite(ctx context.Context, siteID string) error {
 	if err := p.validSiteNamespace(siteID); err != nil {
@@ -241,6 +242,10 @@ func (p *Provisioner) DeleteSite(ctx context.Context, siteID string) error {
 	// The namespace took its routes with it, but not the maintenance routes
 	// in the platform namespace.
 	if err := p.removeMaintenance(ctx, siteID, nil); err != nil {
+		return fmt.Errorf("delete site %s: %w", siteID, err)
+	}
+	// Cluster-wide, so not deleted with the namespace; the storage stays.
+	if err := p.deleteSiteData(ctx, siteID); err != nil {
 		return fmt.Errorf("delete site %s: %w", siteID, err)
 	}
 	if err := os.RemoveAll(dir); err != nil {

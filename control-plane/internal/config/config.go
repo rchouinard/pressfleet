@@ -732,6 +732,7 @@ var envVars = []struct {
 	{"PRESSFLEET_KUBERNETES_STORAGE_CLASSES_DATA", func(c *Config) *string { return &c.Kubernetes.StorageClasses.Data }},
 	{"PRESSFLEET_KUBERNETES_SITE_VOLUME_SIZE", func(c *Config) *string { return &c.Kubernetes.SiteVolumeSize }},
 	{"PRESSFLEET_KUBERNETES_TRAEFIK_SERVICE", func(c *Config) *string { return &c.Kubernetes.TraefikService }},
+	{"PRESSFLEET_KUBERNETES_DATA_CLAIM", func(c *Config) *string { return &c.Kubernetes.DataClaim }},
 	{"PRESSFLEET_PLATFORM_PROJECT", func(c *Config) *string { return &c.PlatformProject }},
 	{"PRESSFLEET_TASK_IMAGE", func(c *Config) *string { return &c.TaskImage }},
 	{"PRESSFLEET_SMTP_HOST", func(c *Config) *string { return &c.SMTP.Host }},

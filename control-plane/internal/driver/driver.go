@@ -214,7 +214,12 @@ func kubernetesConfig(cfg *config.Config, log *slog.Logger) kubernetes.Config {
 		MariaDBAddress:    cfg.MariaDB.Address,
 		RedisAddress:      cfg.Redis.Address,
 		WordPressSecurity: cfg.WordPressSecurity,
-		Logger:            log.With("component", "provisioner"),
+		Tasks: kubernetes.TaskConfig{
+			Image:         cfg.TaskImage,
+			MemoryLimitMB: cfg.Backup.TaskMemoryMB,
+			S3Endpoint:    cfg.Backup.S3.Endpoint,
+		},
+		Logger: log.With("component", "provisioner"),
 	}
 }
 

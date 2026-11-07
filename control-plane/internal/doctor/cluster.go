@@ -126,6 +126,13 @@ var rwxIncapable = []string{
 	"cinder.csi.openstack.org",
 }
 
+// unshareable lists ReadWriteMany provisioners whose volumes are known not
+// to take several PersistentVolumes pointing at one volume, which is how
+// site tasks mount the data volume (#219): Azure Files wants a volume
+// handle of its own for each, and Longhorn ties a volume to one
+// PersistentVolume.
+var unshareable = []string{"file.csi.azure.com", "kubernetes.io/azure-file", "driver.longhorn.io"}
+
 // cluster returns the probe, or the reason there is none.
 func (e *env) cluster() (ClusterProbe, error) {
 	if e.Cluster != nil {
@@ -278,6 +285,11 @@ func checkK8sStorage(setting string, class func(*env) string, rwx bool) func(con
 		if slices.Contains(rwxIncapable, info.Provisioner) {
 			return fail("Use a ReadWriteMany class (NFS, CephFS, Longhorn, EFS, Filestore, Azure Files) and set "+setting+".",
 				"storage class %q (%s) provides ReadWriteOnce volumes only; the data directory needs ReadWriteMany", info.Name, info.Provisioner)
+		}
+		if slices.Contains(unshareable, info.Provisioner) {
+			return warn("Use NFS (nfs.csi.k8s.io), CephFS, or EFS for the data directory and set "+setting+".",
+				"storage class %q (%s) is known not to accept several PersistentVolumes on one volume, which site tasks mount the data directory through",
+				info.Name, info.Provisioner)
 		}
 		return pass("storage class %q (%s); whether it supports ReadWriteMany shows when the data volume binds", info.Name, info.Provisioner)
 	}

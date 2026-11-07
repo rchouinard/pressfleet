@@ -11,7 +11,7 @@ Everything goes in the release's namespace, which is the platform namespace (`ku
 | Object | Notes |
 | --- | --- |
 | `control-plane` Deployment, Service, ServiceAccount | One replica, strategy `Recreate`. Runs as UID/GID 60001 with the repository group 60000 (`provisioner.RepositoryGID`), read-only root filesystem, `GOMEMLIMIT=96MiB`. |
-| `control-plane-data` PVC | ReadWriteMany, the data directory `/var/lib/pressfleet`, including `state/backups`, where the control plane writes its migration markers (#246). Kept on uninstall (`helm.sh/resource-policy: keep`). `controlPlane.data.existingClaim` uses an existing claim instead. The volume must be writable by the control plane's group: the storage must honor `fsGroup`. |
+| `control-plane-data` PVC | ReadWriteMany, the data directory `/var/lib/pressfleet`, including `state/backups`, where the control plane writes its migration markers (#246). Kept on uninstall (`helm.sh/resource-policy: keep`). `controlPlane.data.existingClaim` uses an existing claim instead. The volume must be writable by the control plane's group: the storage must honor `fsGroup`. Site tasks mount the same storage through a PersistentVolume of their own namespace (see [The data volume in site namespaces](#the-data-volume-in-site-namespaces)), so the storage must accept several PersistentVolumes on one volume (NFS, CephFS, EFS do), and the PersistentVolume the claim binds should have the reclaim policy `Retain`: the class's `reclaimPolicy: Retain`, or `kubectl patch pv` after the install. |
 | `traefik` Deployment, Service, ConfigMap, `traefik-acme` PVC | One replica (ACME storage is ReadWriteOnce). Entry points `web`, `websecure`, `traefik` (loopback: ping and metrics), resolvers `acme-http` and `acme-preview`, as in package `ingress`, plus `sftp`. The Service maps 80, 443, and `sftp.port` to the container's 8000, 8443, and 2222. |
 | `mariadb` StatefulSet, Service, ConfigMap | Configured from the Compose template (`files/mariadb.cnf.tmpl`). Left out with `mariadb.enabled: false`, which needs `mariadb.address`. |
 | `redis` StatefulSet, Service, ConfigMap | Valkey, from the Compose template (`files/valkey.conf.tmpl`); an init container puts in the admin password's SHA-256. Nothing persisted. |
@@ -54,7 +54,7 @@ Values that the chart and the control plane both need are passed to the control 
 
 The control plane's ServiceAccount, `control-plane`, gets:
 
-- **ClusterRole `pressfleet:<namespace>:control-plane`:** create, change, and delete namespaces; write RoleBindings and `bind` the site ClusterRole only; read nodes, node metrics, and storage classes. No Secrets, `nodes/proxy`, or `pods/exec` outside its namespaces.
+- **ClusterRole `pressfleet:<namespace>:control-plane`:** create, change, and delete namespaces; write RoleBindings and `bind` the site ClusterRole only; create, label, and delete PersistentVolumes (the data volume's clones, below); read nodes, node metrics, and storage classes. No Secrets, `nodes/proxy`, or `pods/exec` outside its namespaces.
 - **ClusterRole `pressfleet:<namespace>:site`:** a site's objects (pods, exec, attach, logs, Secrets, Services, PVCs, ConfigMaps, Deployments, NetworkPolicies, IngressRoutes, Middlewares, pod metrics). Never bound cluster-wide: the driver binds it in each site namespace with a RoleBinding to `system:serviceaccount:<namespace>:control-plane`.
 - **Role `control-plane`** in the platform namespace: repository task pods, their Secrets and NetworkPolicies, exec and attach, IngressRoutes and Middlewares, and read access to Services, PVCs, events, workloads, and pod metrics.
 
@@ -64,6 +64,15 @@ RBAC can't name namespaces that don't exist yet, so the namespace and RoleBindin
 - **Doctor's probe namespaces** (#225) are named `<namespace>-doctor-...` and labeled `pressfleet.io/doctor-probe: "true"`.
 
 Both kinds must enforce Pod Security `restricted`. A RoleBinding must be in one of them and bind the site ClusterRole.
+
+### The data volume in site namespaces
+
+Site tasks (backups, restores, imports, exports, deploys) mount transfer and repository directories from the data volume, but its claim belongs to the platform namespace. For each site namespace, the driver creates a PersistentVolume `<site namespace>-data`, with the data volume's CSI or NFS source and mount options, reclaim policy `Retain`, and no storage class, bound in advance to a claim `pressfleet-data` in the site's namespace (decision of 2026-11-06 in #219). Deleting a site deletes both; the storage stays.
+
+A PersistentVolume could point at anything, a node's filesystem included, and Pod Security doesn't look at volumes behind a claim. `data-volume-policy.yaml` therefore narrows the control plane's PersistentVolume rights with two more `ValidatingAdmissionPolicies`:
+
+- **`data-volume.<namespace>.pressfleet.io`:** a PersistentVolume the control plane creates must be a clone as described, labeled `pressfleet.io/data-clone: <namespace>`; it may delete only such clones; and the only change it may make is to label the PersistentVolume bound to the data claim `pressfleet.io/data-volume: <namespace>`, changing nothing else.
+- **`data-volume-clones.<namespace>.pressfleet.io`:** takes the PersistentVolume with that label as its parameter, and admits a clone only if its source and mount options are the same. Until the control plane has labeled the data volume (before its first site task), it admits no PersistentVolume at all.
 
 Traefik's ServiceAccount gets the cluster-wide read access its CRD provider needs, which includes Secrets (basicAuth middlewares name them).
 
