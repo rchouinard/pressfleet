@@ -530,6 +530,13 @@ rules:
   - apiGroups: [storage.k8s.io]
     resources: [storageclasses]
     verbs: [get, list]
+  # Each site namespace's clone of the data volume, through which its tasks
+  # mount the data directory, and the label on the data volume's own
+  # PersistentVolume that the clones are compared with (#219).
+  # data-volume-policy.yaml admits nothing else.
+  - apiGroups: [""]
+    resources: [persistentvolumes]
+    verbs: [get, list, create, patch, delete]
 
 ---
 # Source: pressfleet/templates/rbac.yaml
@@ -973,6 +980,9 @@ spec:
               value: ""
             - name: PRESSFLEET_KUBERNETES_TRAEFIK_SERVICE
               value: traefik
+            # Task pods mount it too (#219).
+            - name: PRESSFLEET_KUBERNETES_DATA_CLAIM
+              value: "control-plane-data"
             - name: PRESSFLEET_KUBERNETES_POD_CIDRS
               value: "10.244.0.0/16"
             - name: PRESSFLEET_KUBERNETES_IMAGE_PULL_SECRETS
@@ -1663,6 +1673,112 @@ spec:
       message: "the PressFleet control plane may only bind the ClusterRole pressfleet:pressfleet:site"
 
 ---
+# Source: pressfleet/templates/data-volume-policy.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: "data-volume.pressfleet.pressfleet.io"
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: control-plane
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [persistentvolumes]
+  matchConditions:
+    - name: control-plane
+      expression: "request.userInfo.username == 'system:serviceaccount:pressfleet:control-plane'"
+  validations:
+    - expression: >-
+        request.operation != 'CREATE' ||
+        (object.spec.persistentVolumeReclaimPolicy == 'Retain' &&
+        (!has(object.spec.storageClassName) || object.spec.storageClassName == '') &&
+        (has(object.spec.csi) || has(object.spec.nfs)) &&
+        has(object.spec.claimRef) && has(object.spec.claimRef.namespace) && has(object.spec.claimRef.name) &&
+        object.spec.claimRef.namespace.startsWith('pf-') &&
+        object.spec.claimRef.name == 'pressfleet-data' &&
+        object.metadata.name == object.spec.claimRef.namespace + '-data' &&
+        has(object.metadata.labels) &&
+        'pressfleet.io/data-clone' in object.metadata.labels &&
+        object.metadata.labels['pressfleet.io/data-clone'] == 'pressfleet' &&
+        !('pressfleet.io/data-volume' in object.metadata.labels))
+      messageExpression: >-
+        'the PressFleet control plane may only create clones of its data volume (Retain, CSI or NFS, no storage class, labeled pressfleet.io/data-clone=pressfleet, bound to pf-.../pressfleet-data and named after that namespace), not ' + object.metadata.name
+    - expression: >-
+        request.operation != 'UPDATE' ||
+        (has(oldObject.spec.claimRef) &&
+        oldObject.spec.claimRef.namespace == 'pressfleet' &&
+        oldObject.spec.claimRef.name == 'control-plane-data' &&
+        object.spec == oldObject.spec &&
+        (has(object.metadata.finalizers) ? object.metadata.finalizers : []) ==
+        (has(oldObject.metadata.finalizers) ? oldObject.metadata.finalizers : []) &&
+        has(object.metadata.labels) &&
+        'pressfleet.io/data-volume' in object.metadata.labels &&
+        object.metadata.labels['pressfleet.io/data-volume'] == 'pressfleet' &&
+        object.metadata.labels.all(k, k == 'pressfleet.io/data-volume' ||
+        (has(oldObject.metadata.labels) && k in oldObject.metadata.labels && oldObject.metadata.labels[k] == object.metadata.labels[k])) &&
+        (!has(oldObject.metadata.labels) || oldObject.metadata.labels.all(k, k in object.metadata.labels)))
+      messageExpression: >-
+        'the PressFleet control plane may only label the data volume (pressfleet/control-plane-data) as such, not change ' + oldObject.metadata.name
+    - expression: >-
+        request.operation != 'DELETE' ||
+        (has(oldObject.metadata.labels) &&
+        'pressfleet.io/data-clone' in oldObject.metadata.labels &&
+        oldObject.metadata.labels['pressfleet.io/data-clone'] == 'pressfleet' &&
+        oldObject.spec.persistentVolumeReclaimPolicy == 'Retain' &&
+        has(oldObject.spec.claimRef) && has(oldObject.spec.claimRef.namespace) &&
+        oldObject.spec.claimRef.namespace.startsWith('pf-'))
+      messageExpression: >-
+        'the PressFleet control plane may only delete clones of its data volume, not ' + oldObject.metadata.name
+
+---
+# Source: pressfleet/templates/data-volume-policy.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: "data-volume-clones.pressfleet.pressfleet.io"
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: control-plane
+spec:
+  failurePolicy: Fail
+  # The data volume's own PersistentVolume (the binding selects it).
+  paramKind:
+    apiVersion: v1
+    kind: PersistentVolume
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [persistentvolumes]
+  matchConditions:
+    - name: control-plane
+      expression: "request.userInfo.username == 'system:serviceaccount:pressfleet:control-plane'"
+  validations:
+    - expression: >-
+        has(object.spec.csi) == has(params.spec.csi) &&
+        (!has(object.spec.csi) || object.spec.csi == params.spec.csi) &&
+        has(object.spec.nfs) == has(params.spec.nfs) &&
+        (!has(object.spec.nfs) || object.spec.nfs == params.spec.nfs) &&
+        (has(object.spec.mountOptions) ? object.spec.mountOptions : []) ==
+        (has(params.spec.mountOptions) ? params.spec.mountOptions : [])
+      messageExpression: >-
+        'a PersistentVolume the PressFleet control plane creates must have the source and mount options of its data volume, ' + params.metadata.name + '; ' + object.metadata.name + ' does not'
+
+---
 # Source: pressfleet/templates/admission-policy.yaml
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
@@ -1677,6 +1793,47 @@ metadata:
     app.kubernetes.io/component: control-plane
 spec:
   policyName: "control-plane.pressfleet.pressfleet.io"
+  validationActions: [Deny]
+
+---
+# Source: pressfleet/templates/data-volume-policy.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: "data-volume.pressfleet.pressfleet.io"
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: control-plane
+spec:
+  policyName: "data-volume.pressfleet.pressfleet.io"
+  validationActions: [Deny]
+
+---
+# Source: pressfleet/templates/data-volume-policy.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: "data-volume-clones.pressfleet.pressfleet.io"
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: control-plane
+spec:
+  policyName: "data-volume-clones.pressfleet.pressfleet.io"
+  paramRef:
+    selector:
+      matchLabels:
+        pressfleet.io/data-volume: "pressfleet"
+    # Until the control plane has labeled the data volume, it may create no
+    # PersistentVolume at all.
+    parameterNotFoundAction: Deny
   validationActions: [Deny]
 ---
 # Source: pressfleet/templates/upgrade-preflight.yaml

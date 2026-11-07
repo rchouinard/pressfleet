@@ -48,6 +48,7 @@ func HealthyCluster() *Cluster {
 			"":      {Name: "standard", Provisioner: "example.com/rwo"},
 			"rwx":   {Name: "rwx", Provisioner: "nfs.csi.k8s.io"},
 			"local": {Name: "local", Provisioner: "rancher.io/local-path"},
+			"azure": {Name: "azure", Provisioner: "file.csi.azure.com"},
 		},
 		NetPol:  doctor.NetworkPolicyResult{State: doctor.NetworkPolicyEnforced},
 		Traefik: []string{"198.51.100.20"},

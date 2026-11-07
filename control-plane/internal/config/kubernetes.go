@@ -49,7 +49,17 @@ type KubernetesConfig struct {
 	// only use a Secret of its own namespace, so the driver copies them
 	// into each site namespace.
 	ImagePullSecrets []string `yaml:"image_pull_secrets"`
+	// DataClaim is the PersistentVolumeClaim of the control plane's data
+	// directory in the platform namespace: the chart's, or the one
+	// controlPlane.data.existingClaim names. Task pods mount it, repository
+	// tasks directly and site tasks through a PersistentVolume of their own
+	// namespace that points at the same storage.
+	DataClaim string `yaml:"data_claim"`
 }
+
+// DefaultDataClaim is the default kubernetes.data_claim, the claim the
+// Helm chart creates.
+const DefaultDataClaim = "control-plane-data"
 
 // KubernetesStorageClasses names the storage classes of the Kubernetes
 // install's volumes. Empty means the cluster's default storage class.
@@ -76,6 +86,7 @@ func DefaultKubernetes() KubernetesConfig {
 		SiteNamespacePrefix: "pf-",
 		SiteVolumeSize:      DefaultSiteVolumeSize,
 		TraefikService:      "traefik",
+		DataClaim:           DefaultDataClaim,
 	}
 }
 
@@ -136,6 +147,9 @@ func (k KubernetesConfig) Validate() error {
 	}
 	if !dnsLabel.MatchString(k.TraefikService) {
 		errs = append(errs, fmt.Errorf("kubernetes.traefik_service must be a Service name, got %q", k.TraefikService))
+	}
+	if !dnsSubdomain.MatchString(k.DataClaim) {
+		errs = append(errs, fmt.Errorf("kubernetes.data_claim must be a PersistentVolumeClaim name, got %q", k.DataClaim))
 	}
 	if _, err := k.PodPrefixes(); err != nil {
 		errs = append(errs, err)

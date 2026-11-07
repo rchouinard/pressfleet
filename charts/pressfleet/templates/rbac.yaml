@@ -4,8 +4,10 @@ replace the Docker socket:
 
 - cluster-wide, it may create and delete namespaces and bind the site
   ClusterRole in them (admission-policy.yaml narrows both to site
-  namespaces and doctor's probe namespaces), and read what doctor and host
-  metrics need: nodes, their metrics, and storage classes;
+  namespaces and doctor's probe namespaces), create and delete the site
+  namespaces' clones of the data volume (data-volume-policy.yaml narrows
+  that to clones), and read what doctor and host metrics need: nodes, their
+  metrics, and storage classes;
 - in each of those namespaces, the site ClusterRole, which the driver (or
   doctor) binds there;
 - in the platform namespace, the Role below: repository task pods, their
@@ -48,6 +50,13 @@ rules:
   - apiGroups: [storage.k8s.io]
     resources: [storageclasses]
     verbs: [get, list]
+  # Each site namespace's clone of the data volume, through which its tasks
+  # mount the data directory, and the label on the data volume's own
+  # PersistentVolume that the clones are compared with (#219).
+  # data-volume-policy.yaml admits nothing else.
+  - apiGroups: [""]
+    resources: [persistentvolumes]
+    verbs: [get, list, create, patch, delete]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

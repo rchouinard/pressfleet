@@ -93,7 +93,9 @@ type Config struct {
 	// Registry is the HTTP client PinImage asks registries with; nil means
 	// one with DefaultRegistryTimeout.
 	Registry *http.Client
-	Logger   *slog.Logger
+	// Tasks configures site and repository tasks.
+	Tasks  TaskConfig
+	Logger *slog.Logger
 }
 
 // Provisioner is the Kubernetes driver.
@@ -130,6 +132,11 @@ type Provisioner struct {
 	registry *http.Client
 	pinsMu   sync.Mutex
 	pins     map[string]string // tag reference -> pinned reference
+
+	// tasks is how tasks run (task.go); attach, if set, replaces
+	// Client.attachPod in tests.
+	tasks  taskSettings
+	attach podAttacher
 }
 
 // New builds the driver and its client from the kubeconfig file or the
@@ -193,6 +200,7 @@ func newWithClient(cfg Config, c *Client) *Provisioner {
 		p.registry = &http.Client{Timeout: DefaultRegistryTimeout}
 	}
 	p.setupErr = p.setupNetwork(cfg)
+	p.tasks = newTaskSettings(cfg)
 	return p
 }
 
@@ -352,16 +360,6 @@ func (p *Provisioner) Logs(context.Context, string, provisioner.LogOptions) iter
 // Stats implements provisioner.StatsReader (#221).
 func (p *Provisioner) Stats(context.Context, string) ([]provisioner.ComponentStats, error) {
 	return nil, notImplemented("read stats")
-}
-
-// RunTask implements provisioner.TaskRunner (#219).
-func (p *Provisioner) RunTask(context.Context, string, provisioner.Task) (*provisioner.TaskResult, error) {
-	return nil, notImplemented("run a site task")
-}
-
-// RunRepositoryTask implements provisioner.RepositoryTaskRunner (#219).
-func (p *Provisioner) RunRepositoryTask(context.Context, string, provisioner.Task) (*provisioner.TaskResult, error) {
-	return nil, notImplemented("run a repository task")
 }
 
 // RunSession implements provisioner.SessionRunner (#220).
