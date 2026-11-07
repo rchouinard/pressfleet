@@ -10,7 +10,7 @@ type: application
 # the control plane always come from the same release (design doc §4.8).
 version: 0.0.0-dev
 appVersion: 0.0.0-dev
-kubeVersion: ">=1.30.0-0"
+kubeVersion: ">=1.35.0-0"
 home: https://github.com/rchouinard/pressfleet
 sources:
   - https://github.com/rchouinard/pressfleet

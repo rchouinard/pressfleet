@@ -2,7 +2,7 @@
 
 Installs PressFleet on a Kubernetes cluster: the control plane and the platform services that `templates/platform` renders for Compose (design doc §4.8, decisions 3, 4, and 7 in #212). Sites are not part of the chart: the control plane's Kubernetes driver creates a namespace for each.
 
-`pressfleet init --target kubernetes` writes the values file and the Secrets (#224). The chart needs a cluster that meets §4.8's requirements: Kubernetes 1.30 or later (the chart uses `ValidatingAdmissionPolicy`), a CNI that enforces NetworkPolicy, metrics-server, a ReadWriteOnce and a ReadWriteMany storage class, and LoadBalancer Services or NodePorts.
+`pressfleet init --target kubernetes` writes the values file and the Secrets (#224). The chart needs a cluster that meets §4.8's requirements: Kubernetes 1.35 or later (the chart uses `ValidatingAdmissionPolicy`), a CNI that enforces NetworkPolicy, metrics-server, a ReadWriteOnce and a ReadWriteMany storage class, and LoadBalancer Services or NodePorts.
 
 ## What it installs
 
