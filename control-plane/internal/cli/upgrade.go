@@ -179,11 +179,18 @@ every site, and before upgrading with a PostgreSQL state database, upgrade
 asks for confirmation; --yes gives it.
 
 --rollback returns the platform to the release before the last upgrade,
-once, for an upgrade that succeeded but is regretted. It first lists what
-the control plane changed since the upgrade started, and refuses changes
-the rollback would leave behind (sites created or deleted, core updates,
-and the like) unless --force is given. It exits with 0 when it rolled back, and 1 when
-it didn't (refused, or stopped).`,
+once, for an upgrade that succeeded but is regretted. If the upgrade
+migrated the state database, it first lists what the control plane changed
+since the upgrade started, and refuses changes the rollback would leave
+behind (sites created or deleted, core updates, go-lives, client groups
+deleted or offboarded) unless --force is given. It asks for confirmation
+(--yes gives it), and also rolls back an upgrade that failed with
+--no-rollback, and resumes a rollback that stopped. It exits with 0 when
+the platform is back on the previous release, and 1 when it isn't (refused,
+or stopped, with the steps printed). It can't be combined with
+--no-rollback, --skip-preflight, or --control-plane-image.
+
+With driver: kubernetes, use helm upgrade and helm rollback instead.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			u := &upgrader{a: a, f: f, in: bufio.NewReader(a.opts.Stdin), out: a.opts.Stdout}
