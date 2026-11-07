@@ -29,6 +29,8 @@ The chart job runs after the images are pushed, so the chart never points at a m
 helm install pressfleet oci://ghcr.io/rchouinard/pressfleet/charts/pressfleet --version 1.2.0 --values values.yaml
 ```
 
+The chart's `kubeVersion` and `doctor.MinKubernetesMinor` (`control-plane/internal/doctor`) are the oldest supported Kubernetes release, the three newest minors, and move together each release; `TestKubeVersionMatchesDoctor` fails if they differ.
+
 The notes carry that command, the chart's digest, and the minimum Kubernetes version (`kubeVersion` in `Chart.yaml`). A tag with a pre-release suffix is a pre-release chart version (`1.2.0-rc.1`), which Helm installs only with an explicit `--version`.
 
 To try the packaging without a release: `mise exec -- scripts/package-chart.sh v0.0.1-test /tmp/dist`.

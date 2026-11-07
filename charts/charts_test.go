@@ -324,3 +324,37 @@ func checkRestricted(t *testing.T, name string, p *pod) {
 		}
 	}
 }
+
+// TestKubeVersionMatchesDoctor keeps the chart's minimum Kubernetes version,
+// which the release notes advertise, equal to the one pressfleet doctor
+// enforces. Bump both together.
+func TestKubeVersionMatchesDoctor(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(charts.ChartDir, "Chart.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chart struct {
+		KubeVersion string `yaml:"kubeVersion"`
+	}
+	if err := yaml.Unmarshal(data, &chart); err != nil {
+		t.Fatal(err)
+	}
+	// Read the constants from the source: the doctor package is internal to
+	// control-plane/, which this package can't import.
+	src, err := os.ReadFile(filepath.Join("..", "control-plane", "internal", "doctor", "cluster.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parts [2]string
+	for i, name := range []string{"MinKubernetesMajor", "MinKubernetesMinor"} {
+		m := regexp.MustCompile(`\b` + name + `\s*=\s*(\d+)`).FindSubmatch(src)
+		if m == nil {
+			t.Fatalf("doctor/cluster.go has no %s constant", name)
+		}
+		parts[i] = string(m[1])
+	}
+	want := ">=" + parts[0] + "." + parts[1] + ".0-0"
+	if chart.KubeVersion != want {
+		t.Errorf("Chart.yaml kubeVersion is %q, but doctor's minimum makes it %q", chart.KubeVersion, want)
+	}
+}
