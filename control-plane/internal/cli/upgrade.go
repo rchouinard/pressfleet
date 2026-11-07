@@ -24,7 +24,6 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/platform"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner/compose"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
-	"github.com/rchouinard/pressfleet/control-plane/internal/skew"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 	"github.com/rchouinard/pressfleet/control-plane/internal/upgradestate"
 )
@@ -111,6 +110,10 @@ type upgradeFlags struct {
 	skipPreflight     bool
 	noRollback        bool
 	controlPlaneImage string
+	// rollback rolls back the last upgrade (--rollback), and force does
+	// even past changes it would leave behind.
+	rollback bool
+	force    bool
 }
 
 // upgradeRecord is the record of the last upgrade, upgrade.json in the
@@ -173,10 +176,23 @@ retry it or roll it back, and won't upgrade to another release over it.
 
 Before recreating Traefik, MariaDB, or the object cache, which interrupts
 every site, and before upgrading with a PostgreSQL state database, upgrade
-asks for confirmation; --yes gives it.`,
+asks for confirmation; --yes gives it.
+
+--rollback returns the platform to the release before the last upgrade,
+once, for an upgrade that succeeded but is regretted. It first lists what
+the control plane changed since the upgrade started, and refuses changes
+the rollback would leave behind (sites created or deleted, core updates,
+and the like) unless --force is given. It exits with 0 when it rolled back, and 1 when
+it didn't (refused, or stopped).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			u := &upgrader{a: a, f: f, in: bufio.NewReader(a.opts.Stdin), out: a.opts.Stdout}
+			if f.rollback {
+				return u.runRollback(cmd.Context())
+			}
+			if f.force {
+				return errors.New("--force applies only to --rollback")
+			}
 			return u.run(cmd.Context())
 		},
 	}
@@ -184,6 +200,10 @@ asks for confirmation; --yes gives it.`,
 	fl.BoolVar(&f.yes, "yes", false, "don't ask for confirmation")
 	fl.BoolVar(&f.noRollback, "no-rollback", false,
 		"if the upgrade fails, don't roll back: leave the platform for debugging and print the steps that return it to the previous release")
+	fl.BoolVar(&f.rollback, "rollback", false,
+		"roll the last upgrade back to the release before it, after listing what changed since")
+	fl.BoolVar(&f.force, "force", false,
+		"with --rollback: roll back even if changes since the upgrade would be left behind")
 	fl.BoolVar(&f.skipPreflight, "skip-preflight", false,
 		"upgrade even if required host checks fail, and start the control plane without them (development only)")
 	fl.StringVar(&f.controlPlaneImage, "control-plane-image", "",
@@ -350,24 +370,22 @@ func (u *upgrader) checkVersions() error {
 		u.a.warnf("can't tell which version the control plane runs; not checking the upgrade order")
 		return nil
 	}
-	to, toErr := skew.Parse(u.to)
-	from, fromErr := skew.Parse(u.from)
-	if toErr != nil || fromErr != nil {
-		u.a.warnf("not checking the upgrade order from %s to %s: development build", u.from, u.to)
-		return nil
-	}
-	oldest, err := skew.Parse(skew.MinUpgradeFrom)
+	order, err := classifyUpgrade(u.from, u.to)
 	if err != nil {
 		return err
 	}
-	switch {
-	case to.Compare(from) < 0:
+	from, to, oldest := order.From, order.To, order.Oldest
+	switch order.Step {
+	case stepUnordered:
+		u.a.warnf("not checking the upgrade order from %s to %s: development build", u.from, u.to)
+		return nil
+	case stepDown:
 		return fmt.Errorf("the control plane runs %s, newer than this CLI (%s); the control plane can't be downgraded. "+
 			"Use a pressfleet CLI %s or later", from, to, from)
-	case from.Compare(oldest) < 0:
+	case stepTooOld:
 		return fmt.Errorf("%s upgrades control planes from %s or later, and this one runs %s. "+
 			"Upgrade it with the CLI of an intermediate release first (see the release notes)", to, oldest, from)
-	case to.Compare(from) == 0:
+	case stepSame:
 		u.printf("The control plane already runs %s; applying this release's platform definition again.\n", to)
 	default:
 		u.printf("Upgrading the platform from %s to %s.\n", from, to)

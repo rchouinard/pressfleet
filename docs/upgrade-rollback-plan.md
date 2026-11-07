@@ -186,4 +186,6 @@ Additions from reviewing the plan against v1.1.0:
 
 **2026-11-05 ([#249](https://github.com/rchouinard/pressfleet/issues/249)):** the record's new statuses are spelled with hyphens (`rolling-back`, `rolled-back`, `rollback-failed`), like the existing `in-progress`, through the constants of package `upgradestate`; its reader no longer accepts underscores.
 
+**2026-11-06 ([#250](https://github.com/rchouinard/pressfleet/issues/250)):** `--rollback` exits 0 when the requested rollback succeeds; 2 is only for automatic rollback after a failed upgrade (the user).
+
 The design doc records the result in §4.7 and §8.

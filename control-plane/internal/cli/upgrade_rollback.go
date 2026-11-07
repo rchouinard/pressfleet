@@ -133,8 +133,10 @@ var rollbackSignals = func(ctx context.Context) (context.Context, context.Cancel
 // tell whether the upgrade migrated the state database, and when the
 // upgrade migrated a PostgreSQL one. The record's status follows its
 // progress: rolling-back, then rolled-back or rollback-failed (or failed
-// again if it refused). Errors are *rollbackError.
+// again if it refused, unless the upgrade had succeeded). Errors are
+// *rollbackError.
 func (u *upgrader) rollBack(ctx context.Context, cause string) (rollbackResult, error) {
+	prior := u.record.Status
 	if u.record.Rollback == nil || (u.record.Status != upgradeRollingBack && u.record.Status != upgradeRollbackFailed) {
 		u.record.Rollback = &rollbackRecord{StartedAt: time.Now().UTC(), Cause: cause}
 	} else {
@@ -147,10 +149,14 @@ func (u *upgrader) rollBack(ctx context.Context, cause string) (rollbackResult, 
 	mig, known, err := u.checkRollback(ctx, postgres)
 	if err != nil {
 		rerr := &rollbackError{err: err, mig: mig, migKnown: known}
-		if len(rb.Done) == 0 {
+		switch {
+		case len(rb.Done) == 0 && prior == upgradeSucceeded:
+			// Nothing changed: a succeeded upgrade (--rollback) stays
+			// confirmed, and its rollouts aren't held.
+		case len(rb.Done) == 0:
 			// Nothing changed: the upgrade is as failed as it was.
 			u.record.Status = upgradeFailed
-		} else {
+		default:
 			u.record.Status = upgradeRollbackFailed
 		}
 		rb.Error = err.Error()
@@ -285,13 +291,19 @@ func (u *upgrader) checkRollback(ctx context.Context, postgres bool) (mig upgrad
 		return mig, false, fmt.Errorf("%w: %w: %w", errRollbackRefused, errMigrationUnknown, err)
 	}
 	switch {
-	case slices.Contains(u.record.Rollback.Done, stepRestoreState) || !mig.Migrated():
+	case u.stateRestored() || !mig.Migrated():
 	case postgres:
 		return mig, true, fmt.Errorf("%w: %w", errRollbackRefused, errPostgresMigrated)
 	case mig.Backup == "":
 		return mig, true, fmt.Errorf("%w: the upgrade migrated the state database, but there is no backup from before the migration", errRollbackRefused)
 	}
 	return mig, true, nil
+}
+
+// stateRestored reports whether a stopped rollback of the record restored
+// the state database already.
+func (u *upgrader) stateRestored() bool {
+	return u.record.Rollback != nil && slices.Contains(u.record.Rollback.Done, stepRestoreState)
 }
 
 // checkRollbackMariaDB refuses to roll back across a MariaDB release series
@@ -373,7 +385,7 @@ func (u *upgrader) rollbackStopped(ctx, rctx context.Context, err error) error {
 	switch {
 	case rerr.step == "" && errors.Is(err, errPostgresMigrated):
 		_, _ = fmt.Fprintf(stderr, "\nThe upgrade migrated the PostgreSQL state database, which PressFleet doesn't back up, "+
-			"so the upgrade can't roll back on its own; nothing was rolled back.\n")
+			"so PressFleet can't roll the upgrade back on its own; nothing was rolled back.\n")
 	case rerr.step == "":
 		_, _ = fmt.Fprintf(stderr, "\nThe rollback didn't start, and nothing was rolled back: %v\n", rerr.err)
 	case rctx.Err() != nil:

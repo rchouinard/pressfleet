@@ -390,8 +390,8 @@ func TestRenderSiteRejects(t *testing.T) {
 func TestTemplateFingerprint(t *testing.T) {
 	p := testProvisioner(t)
 	fp := p.TemplateFingerprint()
-	if !strings.HasPrefix(fp, "r1-") || len(fp) != len("r1-")+16 {
-		t.Errorf("TemplateFingerprint = %q, want r1-<16 hex digits>", fp)
+	if !strings.HasPrefix(fp, "r2-") || len(fp) != len("r2-")+16 {
+		t.Errorf("TemplateFingerprint = %q, want r2-<16 hex digits>", fp)
 	}
 	if again := testProvisioner(t).TemplateFingerprint(); again != fp {
 		t.Errorf("fingerprint changed: %q, then %q", fp, again)

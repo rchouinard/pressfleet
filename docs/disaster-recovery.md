@@ -91,3 +91,41 @@ Run the drill before you need it: on a spare machine or VM, follow [Rebuilding o
 ## PostgreSQL state databases
 
 State backups cover PostgreSQL state databases the same way. `recover` replaces every table in the state database's schema, so the database must be dedicated to PressFleet. Keep your own PostgreSQL backups too: the pre-migration backup before an upgrade, which `pressfleet upgrade` asks for, is still yours to take ([Upgrading](upgrading.md#postgresql-state-databases)).
+
+## Kubernetes
+
+On Kubernetes, a lost cluster is rebuilt from the same three things: the master key, the backup location, and the answers given to `pressfleet init --target kubernetes`, which are its `values.yaml` and `secrets.yaml` (keep both with the master key; `secrets.yaml` holds the key itself). The state database is the operator's PostgreSQL; it must be empty, or `--force`d over, as on Compose. `pressfleet recover` refuses to run with `driver: kubernetes`; the chart's `recovery` values run `pressfleet state recover` instead, in a one-off Job named `state-recover`, with the control plane scaled to zero.
+
+1. **Prepare the cluster** as for a first installation, with DNS pointed at the new Traefik Service once it has an address.
+2. **Put the backups back.** With `s3`, nothing to copy. With `local`, the repositories live on the control plane's data volume: restore the saved `backups/` directory into a ReadWriteMany volume and install with `controlPlane.data.existingClaim` naming it, keeping the files in group 60000.
+3. **Apply the Secrets and install with recovery on**, so that the control plane never starts on the empty database:
+
+   ```sh
+   kubectl create namespace pressfleet
+   kubectl label namespace pressfleet pod-security.kubernetes.io/enforce=restricted
+   kubectl apply --server-side -f secrets.yaml
+   helm install pressfleet oci://ghcr.io/rchouinard/pressfleet/charts/pressfleet --version <release> \
+     --namespace pressfleet --values values.yaml --set recovery.enabled=true --wait --timeout 30m
+   kubectl -n pressfleet logs job/state-recover
+   ```
+
+   The Job runs once the platform is up, and `helm install` waits for it and fails if it fails. It restores the newest state backup (`--set recovery.snapshot=<id>` for another; `--set recovery.force=true` to replace a database that has client groups or sites), and prints the same report as on Compose. If it fails, nothing changed: fix the cause and run `helm upgrade --reuse-values` to run it again.
+4. **Start the control plane**, which recovers the sites from their backups, one `site.recover` job per site:
+
+   ```sh
+   helm upgrade pressfleet oci://ghcr.io/rchouinard/pressfleet/charts/pressfleet --version <release> \
+     --namespace pressfleet --reuse-values --set recovery.enabled=false --wait
+   ```
+
+5. **Log in and check**, as on Compose, then take a state backup: `kubectl -n pressfleet exec deploy/control-plane -- pressfleet state backup`.
+
+To restore a state backup into an install that is running, scale the control plane to zero and wait for its pod to go before turning recovery on, so that the two never use the database at once:
+
+```sh
+kubectl -n pressfleet scale deployment/control-plane --replicas=0
+kubectl -n pressfleet wait --for=delete pod -l app.kubernetes.io/component=control-plane --timeout=5m
+helm upgrade pressfleet oci://ghcr.io/rchouinard/pressfleet/charts/pressfleet --version <release> \
+  --namespace pressfleet --reuse-values --set recovery.enabled=true --set recovery.force=true --wait --timeout 30m
+```
+
+Then start the control plane as in step 4. The Job is deleted a day after it finishes.

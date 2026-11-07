@@ -315,3 +315,34 @@ Sites start on their preview domain. Pointing a client's own domain at a site is
 ## Not yet collected
 
 The design (§4.1) also has `init` collect the backup repository and alert channels (the SMTP relay above is for site email; alert email settings are separate). Those settings arrive with the features that use them in later milestones.
+
+## Kubernetes
+
+On a Kubernetes cluster, the Helm chart installs PressFleet (design doc §4.8; the chart's requirements are in [its README](../charts/pressfleet/README.md)). `pressfleet init --target kubernetes` asks init's questions and writes what the chart reads, without talking to the cluster:
+
+```sh
+pressfleet init --target kubernetes --output-dir ./pressfleet-kubernetes
+```
+
+It asks the dashboard and preview domains, Traefik's public address (optional), the namespace, the cluster's pod network ranges, the storage classes, a file holding the PostgreSQL state database's DSN (the operator provides PostgreSQL), and the SMTP, backup, and certificate questions of a Compose install. It doesn't ask the data directory or the master key file, which the chart fixes, or the first admin user, which is created once the control plane runs. With `--non-interactive`, the answers come from flags and `PRESSFLEET_*` variables, as for a Compose install, and `--confirm-key-stored` is required.
+
+It generates the master key, shows the [master key](#master-key) warning, and asks you to confirm that the key is stored off the cluster. It then writes two files into the output directory:
+
+- `values.yaml`, the chart values: the domains, the `kubernetes` settings, and the ACME settings. It holds no secrets.
+- `secrets.yaml` (mode 0600), the Secrets the chart reads: `pressfleet-master-key`, `pressfleet-platform` (generated MariaDB and Valkey admin passwords and the SFTP gateway's SSH host key), `pressfleet-postgres` (the DSN), `pressfleet-config` (the config file, with the SMTP password and S3 secret key encrypted with the master key, as on Compose), and, when used, `pressfleet-dns-credentials` (the DNS provider's credentials, which Traefik reads) and `pressfleet-acme-ca`. Keep it with the master key and out of version control.
+
+It then prints the commands that install the release:
+
+```sh
+kubectl create namespace pressfleet
+kubectl label namespace pressfleet pod-security.kubernetes.io/enforce=restricted
+kubectl apply --server-side -f pressfleet-kubernetes/secrets.yaml
+helm install pressfleet oci://ghcr.io/rchouinard/pressfleet/charts/pressfleet --version <release> \
+  --namespace pressfleet --values pressfleet-kubernetes/values.yaml --wait --timeout 15m
+kubectl -n pressfleet get service traefik    # point the dashboard and preview domains at its address
+kubectl -n pressfleet exec deploy/control-plane -- pressfleet user create --email <you@agency.example> --role admin
+```
+
+Running init again over the same output directory needs `--force`. It never replaces the master key or the generated credentials: it reuses them from `secrets.yaml`, since MariaDB and Valkey keep their first passwords and SSH clients remember the host key, and takes its defaults from the earlier `values.yaml`, which it keeps as `values.yaml.bak`. Apply the Secrets again and run `helm upgrade` with the new values.
+
+The commands that run inside the control plane container on Compose (`user`, `state`, `repository`, and the rest) run in the control plane pod with `kubectl exec`, as above. The host commands that drive the platform Compose project (`upgrade`, `recover`, `metrics-access`) refuse to run with `driver: kubernetes` and say what replaces them; the version skew check doesn't apply, because the chart and the control plane come from one release. Upgrading is in [Upgrading](upgrading.md#kubernetes), and recovery in [Disaster recovery](disaster-recovery.md#kubernetes).
