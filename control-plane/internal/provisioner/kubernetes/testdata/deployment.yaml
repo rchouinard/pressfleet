@@ -118,7 +118,7 @@ spec:
             # The pod network's ranges, which the site's NetworkPolicy
             # narrows to Traefik's pods (images/README.md).
             - name: NGINX_TRUSTED_PROXIES
-              value: "10.244.0.0/16 fd00:10:244::/56"
+              value: "127.0.0.0/8 10.244.0.0/16 fd00:10:244::/56"
             # FastCGI page cache (SiteConfig.EnableCache).
             - name: NGINX_FASTCGI_CACHE
               value: "on"
