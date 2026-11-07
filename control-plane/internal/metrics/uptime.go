@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"slices"
 	"sync"
@@ -80,13 +81,30 @@ var _ Collector = (*UptimeCollector)(nil)
 // NewUptimeClient returns the production HTTP client: it doesn't follow
 // redirects or reuse connections (each check does its own TLS handshake,
 // so the certificate seen is current), and times out after 10 seconds.
-func NewUptimeClient() *http.Client {
+func NewUptimeClient() *http.Client { return NewUptimeClientVia("") }
+
+// NewUptimeClientVia is [NewUptimeClient] for a control plane that reaches
+// the edge router at an address of its own, such as a Kubernetes Service
+// (host:port): every connection goes there whatever the domain, while the
+// request keeps the domain as its Host and TLS server name, so Traefik
+// routes it and presents the domain's certificate as it would to a
+// visitor. Connecting through the Service works from behind a load balancer
+// that doesn't loop the cluster's own traffic back to it. An empty address
+// means the domain's own.
+func NewUptimeClientVia(address string) *http.Client {
+	tr := &http.Transport{
+		DisableKeepAlives: true,
+		TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12},
+	}
+	if address != "" {
+		dialer := &net.Dialer{Timeout: uptimeRequestTimeout}
+		tr.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return dialer.DialContext(ctx, network, address)
+		}
+	}
 	return &http.Client{
-		Timeout: uptimeRequestTimeout,
-		Transport: &http.Transport{
-			DisableKeepAlives: true,
-			TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12},
-		},
+		Timeout:       uptimeRequestTimeout,
+		Transport:     tr,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 }

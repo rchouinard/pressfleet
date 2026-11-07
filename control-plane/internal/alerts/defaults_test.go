@@ -244,3 +244,18 @@ func TestDefaultMetricsAreDocumented(t *testing.T) {
 		}
 	}
 }
+
+// The disk rule says it has nothing to evaluate on Kubernetes, where it
+// would otherwise look healthy.
+func TestDiskRuleDescribesKubernetes(t *testing.T) {
+	for _, r := range alerts.DefaultRules() {
+		if r.BuiltinKey != alerts.KeyDiskNearlyFull {
+			continue
+		}
+		if !strings.Contains(r.Description, "Kubernetes") || !strings.Contains(r.Description, "nothing to evaluate") {
+			t.Errorf("description = %q, want it to say the rule has nothing to evaluate on Kubernetes", r.Description)
+		}
+		return
+	}
+	t.Fatal("no disk rule")
+}

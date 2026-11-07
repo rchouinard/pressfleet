@@ -15,3 +15,14 @@ type TraefikMetricsReader interface {
 	// the Prometheus text exposition format.
 	TraefikMetrics(ctx context.Context) ([]byte, error)
 }
+
+// TraefikServiceNamer is implemented by a driver whose Traefik names a
+// site's service differently from the Docker provider's pf-<site-id>@docker
+// (the Kubernetes CRD provider names it after the namespace). The traffic
+// collector maps Traefik's per-service series to sites with it. It is
+// optional: without it the collector assumes the Docker names.
+type TraefikServiceNamer interface {
+	// TraefikServiceName returns the name Traefik's metrics give the
+	// site's service, provider suffix included.
+	TraefikServiceName(siteID string) string
+}

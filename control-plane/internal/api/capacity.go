@@ -48,7 +48,8 @@ func (h *Handlers) GetPlatformCapacity(ctx context.Context, _ gen.GetPlatformCap
 // hostMemoryBytes returns the host's total memory from the metrics store, or
 // 0 if it isn't known: no metrics store, or no collector data yet. The
 // capacity is still useful then (the reservations are known), so that is not
-// an error.
+// an error. On Kubernetes the metric has a series per node, and the total is
+// the cluster's allocatable memory, the sum of the nodes'.
 func (h *Handlers) hostMemoryBytes(ctx context.Context) (float64, error) {
 	res, err := h.metrics.Summary(ctx, metricsapi.Request{Metrics: []string{"host_memory"}})
 	if errors.Is(err, metrics.ErrUnavailable) {
@@ -57,14 +58,15 @@ func (h *Handlers) hostMemoryBytes(ctx context.Context) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
+	var total float64
 	for _, r := range res.Results {
 		for _, s := range r.Series {
 			if s.Labels["type"] == "total" && len(s.Points) > 0 {
-				return s.Points[len(s.Points)-1].Value, nil
+				total += s.Points[len(s.Points)-1].Value
 			}
 		}
 	}
-	return 0, nil
+	return total, nil
 }
 
 // capacity builds the response. hostBytes <= 0 (or not finite) means the

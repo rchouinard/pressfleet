@@ -280,3 +280,35 @@ func TestNewUptimeCollectorRequires(t *testing.T) {
 		}
 	}
 }
+
+// NewUptimeClientVia connects to the given address whatever the domain, and
+// still sends the domain as the Host and the TLS server name.
+func TestUptimeClientVia(t *testing.T) {
+	var host, sni string
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host = r.Host
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	srv.TLS = &tls.Config{GetConfigForClient: func(h *tls.ClientHelloInfo) (*tls.Config, error) {
+		sni = h.ServerName
+		return nil, nil
+	}}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+
+	client := metrics.NewUptimeClientVia(srv.Listener.Addr().String())
+	// The test server's certificate isn't for the domain.
+	client.Transport.(*http.Transport).TLSClientConfig.InsecureSkipVerify = true
+	c := newUptime(t, client, fakeAliases{}, nil)
+	site := store.Site{ID: "s1", Status: store.SiteRunning, PreviewDomain: "s1.preview.invalid"}
+	samples, err := c.Collect(context.Background(), []metrics.Target{uptimeTarget(site)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if up, ok := value(samples, "pressfleet_site_up", ""); !ok || up != 1 {
+		t.Errorf("site up = %v (found %v), want 1 through the dialed address", up, ok)
+	}
+	if host != "s1.preview.invalid" || sni != "s1.preview.invalid" {
+		t.Errorf("host = %q, SNI = %q, want the domain for both", host, sni)
+	}
+}

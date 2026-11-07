@@ -172,6 +172,9 @@ type Options struct {
 	SecureCookies bool
 	// SFTP is what GET /api/v1/platform reports about the gateway.
 	SFTP SFTPInfo
+	// Orchestrator is what GET /api/v1/platform reports runs the sites:
+	// "compose" (also the default when empty) or "kubernetes".
+	Orchestrator string
 	// Build is what GET /api/v1/platform reports about the running binary.
 	Build buildinfo.Info
 	// LatestRelease returns what the release check found, for GET
@@ -216,6 +219,7 @@ type Handlers struct {
 	resolver      authz.Resolver
 	secureCookies bool
 	sftp          SFTPInfo
+	orchestrator  string
 	build         buildinfo.Info
 	latestRelease LatestReleaseFunc
 }
@@ -261,7 +265,7 @@ func newHandler(opts Options, requireAll bool) (http.Handler, error) {
 	}
 
 	h := &Handlers{log: opts.Logger, readiness: opts.Readiness, db: opts.DB, auth: opts.Auth, sites: opts.Sites, backups: opts.Backups,
-		uploads: opts.Uploads, secureCookies: opts.SecureCookies, sftp: opts.SFTP, build: opts.Build, latestRelease: opts.LatestRelease}
+		uploads: opts.Uploads, secureCookies: opts.SecureCookies, sftp: opts.SFTP, orchestrator: opts.Orchestrator, build: opts.Build, latestRelease: opts.LatestRelease}
 	if opts.Sites != nil {
 		h.rollouts = opts.Sites.Rollouts()
 	}

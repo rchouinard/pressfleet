@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"path/filepath"
 	"time"
 
@@ -46,6 +47,15 @@ type Runtime struct {
 	FPMStatus provisioner.FPMStatusReader
 	// TraefikMetrics reads the edge router's metrics.
 	TraefikMetrics provisioner.TraefikMetricsReader
+	// NodeStats samples the nodes of a cluster for the host metrics. It is
+	// nil where the platform runs on one host, whose procfs the host
+	// collector reads instead.
+	NodeStats provisioner.NodeStatsReader
+	// EdgeAddress is where the control plane reaches the edge router's
+	// HTTPS port (host:port) when the domains' own addresses won't do, as
+	// inside a cluster; the uptime checks connect there. Empty means the
+	// checks resolve each domain.
+	EdgeAddress string
 	// Templates fingerprints how the driver renders sites, for the
 	// templates rollout.
 	Templates provisioner.TemplateFingerprinter
@@ -236,13 +246,16 @@ func newKubernetes(ctx context.Context, opts Options) (*Runtime, error) {
 	if err := prov.Connect(ctx); err != nil {
 		return nil, err
 	}
-	// The PHP-FPM status and Traefik's metrics come with exec (#218);
-	// until then those features are off.
+	k := opts.Config.Kubernetes
 	return &Runtime{
-		Driver:    prov,
-		Templates: prov,
-		Snapshots: prov,
-		HostProbe: noDockerHost{},
+		Driver:         prov,
+		FPMStatus:      prov,
+		TraefikMetrics: prov,
+		NodeStats:      prov,
+		EdgeAddress:    net.JoinHostPort(k.TraefikService+"."+k.PlatformNamespace+".svc", "443"),
+		Templates:      prov,
+		Snapshots:      prov,
+		HostProbe:      noDockerHost{},
 	}, nil
 }
 

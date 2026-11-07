@@ -22,7 +22,12 @@ func (h *Handlers) GetPlatform(ctx context.Context, _ gen.GetPlatformRequestObje
 	if h.build.Commit != "" {
 		build.Commit = &h.build.Commit
 	}
+	orchestrator := gen.Compose
+	if h.orchestrator == string(gen.Kubernetes) {
+		orchestrator = gen.Kubernetes
+	}
 	out := gen.GetPlatform200JSONResponse{
+		Orchestrator: orchestrator,
 		Sftp: gen.PlatformSftp{
 			Enabled: h.sftp.Enabled,
 			Host:    h.sftp.Host,

@@ -20,6 +20,7 @@ import (
 var (
 	_ provisioner.FPMStatusReader      = (*Provisioner)(nil)
 	_ provisioner.TraefikMetricsReader = (*Provisioner)(nil)
+	_ provisioner.TraefikServiceNamer  = (*Provisioner)(nil)
 )
 
 const (
@@ -144,4 +145,13 @@ func (p *Provisioner) TraefikMetrics(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("read Traefik metrics: %w: more than %d bytes", ErrOutputTruncated, traefikMaxOutput)
 	}
 	return res.Stdout, nil
+}
+
+// TraefikServiceName names the site's service as Traefik's metrics do
+// (provisioner.TraefikServiceNamer). Its CRD provider names the service of
+// an IngressRoute entry <namespace>-<Service>-<port>, here the site's
+// nginx Service on port 80 (templates/k8s/routes.yaml.tmpl), and suffixes
+// the provider.
+func (p *Provisioner) TraefikServiceName(siteID string) string {
+	return p.SiteNamespace(siteID) + "-nginx-80@kubernetescrd"
 }

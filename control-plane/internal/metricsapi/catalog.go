@@ -345,14 +345,14 @@ var catalog = []Entry{
 		Queries: q(`pressfleet_site_backup_duration_seconds{$SEL}`)},
 
 	// §7.2 Host.
-	{ID: "host_cpu", Title: "Host CPU", Description: "Share of CPU time the host spent busy, across all cores.",
-		Unit: UnitRatio, Kind: KindRatio, Group: groupHost, Scope: ScopePlatform, Summary: true,
-		Queries: q(`1 - sum(rate(pressfleet_host_cpu_seconds_total{$SEL,mode="idle"}[$WIN])) / sum(rate(pressfleet_host_cpu_seconds_total{$SEL}[$WIN]))`)},
-	{ID: "host_memory", Title: "Host memory", Description: "Memory in use and total memory of the host.",
-		Unit: UnitBytes, Kind: KindGauge, Group: groupHost, Scope: ScopePlatform, Labels: []string{"type"}, Summary: true,
+	{ID: "host_cpu", Title: "Host CPU", Description: "Share of CPU time the host spent busy, across all cores. On Kubernetes, one series per node.",
+		Unit: UnitRatio, Kind: KindRatio, Group: groupHost, Scope: ScopePlatform, Labels: []string{"node"}, Summary: true,
+		Queries: q(`1 - sum by (node) (rate(pressfleet_host_cpu_seconds_total{$SEL,mode="idle"}[$WIN])) / sum by (node) (rate(pressfleet_host_cpu_seconds_total{$SEL}[$WIN]))`)},
+	{ID: "host_memory", Title: "Host memory", Description: "Memory in use and total memory of the host. On Kubernetes, per node, counting the memory the node offers to pods (allocatable).",
+		Unit: UnitBytes, Kind: KindGauge, Group: groupHost, Scope: ScopePlatform, Labels: []string{"type", "node"}, Summary: true,
 		Queries: []Query{
-			lq(`pressfleet_host_memory_total_bytes{$SEL} - pressfleet_host_memory_available_bytes{$SEL}`, "type", "used"),
-			lq(`pressfleet_host_memory_total_bytes{$SEL}`, "type", "total"),
+			lq(`sum by (node) (pressfleet_host_memory_total_bytes{$SEL} - pressfleet_host_memory_available_bytes{$SEL})`, "type", "used"),
+			lq(`sum by (node) (pressfleet_host_memory_total_bytes{$SEL})`, "type", "total"),
 		}},
 	{ID: "host_disk_usage", Title: "Host disk usage", Description: "Share of each monitored filesystem that is in use.",
 		Unit: UnitRatio, Kind: KindRatio, Group: groupHost, Scope: ScopePlatform, Labels: []string{"mountpoint"}, Summary: true,

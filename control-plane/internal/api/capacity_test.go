@@ -50,6 +50,19 @@ func TestPlatformCapacityEndpoint(t *testing.T) {
 			}
 		}
 
+		// On Kubernetes the total is one series per node; the cluster's
+		// allocatable memory is their sum.
+		node := func(name string, mib float64) metrics.Series {
+			return metrics.Series{
+				Labels: map[string]string{"node": name},
+				Points: []metrics.Point{{Time: time.Now(), Value: mib * 1024 * 1024}},
+			}
+		}
+		e.q.Result = metrics.Result{Type: metrics.Vector, Series: []metrics.Series{node("n1", 100), node("n2", 120)}}
+		if got = get(); got.HostMemoryMb == nil || *got.HostMemoryMb != 220 || got.Level != "exceeded" {
+			t.Errorf("two nodes = %+v, want 220 MiB in all", got)
+		}
+
 		// Stopped and deleting sites hold no reservation.
 		sites := store.NewSites(db)
 		for _, st := range []store.SiteStatus{store.SiteStopped, store.SiteDeleting} {
