@@ -59,7 +59,7 @@ func domainRoutes(site *provisioner.SiteConfig, hsts bool) ([]byte, error) {
 	service := ingress.SiteService(site.ID) + "@docker"
 	name := func(suffixes ...string) string { return ingress.SiteName(site.ID, suffixes...) }
 	routers := map[string]fileRouter{}
-	for _, r := range siteRouters(site, hsts) {
+	for _, r := range ingress.SiteRouters(site, hsts) {
 		if !r.Domain {
 			continue
 		}
@@ -71,10 +71,10 @@ func domainRoutes(site *provisioner.SiteConfig, hsts bool) ([]byte, error) {
 	// preview router's own middlewares, so a protected preview domain asks
 	// for the password before it reveals where the site went.
 	preview := fileRouter{
-		Rule:        hostRule(site.PreviewDomain),
+		Rule:        ingress.HostRule(site.PreviewDomain),
 		EntryPoints: []string{ingress.EntryPointHTTPS},
 		Priority:    ingress.PreviewRedirectPriority,
-		Middlewares: append(previewMiddlewares(site), name(ingress.SuffixPreviewRedirect)),
+		Middlewares: append(ingress.PreviewMiddlewares(site), name(ingress.SuffixPreviewRedirect)),
 		Service:     service,
 	}
 	preview.TLS.CertResolver = ingress.CertResolverPreview

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
+	"github.com/rchouinard/pressfleet/control-plane/internal/outbuf"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 	"github.com/rchouinard/pressfleet/control-plane/internal/redact"
 )
@@ -203,8 +204,8 @@ func (p *Provisioner) runTask(ctx context.Context, target taskTarget, spec taskS
 			return nil, fmt.Errorf("run task on %s: %w", target.what, err)
 		}
 	}
-	stdout := &headBuffer{max: taskMaxOutput + 1}
-	stderr := &tailBuffer{max: taskMaxStderr}
+	stdout := &outbuf.Head{Max: taskMaxOutput + 1}
+	stderr := &outbuf.Tail{Max: taskMaxStderr}
 	var out io.Writer = stdout
 	if task.Stdout != nil {
 		// Streamed: the result's Stdout stays empty. If the writer fails,
@@ -221,7 +222,7 @@ func (p *Provisioner) runTask(ctx context.Context, target taskTarget, spec taskS
 	}
 	target.log.InfoContext(ctx, "task finished", "container", spec.name,
 		"command", task.Command[0], "duration", time.Since(start))
-	if len(stdout.buf) > taskMaxOutput {
+	if len(res.Stdout) > taskMaxOutput {
 		res.Stdout = res.Stdout[:taskMaxOutput]
 		return res, fmt.Errorf("run task on %s: %w to the first %d bytes", target.what, ErrOutputTruncated, taskMaxOutput)
 	}
@@ -255,7 +256,7 @@ func (p *Provisioner) connectBackupNetwork(ctx context.Context, log *slog.Logger
 // taskResult turns the attached run into RunTask's result. The container's
 // own exit code decides, since `docker start --attach` exits non-zero both
 // when the task does and when the CLI fails.
-func (p *Provisioner) taskResult(ctx context.Context, what, name string, stdout *headBuffer, stderr *tailBuffer, runErr error) (*provisioner.TaskResult, error) {
+func (p *Provisioner) taskResult(ctx context.Context, what, name string, stdout *outbuf.Head, stderr *outbuf.Tail, runErr error) (*provisioner.TaskResult, error) {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, fmt.Errorf("run task on %s: %w", what, ctxErr)
 	}
@@ -269,7 +270,7 @@ func (p *Provisioner) taskResult(ctx context.Context, what, name string, stdout 
 		}
 		return nil, fmt.Errorf("run task on %s: %w: %s", what, runErr, strings.TrimSpace(stderr.String()))
 	}
-	res := &provisioner.TaskResult{Stdout: string(stdout.buf), Stderr: stderr.String()}
+	res := &provisioner.TaskResult{Stdout: string(stdout.Bytes()), Stderr: stderr.String()}
 	if info.State.ExitCode != 0 {
 		out := res.Stdout
 		if len(out) > taskMaxOutput {

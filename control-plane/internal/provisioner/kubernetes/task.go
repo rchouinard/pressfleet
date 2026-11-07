@@ -30,6 +30,7 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/config"
+	"github.com/rchouinard/pressfleet/control-plane/internal/outbuf"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 )
 
@@ -516,8 +517,8 @@ func (p *Provisioner) attachTask(ctx context.Context, target taskTarget, spec ta
 	if err != nil {
 		return fail(err)
 	}
-	stdout := &headBuffer{max: taskMaxOutput + 1}
-	stderr := &tailBuffer{max: taskMaxStderr}
+	stdout := &outbuf.Head{Max: taskMaxOutput + 1}
+	stderr := &outbuf.Tail{Max: taskMaxStderr}
 	if early != nil {
 		// The command never ran: the shim itself failed. Its words are in
 		// the logs.
@@ -551,7 +552,7 @@ func (p *Provisioner) attachTask(ctx context.Context, target taskTarget, spec ta
 }
 
 // taskResult turns the container's exit into RunTask's result.
-func (p *Provisioner) taskResult(ctx context.Context, spec taskSpec, term *corev1.ContainerStateTerminated, stdout *headBuffer, stderr *tailBuffer) (*provisioner.TaskResult, error) {
+func (p *Provisioner) taskResult(ctx context.Context, spec taskSpec, term *corev1.ContainerStateTerminated, stdout *outbuf.Head, stderr *outbuf.Tail) (*provisioner.TaskResult, error) {
 	what := spec.namespace + "/" + spec.name
 	out := stdout.Bytes()
 	truncated := len(out) > taskMaxOutput
