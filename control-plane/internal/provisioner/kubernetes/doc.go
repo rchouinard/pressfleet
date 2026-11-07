@@ -18,6 +18,13 @@
 // the cluster to converge. Starting and stopping a site scale its
 // Deployment between 1 and 0, and deleting it deletes its namespace.
 //
-// Routing, exec, tasks, sessions, logs, and stats come in later changes
-// (#217 to #221); until then those methods return [ErrNotImplemented].
+// Tasks are pods ([Provisioner.RunTask], [Provisioner.RunRepositoryTask]):
+// a site's in its namespace, mounting the data volume through a clone of
+// its PersistentVolume there, and a repository's in the platform namespace
+// behind a NetworkPolicy of its own. The driver attaches to them for their
+// output and deletes them afterwards; [Provisioner.Startup] deletes what a
+// restart left.
+//
+// Routing, exec, sessions, logs, and stats come in later changes (#217,
+// #218, #220, #221); until then those methods return [ErrNotImplemented].
 package kubernetes

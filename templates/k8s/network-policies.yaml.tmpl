@@ -4,8 +4,8 @@
   default; the site's pod may then be reached by Traefik alone, and reach
   DNS, MariaDB, Valkey, the SMTP relay, and the internet, but not the rest
   of the cluster: other sites, the API server, the nodes, or the cloud
-  metadata address. Other pods in the namespace (tasks, #219) bring their
-  own policies.
+  metadata address. Task pods share the site's egress; nothing may
+  connect to them.
 */ -}}
 {{ template "header" . }}
 apiVersion: networking.k8s.io/v1
@@ -58,9 +58,15 @@ metadata:
   labels:
 {{- template "labels" . }}
 spec:
+  # The site's pod and its tasks (backups, restores, imports), which reach
+  # what the site reaches: the platform services and S3 (§4.4).
   podSelector:
-    matchLabels:
-      pressfleet.io/component: site
+    matchExpressions:
+      - key: pressfleet.io/component
+        operator: In
+        values:
+          - site
+          - task
   policyTypes:
     - Egress
   egress:

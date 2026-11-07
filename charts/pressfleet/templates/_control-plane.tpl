@@ -87,6 +87,9 @@ containers:
         value: {{ $root.Values.kubernetes.storageClasses.data | quote }}
       - name: PRESSFLEET_KUBERNETES_TRAEFIK_SERVICE
         value: traefik
+      # Task pods mount it too (#219).
+      - name: PRESSFLEET_KUBERNETES_DATA_CLAIM
+        value: {{ $root.Values.controlPlane.data.existingClaim | default "control-plane-data" | quote }}
       - name: PRESSFLEET_KUBERNETES_POD_CIDRS
         value: {{ join "," $root.Values.kubernetes.podCIDRs | quote }}
       - name: PRESSFLEET_KUBERNETES_IMAGE_PULL_SECRETS

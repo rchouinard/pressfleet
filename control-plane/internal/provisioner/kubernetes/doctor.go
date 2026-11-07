@@ -178,7 +178,17 @@ func (p *ClusterProbe) needed() []right {
 	for _, verb := range []string{"get", "list", "create", "delete"} {
 		rights = append(rights, right{ns, verb, "", "secrets", ""})
 	}
+	// Tasks (#219): repository tasks' NetworkPolicies and streams, the
+	// data volume's claim, and its clones in site namespaces.
+	for _, verb := range []string{"get", "list", "create", "patch", "delete"} {
+		rights = append(rights, right{"", verb, "", "persistentvolumes", ""})
+	}
+	for _, verb := range []string{"list", "create", "delete"} {
+		rights = append(rights, right{ns, verb, "networking.k8s.io", "networkpolicies", ""})
+	}
 	return append(rights,
+		right{ns, "create", "", "pods", "attach"},
+		right{ns, "get", "", "persistentvolumeclaims", ""},
 		right{ns, "get", "", "pods", "log"},
 		right{ns, "get", "", "services", ""},
 		right{ns, "list", "metrics.k8s.io", "pods", ""},

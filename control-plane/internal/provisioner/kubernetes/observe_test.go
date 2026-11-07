@@ -45,7 +45,7 @@ func sitePod(name string, age time.Duration, id string, restarts int32) *corev1.
 	}
 }
 
-func siteDeployment() *appsv1.Deployment {
+func observedDeployment() *appsv1.Deployment {
 	return &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: SiteDeployment, Namespace: "pf-" + testSiteID}}
 }
 
@@ -68,7 +68,7 @@ func metricsFor(pod string, at time.Time, window time.Duration, phpCPU, phpMem s
 }
 
 func TestStats(t *testing.T) {
-	p := observed(t, siteDeployment(), sitePod("site-a", time.Hour, "1", 2))
+	p := observed(t, observedDeployment(), sitePod("site-a", time.Hour, "1", 2))
 	sample := metricsFor("site-a", t0, 15*time.Second, "500m", "100Mi")
 	p.observe.podMetrics = func(context.Context, string) ([]podMetrics, error) { return []podMetrics{sample}, nil }
 
@@ -118,7 +118,7 @@ func TestStats(t *testing.T) {
 func TestStatsPrefersNewestPodAndSkipsUnmeasured(t *testing.T) {
 	old := sitePod("site-old", time.Hour, "1", 0)
 	fresh := sitePod("site-new", time.Minute, "2", 0)
-	p := observed(t, siteDeployment(), old, fresh)
+	p := observed(t, observedDeployment(), old, fresh)
 	p.observe.podMetrics = func(context.Context, string) ([]podMetrics, error) {
 		return []podMetrics{metricsFor("site-old", t0, time.Second, "1", "1Mi")}, nil
 	}
@@ -142,7 +142,7 @@ func TestStatsErrors(t *testing.T) {
 		t.Errorf("missing site: %v, want ErrSiteNotFound", err)
 	}
 
-	p = observed(t, siteDeployment())
+	p = observed(t, observedDeployment())
 	p.observe.podMetrics = func(context.Context, string) ([]podMetrics, error) {
 		t.Error("metrics asked for a site without pods")
 		return nil, nil
@@ -151,7 +151,7 @@ func TestStatsErrors(t *testing.T) {
 		t.Errorf("stopped site: %v, %v, want nothing", got, err)
 	}
 
-	p = observed(t, siteDeployment(), sitePod("site-a", 0, "1", 0))
+	p = observed(t, observedDeployment(), sitePod("site-a", 0, "1", 0))
 	if _, err := p.Stats(t.Context(), testSiteID); !errors.Is(err, ErrMetricsUnavailable) {
 		t.Errorf("no metrics API: %v, want ErrMetricsUnavailable", err)
 	}
@@ -168,7 +168,7 @@ func fakeLogs(streams map[string]string) func(context.Context, string, string, *
 }
 
 func TestLogs(t *testing.T) {
-	p := observed(t, siteDeployment(), sitePod("site-a", 0, "1", 0))
+	p := observed(t, observedDeployment(), sitePod("site-a", 0, "1", 0))
 	var seen []*corev1.PodLogOptions
 	logs := fakeLogs(map[string]string{
 		"site-a/php": "2026-11-06T12:00:01.5Z [06-Nov-2026 12:00:01] WARNING: [pool www] child 9 said into stderr\n" +
@@ -256,14 +256,14 @@ func TestLogsErrors(t *testing.T) {
 			t.Errorf("bad options: %v", err)
 		}
 	}
-	p = observed(t, siteDeployment())
+	p = observed(t, observedDeployment())
 	for e, err := range p.Logs(t.Context(), testSiteID, provisioner.LogOptions{}) {
 		t.Errorf("stopped site yielded %+v, %v", e, err)
 	}
 }
 
 func TestLogsFollow(t *testing.T) {
-	p := observed(t, siteDeployment(), sitePod("site-a", 0, "1", 0))
+	p := observed(t, observedDeployment(), sitePod("site-a", 0, "1", 0))
 	var mu sync.Mutex
 	opens := 0
 	var sinces []time.Time

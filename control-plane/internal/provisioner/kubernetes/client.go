@@ -31,6 +31,9 @@ const defaultPollInterval = time.Second
 type Client struct {
 	typed   kubernetes.Interface
 	dynamic dynamic.Interface
+	// rest is the connection the clientsets were built from, which the
+	// streaming subresources (pods/attach) need; nil for fake clientsets.
+	rest *rest.Config
 	// poll is the interval of the Wait methods; tests shorten it.
 	poll time.Duration
 	log  *slog.Logger
@@ -88,7 +91,9 @@ func connect(cfg *rest.Config, log *slog.Logger) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrConnect, err)
 	}
-	return newClient(typed, dyn, log), nil
+	c := newClient(typed, dyn, log)
+	c.rest = cfg
+	return c, nil
 }
 
 // Ping asks the API server for its version, which proves that the cluster
