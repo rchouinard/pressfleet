@@ -205,3 +205,34 @@ A client group that had no backup repository before the upgrade and got one whil
 With S3 backups on those releases, move or delete the objects under the group's ID in the bucket instead.
 
 Alternatively, fix the cause and run `pressfleet upgrade` again. A retry keeps the platform project saved by the failed attempt, so the recovery steps still return to the release from before it. An end-to-end test runs these steps exactly as printed (#142).
+
+## Kubernetes
+
+On a Kubernetes install, the Helm chart takes the place of the platform Compose project, and `helm upgrade` the place of `pressfleet upgrade` (design doc §4.8). `pressfleet upgrade` refuses to run with `driver: kubernetes`. The CLI and control plane version skew rules don't apply, because the chart and the control plane always come from the same release.
+
+Before you upgrade, read the release notes, and **back up the PostgreSQL state database** yourself: the control plane migrates it when it starts, and PressFleet doesn't take pre-migration backups of PostgreSQL ([PostgreSQL state databases](#postgresql-state-databases)).
+
+Helm installs a chart's CRDs on the first install only, never on an upgrade, so apply the new release's Traefik CRDs first. Then upgrade, keeping your values:
+
+```sh
+helm show crds oci://ghcr.io/rchouinard/pressfleet/charts/pressfleet --version <new release> \
+  | kubectl apply --server-side -f -
+helm upgrade pressfleet oci://ghcr.io/rchouinard/pressfleet/charts/pressfleet --version <new release> \
+  --namespace pressfleet --reuse-values --wait --timeout 15m
+```
+
+Before it changes anything, the chart's pre-upgrade hook runs the upgrade preflight on the new control plane image, in the Job `upgrade-preflight`. It applies the same policy as on Compose: no downgrade, no upgrade from below the oldest release the new one upgrades from, and no change of MariaDB's release series (unless MariaDB is external). It reads the running control plane's version and MariaDB image from the cluster, so it needs no access to the API server. If it refuses, `helm upgrade` fails with nothing changed, and the Job stays so that you can read why:
+
+```sh
+kubectl -n pressfleet logs job/upgrade-preflight
+```
+
+The control plane then starts on the new release, migrates the state database, and reports ready; sites keep serving meanwhile. The held rollouts and the automatic rollback of a Compose upgrade don't apply. To undo an upgrade, scale the control plane to zero, restore the PostgreSQL backup you took before it, and roll back the release:
+
+```sh
+kubectl -n pressfleet scale deployment/control-plane --replicas=0
+# restore the state database from your backup from before the upgrade
+helm rollback pressfleet --namespace pressfleet --wait
+```
+
+`helm rollback` returns the chart's objects to the previous release, which starts the previous control plane. Restoring the database first matters: the previous control plane refuses a schema the new one migrated. Anything the control plane recorded after the upgrade is lost with the restore, as on Compose.

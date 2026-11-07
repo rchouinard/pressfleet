@@ -1,0 +1,37 @@
+{{- /*
+Disaster recovery (design doc §5.10): with recovery.enabled, the control
+plane is scaled to zero (control-plane.yaml) and this Job restores a state
+backup into the state database with `pressfleet state recover`, as the
+host's `pressfleet recover` does on Compose. It is a hook, so that it runs
+once the install or upgrade has applied, and helm waits for it and fails
+the release if it fails. It is kept for a day so that its report can be
+read (kubectl logs job/state-recover).
+
+The control plane must not run while it does: on a new cluster, install
+with recovery.enabled from the start; on an existing install, scale the
+control plane to zero and wait for its pod to go first
+(docs/disaster-recovery.md).
+*/ -}}
+{{- if .Values.recovery.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: state-recover
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "state-recover") | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  # A failed restore changes nothing; retrying it is the operator's call.
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        {{- include "pressfleet.componentLabels" (dict "root" . "component" "state-recover") | nindent 8 }}
+    spec:
+      {{- $args := list "state" "recover" "--snapshot" .Values.recovery.snapshot }}
+      {{- if .Values.recovery.force }}{{ $args = append $args "--force" }}{{ end }}
+      {{- include "pressfleet.controlPlanePodSpec" (dict "root" . "args" $args "serve" false) | nindent 6 }}
+{{- end }}
