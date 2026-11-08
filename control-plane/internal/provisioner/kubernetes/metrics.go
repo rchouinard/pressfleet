@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/id"
 	"github.com/rchouinard/pressfleet/control-plane/internal/ingress"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 )
@@ -103,11 +105,30 @@ func (p *Provisioner) TraefikMetrics(ctx context.Context) ([]byte, error) {
 	return res.Stdout, nil
 }
 
-// TraefikServiceName names the site's service as Traefik's metrics do
-// (provisioner.TraefikServiceNamer). Its CRD provider names the service of
-// an IngressRoute entry <namespace>-<Service>-<port>, here the site's
-// nginx Service on port 80 (templates/k8s/routes.yaml.tmpl), and suffixes
-// the provider.
-func (p *Provisioner) TraefikServiceName(siteID string) string {
-	return p.SiteNamespace(siteID) + "-nginx-80@kubernetescrd"
+// traefikCRDProvider is the suffix Traefik's metrics give the services of
+// its Kubernetes CRD provider.
+const traefikCRDProvider = "@kubernetescrd"
+
+// TraefikServiceSite maps a Traefik service to its site
+// (provisioner.TraefikServiceNamer). The CRD provider names the service of
+// an IngressRoute entry <namespace>-<IngressRoute name>-<hash of the
+// route>@kubernetescrd, one per route (preview, domain, aliases), so a
+// site's services are those starting with its namespace and a dash.
+//
+// Site IDs are id.Len characters with no dash, so reading exactly that many
+// after the prefix, and requiring the dash, can't take one site's services
+// for another's, whatever the IngressRoute names (staging sites have IDs
+// of their own). The maintenance routes live in the platform namespace and
+// so match no site: the maintenance page is no site's service, as on
+// Compose, where it belongs to Traefik's file provider.
+func (p *Provisioner) TraefikServiceSite(service string) (string, bool) {
+	rest, ok := strings.CutSuffix(service, traefikCRDProvider)
+	if !ok {
+		return "", false
+	}
+	rest, ok = strings.CutPrefix(rest, p.namespacePrefix)
+	if !ok || len(rest) <= id.Len || rest[id.Len] != '-' {
+		return "", false
+	}
+	return rest[:id.Len], true
 }

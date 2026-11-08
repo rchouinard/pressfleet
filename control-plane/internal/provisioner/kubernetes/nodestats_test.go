@@ -88,9 +88,32 @@ func TestNodeStatsUnavailable(t *testing.T) {
 	}
 }
 
-func TestTraefikServiceName(t *testing.T) {
+func TestTraefikServiceSite(t *testing.T) {
 	p := observed(t)
-	if got, want := p.TraefikServiceName(testSiteID), p.SiteNamespace(testSiteID)+"-nginx-80@kubernetescrd"; got != want {
-		t.Errorf("TraefikServiceName = %q, want %q", got, want)
+	ns := p.SiteNamespace(testSiteID)
+	other := p.SiteNamespace("01hzy3k5q7m9c2v4b6n8r0t1wy")
+	tests := []struct {
+		name    string
+		service string
+		want    string
+	}{
+		{"preview route", ns + "-pf-" + testSiteID + "-preview-e7f9c5922c7a22260b93@kubernetescrd", testSiteID},
+		{"domain route", ns + "-pf-" + testSiteID + "-domain-0123456789abcdef0123@kubernetescrd", testSiteID},
+		{"another site", other + "-pf-x-preview-e7f9@kubernetescrd", "01hzy3k5q7m9c2v4b6n8r0t1wy"},
+		{"no dash after the ID", ns + "x-route@kubernetescrd", ""},
+		{"ID only", ns + "@kubernetescrd", ""},
+		{"truncated ID", ns[:len(ns)-1] + "-route@kubernetescrd", ""},
+		{"Docker provider", "pf-" + testSiteID + "@docker", ""},
+		{"platform namespace", "pressfleet-maintenance-route-abc123@kubernetescrd", ""},
+		{"other prefix", "xx-" + testSiteID + "-route@kubernetescrd", ""},
+		{"internal service", "api@internal", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := p.TraefikServiceSite(tt.service)
+			if got != tt.want || ok != (tt.want != "") {
+				t.Errorf("TraefikServiceSite(%q) = %q, %v, want %q", tt.service, got, ok, tt.want)
+			}
+		})
 	}
 }

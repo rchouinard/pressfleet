@@ -198,18 +198,28 @@ func TestTraefikCollectorReader(t *testing.T) {
 }
 
 // A driver whose Traefik names services differently maps them through
-// ServiceName.
-func TestTraefikCollectorServiceName(t *testing.T) {
-	body := `traefik_service_requests_total{code="200",method="GET",protocol="http",service="pf-site1-nginx-80@kubernetescrd"} 4
+// ServiceSite, and a site's services are summed.
+func TestTraefikCollectorServiceSite(t *testing.T) {
+	body := `traefik_service_requests_total{code="200",method="GET",protocol="http",service="pf-site1-route-a@kubernetescrd"} 4
+traefik_service_requests_total{code="200",method="GET",protocol="http",service="pf-site1-route-b@kubernetescrd"} 3
 traefik_service_requests_total{code="200",method="GET",protocol="http",service="pf-site1@docker"} 99
+traefik_service_requests_total{code="200",method="GET",protocol="http",service="pf-nosite-route@kubernetescrd"} 50
 `
 	srv := serve(t, http.StatusOK, body)
-	c := metrics.TraefikCollector{URL: srv.URL, ServiceName: func(id string) string { return "pf-" + id + "-nginx-80@kubernetescrd" }}
+	c := metrics.TraefikCollector{URL: srv.URL, ServiceSite: func(service string) (string, bool) {
+		rest, ok := strings.CutSuffix(service, "@kubernetescrd")
+		if !ok {
+			return "", false
+		}
+		rest, ok = strings.CutPrefix(rest, "pf-")
+		id, _, _ := strings.Cut(rest, "-")
+		return id, ok
+	}}
 	got, err := c.Collect(context.Background(), traefikTargets())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v, ok := find(got, "pressfleet_site_http_requests_total", "site1", "status_class", "2xx"); !ok || v != 4 {
-		t.Errorf("site1 2xx = %v (found %v), want 4 from the Kubernetes service only", v, ok)
+	if v, ok := find(got, "pressfleet_site_http_requests_total", "site1", "status_class", "2xx"); !ok || v != 7 {
+		t.Errorf("site1 2xx = %v (found %v), want 7 from the Kubernetes services only", v, ok)
 	}
 }

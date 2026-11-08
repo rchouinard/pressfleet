@@ -69,11 +69,13 @@ type TraefikCollector struct {
 	// HTTPClient fetches URL; nil means [http.DefaultClient], since the
 	// service's per-run deadline already bounds the request.
 	HTTPClient *http.Client
-	// ServiceName returns the name Traefik gives the site's service,
-	// provider suffix included; nil means the Docker provider's
-	// (pf-<site-id>@docker). A driver whose Traefik names services
-	// differently supplies it ([provisioner.TraefikServiceNamer]).
-	ServiceName func(siteID string) string
+	// ServiceSite maps the name of a Traefik service (provider suffix
+	// included) to the ID of the site it serves; several services may
+	// serve one site, and their series are summed. Nil means the Docker
+	// provider's (pf-<site-id>@docker). A driver whose Traefik names
+	// services differently supplies it
+	// ([provisioner.TraefikServiceNamer]).
+	ServiceSite func(service string) (siteID string, ok bool)
 }
 
 var _ Collector = TraefikCollector{}
@@ -95,7 +97,7 @@ func (c TraefikCollector) Collect(ctx context.Context, targets []Target) ([]Samp
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrTraefikScrape, err)
 	}
-	return traefikSamples(series, targets, c.ServiceName), nil
+	return traefikSamples(series, targets, c.ServiceSite), nil
 }
 
 func (c TraefikCollector) fetch(ctx context.Context) (io.ReadCloser, error) {
@@ -137,13 +139,20 @@ type traefikHistogram struct {
 // traefikSamples turns Traefik's series into site samples, summing over
 // the labels that are dropped. Sites without series get no samples, so
 // "no traffic yet" reads as no data rather than zero.
-func traefikSamples(series []expositionSeries, targets []Target, serviceName func(string) string) []Sample {
-	if serviceName == nil {
-		serviceName = func(siteID string) string { return ingress.SiteService(siteID) + traefikDockerProvider }
-	}
-	bySvc := make(map[string]Target, len(targets))
+func traefikSamples(series []expositionSeries, targets []Target, serviceSite func(string) (string, bool)) []Sample {
+	byID := make(map[string]Target, len(targets))
 	for _, t := range targets {
-		bySvc[serviceName(t.SiteID)] = t
+		byID[t.SiteID] = t
+	}
+	if serviceSite == nil {
+		serviceSite = func(service string) (string, bool) {
+			id, ok := strings.CutPrefix(service, ingress.SiteService("")) // pf-
+			if !ok {
+				return "", false
+			}
+			id, ok = strings.CutSuffix(id, traefikDockerProvider)
+			return id, ok
+		}
 	}
 	requests := map[string]map[string]float64{} // site -> status class -> count
 	hists := map[string]*traefikHistogram{}     // site -> histogram
@@ -156,7 +165,9 @@ func traefikSamples(series []expositionSeries, targets []Target, serviceName fun
 		return h
 	}
 	for _, s := range series {
-		t, ok := bySvc[s.labels["service"]]
+		id, ok := serviceSite(s.labels["service"])
+		t, found := byID[id]
+		ok = ok && found
 		if !ok {
 			continue
 		}
