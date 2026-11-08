@@ -28,7 +28,8 @@ import (
 // changed (`pressfleet admin changes`, package changes) and refuses the
 // changes a restore would leave sites broken or orphaned by, unless
 // --force is given. Only one platform project is saved, so only the last
-// upgrade can be rolled back, and only once.
+// upgrade can be rolled back, and only once. After a recovery by hand, it
+// only marks the upgrade rolled back (upgrade_recovered.go, #310).
 
 // errNoRollback means there is no upgrade --rollback can roll back.
 var errNoRollback = errors.New("nothing to roll back")
@@ -96,17 +97,24 @@ func (u *upgrader) runRollback(ctx context.Context) error {
 		return err
 	}
 	u.from = cp.Version
-	if !resuming && rec.Status != upgradeSucceeded && cp.Info != nil && cp.Info.Ready && rec.From != "" && cp.Version == rec.From {
-		// A failed upgrade whose recovery steps were run by hand.
-		same, err := sameFile(filepath.Join(u.platformDir, platform.ComposeFile),
-			filepath.Join(u.upgradeDir, previousPlatform, platform.ComposeFile))
-		if err != nil {
-			return err
-		}
-		if same {
-			return fmt.Errorf("%w: the platform is back on %s already: its platform project from before the upgrade "+
-				"to %s was put back, and its control plane is ready", errNoRollback, rec.From, rec.To)
-		}
+	state, err := u.platformState(ctx, cp)
+	if err != nil {
+		return err
+	}
+	switch decideRollback(rec, state) {
+	case rollbackMarkRecovered:
+		return u.markRecovered()
+	case rollbackRefuseOnPrevious:
+		return fmt.Errorf("%w: the upgrade from %s to %s succeeded, but the platform runs %s already: its control plane "+
+			"runs the image from before the upgrade and is ready, and the platform project from before the upgrade was put "+
+			"back. The record says the upgrade succeeded, so the rollouts aren't held; to upgrade again, run pressfleet upgrade",
+			errNoRollback, from, rec.To, rec.From)
+	case rollbackRefuseNeither:
+		return fmt.Errorf("%w: the control plane runs %s, while the last upgrade went from %s to %s. --rollback can't tell "+
+			"what the platform runs, so it changes nothing. Return it to %s with the steps in \"Recovering from a failed "+
+			"upgrade\" in docs/upgrading.md, which end by running pressfleet upgrade --rollback again, or upgrade it with "+
+			"pressfleet upgrade", errNeitherRelease, state.Version, from, rec.To, from)
+	case rollbackRun:
 	}
 
 	u.printf("Rolling back the upgrade from %s to %s, which started at %s.\n", from, rec.To, rec.StartedAt.Format(time.RFC3339))

@@ -31,12 +31,18 @@ type recoveryData struct {
 	// Forced lists the services to recreate on the previous project's
 	// files, space-separated; empty if none.
 	Forced string
+	// ConfigFlag is the --config flag the CLI was run with, with a
+	// leading space, for the step that runs the CLI again; empty if none.
+	ConfigFlag string
 }
 
 // recoveryText is printed by a failed `pressfleet upgrade`, and
 // docs/upgrading.md shows it rendered with placeholders (a test keeps them
-// in sync). Every command must work when pasted as is: the end-to-end test
-// of the recovery (#142) runs them verbatim.
+// in sync). Every command must work when pasted as is: the end-to-end tests
+// of the recovery (#142, #251) run them verbatim. The last one runs this
+// CLI's `upgrade --rollback`, which finds the platform back on the previous
+// release and marks the upgrade rolled back, lifting the rollout hold
+// (#310); the previous release's CLI may not know how.
 const recoveryText = `Sites keep serving while the control plane is down. To return to {{.From}}, run these commands on this host as root:
 
 1. Stop the control plane:
@@ -73,6 +79,10 @@ Don't skip the restore when there is such a file: {{.From}} would crash-loop wit
 {{- if .Forced}}
     docker compose --project-name {{.Project}} --project-directory {{.PlatformDir}} up --detach --wait --force-recreate {{.Forced}}
 {{- end}}
+
+5. Mark the upgrade rolled back with this CLI ({{.To}}), so that the control plane runs its WordPress core, image, and template rollouts again. It finds the platform back on {{.From}} and changes nothing else:
+
+    pressfleet upgrade --rollback{{.ConfigFlag}}
 
 Then use the pressfleet CLI of {{.From}} again. Anything recorded in the control plane after the upgrade started is lost with the restore.
 `

@@ -185,10 +185,13 @@ since the upgrade started, and refuses changes the rollback would leave
 behind (sites created or deleted, core updates, go-lives, client groups
 deleted or offboarded) unless --force is given. It asks for confirmation
 (--yes gives it), and also rolls back an upgrade that failed with
---no-rollback, and resumes a rollback that stopped. It exits with 0 when
-the platform is back on the previous release, and 1 when it isn't (refused,
-or stopped, with the steps printed). It can't be combined with
---no-rollback, --skip-preflight, or --control-plane-image.
+--no-rollback, and resumes a rollback that stopped. After the printed steps
+returned the platform to the previous release by hand, it only marks the
+upgrade rolled back, which lets the control plane's rollouts run again: it
+is their last step. It exits with 0 when the platform is back on the
+previous release, and 1 when it isn't (refused, or stopped, with the steps
+printed). It can't be combined with --no-rollback, --skip-preflight, or
+--control-plane-image.
 
 With driver: kubernetes, use helm upgrade and helm rollback instead.`,
 		Args: cobra.NoArgs,
@@ -877,6 +880,12 @@ func (u *upgrader) recoveryData() recoveryData {
 		Postgres:    u.a.cfg.Database.Driver == string(store.Postgres),
 		Forced:      strings.Join(u.record.Forced, " "),
 	}
+	if path := u.a.configPath; path != "" {
+		if abs, err := filepath.Abs(path); err == nil {
+			path = abs
+		}
+		data.ConfigFlag = " --config " + path
+	}
 	if data.From == "" {
 		data.From = "the previous release"
 	}
@@ -1153,4 +1162,28 @@ func (a *app) upgradeProject(name, dir string, files []string) UpgradeProject {
 		return a.opts.UpgradeProject(name, dir, files)
 	}
 	return compose.Project{Name: name, Dir: dir, Files: files}
+}
+
+// runsPreviousControlPlane reports whether the control plane container
+// runs the image the record says it ran before the upgrade: the same image
+// ID, or the same reference, by tag or by one of its digests.
+func (u *upgrader) runsPreviousControlPlane(ctx context.Context) (bool, error) {
+	prev, ok := u.record.PreviousImages[controlPlaneService]
+	if !ok {
+		return false, nil
+	}
+	c, err := u.project.ServiceContainer(ctx, controlPlaneService)
+	if errors.Is(err, compose.ErrNoContainer) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("finding the control plane's image: %w", err)
+	}
+	switch {
+	case c.ImageID != "" && c.ImageID == prev.ImageID:
+		return true, nil
+	case c.Image == "":
+		return false, nil
+	}
+	return c.Image == prev.Image || slices.Contains(prev.Digests, c.Image), nil
 }

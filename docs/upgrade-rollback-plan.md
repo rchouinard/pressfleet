@@ -188,4 +188,6 @@ Additions from reviewing the plan against v1.1.0:
 
 **2026-11-06 ([#250](https://github.com/rchouinard/pressfleet/issues/250)):** `--rollback` exits 0 when the requested rollback succeeds; 2 is only for automatic rollback after a failed upgrade (the user).
 
+**2026-11-07 ([#310](https://github.com/rchouinard/pressfleet/issues/310)):** the manual recovery steps left the record `failed` or `rollback-failed`, holding the rollouts for good. `pressfleet upgrade --rollback` now notices a platform already back on the previous release (control plane ready at `from`, on its previous image, with the saved project back) and only marks the record `rolled-back`, exiting 0. It is the last of the printed steps and of those in docs/upgrading.md, `pressfleet doctor` mentions it, and the #251 test checks that the hold lifts (the maintainer).
+
 The design doc records the result in §4.7 and §8.
