@@ -96,7 +96,7 @@ func TestStats(t *testing.T) {
 		t.Errorf("repeated scrape moved CPUUsage to %v", again[0].CPUUsage)
 	}
 
-	// A newer scrape adds rate times elapsed time.
+	// A newer scrape, two windows on, holds the rate across both.
 	sample = metricsFor("site-a", t0.Add(30*time.Second), 15*time.Second, "1", "120Mi")
 	next, _ := p.Stats(t.Context(), testSiteID)
 	if want := 7500*time.Millisecond + 30*time.Second; next[0].CPUUsage != want {
@@ -112,6 +112,75 @@ func TestStats(t *testing.T) {
 	after, _ := p.Stats(t.Context(), testSiteID)
 	if want := 3 * time.Second; after[0].CPUUsage != want || after[0].Restarts != 3 {
 		t.Errorf("after restart = %+v, want CPUUsage %v and 3 restarts", after[0], want)
+	}
+}
+
+// metrics-server reports the timestamp and window of a pod's earliest
+// container (#329), so the pod's timestamp need not move with php's
+// windows: each of php's windows still counts once, as a window's worth.
+func TestStatsCountsEachWindowOnce(t *testing.T) {
+	type scrape struct {
+		after  time.Duration // pod timestamp, from t0
+		window time.Duration
+		cpu    string // php's rate
+		want   time.Duration
+	}
+	tests := []struct {
+		name    string
+		scrapes []scrape
+	}{
+		{"a burst while the pod timestamp barely moves", []scrape{
+			{0, 15 * time.Second, "0", 0},
+			// php's new window; the pod's timestamp is nginx's, 4s on.
+			{4 * time.Second, 15 * time.Second, "150m", 2250 * time.Millisecond},
+			// php idles again; the burst isn't lost to the next window.
+			{19 * time.Second, 15 * time.Second, "0", 2250 * time.Millisecond},
+		}},
+		{"a new window without the pod timestamp moving", []scrape{
+			{0, 15 * time.Second, "100m", 1500 * time.Millisecond},
+			{0, 15 * time.Second, "200m", 4500 * time.Millisecond},
+			// Counted up to 15s already: the next window is 15s, not 30s.
+			{30 * time.Second, 15 * time.Second, "300m", 9 * time.Second},
+		}},
+		{"the pod timestamp moving without a new window", []scrape{
+			{0, 15 * time.Second, "100m", 1500 * time.Millisecond},
+			{4 * time.Second, 15 * time.Second, "200m", 4500 * time.Millisecond},
+			// The same window, already counted up to 15s.
+			{10 * time.Second, 15 * time.Second, "200m", 4500 * time.Millisecond},
+			{25 * time.Second, 15 * time.Second, "300m", 9 * time.Second},
+		}},
+		{"a steady rate", []scrape{
+			{0, 15 * time.Second, "750m", 11250 * time.Millisecond},
+			{15 * time.Second, 15 * time.Second, "750m", 22500 * time.Millisecond},
+			{30 * time.Second, 15 * time.Second, "750m", 33750 * time.Millisecond},
+			{time.Minute, 15 * time.Second, "750m", 56250 * time.Millisecond},
+		}},
+		{"a long idle stretch before a burst", []scrape{
+			{0, 15 * time.Second, "0", 0},
+			{10 * time.Minute, 15 * time.Second, "0", 0},
+			{10*time.Minute + 15*time.Second, 15 * time.Second, "150m", 2250 * time.Millisecond},
+		}},
+		{"windows the caller didn't sample", []scrape{
+			{0, 15 * time.Second, "100m", 1500 * time.Millisecond},
+			{time.Minute, 15 * time.Second, "200m", 13500 * time.Millisecond},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := observed(t, observedDeployment(), sitePod("site-a", time.Hour, "1", 0))
+			var sample podMetrics
+			p.observe.podMetrics = func(context.Context, string) ([]podMetrics, error) { return []podMetrics{sample}, nil }
+			for i, s := range tt.scrapes {
+				sample = metricsFor("site-a", t0.Add(s.after), s.window, s.cpu, "100Mi")
+				got, err := p.Stats(t.Context(), testSiteID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(got) == 0 || got[0].CPUUsage != s.want {
+					t.Errorf("scrape %d: Stats = %+v, want php CPUUsage %v", i, got, s.want)
+				}
+			}
+		})
 	}
 }
 
