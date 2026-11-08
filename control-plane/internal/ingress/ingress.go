@@ -3,7 +3,8 @@
 // points, certificate resolvers, and site routes, and the DNS provider
 // credentials of the preview wildcard certificate. The platform package
 // renders Traefik with these names; the Compose driver puts them in site
-// containers' labels and route files, the Kubernetes driver in IngressRoutes.
+// containers' labels and route files, the Kubernetes driver in the routes
+// it serves to Traefik's HTTP provider.
 // It imports only package redact and, for [SiteRouters], package provisioner
 // (not a driver), so both can use it.
 //

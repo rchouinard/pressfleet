@@ -16,7 +16,8 @@ spec:
 
 ---
 # Source: pressfleet/templates/networkpolicies.yaml
-# Traefik takes web and SFTP traffic from anywhere.
+# Traefik takes web and SFTP traffic from anywhere, and the control plane
+# alone reads its metrics, which name every site and its traffic.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -39,10 +40,18 @@ spec:
         - port: web
         - port: websecure
         - port: sftp
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pressfleet
+              app.kubernetes.io/component: control-plane
+      ports:
+        - port: metrics
 
 ---
 # Source: pressfleet/templates/networkpolicies.yaml
-# The dashboard, the API, and the SFTP gateway: from Traefik only.
+# The dashboard, the API, the SFTP gateway, and Traefik's provider
+# endpoint (the sites' routes): from Traefik only.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -69,6 +78,7 @@ spec:
       ports:
         - port: http
         - port: sftp
+        - port: traefik-config
 
 ---
 # Source: pressfleet/templates/networkpolicies.yaml
@@ -233,6 +243,10 @@ metadata:
 
 ---
 # Source: pressfleet/templates/traefik.yaml
+# Traefik's own ServiceAccount, with no token and no rights: Traefik reads
+# nothing from the Kubernetes API. Its routes come from its file provider
+# (the chart's, traefik-config.yaml) and from the control plane, which
+# serves the sites' routes to its HTTP provider (#322, security review K1).
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -244,6 +258,7 @@ metadata:
     app.kubernetes.io/managed-by: "Helm"
     helm.sh/chart: "pressfleet-0.0.0-dev"
     app.kubernetes.io/component: traefik
+automountServiceAccountToken: false
 
 ---
 # Source: pressfleet/templates/mariadb-config.yaml
@@ -419,29 +434,45 @@ data:
       # The SFTP gateway in the control plane (sftp.port on the Service).
       sftp:
         address: ":2222"
-      # Ping (the probes) and Prometheus metrics, on loopback only, as on
-      # Compose (security review finding F5): the control plane reads the
-      # metrics through the exec API (provisioner.TraefikMetricsReader).
+      # Ping, for the probes, on loopback only, as on Compose (security
+      # review finding F5).
       traefik:
         address: "127.0.0.1:8082"
+      # Prometheus metrics, which name every site and its traffic: on the
+      # pod network, but the NetworkPolicy "traefik" admits the control
+      # plane alone (provisioner.TraefikMetricsReader reads them from the
+      # traefik-metrics Service), so it needs no exec into this pod.
+      metrics:
+        address: ":9100"
 
     ping:
       entryPoint: traefik
 
     metrics:
       prometheus:
-        entryPoint: traefik
+        entryPoint: metrics
         addEntryPointsLabels: true
         addRoutersLabels: true
         addServicesLabels: true
 
+    # No Kubernetes provider: Traefik has no access to the API, and serves
+    # only routes the chart or the control plane wrote (#322, security
+    # review K1).
     providers:
-      # The IngressRoute and Middleware objects of the platform and of every
-      # site namespace. A route may only use services and middlewares of its
-      # own namespace.
-      kubernetesCRD:
-        allowCrossNamespace: false
-        allowExternalNameServices: false
+      # The platform's own routes and the maintenance page's service
+      # (dynamic.yaml below).
+      file:
+        filename: /etc/traefik/dynamic.yaml
+        watch: false
+      # The sites' routes and maintenance routes, which the control plane
+      # serves on a listener of its own (kubernetes.traefik_provider_listen)
+      # that the NetworkPolicy "control-plane" opens to Traefik alone. On
+      # an error Traefik keeps the routes it has. The short interval is how
+      # long a new site, domain, or maintenance mode takes to route.
+      http:
+        endpoint: "http://control-plane.pressfleet.svc:8081/traefik/dynamic"
+        pollInterval: 2s
+        pollTimeout: 5s
 
     certificatesResolvers:
       # HTTP-01, one certificate per host name: the dashboard domain and,
@@ -461,6 +492,37 @@ data:
           # HTTP-01, subject to the CA's rate limits.
           httpChallenge:
             entryPoint: web
+
+  # The platform's own routes (Traefik's file provider), which the Compose
+  # project puts in the control plane's labels and its own file provider.
+  # Site routes are the control plane's (the HTTP provider above).
+  dynamic.yaml: |
+    http:
+      services:
+        pf-dashboard:
+          loadBalancer:
+            servers:
+              - url: "http://control-plane.pressfleet.svc:8080"
+        # The maintenance page (design doc §5.4), which the control plane's
+        # maintenance routes name as pf-maintenance@file
+        # (ingress.MaintenanceService).
+        pf-maintenance:
+          loadBalancer:
+            servers:
+              - url: "http://maintenance.pressfleet.svc:8080"
+    # The SFTP gateway (§5.8). SSH can't be routed by host name, so it has
+    # an entry point and a Service port of its own.
+    tcp:
+      routers:
+        pf-sftp:
+          rule: "HostSNI(`*`)"
+          entryPoints: [sftp]
+          service: pf-sftp
+      services:
+        pf-sftp:
+          loadBalancer:
+            servers:
+              - address: "control-plane.pressfleet.svc:2222"
 
 ---
 # Source: pressfleet/templates/control-plane.yaml
@@ -601,51 +663,10 @@ rules:
   - apiGroups: [networking.k8s.io]
     resources: [networkpolicies]
     verbs: ["get","list","watch","create","update","patch","delete","deletecollection"]
-  # Routes: IngressRoute and Middleware objects, named as on Compose.
-  - apiGroups: [traefik.io]
-    resources: [ingressroutes, middlewares]
-    verbs: ["get","list","watch","create","update","patch","delete","deletecollection"]
   # Container stats (§7.2).
   - apiGroups: [metrics.k8s.io]
     resources: [pods]
     verbs: [get, list]
-
----
-# Source: pressfleet/templates/traefik.yaml
-# What Traefik's Kubernetes CRD provider reads, cluster-wide, as Traefik's
-# own RBAC for its release lists it. Secrets are among them: basicAuth
-# middlewares and TLS options name Secrets in sites' namespaces.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: "pressfleet:pressfleet:traefik"
-  labels:
-    app.kubernetes.io/name: pressfleet
-    app.kubernetes.io/instance: "pressfleet"
-    app.kubernetes.io/version: "0.0.0-dev"
-    app.kubernetes.io/managed-by: "Helm"
-    helm.sh/chart: "pressfleet-0.0.0-dev"
-    app.kubernetes.io/component: traefik
-rules:
-  - apiGroups: [""]
-    resources: [services, secrets, nodes, configmaps]
-    verbs: [get, list, watch]
-  - apiGroups: [discovery.k8s.io]
-    resources: [endpointslices]
-    verbs: [list, watch]
-  - apiGroups: [traefik.io]
-    resources:
-      - middlewares
-      - middlewaretcps
-      - ingressroutes
-      - traefikservices
-      - ingressroutetcps
-      - ingressrouteudps
-      - tlsoptions
-      - tlsstores
-      - serverstransports
-      - serverstransporttcps
-    verbs: [get, list, watch]
 
 ---
 # Source: pressfleet/templates/rbac.yaml
@@ -667,28 +688,6 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: control-plane
-    namespace: "pressfleet"
-
----
-# Source: pressfleet/templates/traefik.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: "pressfleet:pressfleet:traefik"
-  labels:
-    app.kubernetes.io/name: pressfleet
-    app.kubernetes.io/instance: "pressfleet"
-    app.kubernetes.io/version: "0.0.0-dev"
-    app.kubernetes.io/managed-by: "Helm"
-    helm.sh/chart: "pressfleet-0.0.0-dev"
-    app.kubernetes.io/component: traefik
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: "pressfleet:pressfleet:traefik"
-subjects:
-  - kind: ServiceAccount
-    name: traefik
     namespace: "pressfleet"
 
 ---
@@ -717,17 +716,14 @@ rules:
   - apiGroups: [networking.k8s.io]
     resources: [networkpolicies]
     verbs: ["get","list","watch","create","update","patch","delete","deletecollection"]
-  # Traefik's metrics and repository task streams.
+  # Repository task streams. No exec: nothing here runs commands in the
+  # platform's pods (Traefik's metrics are read over the network, #322).
   - apiGroups: [""]
-    resources: [pods/exec, pods/attach]
+    resources: [pods/attach]
     verbs: [get, create]
   - apiGroups: [""]
     resources: [pods/log]
     verbs: [get]
-  # Routes that live with the platform services, such as maintenance routes.
-  - apiGroups: [traefik.io]
-    resources: [ingressroutes, middlewares]
-    verbs: ["get","list","watch","create","update","patch","delete","deletecollection"]
   # Doctor and uptime checks: Traefik's Service address, the platform's
   # workloads and volumes.
   - apiGroups: [""]
@@ -786,6 +782,10 @@ spec:
     - name: sftp
       port: 2222
       targetPort: sftp
+    # The sites' routes, for Traefik's HTTP provider (traefik-config.yaml).
+    - name: traefik-config
+      port: 8081
+      targetPort: traefik-config
 
 ---
 # Source: pressfleet/templates/maintenance.yaml
@@ -884,6 +884,31 @@ spec:
     - name: sftp
       port: 2222
       targetPort: sftp
+      protocol: TCP
+
+---
+# Source: pressfleet/templates/traefik.yaml
+# Traefik's Prometheus metrics, for the control plane alone (NetworkPolicy
+# "traefik"), and never on the public Service above.
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik-metrics
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: traefik
+spec:
+  selector:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/component: traefik
+  ports:
+    - name: metrics
+      port: 9100
+      targetPort: metrics
       protocol: TCP
 
 ---
@@ -1004,6 +1029,10 @@ spec:
               value: ""
             - name: PRESSFLEET_KUBERNETES_TRAEFIK_SERVICE
               value: traefik
+            # Where Traefik's HTTP provider reads the sites' routes
+            # (traefik-config.yaml).
+            - name: PRESSFLEET_KUBERNETES_TRAEFIK_PROVIDER_LISTEN
+              value: ":8081"
             # Task pods mount it too (#219).
             - name: PRESSFLEET_KUBERNETES_DATA_CLAIM
               value: "control-plane-data"
@@ -1017,6 +1046,9 @@ spec:
             # The SFTP gateway (§5.8); Traefik forwards sftp.port to it.
             - name: sftp
               containerPort: 2222
+            # Traefik's HTTP provider (kubernetes.traefik_provider_listen).
+            - name: traefik-config
+              containerPort: 8081
           volumeMounts:
             - name: data
               mountPath: "/var/lib/pressfleet"
@@ -1212,9 +1244,10 @@ spec:
         helm.sh/chart: "pressfleet-0.0.0-dev"
         app.kubernetes.io/component: traefik
       annotations:
-        checksum/config: 7f17625c588cd6690b531864ddfd6f6ee6ea129a943759102172a52998cdc120
+        checksum/config: 9090f326b5ead93386a7552a19bc97ab8027634bb6d9fdeb849e394086167acd
     spec:
       serviceAccountName: traefik
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -1242,10 +1275,17 @@ spec:
             - name: sftp
               containerPort: 2222
               protocol: TCP
+            - name: metrics
+              containerPort: 9100
+              protocol: TCP
           volumeMounts:
             - name: config
               mountPath: /etc/traefik/traefik.yaml
               subPath: traefik.yaml
+              readOnly: true
+            - name: config
+              mountPath: /etc/traefik/dynamic.yaml
+              subPath: dynamic.yaml
               readOnly: true
             - name: acme
               mountPath: /var/lib/traefik
@@ -1623,29 +1663,6 @@ spec:
         resources:
           requests:
             storage: "20Gi"
-
----
-# Source: pressfleet/templates/routes.yaml
-# The SFTP gateway (§5.8). SSH can't be routed by host name, so it has an
-# entry point and a Service port of its own.
-apiVersion: traefik.io/v1alpha1
-kind: IngressRouteTCP
-metadata:
-  name: pf-sftp
-  labels:
-    app.kubernetes.io/name: pressfleet
-    app.kubernetes.io/instance: "pressfleet"
-    app.kubernetes.io/version: "0.0.0-dev"
-    app.kubernetes.io/managed-by: "Helm"
-    helm.sh/chart: "pressfleet-0.0.0-dev"
-    app.kubernetes.io/component: control-plane
-spec:
-  entryPoints: [sftp]
-  routes:
-    - match: HostSNI(`*`)
-      services:
-        - name: control-plane
-          port: 2222
 
 ---
 # Source: pressfleet/templates/admission-policy.yaml

@@ -1,8 +1,8 @@
 {{- /*
 Traefik's static configuration, as templates/platform/traefik.yaml.tmpl
-renders it for Compose, with the Kubernetes CRD provider in place of the
-Docker and file providers. Entry point and resolver names are package
-ingress's. Traefik doesn't run as root here, so the entry points listen on
+renders it for Compose, with the control plane's HTTP provider in place of
+the Docker provider, and its dynamic configuration (dynamic.yaml). Entry
+point and resolver names are package ingress's. Traefik doesn't run as root here, so the entry points listen on
 unprivileged ports, and the Service maps 80 and 443 to them.
 */ -}}
 {{- if and .Values.acme.dnsProvider (not .Values.acme.dnsCredentialsSecret) }}
@@ -55,29 +55,45 @@ data:
       # The SFTP gateway in the control plane (sftp.port on the Service).
       sftp:
         address: ":2222"
-      # Ping (the probes) and Prometheus metrics, on loopback only, as on
-      # Compose (security review finding F5): the control plane reads the
-      # metrics through the exec API (provisioner.TraefikMetricsReader).
+      # Ping, for the probes, on loopback only, as on Compose (security
+      # review finding F5).
       traefik:
         address: "127.0.0.1:8082"
+      # Prometheus metrics, which name every site and its traffic: on the
+      # pod network, but the NetworkPolicy "traefik" admits the control
+      # plane alone (provisioner.TraefikMetricsReader reads them from the
+      # traefik-metrics Service), so it needs no exec into this pod.
+      metrics:
+        address: ":9100"
 
     ping:
       entryPoint: traefik
 
     metrics:
       prometheus:
-        entryPoint: traefik
+        entryPoint: metrics
         addEntryPointsLabels: true
         addRoutersLabels: true
         addServicesLabels: true
 
+    # No Kubernetes provider: Traefik has no access to the API, and serves
+    # only routes the chart or the control plane wrote (#322, security
+    # review K1).
     providers:
-      # The IngressRoute and Middleware objects of the platform and of every
-      # site namespace. A route may only use services and middlewares of its
-      # own namespace.
-      kubernetesCRD:
-        allowCrossNamespace: false
-        allowExternalNameServices: false
+      # The platform's own routes and the maintenance page's service
+      # (dynamic.yaml below).
+      file:
+        filename: /etc/traefik/dynamic.yaml
+        watch: false
+      # The sites' routes and maintenance routes, which the control plane
+      # serves on a listener of its own (kubernetes.traefik_provider_listen)
+      # that the NetworkPolicy "control-plane" opens to Traefik alone. On
+      # an error Traefik keeps the routes it has. The short interval is how
+      # long a new site, domain, or maintenance mode takes to route.
+      http:
+        endpoint: {{ printf "http://control-plane.%s.svc:8081/traefik/dynamic" .Release.Namespace | quote }}
+        pollInterval: 2s
+        pollTimeout: 5s
 
     certificatesResolvers:
       # HTTP-01, one certificate per host name: the dashboard domain and,
@@ -109,3 +125,62 @@ data:
           httpChallenge:
             entryPoint: web
           {{- end }}
+
+  # The platform's own routes (Traefik's file provider), which the Compose
+  # project puts in the control plane's labels and its own file provider.
+  # Site routes are the control plane's (the HTTP provider above).
+  dynamic.yaml: |
+    http:
+      {{- if or .Values.dashboardDomain (and .Values.acme.dnsProvider .Values.previewBaseDomain) }}
+      routers:
+        {{- with .Values.dashboardDomain }}
+        # The dashboard and API.
+        pf-dashboard:
+          rule: {{ printf "Host(`%s`)" . | quote }}
+          entryPoints: [websecure]
+          service: pf-dashboard
+          tls:
+            certResolver: acme-http
+        {{- end }}
+        {{- if and .Values.acme.dnsProvider .Values.previewBaseDomain }}
+        # Makes Traefik obtain the preview wildcard certificate with
+        # DNS-01 as soon as it starts, rather than when the first site
+        # appears (ingress.PreviewWildcardRouter). The bare base domain
+        # itself hosts nothing.
+        pf-preview-wildcard:
+          rule: {{ printf "Host(`%s`)" .Values.previewBaseDomain | quote }}
+          entryPoints: [websecure]
+          service: noop@internal
+          tls:
+            certResolver: acme-preview
+            domains:
+              - main: {{ .Values.previewBaseDomain | quote }}
+                sans:
+                  - {{ printf "*.%s" .Values.previewBaseDomain | quote }}
+        {{- end }}
+      {{- end }}
+      services:
+        pf-dashboard:
+          loadBalancer:
+            servers:
+              - url: {{ printf "http://control-plane.%s.svc:8080" .Release.Namespace | quote }}
+        # The maintenance page (design doc §5.4), which the control plane's
+        # maintenance routes name as pf-maintenance@file
+        # (ingress.MaintenanceService).
+        pf-maintenance:
+          loadBalancer:
+            servers:
+              - url: {{ printf "http://maintenance.%s.svc:8080" .Release.Namespace | quote }}
+    # The SFTP gateway (§5.8). SSH can't be routed by host name, so it has
+    # an entry point and a Service port of its own.
+    tcp:
+      routers:
+        pf-sftp:
+          rule: "HostSNI(`*`)"
+          entryPoints: [sftp]
+          service: pf-sftp
+      services:
+        pf-sftp:
+          loadBalancer:
+            servers:
+              - address: {{ printf "control-plane.%s.svc:2222" .Release.Namespace | quote }}

@@ -698,8 +698,13 @@ func (k *KubePlatform) persistentVolumes(ctx context.Context, t *testing.T) []st
 // dumpState logs what a failed test needs: the platform's objects and
 // events, and the logs of its pods.
 func (k *KubePlatform) dumpState(ctx context.Context, t *testing.T) {
+	if out, err := k.ServedRoutes(ctx); err == nil {
+		t.Logf("routes the control plane serves Traefik:\n%s", out)
+	} else {
+		t.Logf("reading the routes the control plane serves Traefik: %v", err)
+	}
 	for _, ns := range k.namespaces(ctx, t) {
-		if out, err := k.Kubectl(ctx, nil, "get", "all,pvc,networkpolicies,ingressroutes,middlewares", "-n", ns, "-o", "wide"); err == nil {
+		if out, err := k.Kubectl(ctx, nil, "get", "all,pvc,networkpolicies", "-n", ns, "-o", "wide"); err == nil {
 			t.Logf("objects in %s:\n%s", ns, out)
 		}
 		if out, err := k.Kubectl(ctx, nil, "get", "events", "-n", ns, "--sort-by=.lastTimestamp"); err == nil {
@@ -743,3 +748,11 @@ func (s *KubeSite) ExecService(ctx context.Context, service string, command ...s
 
 // String names the site's namespace, for test messages.
 func (s *KubeSite) String() string { return s.Namespace }
+
+// ServedRoutes returns the dynamic configuration the control plane serves
+// Traefik's HTTP provider (#322), fetched from Traefik's pod, the only one
+// the NetworkPolicy lets in.
+func (k *KubePlatform) ServedRoutes(ctx context.Context) ([]byte, error) {
+	url := "http://control-plane." + k.Namespace + ".svc:8081/traefik/dynamic"
+	return k.Kubectl(ctx, nil, "exec", "-n", k.Namespace, "deploy/traefik", "--", "wget", "-qO-", url)
+}

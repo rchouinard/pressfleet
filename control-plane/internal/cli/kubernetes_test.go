@@ -548,7 +548,7 @@ func TestVersionOnKubernetes(t *testing.T) {
 		{"no record", "", ""},
 		{"newer release", "v1.3.0",
 			"A newer PressFleet release is available: v1.3.0 (https://example.com/v1.3.0).\n" +
-				"To upgrade, read its release notes, apply the new chart's CRDs, and run `helm upgrade` " +
+				"To upgrade, read its release notes and run `helm upgrade` " +
 				"(docs/kubernetes.md, \"Upgrading\").\n"},
 		{"up to date", "v1.2.2", ""},
 	}

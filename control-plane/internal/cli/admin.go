@@ -363,7 +363,7 @@ func (a *app) recordedRelease() *adminRelease {
 func (a *app) updateNotice(r adminRelease) string {
 	how := fmt.Sprintf("install the %s CLI from the release page and run `pressfleet upgrade`", r.LatestVersion)
 	if a.cfg.Driver == config.SiteDriverKubernetes {
-		how = "read its release notes, apply the new chart's CRDs, and run `helm upgrade` (docs/kubernetes.md, \"Upgrading\")"
+		how = "read its release notes and run `helm upgrade` (docs/kubernetes.md, \"Upgrading\")"
 	} else if _, err := skew.Parse(a.opts.Version); err == nil && !releasecheck.UpdateAvailable(a.opts.Version, r.LatestVersion) {
 		how = "run `pressfleet upgrade` with this CLI"
 	}

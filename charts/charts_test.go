@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"io"
-	"io/fs"
 	"iter"
 	"os"
 	"os/exec"
@@ -18,7 +17,6 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/rchouinard/pressfleet/charts"
-	"github.com/rchouinard/pressfleet/templates"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden files of TestTemplate")
@@ -83,28 +81,6 @@ func TestSharedFilesUpToDate(t *testing.T) {
 		if !bytes.Equal(got, want) {
 			t.Errorf("%s/%s differs from templates/platform/%s; run `make generate` (never edit it by hand)", charts.ChartDir, f.Chart, f.Platform)
 		}
-	}
-}
-
-func TestTraefikCRDsMatchImage(t *testing.T) {
-	images, err := fs.ReadFile(templates.Platform(), "images.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := regexp.MustCompile(`(?m)^traefik: [^:]+:(v[0-9.]+)@`).FindSubmatch(images)
-	if m == nil {
-		t.Fatal("no traefik:<tag>@<digest> in images.yaml")
-	}
-	crds, err := os.ReadFile(filepath.Join(charts.ChartDir, "crds", "traefik.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := regexp.MustCompile(`\((v[0-9.]+)\)`).FindSubmatch(crds)
-	if c == nil {
-		t.Fatal("crds/traefik.yaml's header names no Traefik version")
-	}
-	if string(c[1]) != string(m[1]) {
-		t.Errorf("crds/traefik.yaml is from Traefik %s, but images.yaml pins Traefik %s; replace the CRDs with that release's", c[1], m[1])
 	}
 }
 

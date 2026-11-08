@@ -95,16 +95,13 @@ func TestKubernetesAcceptance(t *testing.T) {
 				t.Errorf("the php image has no %s: %v", tool, err)
 			}
 		}
-		if _, err := k.Kubectl(ctx, nil, "exec", "-n", k.Namespace, "deploy/traefik", "--", "sh", "-c", "command -v wget"); err != nil {
-			t.Errorf("the Traefik image has no wget: %v", err)
-		}
 	})
 
 	t.Run("Traefik's services are attributed to the site", func(t *testing.T) {
-		// The CRD provider names a route's service
-		// <namespace>-<IngressRoute>-<hash>@kubernetescrd (#316); the
-		// driver maps those back to the site, or the traffic charts
-		// stay empty. A rate needs two scrapes, so keep the traffic up.
+		// The HTTP provider names the site's service pf-<site-id>@http
+		// (#322); the driver maps that back to the site, reading the
+		// metrics over the network, or the traffic charts stay empty. A
+		// rate needs two scrapes, so keep the traffic up.
 		deadline := time.Now().Add(4 * time.Minute)
 		for ; ; time.Sleep(5 * time.Second) {
 			ingressGet(t, hc, preview, nil)
@@ -124,7 +121,7 @@ func TestKubernetesAcceptance(t *testing.T) {
 				}
 			}
 			if time.Now().After(deadline) {
-				out, _ := k.Kubectl(ctx, nil, "exec", "-n", k.Namespace, "deploy/traefik", "--", "wget", "-qO-", "http://127.0.0.1:8082/metrics")
+				out, _ := k.Kubectl(ctx, nil, "exec", "-n", k.Namespace, "deploy/traefik", "--", "wget", "-qO-", "http://127.0.0.1:9100/metrics")
 				t.Fatalf("the site's traffic metrics have no data; Traefik's metrics:\n%s", out)
 			}
 		}
@@ -133,6 +130,7 @@ func TestKubernetesAcceptance(t *testing.T) {
 	two, twoSite := k8sSite(t, p, groupID, "E2E Kubernetes Two")
 	t.Run("isolation", func(t *testing.T) { checkK8sIsolation(t, p, site, one, two, twoSite) })
 	t.Run("control plane's rights", func(t *testing.T) { checkK8sControlPlaneRights(t, p, site) })
+	t.Run("Traefik reads no API", func(t *testing.T) { checkK8sTraefik(t, p, site, hc) })
 	t.Run("another install's namespaces", func(t *testing.T) { checkK8sOtherInstall(t, p, site) })
 
 	t.Run("maintenance", func(t *testing.T) {
@@ -367,9 +365,14 @@ func checkK8sIsolation(t *testing.T, p *e2e.Platform, site client.Site, one *e2e
 		apiServer + ":443",
 		"169.254.169.254:80",
 		"postgres.pfk8s-postgres.svc:5432",
-		// Traefik's metrics and ping stay on its loopback (F5), and the
-		// node's kubelet is out of reach (#229).
+		// Traefik's ping stays on its loopback (F5), its metrics and the
+		// control plane's Traefik provider are the control plane's and
+		// Traefik's alone (#322), and the node's kubelet is out of reach
+		// (#229).
 		net.JoinHostPort(traefik, "8082"),
+		net.JoinHostPort(traefik, "9100"),
+		"traefik-metrics." + pn + ".svc:9100",
+		"control-plane." + pn + ".svc:8081",
 		net.JoinHostPort(node, "10250"),
 	}
 	got := k8sProbe(t, one, append(slices.Clone(open), closed...))
@@ -412,6 +415,8 @@ func checkK8sControlPlaneRights(t *testing.T, p *e2e.Platform, site client.Site)
 		{[]string{"get", "secrets", "-n", "kube-system"}, "no"},
 		{[]string{"list", "secrets", "--all-namespaces"}, "no"},
 		{[]string{"create", "pods", "--subresource=exec", "-n", "kube-system"}, "no"},
+		// Nor in its own namespace, Traefik's (#322).
+		{[]string{"create", "pods", "--subresource=exec", "-n", k.Namespace}, "no"},
 		{[]string{"get", "nodes", "--subresource=proxy"}, "no"},
 		{[]string{"patch", "pods", "-n", k.Namespace}, "no"},
 		{[]string{"update", "pods", "-n", siteNS}, "no"},
@@ -586,6 +591,98 @@ func checkK8sOtherInstall(t *testing.T, p *e2e.Platform, site client.Site) {
 			t.Errorf("%s: refused: %v", c.name, c.err)
 		case !c.admitted && (c.err == nil || !strings.Contains(c.err.Error(), "denied request")):
 			t.Errorf("%s: want the admission policy's refusal, got %v", c.name, c.err)
+		}
+	}
+}
+
+// checkK8sTraefik checks #322 (security review K1) on the cluster: no
+// ServiceAccount of the platform's reads Secrets outside PressFleet's
+// namespaces, Traefik has no rights and no token, and Traefik serves only
+// the routes PressFleet wrote: an IngressRoute in another namespace that
+// claims a site's host, at a higher priority, changes nothing.
+func checkK8sTraefik(t *testing.T, p *e2e.Platform, site client.Site, hc *http.Client) {
+	k := p.Kube
+	ctx := t.Context()
+	canI := func(sa string, args ...string) string {
+		out, _ := k.Kubectl(ctx, nil, append([]string{"auth", "can-i", "--as=system:serviceaccount:" + k.Namespace + ":" + sa}, args...)...)
+		return strings.TrimSpace(string(out))
+	}
+	apply := func(doc string) {
+		t.Helper()
+		if _, err := k.Kubectl(ctx, strings.NewReader(doc), "apply", "-f", "-"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	accounts := strings.Fields(k.MustKubectl(t, "get", "serviceaccounts", "-n", k.Namespace, "-o", "jsonpath={.items[*].metadata.name}"))
+	if !slices.Contains(accounts, "traefik") || !slices.Contains(accounts, "control-plane") {
+		t.Fatalf("ServiceAccounts in %s: %q", k.Namespace, accounts)
+	}
+	for _, sa := range accounts {
+		for _, args := range [][]string{{"get", "secrets", "-n", "kube-system"}, {"list", "secrets", "--all-namespaces"}} {
+			if got := canI(sa, args...); got != "no" {
+				t.Errorf("can %s %s? %q, want no", sa, strings.Join(args, " "), got)
+			}
+		}
+	}
+	for _, args := range [][]string{
+		{"get", "secrets", "-n", k.Namespace},
+		{"get", "secrets", "-n", k.SiteNamespace(site.ID)},
+		{"list", "services", "--all-namespaces"},
+		{"list", "configmaps", "-n", k.Namespace},
+		{"list", "endpointslices.discovery.k8s.io", "--all-namespaces"},
+	} {
+		if got := canI("traefik", args...); got != "no" {
+			t.Errorf("can Traefik %s? %q, want no", strings.Join(args, " "), got)
+		}
+	}
+	pod := k.MustKubectl(t, "get", "pods", "-n", k.Namespace, "-l", "app.kubernetes.io/component=traefik", "-o", "jsonpath={.items[0].spec.automountServiceAccountToken}")
+	if pod != "false" {
+		t.Errorf("Traefik's pod has automountServiceAccountToken %q", pod)
+	}
+	if _, err := k.Kubectl(ctx, nil, "exec", "-n", k.Namespace, "deploy/traefik", "--", "test", "-e", "/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
+		t.Error("Traefik's pod has a ServiceAccount token")
+	}
+
+	// A cluster where someone else uses Traefik's CRDs: the chart installs
+	// none, so the test brings a minimal one if the cluster has none.
+	if _, err := k.Kubectl(ctx, nil, "get", "crd", "ingressroutes.traefik.io"); err != nil {
+		crd := `{"apiVersion":"apiextensions.k8s.io/v1","kind":"CustomResourceDefinition","metadata":{"name":"ingressroutes.traefik.io"},` +
+			`"spec":{"group":"traefik.io","scope":"Namespaced","names":{"kind":"IngressRoute","listKind":"IngressRouteList","plural":"ingressroutes","singular":"ingressroute"},` +
+			`"versions":[{"name":"v1alpha1","served":true,"storage":true,"schema":{"openAPIV3Schema":{"type":"object","x-kubernetes-preserve-unknown-fields":true}}}]}}`
+		apply(crd)
+		t.Cleanup(func() {
+			_, _ = k.Kubectl(context.WithoutCancel(ctx), nil, "delete", "crd", "ingressroutes.traefik.io", "--wait=false")
+		})
+		k.MustKubectl(t, "wait", "--for=condition=Established", "crd/ingressroutes.traefik.io", "--timeout=60s")
+	}
+	const foreign = "e2e-foreign-routes"
+	k.MustKubectl(t, "create", "namespace", foreign)
+	t.Cleanup(func() {
+		_, _ = k.Kubectl(context.WithoutCancel(ctx), nil, "delete", "namespace", foreign, "--wait=false")
+	})
+	route := map[string]any{
+		"apiVersion": "traefik.io/v1alpha1", "kind": "IngressRoute",
+		"metadata": map[string]any{"name": "claim", "namespace": foreign},
+		"spec": map[string]any{
+			"entryPoints": []any{"websecure"},
+			"routes": []any{map[string]any{
+				"kind": "Rule", "match": "Host(`" + site.PreviewDomain + "`)", "priority": 1000000,
+				"services": []any{map[string]any{"kind": "TraefikService", "name": "noop@internal"}},
+			}},
+		},
+	}
+	body, err := json.Marshal(route)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply(string(body))
+	// A CRD provider would pick it up within a second or two; give it
+	// several times that.
+	for range 10 {
+		time.Sleep(2 * time.Second)
+		resp, body := ingressGet(t, hc, "https://"+site.PreviewDomain+"/", nil)
+		if resp.StatusCode != http.StatusOK || !strings.Contains(body, "<title>E2E Kubernetes One") {
+			t.Fatalf("Traefik serves another namespace's IngressRoute: status %d:\n%.300s", resp.StatusCode, body)
 		}
 	}
 }

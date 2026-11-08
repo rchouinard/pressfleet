@@ -48,6 +48,10 @@ spec:
     - name: sftp
       port: 2222
       targetPort: sftp
+    # The sites' routes, for Traefik's HTTP provider (traefik-config.yaml).
+    - name: traefik-config
+      port: 8081
+      targetPort: traefik-config
 ---
 apiVersion: apps/v1
 kind: Deployment

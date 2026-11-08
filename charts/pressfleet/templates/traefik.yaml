@@ -3,57 +3,17 @@ The edge router for all web traffic and the SFTP gateway (design doc §3,
 §4.8). One replica: its ACME storage is a ReadWriteOnce volume.
 */ -}}
 {{- $dnsDir := "/run/secrets/acme-dns" }}
+# Traefik's own ServiceAccount, with no token and no rights: Traefik reads
+# nothing from the Kubernetes API. Its routes come from its file provider
+# (the chart's, traefik-config.yaml) and from the control plane, which
+# serves the sites' routes to its HTTP provider (#322, security review K1).
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: traefik
   labels:
     {{- include "pressfleet.componentLabels" (dict "root" . "component" "traefik") | nindent 4 }}
----
-# What Traefik's Kubernetes CRD provider reads, cluster-wide, as Traefik's
-# own RBAC for its release lists it. Secrets are among them: basicAuth
-# middlewares and TLS options name Secrets in sites' namespaces.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: {{ include "pressfleet.traefikClusterRole" . | quote }}
-  labels:
-    {{- include "pressfleet.componentLabels" (dict "root" . "component" "traefik") | nindent 4 }}
-rules:
-  - apiGroups: [""]
-    resources: [services, secrets, nodes, configmaps]
-    verbs: [get, list, watch]
-  - apiGroups: [discovery.k8s.io]
-    resources: [endpointslices]
-    verbs: [list, watch]
-  - apiGroups: [traefik.io]
-    resources:
-      - middlewares
-      - middlewaretcps
-      - ingressroutes
-      - traefikservices
-      - ingressroutetcps
-      - ingressrouteudps
-      - tlsoptions
-      - tlsstores
-      - serverstransports
-      - serverstransporttcps
-    verbs: [get, list, watch]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: {{ include "pressfleet.traefikClusterRole" . | quote }}
-  labels:
-    {{- include "pressfleet.componentLabels" (dict "root" . "component" "traefik") | nindent 4 }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: {{ include "pressfleet.traefikClusterRole" . | quote }}
-subjects:
-  - kind: ServiceAccount
-    name: traefik
-    namespace: {{ .Release.Namespace | quote }}
+automountServiceAccountToken: false
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -118,6 +78,23 @@ spec:
       nodePort: {{ $nodePorts.sftp }}
       {{- end }}
 ---
+# Traefik's Prometheus metrics, for the control plane alone (NetworkPolicy
+# "traefik"), and never on the public Service above.
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik-metrics
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "traefik") | nindent 4 }}
+spec:
+  selector:
+    {{- include "pressfleet.selector" (dict "root" . "component" "traefik") | nindent 4 }}
+  ports:
+    - name: metrics
+      port: 9100
+      targetPort: metrics
+      protocol: TCP
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -141,6 +118,7 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/traefik-config.yaml") . | sha256sum }}
     spec:
       serviceAccountName: traefik
+      automountServiceAccountToken: false
       {{- with include "pressfleet.imagePullSecrets" . }}{{ . | nindent 6 }}{{ end }}
       {{- include "pressfleet.podSecurityContext" (dict "uid" 65532 "gid" 65532) | nindent 6 }}
       containers:
@@ -192,10 +170,17 @@ spec:
             - name: sftp
               containerPort: 2222
               protocol: TCP
+            - name: metrics
+              containerPort: 9100
+              protocol: TCP
           volumeMounts:
             - name: config
               mountPath: /etc/traefik/traefik.yaml
               subPath: traefik.yaml
+              readOnly: true
+            - name: config
+              mountPath: /etc/traefik/dynamic.yaml
+              subPath: dynamic.yaml
               readOnly: true
             - name: acme
               mountPath: /var/lib/traefik

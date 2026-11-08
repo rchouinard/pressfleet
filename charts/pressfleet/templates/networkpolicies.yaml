@@ -18,7 +18,8 @@ spec:
   podSelector: {}
   policyTypes: [Ingress]
 ---
-# Traefik takes web and SFTP traffic from anywhere.
+# Traefik takes web and SFTP traffic from anywhere, and the control plane
+# alone reads its metrics, which name every site and its traffic.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -39,8 +40,13 @@ spec:
           protocol: UDP
         {{- end }}
         - port: sftp
+    - from:
+        {{- include "pressfleet.peer" "control-plane" | nindent 8 }}
+      ports:
+        - port: metrics
 ---
-# The dashboard, the API, and the SFTP gateway: from Traefik only.
+# The dashboard, the API, the SFTP gateway, and Traefik's provider
+# endpoint (the sites' routes): from Traefik only.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -58,6 +64,7 @@ spec:
       ports:
         - port: http
         - port: sftp
+        - port: traefik-config
 ---
 # The maintenance page: from Traefik only.
 apiVersion: networking.k8s.io/v1

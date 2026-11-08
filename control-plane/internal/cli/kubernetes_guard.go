@@ -17,7 +17,7 @@ var errComposeOnly = errors.New("this command manages the platform of a Docker C
 // Compose project, by command path, with what takes their place on
 // Kubernetes (design doc §4.8).
 var kubernetesAlternatives = map[string]string{
-	"pressfleet upgrade": "upgrade with helm upgrade, after applying the new chart's CRDs; " +
+	"pressfleet upgrade": "upgrade with helm upgrade; " +
 		"undo one with helm rollback and your PostgreSQL backup (docs/upgrading.md, \"Kubernetes\")",
 	"pressfleet recover": "restore a state backup with the chart's recovery values " +
 		"(docs/disaster-recovery.md, \"Kubernetes\")",

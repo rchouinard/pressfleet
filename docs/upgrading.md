@@ -284,11 +284,9 @@ Alternatively, fix the cause and run `pressfleet upgrade` again. A retry keeps t
 
 Before you upgrade, read the release notes, and **back up the PostgreSQL state database** yourself: the control plane migrates it when it starts, and PressFleet doesn't take pre-migration backups of PostgreSQL ([PostgreSQL state databases](#postgresql-state-databases)).
 
-Helm installs a chart's CRDs on the first install only, never on an upgrade, so apply the new release's Traefik CRDs first. Then upgrade, with the values file `pressfleet init --target kubernetes` wrote (it is the record of what you run, and new chart defaults reach you; `--reuse-values` keeps the old release's defaults):
+Upgrade with the values file `pressfleet init --target kubernetes` wrote (it is the record of what you run, and new chart defaults reach you; `--reuse-values` keeps the old release's defaults):
 
 ```sh
-helm show crds oci://ghcr.io/rchouinard/pressfleet/charts/pressfleet --version <new release> \
-  | kubectl apply --server-side -f -
 helm upgrade pressfleet oci://ghcr.io/rchouinard/pressfleet/charts/pressfleet --version <new release> \
   --namespace pressfleet --values pressfleet-kubernetes/values.yaml --wait --timeout 15m
 ```
