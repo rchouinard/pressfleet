@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"strconv"
 	"strings"
@@ -32,8 +33,10 @@ const (
 // (the pod's security context), and returns its standard output.
 //
 // args reach WP-CLI verbatim as its argv: the exec API takes an argument
-// vector, so nothing passes through a shell. They may hold secrets (e.g.
-// `user create --user_pass=...`), so they never appear in errors or logs.
+// vector, so nothing passes through a shell. That vector travels as the
+// exec request's URL query, which the API server's audit log records, so
+// args must hold no secret (ExecWPCLIInput takes one on standard input);
+// the driver keeps them out of its own errors and logs all the same.
 //
 // The run is bounded by ctx and the configured WP-CLI timeout. Closing an
 // exec stream doesn't stop the process, so WP-CLI runs under timeout(1)
@@ -42,6 +45,14 @@ const (
 // ErrOutputTruncated. A non-zero exit yields a *provisioner.ExecError
 // carrying the exit code and the end of standard error.
 func (p *Provisioner) ExecWPCLI(ctx context.Context, siteID string, args []string) (string, error) {
+	return p.ExecWPCLIInput(ctx, siteID, args, nil)
+}
+
+// ExecWPCLIInput is ExecWPCLI with stdin as WP-CLI's standard input. The
+// exec API streams it over the upgraded connection, not in the request's
+// URL, and closes it when stdin is drained. A nil stdin requests no input
+// stream, and WP-CLI's standard input is empty.
+func (p *Provisioner) ExecWPCLIInput(ctx context.Context, siteID string, args []string, stdin io.Reader) (string, error) {
 	for _, a := range args {
 		if strings.IndexByte(a, 0) >= 0 {
 			return "", fmt.Errorf("exec wp-cli on site %s: %w: arguments can't contain NUL bytes", siteID, ErrInvalidCommand)
@@ -53,7 +64,7 @@ func (p *Provisioner) ExecWPCLI(ctx context.Context, siteID string, args []strin
 	if err != nil {
 		return "", fmt.Errorf("exec wp-cli: %w", err)
 	}
-	res, err := p.run(ctx, t, timed(ctx, append([]string{wpcliPath}, args...)...), p.wpcliMaxOutput)
+	res, err := p.runInput(ctx, t, timed(ctx, append([]string{wpcliPath}, args...)...), stdin, p.wpcliMaxOutput)
 	if err != nil {
 		return "", fmt.Errorf("exec wp-cli on site %s: %w", siteID, err)
 	}

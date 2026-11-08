@@ -7,7 +7,11 @@ namespaces PressFleet owns (design doc §4.8, §6):
 - site namespaces, named <siteNamespacePrefix>... and labeled
   app.kubernetes.io/managed-by=pressfleet;
 - doctor's short-lived probe namespaces, named <platform namespace>-doctor-...
-  and labeled pressfleet.io/doctor-probe=true (#225).
+  and labeled pressfleet.io/doctor-probe=true (#225);
+
+each labeled pressfleet.io/platform-namespace=<platform namespace>, since
+several installs may share a cluster and a site namespace prefix (security
+review K6, #326).
 
 A namespace it creates or changes must be one of them and enforce Pod
 Security "restricted" at the latest version (an old version checks less);
@@ -16,11 +20,20 @@ writes must be in one of them and bind the site ClusterRole to the control
 plane's own ServiceAccount, never to another subject, which would outlast
 the control plane's own credentials. Without this, the control plane could
 bind the site ClusterRole in any namespace, or delete one.
+
+Site namespaces created before pressfleet.io/platform-namespace existed
+lack it. The namespace a change or delete starts from (oldObject) may
+therefore lack it, so that the next apply of the site's templates (the
+template rollout after the upgrade) adds it; what a change leaves (object)
+must have it, and so must the namespace of a RoleBinding, which the driver
+applies right after the namespace. Another install's label is refused
+everywhere. Until every install sharing a prefix has labeled its
+namespaces, one may still claim another's unlabeled ones.
 */ -}}
 {{- $site := include "pressfleet.siteClusterRole" . }}
 {{- $sitePrefix := .Values.kubernetes.siteNamespacePrefix }}
 {{- $probePrefix := printf "%s-doctor-" .Release.Namespace }}
-{{- $owned := dict "sitePrefix" $sitePrefix "probePrefix" $probePrefix }}
+{{- $owned := dict "sitePrefix" $sitePrefix "probePrefix" $probePrefix "platformNamespace" .Release.Namespace }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -51,22 +64,22 @@ spec:
   validations:
     - expression: >-
         !variables.isNamespace || request.operation == 'DELETE' ||
-        ({{ include "pressfleet.celOwned" (merge (dict "obj" "object") $owned) | nindent 8 | trim }} &&
+        ({{ include "pressfleet.celOwned" (merge (dict "obj" "object" "legacy" false) $owned) | nindent 8 | trim }} &&
         'pod-security.kubernetes.io/enforce' in object.metadata.labels &&
         object.metadata.labels['pod-security.kubernetes.io/enforce'] == 'restricted' &&
         (!('pod-security.kubernetes.io/enforce-version' in object.metadata.labels) ||
         object.metadata.labels['pod-security.kubernetes.io/enforce-version'] == 'latest'))
       messageExpression: >-
-        'the PressFleet control plane may only write site namespaces ({{ $sitePrefix }}..., labeled app.kubernetes.io/managed-by=pressfleet) and doctor probe namespaces ({{ $probePrefix }}..., labeled pressfleet.io/doctor-probe=true) that enforce Pod Security restricted at the latest version, not ' + request.name
+        'the PressFleet control plane may only write site namespaces ({{ $sitePrefix }}..., labeled app.kubernetes.io/managed-by=pressfleet) and doctor probe namespaces ({{ $probePrefix }}..., labeled pressfleet.io/doctor-probe=true), labeled pressfleet.io/platform-namespace={{ .Release.Namespace }}, that enforce Pod Security restricted at the latest version, not ' + request.name
     - expression: >-
         !variables.isNamespace || request.operation == 'CREATE' ||
-        {{ include "pressfleet.celOwned" (merge (dict "obj" "oldObject") $owned) | nindent 8 | trim }}
+        {{ include "pressfleet.celOwned" (merge (dict "obj" "oldObject" "legacy" true) $owned) | nindent 8 | trim }}
       messageExpression: >-
         'the PressFleet control plane may only change or delete namespaces it created, not ' + request.name
     - expression: >-
         variables.isNamespace ||
         (namespaceObject != null &&
-        {{ include "pressfleet.celOwned" (merge (dict "obj" "namespaceObject") $owned) | nindent 8 | trim }})
+        {{ include "pressfleet.celOwned" (merge (dict "obj" "namespaceObject" "legacy" false) $owned) | nindent 8 | trim }})
       messageExpression: >-
         'the PressFleet control plane may only write RoleBindings in its own namespaces, not in ' + request.namespace
     - expression: >-

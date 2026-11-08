@@ -358,7 +358,9 @@ func testStats(t *testing.T, env Env) {
 	// CPU time is cumulative: it grows with work and never goes back.
 	f.wp(ctx, t, cfg, "--skip-wordpress", "eval", "$e = microtime( true ) + 3; while ( microtime( true ) < $e ) {}")
 	// A driver that reads usage from a metrics pipeline sees the work
-	// when it next scrapes.
+	// when it next scrapes. php's CPU limit makes the work at most about
+	// 2.25s of CPU time; the 1s bar leaves room for a driver that
+	// estimates it from rates over windows (Kubernetes, #329).
 	var second map[provisioner.Component]provisioner.ComponentStats
 	eventually(t, statsWait, "php CPU time growing over 3 seconds of work", func() string {
 		second = sample()

@@ -30,8 +30,14 @@ type cpuState struct {
 	// containerID tells a restarted container, whose total starts again,
 	// from the one the state was built for.
 	containerID string
-	sampled     time.Time
-	total       time.Duration
+	// cores is the rate of the container's last metrics window, which
+	// tells a new window from one already counted.
+	cores float64
+	// counted is how far the total accounts for the container's time. It
+	// can run ahead of the pod's timestamp, which belongs to another
+	// container when that one was scraped earlier.
+	counted time.Time
+	total   time.Duration
 }
 
 // Stats samples the site's running containers (provisioner.StatsReader)
@@ -39,10 +45,19 @@ type cpuState struct {
 // access to nodes/proxy.
 //
 // The metrics API reports CPU as a rate over a short window, but the
-// contract asks for cumulative CPU time, so each sample is integrated:
-// the rate is held constant between samples of the container, and the
-// total starts again when the container does. The total lives in the
-// control plane's memory, so it also starts again with the control plane;
+// contract asks for cumulative CPU time, so each sample is integrated.
+// metrics-server gives each container a window of its own but reports
+// only the timestamp and window of the pod's earliest container, so a
+// container's new window is recognized by its rate changing and counted
+// as the rate times the pod's window; when samples are further apart
+// than that (windows the caller didn't sample), the rate is held across
+// the whole gap; an unchanged rate is held over time not yet counted. The
+// total is therefore an estimate: a burst counts at
+// its window's average rate times a window that may be another
+// container's (both about the scrape interval), and a gap is filled with
+// the rate of its last window. The total starts again when the container
+// does, and since it lives in the control plane's memory, it also starts
+// again with the control plane;
 // consumers that derive rates from successive samples treat a decrease as
 // a reset. Samples are as fresh as metrics-server's (about 15 seconds);
 // SampledAt is the time of its scrape, and a repeated scrape returns the
@@ -159,15 +174,31 @@ func (p *Provisioner) containerStats(pod *corev1.Pod, name string, metrics []pod
 	key := cpuKey(ns, pod.Name, name)
 	st, known := p.observe.cpu[key]
 	cores := usage.Cpu().AsApproximateFloat64()
+	at, window := pm.Timestamp.Time, pm.Window.Duration
 	switch {
 	case !known || st.containerID != status.ContainerID:
 		// The first sample of this container: the window is all that is
 		// known to have run.
-		st = cpuState{containerID: status.ContainerID, sampled: pm.Timestamp.Time}
-		st.total = time.Duration(cores * float64(pm.Window.Duration))
-	case pm.Timestamp.After(st.sampled):
-		st.total += time.Duration(cores * float64(pm.Timestamp.Sub(st.sampled)))
-		st.sampled = pm.Timestamp.Time
+		st = cpuState{containerID: status.ContainerID, cores: cores, counted: at}
+		st.total = time.Duration(cores * float64(window))
+	case cores != st.cores:
+		// A new window of this container. The pod's timestamp is its
+		// earliest container's, so it may not have moved at all, or by
+		// less than this container's window: count a window's worth, or
+		// the whole time since the last count when windows went unseen.
+		span := max(window, at.Sub(st.counted))
+		st.total += time.Duration(cores * float64(span))
+		st.cores = cores
+		st.counted = st.counted.Add(span)
+	default:
+		// The same window again, or a new one at the same rate (an idle
+		// container's zero, or one pinned at its limit): hold the rate
+		// over time not yet counted. A window seen again was counted a
+		// full window ahead, so only time past that window is added.
+		if at.After(st.counted) {
+			st.total += time.Duration(cores * float64(at.Sub(st.counted)))
+			st.counted = at
+		}
 	}
 	p.observe.cpu[key] = st
 	cs.CPUUsage = st.total

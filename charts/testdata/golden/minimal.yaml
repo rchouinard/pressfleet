@@ -129,9 +129,18 @@ spec:
         - namespaceSelector:
             matchLabels:
               app.kubernetes.io/managed-by: pressfleet
+              pressfleet.io/platform-namespace: "pressfleet"
             matchExpressions:
               - key: pressfleet.io/site-id
                 operator: Exists
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/managed-by: pressfleet
+            matchExpressions:
+              - key: pressfleet.io/site-id
+                operator: Exists
+              - key: pressfleet.io/platform-namespace
+                operator: DoesNotExist
       ports:
         - port: mysql
 
@@ -164,9 +173,18 @@ spec:
         - namespaceSelector:
             matchLabels:
               app.kubernetes.io/managed-by: pressfleet
+              pressfleet.io/platform-namespace: "pressfleet"
             matchExpressions:
               - key: pressfleet.io/site-id
                 operator: Exists
+        - namespaceSelector:
+            matchLabels:
+              app.kubernetes.io/managed-by: pressfleet
+            matchExpressions:
+              - key: pressfleet.io/site-id
+                operator: Exists
+              - key: pressfleet.io/platform-namespace
+                operator: DoesNotExist
       ports:
         - port: redis
 
@@ -1670,20 +1688,22 @@ spec:
         (variables.target.startsWith('pf-') &&
         'app.kubernetes.io/managed-by' in object.metadata.labels && object.metadata.labels['app.kubernetes.io/managed-by'] == 'pressfleet') ||
         (variables.target.startsWith('pressfleet-doctor-') &&
-        'pressfleet.io/doctor-probe' in object.metadata.labels && object.metadata.labels['pressfleet.io/doctor-probe'] == 'true'))) &&
+        'pressfleet.io/doctor-probe' in object.metadata.labels && object.metadata.labels['pressfleet.io/doctor-probe'] == 'true')) &&
+        'pressfleet.io/platform-namespace' in object.metadata.labels && object.metadata.labels['pressfleet.io/platform-namespace'] == 'pressfleet') &&
         'pod-security.kubernetes.io/enforce' in object.metadata.labels &&
         object.metadata.labels['pod-security.kubernetes.io/enforce'] == 'restricted' &&
         (!('pod-security.kubernetes.io/enforce-version' in object.metadata.labels) ||
         object.metadata.labels['pod-security.kubernetes.io/enforce-version'] == 'latest'))
       messageExpression: >-
-        'the PressFleet control plane may only write site namespaces (pf-..., labeled app.kubernetes.io/managed-by=pressfleet) and doctor probe namespaces (pressfleet-doctor-..., labeled pressfleet.io/doctor-probe=true) that enforce Pod Security restricted at the latest version, not ' + request.name
+        'the PressFleet control plane may only write site namespaces (pf-..., labeled app.kubernetes.io/managed-by=pressfleet) and doctor probe namespaces (pressfleet-doctor-..., labeled pressfleet.io/doctor-probe=true), labeled pressfleet.io/platform-namespace=pressfleet, that enforce Pod Security restricted at the latest version, not ' + request.name
     - expression: >-
         !variables.isNamespace || request.operation == 'CREATE' ||
         (has(oldObject.metadata.labels) && (
         (variables.target.startsWith('pf-') &&
         'app.kubernetes.io/managed-by' in oldObject.metadata.labels && oldObject.metadata.labels['app.kubernetes.io/managed-by'] == 'pressfleet') ||
         (variables.target.startsWith('pressfleet-doctor-') &&
-        'pressfleet.io/doctor-probe' in oldObject.metadata.labels && oldObject.metadata.labels['pressfleet.io/doctor-probe'] == 'true')))
+        'pressfleet.io/doctor-probe' in oldObject.metadata.labels && oldObject.metadata.labels['pressfleet.io/doctor-probe'] == 'true')) &&
+        (!('pressfleet.io/platform-namespace' in oldObject.metadata.labels) || oldObject.metadata.labels['pressfleet.io/platform-namespace'] == 'pressfleet'))
       messageExpression: >-
         'the PressFleet control plane may only change or delete namespaces it created, not ' + request.name
     - expression: >-
@@ -1693,7 +1713,8 @@ spec:
         (variables.target.startsWith('pf-') &&
         'app.kubernetes.io/managed-by' in namespaceObject.metadata.labels && namespaceObject.metadata.labels['app.kubernetes.io/managed-by'] == 'pressfleet') ||
         (variables.target.startsWith('pressfleet-doctor-') &&
-        'pressfleet.io/doctor-probe' in namespaceObject.metadata.labels && namespaceObject.metadata.labels['pressfleet.io/doctor-probe'] == 'true'))))
+        'pressfleet.io/doctor-probe' in namespaceObject.metadata.labels && namespaceObject.metadata.labels['pressfleet.io/doctor-probe'] == 'true')) &&
+        'pressfleet.io/platform-namespace' in namespaceObject.metadata.labels && namespaceObject.metadata.labels['pressfleet.io/platform-namespace'] == 'pressfleet'))
       messageExpression: >-
         'the PressFleet control plane may only write RoleBindings in its own namespaces, not in ' + request.namespace
     - expression: >-

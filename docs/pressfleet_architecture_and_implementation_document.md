@@ -270,7 +270,8 @@ type Provisioner interface {
     StartSite(ctx context.Context, siteID string) error
     StopSite(ctx context.Context, siteID string) error
     SetMaintenance(ctx context.Context, siteID string, enabled bool) error
-    ExecWPCLI(ctx context.Context, siteID string, args []string) (string, error)
+    ExecWPCLI(ctx context.Context, siteID string, args []string) (string, error) // args never hold a secret: a driver may log argv (the Kubernetes audit log does)
+    ExecWPCLIInput(ctx context.Context, siteID string, args []string, stdin io.Reader) (string, error) // secrets go on stdin
     PurgeCache(ctx context.Context, siteID string) error // page cache; the object cache manager flushes the object cache
 }
 
@@ -472,7 +473,7 @@ PressFleet installs on a Kubernetes cluster with a Helm chart, and a Kubernetes 
 * **Isolation (§6):**
   * Each site namespace enforces Pod Security `restricted`. Site, task, and session pods run as the site's UID with no capabilities, a read-only root filesystem, and no service account token.
   * Each site namespace denies all traffic by default. Ingress to nginx is allowed only from Traefik. Egress is allowed to DNS, MariaDB, Valkey, the SMTP relay, and the internet, but not to the cluster's pod, service, or node ranges, or the cloud metadata address (nodes and API server endpoints on public addresses are #324). nginx trusts forwarded headers from the pod network's ranges (`NGINX_TRUSTED_PROXIES`), which the NetworkPolicy narrows to Traefik.
-  * The control plane's ServiceAccount can create and delete namespaces, and in each site namespace it creates binds a ClusterRole that covers the site's objects. It has no rights in other namespaces, no cluster-wide Secret access, and no `nodes/proxy`. RBAC can't name namespaces that don't exist yet, so the chart's ValidatingAdmissionPolicies narrow its cluster-wide rights: namespaces and RoleBindings to its own namespaces and its own ServiceAccount, PersistentVolumes to clones of the data volume, and the pods and Services it creates to ones without a ServiceAccount token, host access, or exposure past Traefik (security review, #229). This replaces the Docker socket (§6).
+  * The control plane's ServiceAccount can create and delete namespaces, and in each site namespace it creates binds a ClusterRole that covers the site's objects. It has no rights in other namespaces, no cluster-wide Secret access, and no `nodes/proxy`. RBAC can't name namespaces that don't exist yet, so the chart's ValidatingAdmissionPolicies narrow its cluster-wide rights: namespaces and RoleBindings to its own namespaces (named with its prefix and labeled with its platform namespace, so that installs sharing a cluster and a prefix stay apart, #326) and its own ServiceAccount, PersistentVolumes to clones of the data volume, and the pods and Services it creates to ones without a ServiceAccount token, host access, or exposure past Traefik (security review, #229). This replaces the Docker socket (§6).
   * The cluster's CNI must enforce NetworkPolicy, which doctor proves.
   * One namespace for all sites, with policies selected by label, would need only a namespaced Role, but isolation would then depend on every label being right.
 * **Ingress and TLS:** the chart's Traefik, with its Kubernetes CRD provider. The driver writes IngressRoute and Middleware objects named as on Compose. Maintenance mode is a higher-priority IngressRoute to the maintenance page. Certificates are issued as on Compose (HTTP-01, and DNS-01 for the preview wildcard), with Traefik's ACME storage on a PVC, so Traefik runs as one replica. A LoadBalancer Service, or NodePorts, carries ports 80, 443, and the SFTP port. Standard Ingress, Gateway API, and cert-manager are left for later; basic auth, noindex, HSTS, redirects, and maintenance priorities would need work for each controller.
@@ -493,7 +494,7 @@ All long-running operations run as **Jobs**. API endpoints that start them retur
 3. **Database Creation:** `DatabaseManager.CreateDatabase` creates the database and a user whose grants are limited to that database.
 4. **Object Cache Credentials:** Creates the site's Redis ACL user, restricted to its own key prefix (§6).
 5. **Container Provisioning:** `Provisioner.CreateSite` creates the site network and renders the site's Compose project (`nginx` and `php` containers from the images for the selected PHP version and current WordPress core, `wp-content` and cache volumes, generated `wp-config.php`, Traefik labels for the preview domain, resource limits) and brings it up.
-6. **WordPress Installation:** Runs `wp core install` against the image's WordPress core with the preview domain as the site URL via `ExecWPCLI`.
+6. **WordPress Installation:** Runs `wp core install` against the image's WordPress core with the preview domain as the site URL via `ExecWPCLIInput`, with the generated admin password on standard input (`--prompt=admin_password`), never in argv.
 7. **Plugin Auto-Configuration:** Activates the default plugin stack: Nginx Helper, Redis Object Cache (configured with the site's ACL credentials, database, and key prefix), and the WordPress security set configured for the install (§6.1).
 8. **Preview Ready:** The site is immediately reachable over HTTPS on its preview domain. Preview domains send `X-Robots-Tag: noindex` to keep them out of search engines.
 

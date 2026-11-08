@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 )
 
@@ -337,8 +338,19 @@ type Provisioner interface {
 	// ExecWPCLI runs WP-CLI in the site's PHP container as the site's user
 	// and returns its stdout. args are passed as argv, never through a shell.
 	// A non-zero exit yields an *ExecError; a site that exists but isn't
-	// running yields ErrSiteNotRunning.
+	// running yields ErrSiteNotRunning. WP-CLI's standard input is empty.
+	//
+	// args must never hold a secret. A driver may carry argv where others
+	// can read it: the Kubernetes exec API puts the command in the request
+	// URL, which the API server's audit log and any proxy in front of it
+	// record. Pass secrets on standard input with ExecWPCLIInput instead,
+	// e.g. `wp core install --prompt=admin_password`.
 	ExecWPCLI(ctx context.Context, siteID string, args []string) (string, error)
+	// ExecWPCLIInput is ExecWPCLI with stdin as WP-CLI's standard input,
+	// which the command sees end once stdin is drained. It is the way to
+	// hand WP-CLI a secret (see ExecWPCLI). stdin is read at most once, so
+	// a caller that retries passes a fresh reader each time.
+	ExecWPCLIInput(ctx context.Context, siteID string, args []string, stdin io.Reader) (string, error)
 	// PurgeCache empties the site's page cache, which lives in the site's
 	// own runtime (the FastCGI cache nginx keeps in the site's cache
 	// volume), whether or not the site is running. Returns ErrSiteNotFound

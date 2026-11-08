@@ -209,14 +209,19 @@ func (f *fixture) exec(ctx context.Context, t *testing.T, cfg *provisioner.SiteC
 	return strings.TrimSpace(out)
 }
 
+// testAdminPassword is the administrator password install sets.
+const testAdminPassword = "test-admin-pw"
+
 // install installs WordPress, waiting for the database to accept the site.
+// The administrator password goes on standard input, as package sites
+// passes it (see Provisioner.ExecWPCLI).
 func (f *fixture) install(ctx context.Context, t *testing.T, cfg *provisioner.SiteConfig, title string) {
 	t.Helper()
 	args := []string{"core", "install", "--url=http://" + cfg.PreviewDomain, "--title=" + title,
-		"--admin_user=admin", "--admin_password=test-admin-pw", "--admin_email=admin@example.com", "--skip-email"}
+		"--admin_user=admin", "--admin_email=admin@example.com", "--skip-email", "--prompt=admin_password"}
 	var err error
 	for deadline := time.Now().Add(3 * time.Minute); time.Now().Before(deadline); time.Sleep(2 * time.Second) {
-		if _, err = f.d.ExecWPCLI(ctx, cfg.ID, args); err == nil {
+		if _, err = f.d.ExecWPCLIInput(ctx, cfg.ID, args, strings.NewReader(testAdminPassword+"\n")); err == nil {
 			return
 		}
 		var ee *provisioner.ExecError

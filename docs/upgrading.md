@@ -26,6 +26,8 @@ The control plane asks GitHub for new releases when it starts and once a day. Wh
 - the dashboard flags the version under the menu with "Update available", and the About dialog links to the release notes;
 - `GET /api/v1/platform` reports it as `release`.
 
+On Kubernetes, the notices say to read the release notes, apply the new chart's CRDs, and run `helm upgrade` instead ([Kubernetes](#kubernetes)); `pressfleet version` prints its notice when run in the control plane pod.
+
 The request carries no credentials or details about your install, only a `User-Agent` of `PressFleet/<version>`. If the host shouldn't contact GitHub (an air-gapped install), set `updates.release_check: false` ([Release check](configuration.md#release-check)); then nothing reports a release, and you must watch the [releases page](https://github.com/rchouinard/pressfleet/releases) yourself. A failed check is silent and changes nothing. Development builds never report one.
 
 ## Version skew
