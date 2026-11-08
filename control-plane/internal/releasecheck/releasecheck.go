@@ -194,6 +194,10 @@ type Options struct {
 	Source Source
 	// Version is the running version, to log when a newer one appears.
 	Version string
+	// Kubernetes says the platform runs from the Helm chart (driver:
+	// kubernetes), where helm upgrade takes the place of pressfleet
+	// upgrade, so the line logged about a newer release says so.
+	Kubernetes bool
 	// File is where the last result is kept, for `pressfleet admin info`;
 	// empty keeps it in memory only.
 	File string
@@ -281,8 +285,12 @@ func (c *Checker) Check(ctx context.Context) {
 	}
 	c.mu.Unlock()
 	if announce {
-		log.Info("a newer PressFleet release is available; install its CLI and run pressfleet upgrade",
-			"version", c.opts.Version, "latest", r.LatestVersion, "url", r.ReleaseURL)
+		attrs := []any{"version", c.opts.Version, "latest", r.LatestVersion, "url", r.ReleaseURL}
+		if c.opts.Kubernetes {
+			log.Info("a newer PressFleet release is available; read its release notes, apply the new chart's CRDs, and run helm upgrade", attrs...)
+		} else {
+			log.Info("a newer PressFleet release is available; install its CLI and run pressfleet upgrade", attrs...)
+		}
 	}
 	if c.opts.File != "" {
 		if err := writeFile(c.opts.File, r); err != nil {

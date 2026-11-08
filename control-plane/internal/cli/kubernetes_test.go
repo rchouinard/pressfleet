@@ -536,15 +536,59 @@ func TestComposeCommandsRefusedOnKubernetes(t *testing.T) {
 }
 
 func TestVersionOnKubernetes(t *testing.T) {
-	cp := &fakeControlPlane{}
-	r := runProbed(t, t.Context(), []string{"version"}, kubernetesInstallEnv(), nil, nil, &syncBuffer{}, cp)
-	if r.code != 0 {
-		t.Fatalf("exit %d\n%s", r.code, r.stderr)
+	// In the control plane pod (CLI v1.2.3-test), version reports what its
+	// release check recorded, with Helm's upgrade (#319).
+	tests := []struct {
+		name string
+		// latest is the recorded release; empty means no record.
+		latest string
+		// want is the notice; empty means none.
+		want string
+	}{
+		{"no record", "", ""},
+		{"newer release", "v1.3.0",
+			"A newer PressFleet release is available: v1.3.0 (https://example.com/v1.3.0).\n" +
+				"To upgrade, read its release notes, apply the new chart's CRDs, and run `helm upgrade` " +
+				"(docs/kubernetes.md, \"Upgrading\").\n"},
+		{"up to date", "v1.2.2", ""},
 	}
-	if !strings.Contains(r.stdout, "skew rules don't apply on Kubernetes") {
-		t.Errorf("stdout:\n%s", r.stdout)
-	}
-	if projects, _ := cp.calls(); len(projects) > 0 {
-		t.Errorf("looked for a Compose control plane: %v", projects)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			if tt.latest != "" {
+				file := config.Layout{Root: dataDir}.ReleaseCheckFile()
+				if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				rec := `{"latest_version":"` + tt.latest + `","release_url":"https://example.com/` + tt.latest +
+					`","checked_at":"2026-10-20T12:00:00Z"}`
+				if err := os.WriteFile(file, []byte(rec), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			env := kubernetesInstallEnv()
+			env["PRESSFLEET_DATA_DIR"] = dataDir
+			cp := &fakeControlPlane{}
+			r := runProbed(t, t.Context(), []string{"version"}, env, nil, nil, &syncBuffer{}, cp)
+			if r.code != 0 {
+				t.Fatalf("exit %d\n%s", r.code, r.stderr)
+			}
+			if !strings.Contains(r.stdout, "skew rules don't apply on Kubernetes") {
+				t.Errorf("stdout:\n%s", r.stdout)
+			}
+			if tt.want == "" {
+				if strings.Contains(r.stdout, "newer PressFleet release") {
+					t.Errorf("unexpected notice:\n%s", r.stdout)
+				}
+			} else if !strings.HasSuffix(r.stdout, "\n\n"+tt.want) {
+				t.Errorf("stdout lacks the notice %q:\n%s", tt.want, r.stdout)
+			}
+			if strings.Contains(r.stdout, "pressfleet upgrade") {
+				t.Errorf("stdout points to pressfleet upgrade:\n%s", r.stdout)
+			}
+			if projects, _ := cp.calls(); len(projects) > 0 {
+				t.Errorf("looked for a Compose control plane: %v", projects)
+			}
+		})
 	}
 }
