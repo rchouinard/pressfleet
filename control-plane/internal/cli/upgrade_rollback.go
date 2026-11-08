@@ -77,6 +77,10 @@ type rollbackRecord struct {
 	// refused to start; Error is why.
 	StoppedAt string `json:"stopped_at,omitempty"`
 	Error     string `json:"error,omitempty"`
+	// RecoveredByHand says the operator finished the rollback with the
+	// recovery steps, and `upgrade --rollback` only confirmed that the
+	// platform runs the previous release (#310).
+	RecoveredByHand bool `json:"recovered_by_hand,omitempty"`
 }
 
 // Errors of a rollback that refuses to start. Nothing has changed then.

@@ -260,9 +260,10 @@ func TestUpgradeRecovery(t *testing.T) {
 		t.Error("the recovery steps neither restore the state database nor say it needs no restore")
 	}
 
-	// 5. Recover by running the printed commands as they are.
+	// 5. Recover by running the printed commands as they are. The last
+	// marks the upgrade rolled back (#310).
 	for i, command := range commands {
-		out, err := compose.RunShell(ctx, command)
+		out, err := runRecoveryCommand(ctx, project.Name, command)
 		t.Logf("$ %s\n%s", command, out)
 		if err != nil {
 			t.Fatalf("recovery command %d failed: %v", i+1, err)
@@ -272,7 +273,11 @@ func TestUpgradeRecovery(t *testing.T) {
 		}
 	}
 
-	// 6. The platform is back at the previous release, with its data.
+	// 6. The platform is back at the previous release, with its data, and
+	// the upgrade is marked rolled back.
+	if status := upgradeStatus(t, dataDir); status != "rolled-back" {
+		t.Errorf("after the recovery steps, the upgrade record's status is %q, want rolled-back", status)
+	}
 	p.Connect(ctx, t)
 	if after := controlPlaneInfo(ctx, t, project); after.Version != before.Version || !after.Ready {
 		t.Errorf("after the recovery, the control plane runs %s (ready: %t), want %s", after.Version, after.Ready, before.Version)
@@ -472,6 +477,31 @@ func recoveryCommands(out string) []string {
 		}
 	}
 	return commands
+}
+
+// runRecoveryCommand runs a command of the recovery steps as printed: in a
+// shell, except for the last step's pressfleet command, which runs this
+// tree's CLI, the one that upgraded (version "e2e", as the tests run it),
+// in the test's process, with the printed arguments. The platform's Compose
+// project name, which an operator never sets, is the only addition.
+func runRecoveryCommand(ctx context.Context, projectName, command string) ([]byte, error) {
+	args, ok := strings.CutPrefix(command, "pressfleet ")
+	if !ok {
+		return compose.RunShell(ctx, command)
+	}
+	var out bytes.Buffer
+	code := cli.Run(ctx, strings.Fields(args), cli.Options{
+		Version:             "e2e",
+		Stdin:               strings.NewReader(""),
+		Stdout:              &out,
+		Stderr:              &out,
+		Env:                 func(string) (string, bool) { return "", false },
+		PlatformProjectName: projectName,
+	})
+	if code != 0 {
+		return out.Bytes(), fmt.Errorf("%s: exit %d", command, code)
+	}
+	return out.Bytes(), nil
 }
 
 // previousControlPlaneDigest returns the image the control plane ran before

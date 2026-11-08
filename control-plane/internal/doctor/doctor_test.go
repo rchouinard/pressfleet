@@ -367,6 +367,12 @@ func TestUpgradeRollouts(t *testing.T) {
 			wantStatus: doctor.StatusWarn, wantMessage: "upgrade to 1.2.0 is in progress", wantFix: "Wait for `pressfleet upgrade`"},
 		{name: "failed", setup: record(`{"to":"1.2.0","status":"failed"}`),
 			wantStatus: doctor.StatusWarn, wantMessage: "rollouts are held", wantFix: "`pressfleet upgrade --rollback` to return"},
+		// After the recovery steps by hand, their last step lifts the hold
+		// (#310).
+		{name: "failed, recovered by hand", setup: record(`{"to":"1.2.0","status":"failed"}`),
+			wantStatus: doctor.StatusWarn, wantFix: "returned to the previous release with those steps, run their last one"},
+		{name: "rollback failed", setup: record(`{"to":"1.2.0","status":"rollback-failed"}`),
+			wantStatus: doctor.StatusWarn, wantFix: "it marks the upgrade rolled back"},
 		{name: "rolling back", setup: record(`{"to":"1.2.0","status":"rolling-back"}`),
 			wantStatus: doctor.StatusWarn, wantMessage: "being rolled back", wantFix: "`pressfleet upgrade --rollback` to resume"},
 		{name: "unreadable", setup: record(`{`),

@@ -243,13 +243,14 @@ A `pressfleet upgrade --rollback` that refuses says why and changes nothing:
 
 - **`changes since the upgrade would be left behind`:** it lists the sites created or deleted, core updates, go-lives, and client groups deleted or offboarded since the upgrade. Undo them, or pass `--force` and clean up afterwards ([Rolling back an upgrade](upgrading.md#rolling-back-an-upgrade)).
 - **`can't tell what changed since the upgrade`:** the control plane didn't answer. Start it and retry, or pass `--force`.
-- **`nothing to roll back`:** there is no upgrade record, the last upgrade was rolled back already, the platform project from before it is gone, or the platform is back on the previous release already. Only the most recent upgrade can be rolled back, once.
+- **`nothing to roll back`:** there is no upgrade record, the last upgrade was rolled back already, the platform project from before it is gone, or the upgrade succeeded and the platform is back on the previous release already. Only the most recent upgrade can be rolled back, once.
+- **`the platform runs neither release of the last upgrade`:** the control plane is ready at a release that is neither the one the upgrade started from nor the one it went to, so `--rollback` can't tell whether to mark the upgrade rolled back or roll it back. Return the platform to the previous release with the [recovery steps](upgrading.md#recovering-from-a-failed-upgrade), or run `pressfleet upgrade`.
 
 ### Site updates are held after an upgrade
 
 `pressfleet doctor` warns `upgrade-rollouts`, and the core, image, and template rollouts report `held: true` with a reason (`GET /api/v1/core-rollout`, `/image-rollout`, `/template-rollout`; the dashboard's platform overview shows it too). The control plane holds them while the record `<data_dir>/upgrade/upgrade.json` says `in-progress`, `failed`, `rolling-back`, or `rollback-failed`, or can't be read. An upgrade that was interrupted (the CLI was killed, the SSH session dropped) or left failed with `--no-rollback` is the usual cause. Updates you start by hand still run.
 
-Run `pressfleet upgrade` to retry or resume, or `pressfleet upgrade --rollback`; either ends in `succeeded` or `rolled-back`, and the rollouts resume within 15 minutes without a restart ([Held rollouts](upgrading.md#held-rollouts)). If you finished the recovery by hand instead, the record keeps its status until the next `pressfleet upgrade` writes a new one; don't edit it.
+Run `pressfleet upgrade` to retry or resume, or `pressfleet upgrade --rollback`; either ends in `succeeded` or `rolled-back`, and the rollouts resume within 15 minutes without a restart ([Held rollouts](upgrading.md#held-rollouts)). If you returned to the previous release by hand with the [recovery steps](upgrading.md#recovering-from-a-failed-upgrade), run their last step, `pressfleet upgrade --rollback`, with the CLI that upgraded: it finds the platform back on the previous release and marks the record `rolled-back`, changing nothing else ([After the recovery steps](upgrading.md#after-the-recovery-steps)). If it says the control plane runs neither release, or starts a rollback, the recovery isn't finished. Don't edit the record.
 
 ## Still stuck
 

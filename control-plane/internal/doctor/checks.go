@@ -454,6 +454,8 @@ func checkRolloutHold(_ context.Context, e *env) outcome {
 	default:
 		fix = "Run `pressfleet upgrade` again to finish the upgrade, or `pressfleet upgrade --rollback` to return to " +
 			"the previous release; if the rollback can't finish, follow \"Recovering from a failed upgrade\" in docs/upgrading.md. " +
+			"If you already returned to the previous release with those steps, run their last one, `pressfleet upgrade --rollback` " +
+			"with the CLI that upgraded: it marks the upgrade rolled back. " +
 			"The rollouts resume on their own once the upgrade succeeds or is rolled back."
 	}
 	return warn(fix, "the core, image, and template rollouts are held: %s. Sites change only when you ask", hold.Reason)

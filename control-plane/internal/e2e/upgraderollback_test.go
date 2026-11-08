@@ -102,7 +102,7 @@ func TestUpgradeRollback(t *testing.T) {
 	traffic := e2e.ProbeTraffic(t, hc, siteURL)
 	run := u.startUpgrade("--skip-preflight", "--control-plane-image", broken)
 	u.waitApplying(run.done, broken)
-	checkRolloutsHeld(t, u.Client)
+	checkRollouts(t, u.Client, true)
 	res := run.wait()
 	checkTraffic(ctx, t, u.Project, traffic, shared, "the failed upgrade and its rollback")
 
@@ -371,8 +371,11 @@ func TestUpgradeRollbackOnDemand(t *testing.T) {
 	if err := compose.TagImage(ctx, nil, image, previous); err != nil {
 		t.Fatal(err)
 	}
+	if last := commands[len(commands)-1]; !strings.HasPrefix(last, "pressfleet upgrade --rollback") {
+		t.Errorf("the manual steps don't end by marking the upgrade rolled back: %q", last)
+	}
 	for i, command := range commands {
-		out, err := compose.RunShell(ctx, command)
+		out, err := runRecoveryCommand(ctx, u.Project.Name, command)
 		t.Logf("$ %s\n%s", command, out)
 		if err != nil {
 			t.Fatalf("recovery command %d failed: %v", i+1, err)
@@ -381,10 +384,14 @@ func TestUpgradeRollbackOnDemand(t *testing.T) {
 			checkStateRestore(t, command, string(out))
 		}
 	}
-	// The record still says rollback-failed after the manual steps, so
-	// the control plane keeps holding its rollouts (#310): assert that the
-	// hold lifts here once that is fixed.
+	// The last step found the platform back on the release and marked the
+	// upgrade rolled back, so the control plane runs its rollouts again
+	// (#310).
+	if status := upgradeStatus(t, u.dataDir); status != "rolled-back" {
+		t.Errorf("after the manual steps, the upgrade record's status is %q, want rolled-back", status)
+	}
 	u.checkBackOn(from, previous)
+	checkRollouts(t, u.Client, false)
 	if resp, err := u.Client.GetClientGroupWithResponse(ctx, groupID); err != nil || resp.JSON200 == nil {
 		t.Errorf("the client group is gone after the manual recovery: %v %v", err, resp)
 	}
@@ -717,9 +724,10 @@ func buildPressfleet(ctx context.Context, t *testing.T, version string, migratio
 	return out
 }
 
-// checkRolloutsHeld checks that the control plane holds its core, image,
-// and template rollouts: an upgrade to it isn't confirmed (#247).
-func checkRolloutsHeld(t *testing.T, c *client.ClientWithResponses) {
+// checkRollouts checks that the control plane holds its core, image, and
+// template rollouts, if held, because an upgrade to it isn't confirmed
+// (#247), or else that it holds none of them.
+func checkRollouts(t *testing.T, c *client.ClientWithResponses, held bool) {
 	t.Helper()
 	core, err := c.GetCoreRolloutWithResponse(t.Context())
 	if err != nil || core.JSON200 == nil {
@@ -742,11 +750,18 @@ func checkRolloutsHeld(t *testing.T, c *client.ClientWithResponses) {
 		{"image", images.JSON200.Held, images.JSON200.HoldReason},
 		{"template", templates.JSON200.Held, templates.JSON200.HoldReason},
 	} {
-		if !r.held || r.reason == nil {
+		switch {
+		case held && (!r.held || r.reason == nil):
 			t.Errorf("while the upgrade is unconfirmed, the %s rollout isn't held (held: %t)", r.name, r.held)
-			continue
+		case held:
+			t.Logf("the %s rollout is held: %s", r.name, *r.reason)
+		case r.held:
+			reason := ""
+			if r.reason != nil {
+				reason = *r.reason
+			}
+			t.Errorf("after the upgrade was rolled back, the %s rollout is still held: %s", r.name, reason)
 		}
-		t.Logf("the %s rollout is held: %s", r.name, *r.reason)
 	}
 }
 
