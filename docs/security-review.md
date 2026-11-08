@@ -1,4 +1,12 @@
-# Pre-release security review
+# Security reviews
+
+The reviews PressFleet has had, each with its scope, method, findings, and what happened to them:
+
+- [Pre-release review](#pre-release-review) (#97, 2026-10-20): the Compose platform, before 1.0.
+- [Kubernetes target](#kubernetes-target) (#229, 2026-11-08): the Kubernetes driver and the Helm chart.
+
+## Pre-release review
+
 
 **Issue:** [#97](https://github.com/rchouinard/pressfleet/issues/97), Security review: tenant isolation and secrets
 **Date:** 2026-10-20, against `main` at `34dbb7e` (after #160)
@@ -6,7 +14,7 @@
 
 This is the record #97 asks for. It says what was checked, how, what came out, and what happened to each finding. Severities are this review's own. **Critical** means a remote compromise without credentials. **High** means a compromise from a low-privilege position. **Medium** means escalation or denial of service with a realistic precondition. **Low** means limited disclosure or a precondition that is already a serious compromise. Only findings with a concrete path are listed. Things that were checked and hold are under [Checked and holding](#what-was-checked-and-how).
 
-## Findings
+### Findings
 
 | ID | Severity | Finding | Status |
 | --- | --- | --- | --- |
@@ -19,34 +27,34 @@ This is the record #97 asks for. It says what was checked, how, what came out, a
 | [F7](#f7-webauthn-challenge-store-can-be-flooded) | Low | One session can flood the WebAuthn challenge store and evict other users' login challenges | Fixed: per-user challenge cap and throttled options ([#185](https://github.com/rchouinard/pressfleet/issues/185)) |
 | [F8](#f8-image-vulnerabilities-and-the-scan-policy) | Low | Every shipped image has HIGH findings with fixed versions; the new scan is report-only | Fixed in [#186](https://github.com/rchouinard/pressfleet/issues/186) (pins bumped, fixed CRITICAL findings now fail builds); the HIGH findings left are upstream |
 
-### F1: kin-openapi request validation vulnerabilities
+#### F1: kin-openapi request validation vulnerabilities
 
 - **Location:** `go.mod` (`github.com/getkin/kin-openapi v0.142.0`), used by `control-plane/internal/api/validate.go` (`openapi3filter.ValidateRequest`).
 - **What:** govulncheck reports GO-2026-6112 (nil-pointer panic on a content parameter without a schema) as reachable from `api.validateRequests`. Trivy also reports CVE-2026-100349, -100351, -100352, -100353 and -100354 (nil dereferences, non-finite numbers, unbounded recursion in schema validation, and a path-decoding discrepancy), fixed in v0.146.0 to v0.149.0. GO-2026-6095 (the `NoopAuthenticationFunc` default) and GHSA-r277-6w6q-xmqw (`ValidationHandler.Load()` fails open) don't apply. PressFleet authenticates in its own middleware before validation (`api.authenticate`), sets `NoopAuthenticationFunc` deliberately, and doesn't use `ValidationHandler`.
 - **Exploit path:** validation runs before the handler on every operation. For the public ones (`login`, `loginSecondFactor`), that is before any authentication. An unauthenticated client sends a crafted body to `POST /api/v1/auth/login` through Traefik. A nil dereference panics the request, which the `Recover` middleware turns into a 500. Unbounded recursion overflows the goroutine stack, which can't be recovered and stops the control plane. That ends the dashboard, API, jobs and the SFTP gateway until Docker restarts it. Whether PressFleet's own spec exposes each code path wasn't reproduced. The advisories' preconditions are about request input, and the fix costs a version bump.
 - **Fix:** upgraded to v0.149.0, the oldest release that fixes all of them. `make vulncheck` now reports nothing reachable, Trivy reports nothing for kin-openapi, and the API package tests pass. The test that fails without the fix is govulncheck itself, which now runs in CI (see [CI scanning](#ci-scanning)).
 
-### F2: control plane image built with Go 1.27.1
+#### F2: control plane image built with Go 1.27.1
 
 - **Location:** `control-plane/Dockerfile` (`ARG GO_IMAGE=golang:1.27.1-trixie@…`).
 - **What:** the release binary in the image is built by the pinned Go image, not by the toolchain in `mise.toml`. Trivy reports CVE-2026-78667 (net/http denial of service via a crafted HTTP request) for the `pressfleet` binary, fixed in Go 1.27.2. govulncheck run locally with Go 1.27.2 can't see it, because it checks the standard library of the toolchain that runs it.
 - **Exploit path:** any client on the internet reaches the control plane's `net/http` server through Traefik on the dashboard domain. Like F1, this wasn't reproduced; the advisory names the server code PressFleet runs.
 - **Fix:** `GO_IMAGE` is now `golang:1.27.2-trixie` pinned by its linux/amd64 digest. A rebuilt image no longer reports the stdlib finding for `pressfleet`. The Trivy step added to the Images workflow is what shows it.
 
-### F3: Viewers can read secrets in access log query strings
+#### F3: Viewers can read secrets in access log query strings
 
 - **Location:** `images/site-nginx/conf/nginx.conf.template` (`log_format pressfleet` logs `"uri":"$request_uri"`, query string included), served to every role by `listSiteLogs` and `streamSiteLogs` (`authz.ViewMonitoring`, Viewer).
 - **Exploit path:** a site's administrator asks WordPress for a password reset. The emailed link is `GET /wp-login.php?action=rp&key=<key>&login=<user>`, and nginx logs it with the key. WordPress then moves the key into a cookie and redirects, but the key stays valid until the password is changed, by default for 24 hours. A Viewer polling the site's logs in the dashboard copies the key and sets the administrator's password with `POST /wp-login.php?action=resetpass`. They are then a WordPress administrator, which §4.6 and §5.9 deny Viewers. Other WordPress flows carry one-time secrets in URLs the same way (`confirmaction` keys for privacy requests, and many plugins' magic-login and order links). §5.9 already sends the platform's own login token in a POST body for exactly this reason.
 - **Fix:** reading site logs is an Operator action (`authz.ViewLogs`, [#181](https://github.com/rchouinard/pressfleet/issues/181)): `listSiteLogs` and `streamSiteLogs` answer `403` to Viewers and read-only tokens of Viewers, and the dashboard hides the logs viewer from them. Metrics and alerts stay Viewer actions. The other options (logging `$uri` only, or masking known parameters) were rejected for now, so the log format is unchanged: the access log still records query strings, and Operators and Admins can see them. They already have wp-admin and database access to the site.
 - **Tests:** `TestSiteLogsAuthorization` (a Viewer gets `403` and an Operator `200` from both endpoints), the `authz` table tests, and the dashboard's permission and navigation tests.
 
-### F4: Admin API tokens can mint new sessions
+#### F4: Admin API tokens can mint new sessions
 
 - **Location:** `control-plane/internal/authz/authz.go`. `CreateUser` and `UpdateUser` (including `password`) aren't in `sessionActions`, and tokens are never asked to reauthenticate (`CheckReauthentication`).
 - **Exploit path:** an Admin's full-scope API token leaks, for example from a CI system. Its holder calls `POST /api/v1/users` to create an Admin with a password they choose. Alternatively, `PATCH /api/v1/users/{id}` sets the password of an existing user without a second factor. They then log in to the dashboard and create tokens of their own from that session. Revoking the leaked token doesn't end their access. That defeats the property §4.6 and §6.2 give session-only token creation ("a stolen token can't mint replacements that outlive its revocation"). When `two_factor.required` covers the new user, the attacker simply enrolls their own TOTP. Each step is audited, which helps after the fact but doesn't stop it.
 - **Accepted risk:** [#182](https://github.com/rchouinard/pressfleet/issues/182) keeps the behavior, because making user creation and password changes session-only would break automation that onboards users. Only an Admin's full-scope token can take these actions, and it is as powerful as the Admin account. The risk is documented in design doc §4.6 and §6.2, in `docs/configuration.md` ("API tokens"), and in a warning when an Admin creates a full-scope token in the dashboard. Guidance: treat full-scope Admin tokens like the Admin password, prefer read-only or Operator-owned tokens for automation, and after revoking a leaked Admin token check the audit log for `user.create` and `user.update`.
 
-### F5: Traefik metrics are reachable from every site
+#### F5: Traefik metrics are reachable from every site
 
 - **Location:** `templates/platform/traefik.yaml.tmpl` (the `traefik` entry point on `:8082` serves `/ping` and `/metrics` on every interface). `compose/provisioner.go` connects Traefik to each site network as `pf-traefik`.
 - **Verified:** from site A's php container, `http://pf-traefik:8082/metrics` answered with `traefik_router_*` and `traefik_service_*` series for site B, named by B's site ID (`router="pf-<id>-preview@docker"`), with B's request counts, status codes, bytes, and latencies. With certificates, `traefik_tls_certs_*` adds every certificate's names.
@@ -54,7 +62,7 @@ This is the record #97 asks for. It says what was checked, how, what came out, a
 - **Fix:** the `traefik` entry point listens on `127.0.0.1:8082`, so only processes inside the Traefik container reach it. Traefik's own healthcheck runs there. The control plane's `traefik` collector no longer scrapes over the network: it reads `/metrics` with `docker exec` into the Traefik container through the Compose provisioner (`provisioner.TraefikMetricsReader`), as the PHP-FPM and cgroup collectors already read their data. Alternatives rejected: Traefik `manualRouting` with an `ipAllowList` or basic auth needs the platform subnet (unknown when the config is rendered) or a new shared secret, and a fixed subnet can collide with an operator's own networks. The loopback bind needs neither.
 - **Tests:** `TestSiteCreateDelete` ("sites can't reach Traefik's internal port") probes `pf-traefik:8082` and Traefik's address on the site network from a site's php container, and fails on the previous configuration. `TestIngress` ("the collector reads the metrics") reads the metrics through the provisioner and runs the collector against them. Unit tests cover the rendered entry point (`platform` golden files), the provisioner call, and the collector.
 
-### F6: task secrets are readable through the socket proxy
+#### F6: task secrets are readable through the socket proxy
 
 - **Location:** `control-plane/internal/provisioner/compose/task.go` (`createTask` passes `Task.SecretEnv` with `--env-file`) and `templates/platform/compose.yaml.tmpl` (the socket proxy allows `GET /containers/<id>/json` to Traefik).
 - **What:** backup, restore, and export tasks get `RESTIC_PASSWORD`, plus `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` on S3, as environment variables. The code notes that Docker keeps them in the container's configuration until the container is removed. That configuration is what the allowlisted inspect endpoint returns.
@@ -64,24 +72,24 @@ This is the record #97 asks for. It says what was checked, how, what came out, a
 - **Left as is:** with a control plane that isn't root (development and tests) the directory can't be handed to the site's UID, so it and its files are world-readable on the host for the length of the task. The control plane container is root. The secrets exist on the host's disk, in the data directory, while a task runs; before, the env-file was there for the moment `docker create` ran and Docker kept the values in the container's configuration for the whole run. `docker exec` of WP-CLI passes its arguments (which may hold a password) on the command line of a process in the site's own php container; the socket proxy doesn't serve exec inspection, so Traefik can't read them.
 - **Tests:** `TestRunTaskSecretsOutOfInspectDocker` runs a task and asserts that the full `docker inspect` output of the running container holds no secret value (it fails on the previous code), while the task, as the site's user, reads the files with mode 400. Unit tests (`TestRunTask`, `TestRunTaskSecretsRemovedOnFailure`, `TestRemoveStaleTaskSecrets`, `TestRunTaskInvalid`) cover the files, their cleanup on every failure path, and the file name checks. The backup, restore, export, and S3 end-to-end tests run restic from those files.
 
-### F7: WebAuthn challenge store can be flooded
+#### F7: WebAuthn challenge store can be flooded
 
 - **Location:** `control-plane/internal/auth/challenge.go` (one store of 10,000 entries for all users, pruning the soonest-expiring entry when full) and `StartReauthentication` (`POST /api/v1/auth/reauthenticate/options`, any role, not rate limited), which stores a challenge per call for a user with a security key.
 - **Exploit path:** any logged-in user, a Viewer included, registers a security key and calls the options endpoint in a loop. After 10,000 calls in five minutes, every new challenge evicts the oldest live one, which includes other users' in-flight WebAuthn login challenges. Their login then fails with "unknown or expired challenge" until the flood stops. This is a denial of service against WebAuthn logins and reauthentication only. TOTP and recovery codes are unaffected, and the calls are attributable to the session.
 - **Fix:** the store keeps at most 5 live challenges per user and, past that, drops that user's oldest (soonest-expiring, then earliest put) first, so a flood evicts only the flooder's own. Challenges with no user (passwordless sign-in, #161) have no per-user cap and count against the 10,000 total only, so the store stays shared. The alternative, a separate bound per kind, would still let one session evict other users' logins of the same kind, and would split a store passwordless sign-in is meant to reuse. `reauthenticate/options` now also counts every call against the login throttle's machinery: 20 per user and 60 per client address per 15 minutes, under keys of their own so a flood never locks anyone out of logging in. Filling the store now takes thousands of users with a security key each. The limits are constants, not settings. Tests: `TestWebAuthnFloodKeepsOtherLogins` and `TestWebAuthnChallengesPerUser` fail on the previous code; `TestStartReauthenticationThrottled` and the `challengeStore` owner-limit tests cover the rest. A user whose password is known can still push their own in-flight login challenge out by starting more than 5 logins.
 
-### F8: image vulnerabilities and the scan policy
+#### F8: image vulnerabilities and the scan policy
 
 - **What:** Trivy 0.75.0 (HIGH and CRITICAL, fixed versions only) finds HIGH issues with fixed versions in every shipped image, almost all in layers PressFleet doesn't build. In the control plane image: Debian `libpcre2-8-0`, and the bundled `docker` CLI, Compose plugin, and `restic` binaries (Go stdlib, `x/crypto`, `x/net`, and others). In `site-php`: Debian `curl`/`libcurl` and `linux-libc-dev`. In `site-nginx`: Alpine `libexpat` and `libx11`. In the platform images: MariaDB (`openssl`, and `gosu` built with an old Go, one CRITICAL), Traefik, the socket proxy, Valkey, and VictoriaMetrics (Go stdlib and `x/net`, Debian `openssl` and `pcre2`).
 - **Exploit path:** depends on the component. Most are DoS issues in network-facing Go code: Traefik and the socket proxy's HTTP servers. The rest are in libraries the services link but don't expose (`libx11`, `linux-libc-dev`, and `gosu`, which only runs at container start).
 - **Fix (#186):** the pins in `templates/platform/images.yaml` and `control-plane/Dockerfile` are bumped to the newest stable releases (Traefik v3.7.16, VictoriaMetrics v1.154.1, Docker CLI 29.9.2, Go 1.27.3, the MariaDB 12.3.3 image rebuilt with Ubuntu's `openssl` fix, and current Debian and Node digests), and the control plane and site-nginx images pick up Debian and Alpine patches. Traefik, the control plane's `libpcre2`, MariaDB's `openssl`, site-php's `curl` and `linux-libc-dev` (a rebuild on current Debian clears them), and site-nginx's `libexpat` and `libx11` (the new `apk upgrade` step) no longer report. The scans now gate: a fixed CRITICAL finding fails pull request scans of the images we build, the pre-push scan of every release image, the release's scan of the platform images, and the weekly platform scan, with reviewed, expiring exceptions in `.trivyignore.yaml`. The policy is in [releasing.md](releasing.md#vulnerability-scanning).
 - **Left, and why:** the only CRITICAL is `gosu` in the MariaDB 12.3.3 image (CVE-2025-68121, built with Go 1.24.6, TLS resumption code that `gosu` never runs); it is an expiring exception because the series can't change and there is no newer 12.3 image. HIGH findings remain in restic 0.19.1 (the newest release; its Go 1.26.4 toolchain and `x/crypto`, `x/net`, `x/text`, `grpc`, `klauspost/compress` dependencies), the Compose plugin bundled in `docker:29.9.2-cli` (`x/net`), the socket proxy 1.13.1 (Go 1.26.6; the newest release), Valkey 9.1.2 (Debian `openssl` and `pcre2`; the image hasn't been rebuilt), VictoriaMetrics v1.154.1 (Go 1.27.2), and the `gosu` binary's Go standard library. Each needs an upstream release or rebuild, and HIGH findings don't gate builds.
 
-## What was checked, and how
+### What was checked, and how
 
 Code was read at the locations named. Live checks ran against the e2e harness (`PRESSFLEET_DOCKER_TESTS=1`) with a locally built control plane image. The sandbox's TLS proxy needed a CA added to a build-only copy of the Dockerfile, which isn't in the repository. The site images were pulled from GHCR (`site-php:php8.5-wp7.1.2`, `site-nginx:wp7.1.2`). The Docker host used cgroup v1, which the harness tolerates because it skips preflight.
 
-### Tenant isolation (§6)
+#### Tenant isolation (§6)
 
 | Control | How it was checked | Result |
 | --- | --- | --- |
@@ -92,11 +100,11 @@ Code was read at the locations named. Live checks ran against the e2e harness (`
 | MariaDB grants | `sitedb/mariadb/server.go` and `names.go` (`ALL PRIVILEGES` on `` `pf\_<id>`.* `` with `_` escaped, no global privileges or `GRANT OPTION`, `MAX_USER_CONNECTIONS`, passwords sent as hashes). Temporary users: `SELECT, SHOW VIEW` or `ALL` on the site's database only, `REVOKE` before `GRANT`, `KILL HARD USER` on drop. Live: **new** `TestTenantIsolation`, with the site's own credentials | Holds. `SHOW DATABASES` lists only its own; the other site's tables, `mysql.user`, and `CREATE DATABASE` are refused; `LOAD_FILE` returns `NULL` (no `FILE`). |
 | SFTP and database tunnels | `sftpgw/sftpgw.go` (sftp subsystem only; no shell, exec, or remote forwarding), `dbsession/forward.go` (only the configured database host and port; an active session on that site; the key and role rechecked per connection; the deadline at expiry) | Holds (code review; `TestSFTP` and the database session e2e tests cover it and weren't rerun). |
 
-### Docker socket (§6)
+#### Docker socket (§6)
 
 `templates/platform/compose.yaml.tmpl`: only the control plane mounts `/var/run/docker.sock` read-write. The socket proxy mounts it read-only and allows `HEAD /_ping` and `GET` on `version`, `containers/json`, `containers/<64 hex>/json`, and `events`, from the Traefik container only, on an internal network that only the two share. Traefik reaches Docker only through it. Live: existing `TestIngress` ("no docker socket in traefik", "socket proxy is read-only": writes, logs, exec, and archives are refused), run and passing. **Holds.** What the allowed inspect endpoint discloses was **F6**: task secrets, now kept out of container configuration.
 
-### Secrets, logging, auth, CSRF, and sessions
+#### Secrets, logging, auth, CSRF, and sessions
 
 - **`redact.Secret`** prints `[REDACTED]` for every `fmt` verb, `slog`, JSON, and text marshaling. Secrets are revealed at the point of use: SQL takes password hashes, Redis takes `#<sha256>` rules, WP-CLI takes argv kept out of errors (`compose.ExecWPCLI`), and tasks take files in a mounted directory, never environment variables (see F6).
 - **Logs:** every `slog` call in `auth`, `api`, `sites`, and `backup` was grepped for secret-bearing attributes, and none log one. The access log records the path, not the query (`httpserver.AccessLog`). Traefik's access log drops request headers.
@@ -109,7 +117,7 @@ Code was read at the locations named. Live checks ran against the e2e harness (`
 
 **Result:** holds. F6 (secrets in container configuration) is fixed.
 
-### Dashboard two-factor (§6.2)
+#### Dashboard two-factor (§6.2)
 
 | Area | Checked | Result |
 | --- | --- | --- |
@@ -124,12 +132,118 @@ Code was read at the locations named. Live checks ran against the e2e harness (`
 
 Live: existing `TestTwoFactor` e2e, run and passing.
 
-### CI scanning
+#### CI scanning
 
 - **govulncheck** (`make vulncheck`, pinned at v1.9.0, run with the mise Go toolchain) runs in the new `.github/workflows/security.yml` on every push and pull request, and weekly. It reports only reachable vulnerabilities, so any finding fails the job. Run locally before F1's fix: one reachable (GO-2026-6112), one in an imported package (GO-2026-6095), and one in a required module (GO-2026-5932, `x/crypto/openpgp`, which PressFleet doesn't import and which has no fix). After the fix: none reachable, GO-2026-5932 remains as module-only.
 - **Trivy** (`aquasec/trivy:0.75.0`, pinned by linux/amd64 digest, run as a container rather than through `aquasecurity/trivy-action`) is a composite action, `.github/actions/trivy-scan`. It scans for HIGH and CRITICAL findings with a fixed version and writes them to the job summary. The Images workflow scans the control plane image it builds for pull requests, and the site images of the smoke-tested matrix entries. `security.yml` scans the third-party images in `templates/platform/images.yaml` weekly and on demand. It reports every fixed HIGH and CRITICAL finding and fails on fixed CRITICAL ones that `.trivyignore.yaml` doesn't cover (see **F8** and [releasing.md](releasing.md#vulnerability-scanning)). The platform images are rescanned weekly; the site images are rebuilt, and so rescanned on release, weekly.
 
-## Other observations
+### Other observations
 
 - `TestTwoFactorStatusOverHTTP` (`control-plane/internal/api/twofactor_status_test.go`) fails about one run in three on an unchanged checkout. It creates two WebAuthn credentials within one millisecond and expects `ListForUser` (`ORDER BY id`, ULIDs) to return them oldest first. This is a test-stability problem, not a security one; `id.Monotonic` or ordering by `created_at, id` would settle it.
-- Not covered here: `TestM2Acceptance` (needs Pebble), the dashboard's Playwright suite, and Kubernetes templates (post-MVP, nothing to review).
+- Not covered here: `TestM2Acceptance` (needs Pebble), the dashboard's Playwright suite, and Kubernetes templates (post-MVP, nothing to review then; see [Kubernetes target](#kubernetes-target)).
+
+## Kubernetes target
+
+**Issue:** [#229](https://github.com/rchouinard/pressfleet/issues/229), Security review: Kubernetes target
+**Date:** 2026-11-08, against `main` at `6b26962` (after #228)
+**Scope:** design doc §4.8 and §6, [the Kubernetes driver plan](kubernetes-driver-plan.md), and the decisions in #212: the control plane's RBAC, tenant isolation (NetworkPolicies, Pod Security, ServiceAccount tokens), secrets (pod specs, environment, logs, task Secret volumes, who reads the platform's Secrets), and ingress (nginx's trusted proxies, Traefik's metrics, the dashboard and VictoriaMetrics). Also what is particular to this target: the chart's ValidatingAdmissionPolicies, the per-site clones of the data volume, `kubernetes.insecure_registries`, doctor's probe namespaces, session pods, the Helm hook Jobs, and the chart's defaults.
+
+The severities are the [pre-release review](#pre-release-review)'s. Two of its fixes are rechecked: F5 (Traefik's metrics on loopback) holds; F6's aim, keeping task secrets from Traefik, doesn't hold here, for a new reason (**K1**).
+
+### Kubernetes findings
+
+| ID | Severity | Finding | Status |
+| --- | --- | --- | --- |
+| [K1](#k1-traefik-reads-every-secret-in-the-cluster) | Medium | Traefik's ServiceAccount reads every Secret in the cluster, the master key included, and Traefik serves routes from every namespace; the control plane can reach that token | Tracked in [#322](https://github.com/rchouinard/pressfleet/issues/322). K2's fix closes the control plane's ways to the token other than exec |
+| [K2](#k2-the-control-plane-can-borrow-a-serviceaccount-or-the-node-through-pods) | Medium | Pods the control plane creates may name any ServiceAccount and mount its token, can be changed in place, and, in a platform namespace without Pod Security, can run privileged | Fixed in this review: admission policy `workloads.<ns>.pressfleet.io`; pods are never updated |
+| [K3](#k3-the-site-admin-password-reaches-the-api-servers-audit-log) | Medium | The generated WordPress admin password travels in the exec request's URL, which the API server's audit log records | Tracked in [#323](https://github.com/rchouinard/pressfleet/issues/323) |
+| [K4](#k4-site-egress-reaches-public-node-and-api-server-addresses) | Medium | Site egress leaves out private ranges only, so nodes and an API server on public addresses (k3s on a VPS) are reachable | Tracked in [#324](https://github.com/rchouinard/pressfleet/issues/324); documented meanwhile |
+| [K5](#k5-gaps-in-the-namespace-and-rolebinding-policy-and-services) | Low | The admission policy didn't check a RoleBinding's subjects or the Pod Security version, and Services could be NodePorts or carry `externalIPs` (CVE-2020-8554) | Fixed in this review |
+| [K6](#k6-installs-sharing-a-site-namespace-prefix) | Low | Two installs in one cluster with the same site namespace prefix (the default `pf-`) can manage each other's site namespaces | Tracked in [#326](https://github.com/rchouinard/pressfleet/issues/326); the chart README says to use one prefix per install |
+
+#### K1: Traefik reads every Secret in the cluster
+
+- **Location:** `charts/pressfleet/templates/traefik.yaml` (ClusterRole `pressfleet:<ns>:traefik`: `get`, `list`, and `watch` on Secrets, Services, ConfigMaps, nodes, EndpointSlices, and every Traefik CRD, bound cluster-wide) and `traefik-config.yaml` (the `kubernetesCRD` provider, with no `namespaces`). Traefik's pod mounts its token, as it must to read the API.
+- **What:** the CRD provider's informers list and watch Secrets in every namespace, so Traefik's memory and token hold every Secret in the cluster: the platform master key (which decrypts every secret in the state database), the PostgreSQL DSN, the MariaDB root and Valkey admin passwords, the DNS provider credentials, each site's `wp-config` Secret, each running backup task's Restic password and S3 credentials, and the Secrets of every other workload, `kube-system` included. Traefik also serves IngressRoutes, Middlewares, TLSStores, and TLSOptions from every namespace.
+- **Exploit path:** code execution in Traefik, the internet-facing service that §6 sets out to contain. On Compose, the socket proxy limits Traefik to container metadata, and F6 took task secrets out of that. Separately, the control plane may exec into Traefik's pod (Role `control-plane`: `pods/exec` in the platform namespace, for Traefik's metrics) and read the token. So a compromised control plane reaches Secrets outside PressFleet's namespaces, which decision 6 rules out. Before K2's fix it could also start a pod as Traefik's ServiceAccount or swap a Traefik pod's image. And anyone who can write Traefik CRDs in any namespace can claim a PressFleet host with a longer rule and have the `acme-http` resolver issue a certificate for it.
+- **Why not fixed here:** the CRD provider has no namespace selector, and its Secret informer fails without cluster-wide `list`. The fixes (a static namespace list re-rendered for every site, Traefik's HTTP provider fed by the control plane, or basic auth without Secrets) change routing (#217) and need a decision. #322 lists them, together with reading Traefik's metrics without exec.
+
+#### K2: the control plane can borrow a ServiceAccount or the node through pods
+
+- **Location:** `charts/pressfleet/templates/rbac.yaml` (pods: every verb, `update` and `patch` included, in the platform namespace and in the site ClusterRole). Pod Security covers the platform namespace only if the operator labels it: docs/installation.md asks for the label, and nothing checks it.
+- **Exploit path:** with the control plane's token, create a pod in the platform namespace with `serviceAccountName: traefik` (K1's rights) and a mounted token, or patch the image of Traefik's running pod to one's own. If the operator skipped the Pod Security label, create a privileged or `hostPath: /` pod there and own the node instead. Each turns a control plane compromise into a cluster compromise.
+- **Fix:** a new `ValidatingAdmissionPolicy`, `workloads.<ns>.pressfleet.io` (`templates/workload-policy.yaml`), matching the control plane's ServiceAccount. A pod it creates, in any namespace, must set `automountServiceAccountToken: false`, run as the namespace's `default` ServiceAccount, share no host namespace, mount no hostPath, and run no privileged container. Every pod the driver starts (site tasks, repository tasks, sessions, doctor's probes) already does. The policy checks the fields itself rather than the namespace's Pod Security label, so it also holds where Pod Security is configured cluster-wide. RBAC drops `update` and `patch` on pods from both roles (the driver only creates and deletes pods), and `configmaps` from the site ClusterRole, which the driver never used.
+- **Tests:** `TestRBACLeastPrivilege` (`charts/rbac_test.go`, new) fails on the previous chart. The kind e2e subtest "control plane's rights" (`checkK8sControlPlaneRights`, new) has the control plane's ServiceAccount dry-run a pod with a token and a pod as Traefik's ServiceAccount, each refused by the policy beside an admitted twin, and asks `kubectl auth can-i` about pod `patch` and `update`.
+- **Left:** exec into Traefik (K1).
+
+#### K3: the site admin password reaches the API server's audit log
+
+- **Location:** `control-plane/internal/sites/create.go` (`wp core install ... --admin_password=<password>`) and `provisioner/kubernetes/exec.go`, which sends the command as `command=` query parameters of the exec request.
+- **Exploit path:** the API server's audit log records the request URI at every level from `Metadata` up, and so do proxies in front of the API server; managed clusters forward it to the cloud's logging. Whoever reads those logs, often a wider group than cluster administrators, reads each site's generated administrator password, valid until someone changes it. The driver already redacts the query from its own errors (`redactQuery`), and no other `ExecWPCLI` caller passes a secret.
+- **Why not fixed here:** the fix gives WP-CLI the password on standard input (`--prompt=admin_password`). That needs standard input on `ExecWPCLI` in both drivers and in the conformance suite (#323).
+
+#### K4: site egress reaches public node and API server addresses
+
+- **Location:** `provisioner/kubernetes/network.go` (`nonInternet`: the internet rule leaves out the private, shared, and link-local ranges and the configured pod ranges) and `templates/k8s/network-policies.yaml.tmpl`.
+- **Exploit path:** on a single-node k3s on a VPS, the node's address is public. Code in a site reaches every port the node listens on: the kubelet, the k3s API server, NodePorts, and host services such as a PostgreSQL for the state database, which k3s's own firewall advice (`ufw allow from 10.42.0.0/16`) may let the pod range reach. A managed cluster's public API endpoint is reachable too (policy applies after the `kubernetes` Service's DNAT), though only anonymously, since site pods have no token. §6 and docs/configuration.md say sites reach neither. The kind tests can't see this: kind's nodes are on a private network.
+- **Status:** #324 has the driver leave out the nodes' and the API server's addresses. docs/configuration.md ("Network isolation") and design doc §4.8 now state the gap, and what to do meanwhile.
+
+#### K5: gaps in the namespace and RoleBinding policy, and Services
+
+- **Location:** `charts/pressfleet/templates/admission-policy.yaml`, and the site ClusterRole's `services` rights.
+- **What:** the policy checked a RoleBinding's `roleRef` but not its subjects, so the control plane could bind the site ClusterRole in a site namespace to `system:anonymous`, `system:authenticated`, or another ServiceAccount: access that outlives the rotation of its own credentials. It checked `pod-security.kubernetes.io/enforce: restricted` but not `enforce-version`, and an old version checks less. And the control plane could write NodePort or LoadBalancer Services in site namespaces, exposing a site's pod past Traefik (and past the NetworkPolicy that narrows nginx's trusted proxies to Traefik), or Services with `externalIPs`, which let their creator take over cluster traffic to any address (CVE-2020-8554; the `DenyServiceExternalIPs` admission plugin is off by default).
+- **Precondition:** a compromised control plane, so Low; each gap widens what it can do beyond its namespaces or past its own revocation.
+- **Fix:** a RoleBinding must have exactly one subject, the control plane's own ServiceAccount; a namespace's `enforce-version` must be absent or `latest` (the driver writes `latest`, doctor's probes none); the workload policy (K2) admits only ClusterIP Services without `externalIPs`. The driver's own objects already met all three.
+- **Tests:** the kind e2e subtest "control plane's rights" dry-runs, as the control plane, a RoleBinding to another subject, a namespace at Pod Security `v1.25`, a NodePort Service, and a Service with `externalIPs`. Each is refused, beside an admitted twin.
+
+#### K6: installs sharing a site namespace prefix
+
+- **Location:** `pressfleet.celOwned` and `pressfleet.sitePods` (`charts/pressfleet/templates/_helpers.tpl`), and `Startup` in `provisioner/kubernetes/task.go`: a namespace is PressFleet's if its name has the prefix and it has the label `app.kubernetes.io/managed-by: pressfleet`. The prefix defaults to `pf-` for every install, while the chart names cluster-scoped objects per install so that several installs can share a cluster.
+- **Exploit path:** with two installs on the default prefix, one compromised control plane may delete the other's site namespaces, or bind its own site ClusterRole there and read their Secrets and exec into their sites. Each install's sites pass the other's MariaDB and Valkey NetworkPolicies (they still need credentials). The data volume policy has the same shape: a clone's `claimRef` namespace is checked by prefix only.
+- **Status:** #326 labels site namespaces with their platform namespace and requires the label. Until then, the chart README tells operators to give each install its own prefix.
+
+### Kubernetes: what was checked, and how
+
+Code was read at the locations named, the chart was rendered with `helm template` for both test values files, and the kind e2e tests (`TestKubernetesAcceptance`, `make test-k8s-e2e`, Calico on kind) were read for what they prove. The new checks run in CI with the `e2e:k8s` label; no kind cluster was run for this review.
+
+#### RBAC
+
+| Control | How it was checked | Result |
+| --- | --- | --- |
+| Cluster-wide rights | `rbac.yaml`, rendered. Doctor's `needed` and `forbidden` lists (`provisioner/kubernetes/doctor.go`), which the e2e "doctor" subtest runs as SelfSubjectAccessReviews. **New:** `TestRBACLeastPrivilege` and the e2e `can-i` checks | Holds: namespaces, RoleBindings, `bind` on the site ClusterRole alone, PersistentVolumes, and read access to nodes, node metrics, and storage classes. No Secrets, `pods/exec`, `nodes/proxy`, ClusterRoleBindings, `escalate`, `impersonate`, or wildcards. It can read every RoleBinding and PersistentVolume in the cluster: configuration only, accepted. |
+| Namespaces and RoleBindings | `admission-policy.yaml`, against `templates/k8s/namespace.yaml.tmpl`, `rbac.yaml.tmpl`, and doctor's `runProbes` | Holds after **K5**. It may write only namespaces with the prefix and label that enforce `restricted`, and change or delete only those; RoleBindings only there, of the site ClusterRole, to itself. A site ID is a ULID the control plane generates, so no request chooses a namespace's name. The platform namespace can't be taken over: it lacks the label, and the control plane can't add the label to a namespace it doesn't own. Shared prefixes: **K6**. |
+| PersistentVolume clones | `data-volume-policy.yaml`, against `datavolume.go`. The existing e2e "data volume clones" subtest dry-runs a `hostPath: /` PersistentVolume as the control plane | Holds: no request can mount an arbitrary host or NFS path. The control plane creates only PersistentVolumes whose CSI or NFS source and mount options equal the labeled data volume's, `Retain`, with no storage class, bound to `<prefix>.../pressfleet-data`. Only the PersistentVolume bound to the platform's data claim can get the label, and nothing else about it may change (its reclaim policy included); the control plane can't create claims in the platform namespace. The API server allows one volume source per PersistentVolume, so a clone can't carry a `hostPath` beside its NFS source. Before the label exists, every create is refused (`parameterNotFoundAction: Deny`). Clones can be deleted, never changed, and deleting one leaves the storage. |
+| In site namespaces | The site ClusterRole, bound in each | Its pods are Pod Security `restricted`, and the namespace has no ServiceAccount but `default`, which has no rights. Pods are never changed in place, and Services stay ClusterIP (**K2**, **K5**). |
+| In the platform namespace | Role `control-plane` | It reads and writes the platform's Secrets and pods, and may exec into any platform pod. Exec into Traefik is **K1**; exec into MariaDB or Valkey gives nothing it doesn't hold already (it has their admin passwords). |
+
+#### Tenant isolation (§6)
+
+| Control | How it was checked | Result |
+| --- | --- | --- |
+| Between sites, and to the control plane and platform services | `network-policies.yaml.tmpl` and the chart's `networkpolicies.yaml`. Existing e2e `checkK8sIsolation`: from a site's php container, the other site's Service and pod (nginx and PHP-FPM ports), the control plane (HTTP and SFTP), VictoriaMetrics, the maintenance page, and the state database are closed; MariaDB and Valkey are open; and the other way round | Holds. The platform namespace denies ingress by default; MariaDB and Valkey admit site namespaces by label. Sites reach Traefik only through its public address, like any client. |
+| To the API server, nodes, and metadata address | `network.go` (`nonInternet`, `internetExceptions`). Existing e2e: `kubernetes.default.svc:443`, the `kubernetes` ClusterIP, and `169.254.169.254:80` are closed. **New:** the node's kubelet (`<InternalIP>:10250`) is closed | Holds for private addresses; public node and API server addresses are **K4**. The SMTP relay's port and DNS (53) are open to any address, as designed (a relay named by host name can't be a policy peer). NAT64 (`64:ff9b::/96`) on an IPv6-only cluster would map onto private IPv4 addresses and isn't left out: accepted until such clusters are supported. |
+| Session pods | `session.go` (`checkDenyAll`, `sessionPod`); existing unit test `TestSessionPodIsIsolated` | Holds. A session pod's labels (`pressfleet.io/component: session`) match no allow policy, so only `default-deny` selects it, and `RunSession` refuses a namespace whose `default-deny` doesn't deny everything. Its only stream is the attach through the API server. |
+| Pod Security | Site namespaces: `restricted` at `latest`, required by the admission policy. Doctor's probe namespaces: `restricted`. The platform namespace: the operator's label (docs/installation.md; `pressfleet init --target kubernetes` prints the command), and `TestPodsMeetRestricted` for every chart pod | Holds. The control plane's own pods no longer depend on the platform namespace's label (**K2**). |
+| ServiceAccount tokens | The site Deployment (`deployment.yaml.tmpl`), task and session pods (`taskPod`), probe pods, and the chart's pods: `automountServiceAccountToken: false` everywhere but the control plane, its `state-recover` Job (which starts repository tasks), and Traefik | Holds, and is now enforced for every pod the control plane creates (**K2**). `upgrade-preflight` has no token. |
+| Doctor's probe namespaces | `runProbes`: `<ns>-doctor-<random>`, labeled, `restricted`, bound like a site namespace, and deleted afterwards, also when the caller's context ends | Holds. Probe pods run fixed scripts as UID 65534 without a token. A namespace whose deletion fails is logged and stays behind, harmless. |
+
+#### Secrets
+
+- **Pod specs and environment:** site pods get `wp-config.php` from a Secret volume (mode 0440 to the site's group, php only). Task secrets are an immutable Secret mounted at `/run/pressfleet/secrets`; task environment variables hold only paths (`RESTIC_PASSWORD_FILE`, `AWS_SHARED_CREDENTIALS_FILE`), `HOME`, and `GOMEMLIMIT`. MariaDB and Valkey read their passwords from files. The one secret in an environment variable is the control plane's `PRESSFLEET_DATABASE_POSTGRES_DSN`, from a `secretKeyRef`, so not in the pod spec. Whoever can exec into the control plane sees it (and can read the Secret anyway), and the MariaDB client programs the control plane runs for dumps and imports inherit it; they are trusted. Accepted; a file setting for the DSN would remove it.
+- **Task secret volumes:** the files are mode 0444 and owned by root, because task pods can't use `fsGroup` (it would change the group of the whole shared data volume), and Kubernetes hands Secret files to the pod's user only through `fsGroup`. Any user in the pod could read them, but the pod runs one container as one user, the task's, and the only tasks with secrets run `restic`, never site code. The pod and its Secret are deleted when the task ends, however it ends (`removeTask`), and `Startup` deletes leftovers in the platform and site namespaces. Holds; design doc §4.8's wording ("readable by the task's user alone") is corrected to match.
+- **Logs:** the driver logs a task's program name only, never its arguments or environment, and keeps WP-CLI's arguments out of its errors (`redactQuery`). The API server's audit log is the exception: **K3**. Traefik's access log drops request headers. Site access logs keep query strings, as on Compose (F3; Operator-only).
+- **Who reads the platform namespace's Secrets:** the control plane, through its Role. It mounts the master key, platform credentials, config, and DSN, copies image pull Secrets into site namespaces, and lists its task Secrets to clean them up, which also shows it the DNS provider credentials it doesn't use: accepted. Then cluster administrators, and Traefik, which reads every Secret in the cluster (**K1**). Image pull Secrets copied into site namespaces are read only by the control plane and the kubelet.
+
+#### Ingress
+
+- **nginx's trusted proxies:** site nginx trusts `X-Forwarded-*` from the configured pod ranges (`NGINX_TRUSTED_PROXIES`), and the site's `site-ingress` policy admits only Traefik's pods. Traefik sets the headers itself rather than passing on a client's. The control plane trusts private ranges (`http.trusted_proxies`' default), and its policy admits only Traefik. Holds while the CNI enforces NetworkPolicy, which doctor proves with probe pods. NodePort and LoadBalancer Services that would bypass Traefik are now refused (**K5**).
+- **Traefik's metrics:** the `traefik` entry point listens on `127.0.0.1:8082` (F5), and the control plane reads it through exec. **New** e2e check: a site can't reach Traefik's pod address on 8082. Holds; the exec path is part of **K1**.
+- **Dashboard and VictoriaMetrics:** the dashboard is reachable only through Traefik, on the dashboard domain (`pf-dashboard`, HTTPS, ACME HTTP-01). VictoriaMetrics admits only the control plane, and the chart has no route to it (Compose's `metrics-access` route has no Kubernetes counterpart yet). The maintenance page admits only Traefik. Holds.
+- **Routes from other namespaces:** Traefik serves IngressRoutes from every namespace (**K1**). `allowCrossNamespace: false` and `allowExternalNameServices: false` keep each route on its own namespace's Services.
+
+#### Other parts of the target
+
+- **`kubernetes.insecure_registries`:** only image pinning uses plain HTTP, and only for the listed hosts and loopback (`registryURL`); nodes pull by their own registry configuration, and by digest. A registry's token `realm` may name any HTTP(S) URL, which the control plane then fetches: a blind GET at the direction of a registry the operator configured, accepted. docs/configuration.md warns against using the setting across untrusted networks. Holds.
+- **Helm hook Jobs:** `upgrade-preflight` runs the new control plane image with no token and no Secrets, on values from `lookup`. `state-recover` runs the control plane's pod spec while the control plane is scaled to zero. Holds.
+- **The chart's defaults:** every pod meets `restricted`; Traefik's Service is a LoadBalancer with `externalTrafficPolicy: Local` (clients' own addresses for throttling and the audit log); MariaDB, Valkey, and VictoriaMetrics have no Service outside the cluster; the data volume is kept on uninstall; the chart never creates Secrets. The platform namespace's Pod Security label is the operator's step (above). `siteNamespacePrefix` defaults to `pf-` for every install (**K6**).
+- **Each site namespace's claim on the data volume** (`pressfleet-data`) covers the whole data directory, not just that site's part, so any pod in the namespace could mount it whole. Only the control plane creates pods there, and it mounts subpaths (`dataSubPath` resolves symbolic links and stays below the transfer or repository root, and the kubelet resolves subpaths safely); the site's own pod has no token. Accepted: a volume per site would need storage the ReadWriteMany classes don't offer.

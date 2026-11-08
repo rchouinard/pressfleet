@@ -10,10 +10,12 @@ namespaces PressFleet owns (design doc §4.8, §6):
   and labeled pressfleet.io/doctor-probe=true (#225).
 
 A namespace it creates or changes must be one of them and enforce Pod
-Security "restricted"; one it changes or deletes must have been one of
-them. A RoleBinding it writes must be in one of them and bind the site
-ClusterRole. Without this, the control plane could bind the site
-ClusterRole in any namespace, or delete one.
+Security "restricted" at the latest version (an old version checks less);
+one it changes or deletes must have been one of them. A RoleBinding it
+writes must be in one of them and bind the site ClusterRole to the control
+plane's own ServiceAccount, never to another subject, which would outlast
+the control plane's own credentials. Without this, the control plane could
+bind the site ClusterRole in any namespace, or delete one.
 */ -}}
 {{- $site := include "pressfleet.siteClusterRole" . }}
 {{- $sitePrefix := .Values.kubernetes.siteNamespacePrefix }}
@@ -51,9 +53,11 @@ spec:
         !variables.isNamespace || request.operation == 'DELETE' ||
         ({{ include "pressfleet.celOwned" (merge (dict "obj" "object") $owned) | nindent 8 | trim }} &&
         'pod-security.kubernetes.io/enforce' in object.metadata.labels &&
-        object.metadata.labels['pod-security.kubernetes.io/enforce'] == 'restricted')
+        object.metadata.labels['pod-security.kubernetes.io/enforce'] == 'restricted' &&
+        (!('pod-security.kubernetes.io/enforce-version' in object.metadata.labels) ||
+        object.metadata.labels['pod-security.kubernetes.io/enforce-version'] == 'latest'))
       messageExpression: >-
-        'the PressFleet control plane may only write site namespaces ({{ $sitePrefix }}..., labeled app.kubernetes.io/managed-by=pressfleet) and doctor probe namespaces ({{ $probePrefix }}..., labeled pressfleet.io/doctor-probe=true) that enforce Pod Security restricted, not ' + request.name
+        'the PressFleet control plane may only write site namespaces ({{ $sitePrefix }}..., labeled app.kubernetes.io/managed-by=pressfleet) and doctor probe namespaces ({{ $probePrefix }}..., labeled pressfleet.io/doctor-probe=true) that enforce Pod Security restricted at the latest version, not ' + request.name
     - expression: >-
         !variables.isNamespace || request.operation == 'CREATE' ||
         {{ include "pressfleet.celOwned" (merge (dict "obj" "oldObject") $owned) | nindent 8 | trim }}
@@ -67,8 +71,12 @@ spec:
         'the PressFleet control plane may only write RoleBindings in its own namespaces, not in ' + request.namespace
     - expression: >-
         variables.isNamespace || request.operation == 'DELETE' ||
-        (object.roleRef.kind == 'ClusterRole' && object.roleRef.name == {{ printf "'%s'" $site }})
-      message: {{ printf "the PressFleet control plane may only bind the ClusterRole %s" $site | quote }}
+        (object.roleRef.kind == 'ClusterRole' && object.roleRef.name == {{ printf "'%s'" $site }} &&
+        has(object.subjects) && size(object.subjects) == 1 &&
+        object.subjects[0].kind == 'ServiceAccount' &&
+        object.subjects[0].name == 'control-plane' &&
+        has(object.subjects[0].namespace) && object.subjects[0].namespace == {{ printf "'%s'" .Release.Namespace }})
+      message: {{ printf "the PressFleet control plane may only bind the ClusterRole %s, to its own ServiceAccount" $site | quote }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
