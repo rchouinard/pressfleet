@@ -410,16 +410,18 @@ func checkK8sControlPlaneRights(t *testing.T, p *e2e.Platform, site client.Site)
 	}{
 		{[]string{"get", "secrets", "-n", "kube-system"}, "no"},
 		{[]string{"list", "secrets", "--all-namespaces"}, "no"},
-		{[]string{"create", "pods/exec", "-n", "kube-system"}, "no"},
-		{[]string{"get", "nodes/proxy"}, "no"},
+		{[]string{"create", "pods", "--subresource=exec", "-n", "kube-system"}, "no"},
+		{[]string{"get", "nodes", "--subresource=proxy"}, "no"},
 		{[]string{"patch", "pods", "-n", k.Namespace}, "no"},
 		{[]string{"update", "pods", "-n", siteNS}, "no"},
-		{[]string{"create", "serviceaccounts/token", "-n", k.Namespace}, "no"},
+		{[]string{"create", "serviceaccounts", "--subresource=token", "-n", k.Namespace}, "no"},
 		{[]string{"create", "clusterrolebindings"}, "no"},
-		{[]string{"create", "pods/exec", "-n", siteNS}, "yes"},
+		{[]string{"create", "pods", "--subresource=exec", "-n", siteNS}, "yes"},
 		{[]string{"get", "secrets", "-n", siteNS}, "yes"},
 	} {
-		// can-i exits 1 for no; its answer is on standard output either way.
+		// A subresource goes in --subresource: can-i reads "pods/exec" as the
+		// pod named exec. can-i exits 1 for no; its answer is on standard
+		// output either way.
 		out, _ := k.Kubectl(ctx, nil, append([]string{"auth", "can-i", as}, c.args...)...)
 		if got := strings.TrimSpace(string(out)); got != c.want {
 			t.Errorf("can the control plane %s? %q, want %q", strings.Join(c.args, " "), got, c.want)
