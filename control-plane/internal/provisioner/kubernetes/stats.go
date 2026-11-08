@@ -51,7 +51,8 @@ type cpuState struct {
 // container's new window is recognized by its rate changing and counted
 // as the rate times the pod's window; when samples are further apart
 // than that (windows the caller didn't sample), the rate is held across
-// the whole gap. The total is therefore an estimate: a burst counts at
+// the whole gap; an unchanged rate is held over time not yet counted. The
+// total is therefore an estimate: a burst counts at
 // its window's average rate times a window that may be another
 // container's (both about the scrape interval), and a gap is filled with
 // the rate of its last window. The total starts again when the container
@@ -191,8 +192,11 @@ func (p *Provisioner) containerStats(pod *corev1.Pod, name string, metrics []pod
 		st.counted = st.counted.Add(span)
 	default:
 		// The same window again, or a new one at the same rate (an idle
-		// container's zero): nothing to add, but the time is accounted for.
+		// container's zero, or one pinned at its limit): hold the rate
+		// over time not yet counted. A window seen again was counted a
+		// full window ahead, so only time past that window is added.
 		if at.After(st.counted) {
+			st.total += time.Duration(cores * float64(at.Sub(st.counted)))
 			st.counted = at
 		}
 	}

@@ -144,8 +144,16 @@ func TestStatsCountsEachWindowOnce(t *testing.T) {
 		}},
 		{"the pod timestamp moving without a new window", []scrape{
 			{0, 15 * time.Second, "100m", 1500 * time.Millisecond},
-			{10 * time.Second, 15 * time.Second, "100m", 1500 * time.Millisecond},
-			{25 * time.Second, 15 * time.Second, "200m", 4500 * time.Millisecond},
+			{4 * time.Second, 15 * time.Second, "200m", 4500 * time.Millisecond},
+			// The same window, already counted up to 15s.
+			{10 * time.Second, 15 * time.Second, "200m", 4500 * time.Millisecond},
+			{25 * time.Second, 15 * time.Second, "300m", 9 * time.Second},
+		}},
+		{"a steady rate", []scrape{
+			{0, 15 * time.Second, "750m", 11250 * time.Millisecond},
+			{15 * time.Second, 15 * time.Second, "750m", 22500 * time.Millisecond},
+			{30 * time.Second, 15 * time.Second, "750m", 33750 * time.Millisecond},
+			{time.Minute, 15 * time.Second, "750m", 56250 * time.Millisecond},
 		}},
 		{"a long idle stretch before a burst", []scrape{
 			{0, 15 * time.Second, "0", 0},
