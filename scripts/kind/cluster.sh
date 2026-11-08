@@ -19,7 +19,8 @@
 #
 # The NFS server is the kernel's, so the host needs the nfsd module, and
 # nodes mount with the host's nfs module; up loads both with modprobe when
-# they aren't loaded (which may ask for sudo).
+# they aren't loaded: directly as root, else with passwordless sudo, else
+# from a privileged container.
 #
 # Environment (defaults in brackets):
 #   KIND_CLUSTER        cluster name [pfk8s-e2e]
@@ -78,8 +79,14 @@ load_modules() {
 	log "loading kernel modules: ${missing[*]}"
 	if [[ $(id -u) -eq 0 ]]; then
 		modprobe -a "${missing[@]}"
-	else
+	elif sudo -n true 2>/dev/null; then
 		sudo modprobe -a "${missing[@]}"
+	else
+		# No root and no passwordless sudo (a self-hosted runner): Docker
+		# access is root-equivalent anyway, so load them from a privileged
+		# container. The node image has modprobe, and kind pulls it next.
+		docker run --rm --privileged --entrypoint modprobe \
+			-v /lib/modules:/lib/modules:ro "$node_image" -a "${missing[@]}"
 	fi
 }
 
