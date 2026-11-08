@@ -114,7 +114,9 @@ func (p *Provisioner) applySite(ctx context.Context, siteID, dir string) error {
 	if err := p.Apply(ctx, first); err != nil {
 		return err
 	}
-	if err := p.syncPullSecrets(ctx, ns); err != nil {
+	// These are the first calls in a namespace whose RoleBinding may be
+	// seconds old.
+	if err := p.whileForbidden(ctx, func() error { return p.syncPullSecrets(ctx, ns) }); err != nil {
 		return err
 	}
 	if err := p.Apply(ctx, rest); err != nil {
