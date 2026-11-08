@@ -768,6 +768,24 @@ func (e PHPVersionInfoStatus) Valid() bool {
 	}
 }
 
+// Defines values for PlatformOrchestrator.
+const (
+	Compose    PlatformOrchestrator = "compose"
+	Kubernetes PlatformOrchestrator = "kubernetes"
+)
+
+// Valid indicates whether the value is a known member of the PlatformOrchestrator enum.
+func (e PlatformOrchestrator) Valid() bool {
+	switch e {
+	case Compose:
+		return true
+	case Kubernetes:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for PlatformCapacityLevel.
 const (
 	PlatformCapacityLevelCaution  PlatformCapacityLevel = "caution"
@@ -3084,6 +3102,11 @@ type Platform struct {
 	// Build The build of the running control plane.
 	Build PlatformBuild `json:"build"`
 
+	// Orchestrator What runs the sites (the configured `driver`). On `kubernetes`
+	// the host metrics are per node, from the cluster's metrics API,
+	// and there are no host disk metrics.
+	Orchestrator PlatformOrchestrator `json:"orchestrator"`
+
 	// Release The newest stable PressFleet release the control plane's release
 	// check found (`updates.release_check`). Absent when the check is off
 	// or hasn't succeeded yet, as on a host that can't reach GitHub.
@@ -3092,6 +3115,11 @@ type Platform struct {
 	// Sftp Where developers reach the SFTP gateway (design doc §5.8).
 	Sftp PlatformSftp `json:"sftp"`
 }
+
+// PlatformOrchestrator What runs the sites (the configured `driver`). On `kubernetes`
+// the host metrics are per node, from the cluster's metrics API,
+// and there are no host disk metrics.
+type PlatformOrchestrator string
 
 // PlatformBuild The build of the running control plane.
 type PlatformBuild struct {

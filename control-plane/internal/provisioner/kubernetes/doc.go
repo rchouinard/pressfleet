@@ -25,6 +25,7 @@
 // output and deletes them afterwards; [Provisioner.Startup] deletes what a
 // restart left.
 //
-// Routing, exec, sessions, logs, and stats come in later changes (#217,
-// #218, #220, #221); until then those methods return [ErrNotImplemented].
+// SFTP sessions ([Provisioner.RunSession]) are task pods of the site's that
+// keep the client's standard input, with no network: only the namespace's
+// default-deny NetworkPolicy selects them.
 package kubernetes

@@ -88,7 +88,7 @@ Everything else is done in the dashboard or the API.
 
 ### What is collected
 
-The control plane collects metrics every 30 seconds (`metrics.interval_seconds`) into VictoriaMetrics, kept `metrics.retention_days` (90). Per site: whether it is up, response time, request rate and status codes, page and object cache hit ratio, PHP workers, CPU and memory, restarts, disk use, database size, certificate expiry, and backup age and size. Platform-wide: host CPU, memory, and disk, MariaDB and Redis, the job queue, and each client group's repository size. See the [catalog](configuration.md#metrics-api).
+The control plane collects metrics every 30 seconds (`metrics.interval_seconds`) into VictoriaMetrics, kept `metrics.retention_days` (90). Per site: whether it is up, response time, request rate and status codes, page and object cache hit ratio, PHP workers, CPU and memory, restarts, disk use, database size, certificate expiry, and backup age and size. Platform-wide: host CPU, memory, and disk (on Kubernetes, CPU and memory per node, and no disk: use your cluster's monitoring), MariaDB and Redis, the job queue, and each client group's repository size. See the [catalog](configuration.md#metrics-api).
 
 Where to look:
 
@@ -100,7 +100,7 @@ The uptime check runs from the PressFleet host itself, so **it cannot tell you t
 
 ### Alert rules
 
-Eleven rules are created at first start and are on by default: site down, elevated 5xx rate, certificate expiring and certificate renewal failing, backup failed and backup stale, disk nearly full, container restart loop, PHP-FPM worker saturation, Redis eviction spike, and plugin or theme updates pending. You can edit their thresholds, durations, and text, or disable them, but not delete them. The table is in [Alerts](configuration.md#alerts). The site rules skip [staging sites](staging.md) unless a rule (a built-in one can be edited too) sets **Include staging sites**. Operators and Admins add rules on the **Alerts** > **Rules** page (`/api/v1/alert-rules`): a PromQL expression, a threshold or an "is true" condition, a duration, and a severity.
+Eleven rules are created at first start and are on by default: site down, elevated 5xx rate, certificate expiring and certificate renewal failing, backup failed and backup stale, disk nearly full (not on Kubernetes, which reports no host disk metrics), container restart loop, PHP-FPM worker saturation, Redis eviction spike, and plugin or theme updates pending. You can edit their thresholds, durations, and text, or disable them, but not delete them. The table is in [Alerts](configuration.md#alerts). The site rules skip [staging sites](staging.md) unless a rule (a built-in one can be edited too) sets **Include staging sites**. Operators and Admins add rules on the **Alerts** > **Rules** page (`/api/v1/alert-rules`): a PromQL expression, a threshold or an "is true" condition, a duration, and a severity.
 
 An alert is `pending` until its duration has passed, then `firing`, then `resolved`. Resolved alerts are kept 90 days. If VictoriaMetrics is down, alerts stay as they are: nothing fires or resolves.
 
@@ -131,6 +131,18 @@ To query the metrics from your own Grafana:
 
 Only the read paths of the query API are served (`/api/v1/query`, `query_range`, `series`, `labels`, `label/<name>/values`, `metadata`, `status/buildinfo`, and `/federate`); everything else answers `404`. The metric names are the ones in the [catalog](configuration.md#metrics-api). To replace the password, run `pressfleet metrics-access rotate` on the host (it prints the new one once, and the old one stops within seconds), then update Grafana. To turn it off, remove the setting and run `pressfleet init --force`. Details: [Connecting Grafana](configuration.md#connecting-grafana).
 
+## Upgrades, rollback, and state backups
+
+`pressfleet upgrade` rolls a failed upgrade back by itself, and `pressfleet upgrade --rollback` undoes one you regret ([Upgrading](upgrading.md#automatic-rollback)). A rollback is not a backup, and does not replace one:
+
+- It returns the platform to the release before the **last** upgrade, once. Older releases and older states come from a state backup ([Disaster recovery](disaster-recovery.md#state-backups)).
+- With SQLite, it restores the copy the control plane takes right before migrating, which is separate from the hourly state backups (it is in `<data_dir>/state/backups/`). Anything recorded after the upgrade started goes with it, and `--rollback` refuses first if that would leave sites orphaned or broken.
+- With PostgreSQL, it works only if the upgrade didn't migrate the database. Otherwise your own backup from before the upgrade is the way back.
+- It doesn't touch client group backups: snapshots stay in the repositories.
+- While an upgrade is unconfirmed, the core, image, and template rollouts are held ([Held rollouts](upgrading.md#held-rollouts)); `pressfleet doctor` warns.
+
+Kubernetes installs upgrade and roll back with Helm ([Kubernetes](upgrading.md#kubernetes)).
+
 ## Routine tasks
 
 | When | Do |
@@ -138,6 +150,6 @@ Only the read paths of the query API are served (`/api/v1/query`, `query_range`,
 | Daily | Glance at **Alerts** and **Jobs** for failures. |
 | Weekly | Check that the newest backup of a few sites is recent. Confirm the off-host copy of local backups is current. |
 | Monthly | Run a restore into a scratch site. Look at disk use (`df`, **Metrics** > host disk). Review the user list and API tokens. Check [the release check](upgrading.md#release-check) for a new version. |
-| Before a big change | `pressfleet state backup` in the container, and a manual backup of the affected sites. |
+| Before a big change | `pressfleet state backup` in the container, and a manual backup of the affected sites. Before an upgrade, also read [Before you upgrade](upgrading.md#before-you-upgrade); with PostgreSQL, take your own database backup. |
 | Once, before real client sites | The [disaster recovery drill](disaster-recovery.md#rehearsing). |
 | When someone leaves | Disable or delete their user (this ends their sessions and revokes their tokens), remove their SSH keys, rotate any secret they could read ([Security](security.md#rotating-secrets)). |

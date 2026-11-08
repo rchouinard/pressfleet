@@ -22,10 +22,6 @@ import (
 	"github.com/rchouinard/pressfleet/control-plane/internal/wpconfig"
 )
 
-// ErrNotImplemented is returned by the driver's operations that later
-// changes implement (#217 to #221).
-var ErrNotImplemented = errors.New("not implemented by the Kubernetes driver yet")
-
 // ErrInvalidSite is returned for a site the driver can't render: an ID
 // that can't name a namespace, or a configuration it can't use.
 var ErrInvalidSite = errors.New("kubernetes: invalid site")
@@ -341,11 +337,4 @@ func (p *Provisioner) resolve(ctx context.Context, cfg *provisioner.SiteConfig) 
 		return siteInputs{}, fmt.Errorf("%w: %w", ErrInvalidSite, err)
 	}
 	return in, nil
-}
-
-func notImplemented(op string) error { return fmt.Errorf("%s: %w", op, ErrNotImplemented) }
-
-// RunSession implements provisioner.SessionRunner (#220).
-func (p *Provisioner) RunSession(context.Context, string, provisioner.Session) error {
-	return notImplemented("run a session")
 }

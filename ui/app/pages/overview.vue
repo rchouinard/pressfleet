@@ -5,7 +5,7 @@
 // doesn't blank the page.
 import { formatValue } from '../utils/metrics'
 import {
-  assessCapacity, fetchReadiness, overviewMetricIds, rolloutHold, summaryValue, worstDisk, type RolloutState,
+  assessCapacity, fetchReadiness, hostFigures, orchestratorName, overviewMetricIds, rolloutHold, summaryValue, type RolloutState,
 } from '../utils/overview'
 import { toApiError } from '../utils/api-error'
 
@@ -14,6 +14,8 @@ useHead({ title: 'Platform overview' })
 useBreadcrumbs([{ label: 'Platform overview' }])
 
 const api = useApi()
+const { data: platform } = usePlatform()
+const orchestrator = computed(() => platform.value?.orchestrator)
 
 const { data: metrics, status: metricsStatus, refresh: reloadMetrics } = useAsyncData('overview-metrics', async () => {
   try {
@@ -74,20 +76,21 @@ const { data: rollouts, refresh: reloadRollouts } = useAsyncData('overview-rollo
 })
 
 const assessment = computed(() =>
-  capacity.value?.capacity ? assessCapacity(capacity.value.capacity) : undefined,
+  capacity.value?.capacity ? assessCapacity(capacity.value.capacity, orchestrator.value) : undefined,
 )
 
 const figures = computed(() => {
   const m = metrics.value?.metrics ?? []
-  const used = summaryValue(m, 'host_memory', { type: 'used' })
-  const total = summaryValue(m, 'host_memory', { type: 'total' })
-  const disk = worstDisk(m)
+  const host = hostFigures(m, orchestrator.value)
   const conns = summaryValue(m, 'mariadb_connections', { state: 'connected' })
   const maxConns = summaryValue(m, 'mariadb_connections', { state: 'max' })
   return [
-    { label: 'Host CPU', value: formatValue(summaryValue(m, 'host_cpu'), 'ratio') },
-    { label: 'Host memory', value: `${formatValue(used, 'bytes')} of ${formatValue(total, 'bytes')}` },
-    { label: disk ? `Disk (${disk.mountpoint})` : 'Disk', value: formatValue(disk?.ratio, 'ratio') },
+    { label: host.cpu.label, value: formatValue(host.cpu.ratio, 'ratio') },
+    { label: host.memory.label, value: `${formatValue(host.memory.used, 'bytes')} of ${formatValue(host.memory.total, 'bytes')}` },
+    // A cluster's disks are for its own monitoring to watch.
+    host.disk
+      ? { label: host.disk.label, value: formatValue(host.disk.ratio, 'ratio') }
+      : { label: 'Disk', value: 'Not collected on Kubernetes' },
     { label: 'MariaDB connections', value: `${formatValue(conns, 'count')} of ${formatValue(maxConns, 'count')}` },
     { label: 'Redis memory', value: formatValue(summaryValue(m, 'redis_memory'), 'bytes') },
     { label: 'Jobs running', value: formatValue(summaryValue(m, 'job_queue_depth', { state: 'running' }), 'count') },
@@ -111,7 +114,9 @@ const busy = computed(() => [metricsStatus.value, capacityStatus.value, readySta
     <header class="flex flex-wrap items-start justify-between gap-3">
       <div class="space-y-1">
         <h1 class="text-2xl font-semibold tracking-tight">Platform overview</h1>
-        <p class="text-sm text-muted">Host capacity, memory reservations and platform health.</p>
+        <p class="text-sm text-muted">
+          <template v-if="platform">Running on {{ orchestratorName(orchestrator) }}. </template>Host capacity, memory reservations and platform health.
+        </p>
       </div>
       <UButton color="neutral" variant="outline" size="sm" icon="i-lucide-refresh-cw" :loading="busy" @click="refreshAll">
         Refresh

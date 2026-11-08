@@ -196,3 +196,20 @@ func TestTraefikCollectorReader(t *testing.T) {
 		t.Errorf("no source: got %v", err)
 	}
 }
+
+// A driver whose Traefik names services differently maps them through
+// ServiceName.
+func TestTraefikCollectorServiceName(t *testing.T) {
+	body := `traefik_service_requests_total{code="200",method="GET",protocol="http",service="pf-site1-nginx-80@kubernetescrd"} 4
+traefik_service_requests_total{code="200",method="GET",protocol="http",service="pf-site1@docker"} 99
+`
+	srv := serve(t, http.StatusOK, body)
+	c := metrics.TraefikCollector{URL: srv.URL, ServiceName: func(id string) string { return "pf-" + id + "-nginx-80@kubernetescrd" }}
+	got, err := c.Collect(context.Background(), traefikTargets())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := find(got, "pressfleet_site_http_requests_total", "site1", "status_class", "2xx"); !ok || v != 4 {
+		t.Errorf("site1 2xx = %v (found %v), want 4 from the Kubernetes service only", v, ok)
+	}
+}

@@ -67,10 +67,16 @@ func TestNewKubernetes(t *testing.T) {
 	if rt.Driver == nil || rt.Templates == nil || rt.Snapshots == nil || rt.HostProbe == nil {
 		t.Errorf("the Kubernetes driver left a capability out: %+v", rt)
 	}
-	// Off until the driver has them (#218), which turns their features off
-	// rather than failing them.
-	if rt.FPMStatus != nil || rt.TraefikMetrics != nil {
-		t.Errorf("the Kubernetes driver claims capabilities it lacks: %+v", rt)
+	// The metrics collectors' sources: exec reads (#218), the nodes
+	// (#226), and Traefik's Service for the uptime checks.
+	if rt.FPMStatus == nil || rt.TraefikMetrics == nil || rt.NodeStats == nil {
+		t.Errorf("the Kubernetes driver lacks a metrics capability: %+v", rt)
+	}
+	if want := "traefik." + cfg.Kubernetes.PlatformNamespace + ".svc:443"; rt.EdgeAddress != want {
+		t.Errorf("EdgeAddress = %q, want %q", rt.EdgeAddress, want)
+	}
+	if _, ok := rt.TraefikMetrics.(provisioner.TraefikServiceNamer); !ok {
+		t.Error("the Kubernetes driver doesn't name its Traefik services")
 	}
 	if fp := rt.Templates.TemplateFingerprint(); fp == "" {
 		t.Error("empty template fingerprint")

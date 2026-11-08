@@ -249,7 +249,7 @@ func TestPlatformClientGroupFilter(t *testing.T) {
 	queries := q.Queries()
 	slices.Sort(queries)
 	want := []string{
-		`1 - sum(rate(pressfleet_host_cpu_seconds_total{mode="idle"}[120s])) / sum(rate(pressfleet_host_cpu_seconds_total[120s]))`,
+		`1 - sum by (node) (rate(pressfleet_host_cpu_seconds_total{mode="idle"}[120s])) / sum by (node) (rate(pressfleet_host_cpu_seconds_total[120s]))`,
 		`sum by (client_group_id) (pressfleet_restic_repository_size_bytes{client_group_id="G-1"})`,
 	}
 	if !slices.Equal(queries, want) {

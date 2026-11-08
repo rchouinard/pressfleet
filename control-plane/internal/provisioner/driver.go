@@ -351,6 +351,8 @@ type Session struct {
 // streams; on Kubernetes it maps to a short-lived Pod (stdin: true,
 // stdinOnce: true, runAsUser/runAsGroup the site's UID, the site's PVC,
 // a deny-all NetworkPolicy) that the driver attaches to through the API.
+// A pod spec has no process limit of its own; there, the kubelet's
+// podPidsLimit is the worker's.
 type SessionRunner interface {
 	// RunSession starts a worker for the site that runs s.Command with its
 	// standard streams connected to s's, and waits until it exits: when the

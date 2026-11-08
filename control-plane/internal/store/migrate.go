@@ -52,8 +52,18 @@ func Migrations(d Dialect) ([]Migration, error) {
 			return nil, fmt.Errorf("%s migrations: expected version %04d, found %04d", d, i+1, m.Version)
 		}
 	}
+	if testMigration != "" {
+		ms = append(ms, Migration{Version: len(ms) + 1, Name: "e2e_noop", sql: testMigration})
+	}
 	return ms, nil
 }
+
+// testMigration is the SQL of one more migration after the embedded ones,
+// set only in binaries built with the e2emigration tag (migrate_e2e.go):
+// the upgrade rollback's end-to-end tests need an upgrade that migrates the
+// state database even when the tree has no migration since the release
+// they roll back to (#251). Ordinary builds never have it.
+var testMigration string
 
 // LatestVersion is the newest schema version this binary knows.
 func LatestVersion(d Dialect) (int, error) {

@@ -206,6 +206,17 @@ type taskSpec struct {
 	repositoryDir string
 	affinity      *corev1.Affinity
 	policy        *networkingv1.NetworkPolicy
+	// session marks a session's pod (session.go), which shares the waits
+	// and the cleanup of tasks; messages name it.
+	session bool
+}
+
+// noun is what messages call the pod's workload.
+func (s taskSpec) noun() string {
+	if s.session {
+		return "session"
+	}
+	return "task"
 }
 
 // taskTarget says who a task is for, as errors and log lines name it.
@@ -592,7 +603,7 @@ func (p *Provisioner) waitTaskStart(ctx context.Context, spec taskSpec) (*corev1
 		if err != nil {
 			return false, err
 		}
-		if err := podFailure(pod); err != nil {
+		if err := podFailure(pod, spec.noun()); err != nil {
 			return false, err
 		}
 		if cs := taskContainerStatus(pod); cs != nil {
@@ -603,7 +614,7 @@ func (p *Provisioner) waitTaskStart(ctx context.Context, spec taskSpec) (*corev1
 				ended = cs.State.Terminated
 				return true, nil
 			case w != nil && stuckReasons[w.Reason]:
-				return false, fmt.Errorf("the task's container can't start: %s: %s", w.Reason, w.Message)
+				return false, fmt.Errorf("the %s's container can't start: %s: %s", spec.noun(), w.Reason, w.Message)
 			case w != nil:
 				why = w.Reason
 			}
@@ -621,9 +632,9 @@ func (p *Provisioner) waitTaskStart(ctx context.Context, spec taskSpec) (*corev1
 	case ctx.Err() != nil:
 		return nil, ctx.Err()
 	case wctx.Err() != nil && why != "":
-		return nil, fmt.Errorf("the task's pod didn't start within %s (%s)", p.waitTimeout, why)
+		return nil, fmt.Errorf("the %s's pod didn't start within %s (%s)", spec.noun(), p.waitTimeout, why)
 	case wctx.Err() != nil:
-		return nil, fmt.Errorf("the task's pod didn't start within %s", p.waitTimeout)
+		return nil, fmt.Errorf("the %s's pod didn't start within %s", spec.noun(), p.waitTimeout)
 	}
 	return nil, err
 }
@@ -644,7 +655,7 @@ func (p *Provisioner) waitTaskEnd(ctx context.Context, spec taskSpec, attachErr 
 		if err != nil {
 			return false, err
 		}
-		if err := podFailure(pod); err != nil {
+		if err := podFailure(pod, spec.noun()); err != nil {
 			return false, err
 		}
 		if cs := taskContainerStatus(pod); cs != nil && cs.State.Terminated != nil {
@@ -659,9 +670,9 @@ func (p *Provisioner) waitTaskEnd(ctx context.Context, spec taskSpec, attachErr 
 	case ctx.Err() != nil:
 		return nil, ctx.Err()
 	case attachErr != nil && wctx.Err() != nil:
-		return nil, fmt.Errorf("lost the task's output: %w", attachErr)
+		return nil, fmt.Errorf("lost the %s's output: %w", spec.noun(), attachErr)
 	case wctx.Err() != nil:
-		return nil, fmt.Errorf("the task's output ended, but its pod doesn't show that it exited within %s", limit)
+		return nil, fmt.Errorf("the %s's output ended, but its pod doesn't show that it exited within %s", spec.noun(), limit)
 	}
 	return nil, err
 }
@@ -669,7 +680,7 @@ func (p *Provisioner) waitTaskEnd(ctx context.Context, spec taskSpec, attachErr 
 // podFailure returns why the pod failed as a whole, or nil. A pod past its
 // activeDeadlineSeconds (Task.Timeout) is context.DeadlineExceeded, as a
 // timeout is on Compose.
-func podFailure(pod *corev1.Pod) error {
+func podFailure(pod *corev1.Pod, noun string) error {
 	if pod.Status.Phase != corev1.PodFailed {
 		return nil
 	}
@@ -678,11 +689,11 @@ func podFailure(pod *corev1.Pod) error {
 	}
 	switch pod.Status.Reason {
 	case "DeadlineExceeded":
-		return fmt.Errorf("the task's pod ran past its timeout: %w", context.DeadlineExceeded)
+		return fmt.Errorf("the %s's pod ran past its timeout: %w", noun, context.DeadlineExceeded)
 	case "":
-		return errors.New("the task's pod failed")
+		return fmt.Errorf("the %s's pod failed", noun)
 	}
-	return fmt.Errorf("the task's pod failed: %s: %s", pod.Status.Reason, pod.Status.Message)
+	return fmt.Errorf("the %s's pod failed: %s: %s", noun, pod.Status.Reason, pod.Status.Message)
 }
 
 func taskContainerStatus(pod *corev1.Pod) *corev1.ContainerStatus {

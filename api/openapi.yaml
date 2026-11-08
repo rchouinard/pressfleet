@@ -7715,8 +7715,15 @@ components:
 
     Platform:
       type: object
-      required: [sftp, build]
+      required: [sftp, build, orchestrator]
       properties:
+        orchestrator:
+          type: string
+          enum: [compose, kubernetes]
+          description: |
+            What runs the sites (the configured `driver`). On `kubernetes`
+            the host metrics are per node, from the cluster's metrics API,
+            and there are no host disk metrics.
         sftp:
           $ref: "#/components/schemas/PlatformSftp"
         build:
