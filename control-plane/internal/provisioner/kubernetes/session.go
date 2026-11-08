@@ -16,6 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/remotecommand"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/outbuf"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 )
 
@@ -215,7 +216,7 @@ func (p *Provisioner) attachSession(ctx context.Context, spec taskSpec, s provis
 	if err != nil {
 		return err
 	}
-	tail := &tailBuffer{max: sessionMaxStderr}
+	tail := &outbuf.Tail{Max: sessionMaxStderr}
 	var stderr io.Writer = tail
 	if s.Stderr != nil {
 		stderr = s.Stderr
@@ -249,7 +250,7 @@ func (p *Provisioner) attachSession(ctx context.Context, spec taskSpec, s provis
 
 // sessionExit is the error for how the session's container ended, nil for
 // a zero exit.
-func sessionExit(spec taskSpec, term *corev1.ContainerStateTerminated, stderr *tailBuffer) error {
+func sessionExit(spec taskSpec, term *corev1.ContainerStateTerminated, stderr *outbuf.Tail) error {
 	if term.ExitCode == 0 {
 		return nil
 	}
