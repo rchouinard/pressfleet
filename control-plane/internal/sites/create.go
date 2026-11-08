@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/backup/sitebackup"
 	"github.com/rchouinard/pressfleet/control-plane/internal/jobs"
@@ -318,17 +319,18 @@ func (s *Service) installWordPress(ctx context.Context, r *jobs.Run) error {
 	if err != nil {
 		return fmt.Errorf("reading the admin password: %w", err)
 	}
-	// The arguments go to WP-CLI as argv, never through a shell, and the
-	// provisioner keeps them out of errors and logs.
-	_, err = s.prov.ExecWPCLI(ctx, site.ID, []string{
+	// The arguments go to WP-CLI as argv, never through a shell. The password
+	// goes on standard input, which --prompt reads: a driver's argv can reach
+	// logs (the Kubernetes API server's audit log records it).
+	_, err = s.prov.ExecWPCLIInput(ctx, site.ID, []string{
 		"core", "install",
 		"--url=" + URL(site),
 		"--title=" + site.Name,
 		"--admin_user=" + site.AdminUsername,
-		"--admin_password=" + password.Reveal(),
 		"--admin_email=" + site.AdminEmail,
 		"--skip-email",
-	})
+		"--prompt=admin_password",
+	}, strings.NewReader(password.Reveal()+"\n"))
 	if err != nil {
 		return fmt.Errorf("installing WordPress: %w", err)
 	}

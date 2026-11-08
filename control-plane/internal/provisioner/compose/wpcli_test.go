@@ -76,6 +76,27 @@ func TestExecWPCLIPassesArgsVerbatim(t *testing.T) {
 	}
 }
 
+func TestExecWPCLIInput(t *testing.T) {
+	f := runningFixture(t)
+	args := []string{"user", "update", "1", "--prompt=user_pass"}
+	if _, err := f.prov.ExecWPCLIInput(context.Background(), testSiteID, args, strings.NewReader("pw\n")); err != nil {
+		t.Fatal(err)
+	}
+	if f.docker.execStdin == nil || *f.docker.execStdin != "pw\n" {
+		t.Errorf("docker stdin = %v, want %q", f.docker.execStdin, "pw\n")
+	}
+	if got := f.docker.execArgs; !slices.Equal(got[len(got)-len(args):], args) || slices.Contains(got, "pw") {
+		t.Errorf("exec argv = %q", got)
+	}
+	// ExecWPCLI gives docker no standard input.
+	if _, err := f.prov.ExecWPCLI(context.Background(), testSiteID, []string{"option", "get", "home"}); err != nil {
+		t.Fatal(err)
+	}
+	if f.docker.execStdin != nil {
+		t.Errorf("ExecWPCLI sent stdin %q", *f.docker.execStdin)
+	}
+}
+
 func TestExecWPCLITimeout(t *testing.T) {
 	f := runningFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

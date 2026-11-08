@@ -270,7 +270,8 @@ type Provisioner interface {
     StartSite(ctx context.Context, siteID string) error
     StopSite(ctx context.Context, siteID string) error
     SetMaintenance(ctx context.Context, siteID string, enabled bool) error
-    ExecWPCLI(ctx context.Context, siteID string, args []string) (string, error)
+    ExecWPCLI(ctx context.Context, siteID string, args []string) (string, error) // args never hold a secret: a driver may log argv (the Kubernetes audit log does)
+    ExecWPCLIInput(ctx context.Context, siteID string, args []string, stdin io.Reader) (string, error) // secrets go on stdin
     PurgeCache(ctx context.Context, siteID string) error // page cache; the object cache manager flushes the object cache
 }
 
@@ -493,7 +494,7 @@ All long-running operations run as **Jobs**. API endpoints that start them retur
 3. **Database Creation:** `DatabaseManager.CreateDatabase` creates the database and a user whose grants are limited to that database.
 4. **Object Cache Credentials:** Creates the site's Redis ACL user, restricted to its own key prefix (§6).
 5. **Container Provisioning:** `Provisioner.CreateSite` creates the site network and renders the site's Compose project (`nginx` and `php` containers from the images for the selected PHP version and current WordPress core, `wp-content` and cache volumes, generated `wp-config.php`, Traefik labels for the preview domain, resource limits) and brings it up.
-6. **WordPress Installation:** Runs `wp core install` against the image's WordPress core with the preview domain as the site URL via `ExecWPCLI`.
+6. **WordPress Installation:** Runs `wp core install` against the image's WordPress core with the preview domain as the site URL via `ExecWPCLIInput`, with the generated admin password on standard input (`--prompt=admin_password`), never in argv.
 7. **Plugin Auto-Configuration:** Activates the default plugin stack: Nginx Helper, Redis Object Cache (configured with the site's ACL credentials, database, and key prefix), and the WordPress security set configured for the install (§6.1).
 8. **Preview Ready:** The site is immediately reachable over HTTPS on its preview domain. Preview domains send `X-Robots-Tag: noindex` to keep them out of search engines.
 
