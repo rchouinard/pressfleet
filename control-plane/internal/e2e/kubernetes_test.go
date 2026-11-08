@@ -262,7 +262,8 @@ func deleteK8sSite(t *testing.T, p *e2e.Platform, siteID string) {
 // container, which also runs the checks that start pods: kind with Calico
 // enforces NetworkPolicy, nodes use cgroup v2, and the chart's RBAC is what
 // the driver needs. The test domains resolve nowhere, so the DNS checks
-// fail, and Traefik's NodePort Service has no external address.
+// fail, and Traefik's NodePort Service has no external address. Then it
+// runs the chart's Helm test.
 func checkK8sDoctor(t *testing.T, p *e2e.Platform) {
 	expected := map[string]bool{"k8s-dns-dashboard": true, "k8s-dns-preview": true, "k8s-traefik": true}
 	check := func(source string, results []doctorResult, want ...string) {
@@ -303,6 +304,22 @@ func checkK8sDoctor(t *testing.T, p *e2e.Platform) {
 		t.Fatalf("pressfleet doctor --json: %v: %s", err, out)
 	}
 	check("pressfleet doctor", cli.Results, "k8s-rbac", "k8s-cgroup", "k8s-networkpolicy")
+
+	// The chart's Helm test runs doctor in a pod of its own (#320), and
+	// passes with only the recommended checks failing. The second run
+	// replaces the first's pod.
+	for run := range 2 {
+		out, err := p.Kube.Helm(t.Context(), "test", "pressfleet", "--namespace", p.Kube.Namespace, "--logs", "--timeout", "10m")
+		if err != nil {
+			t.Fatalf("helm test (run %d): %v\n%s", run+1, err, out)
+		}
+		if !bytes.Contains(out, []byte("doctor-test")) || !bytes.Contains(out, []byte("Succeeded")) {
+			t.Errorf("helm test (run %d) ran no doctor-test pod:\n%s", run+1, out)
+		}
+		if run == 0 {
+			t.Logf("helm test:\n%s", out)
+		}
+	}
 }
 
 // doctorResult is one check of a doctor report.

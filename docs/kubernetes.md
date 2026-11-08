@@ -63,6 +63,7 @@ kubectl apply --server-side -f pressfleet-kubernetes/secrets.yaml
 helm install pressfleet oci://ghcr.io/rchouinard/pressfleet/charts/pressfleet --version <release> \
   --namespace pressfleet --values pressfleet-kubernetes/values.yaml --wait --timeout 15m
 kubectl -n pressfleet get service traefik
+helm test pressfleet --namespace pressfleet --logs
 kubectl -n pressfleet exec deploy/control-plane -- pressfleet user create --email you@agency.example --role admin
 ```
 
@@ -169,13 +170,19 @@ pfk pressfleet repository check --help
 | A site's objects | `kubectl -n pf-<site-id> get all,pvc,networkpolicy`. Read them; don't edit them. The control plane renders and applies them again, and its rendered copy is in `<data_dir>/sites/<site-id>/kubernetes/` |
 | A site's logs | The dashboard, as on Compose. A **stopped** site has no pod, so it has no logs |
 | Which release? | `helm list -n pressfleet`. `pressfleet version` on Kubernetes says to ask Helm |
-| Is the cluster fit? | `pfk pressfleet doctor`, or the dashboard's **Platform overview** |
+| Is the cluster fit? | `helm test pressfleet -n pressfleet --logs`, `pfk pressfleet doctor`, or the dashboard's **Platform overview** |
 
 Release notices ([Release check](upgrading.md#release-check)) in the dashboard's About dialog, the control plane's log, and `pfk pressfleet version` say to read the release notes, apply the new chart's CRDs, and run `helm upgrade`, as in [Upgrading](#upgrading).
 
 ### Doctor on Kubernetes
 
-Doctor checks the cluster: the Kubernetes version, amd64 nodes, cgroup v2 (a short-lived pod on each node), the control plane's RBAC, both storage classes, metrics-server, NetworkPolicy enforcement (two pods in a temporary namespace try to reach the API server; one is denied by a policy), Traefik's address, the DNS records, and cluster memory. The table with what each means and its fix is [Kubernetes checks](installation.md#kubernetes-checks). It runs when the control plane starts (required checks must pass), in `pressfleet doctor` run in the pod (exit codes as on Compose), and in the dashboard's platform overview, where the two checks that start pods read `UNAVAILABLE`. There is no Helm test; run doctor as above after an install or a change to the cluster.
+Doctor checks the cluster: the Kubernetes version, amd64 nodes, cgroup v2 (a short-lived pod on each node), the control plane's RBAC, both storage classes, metrics-server, NetworkPolicy enforcement (two pods in a temporary namespace try to reach the API server; one is denied by a policy), Traefik's address, the DNS records, and cluster memory. The table with what each means and its fix is [Kubernetes checks](installation.md#kubernetes-checks). It runs when the control plane starts (required checks must pass), in `pressfleet doctor` run in the pod (exit codes as on Compose), in the chart's Helm test, and in the dashboard's platform overview, where the two checks that start pods read `UNAVAILABLE`. Run it after an install, an upgrade, or a change to the cluster:
+
+```sh
+helm test pressfleet --namespace pressfleet --logs
+```
+
+The test starts a pod, `doctor-test`, like the control plane's: its image, settings, Secrets, data volume, and ServiceAccount, so it sees the cluster as the control plane does. It fails only when a required check fails; recommended ones (Traefik's address, DNS records not set up yet) show in the report that `--logs` prints. The pod stays until the next run, so `kubectl -n pressfleet logs doctor-test` shows the last report.
 
 The probe pods run the control plane image, so the nodes must be able to pull it, and the first start waits for that.
 
@@ -219,7 +226,7 @@ Everything in [Upgrading](upgrading.md#kubernetes) applies; this is the order of
    ```
 
    The Job `upgrade-preflight` runs first and refuses a downgrade, an upgrade from a release older than the new one accepts, and a change of MariaDB's release series. When it refuses, nothing changed: `kubectl -n pressfleet logs job/upgrade-preflight`. The control plane then restarts on the new release; sites keep serving meanwhile.
-5. Check with `pfk pressfleet doctor` and the dashboard. The control plane then updates sites' templates and images one at a time, as on Compose.
+5. Check with `helm test pressfleet --namespace pressfleet --logs` (or `pfk pressfleet doctor`) and the dashboard. The control plane then updates sites' templates and images one at a time, as on Compose.
 
 To undo an upgrade, scale the control plane to zero, restore the PostgreSQL backup from step 2, then `helm rollback pressfleet --namespace pressfleet --wait` ([Upgrading](upgrading.md#kubernetes)). Anything the control plane recorded after the upgrade is lost with the restore.
 
@@ -414,7 +421,7 @@ With ServiceLB the external address is the node's. Check it matches the DNS reco
 ### 6. Check and first login
 
 ```sh
-kubectl -n pressfleet exec deploy/control-plane -- pressfleet doctor
+helm test pressfleet --namespace pressfleet --logs
 kubectl -n pressfleet exec deploy/control-plane -- pressfleet user create --email you@agency.example --role admin
 ```
 

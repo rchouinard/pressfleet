@@ -11,28 +11,49 @@ import (
 )
 
 // lifecycleObject is the part of a rendered object the lifecycle tests
-// read: hooks, replicas, and the first container's arguments.
+// read: hooks, labels, replicas, and the pod's identity, containers, and
+// volumes.
 type lifecycleObject struct {
 	Kind     string `yaml:"kind"`
 	Metadata struct {
 		Name        string            `yaml:"name"`
+		Labels      map[string]string `yaml:"labels"`
 		Annotations map[string]string `yaml:"annotations"`
 	} `yaml:"metadata"`
 	Spec struct {
-		Replicas *int `yaml:"replicas"`
-		Template struct {
+		// A Pod's spec is the pod itself.
+		lifecyclePod `yaml:",inline"`
+		Replicas     *int `yaml:"replicas"`
+		Template     struct {
 			Metadata struct {
 				Labels map[string]string `yaml:"labels"`
 			} `yaml:"metadata"`
-			Spec struct {
-				ServiceAccountName string `yaml:"serviceAccountName"`
-				Containers         []struct {
-					Image string   `yaml:"image"`
-					Args  []string `yaml:"args"`
-				} `yaml:"containers"`
-			} `yaml:"spec"`
+			Spec lifecyclePod `yaml:"spec"`
 		} `yaml:"template"`
 	} `yaml:"spec"`
+}
+
+// lifecyclePod is the part of a pod spec the lifecycle tests read.
+type lifecyclePod struct {
+	ServiceAccountName string `yaml:"serviceAccountName"`
+	Containers         []struct {
+		Image   string   `yaml:"image"`
+		Command []string `yaml:"command"`
+		Args    []string `yaml:"args"`
+		Env     []struct {
+			Name string `yaml:"name"`
+		} `yaml:"env"`
+		VolumeMounts []struct {
+			Name      string `yaml:"name"`
+			MountPath string `yaml:"mountPath"`
+		} `yaml:"volumeMounts"`
+	} `yaml:"containers"`
+	Volumes []struct {
+		Name                  string `yaml:"name"`
+		PersistentVolumeClaim struct {
+			ClaimName string `yaml:"claimName"`
+		} `yaml:"persistentVolumeClaim"`
+	} `yaml:"volumes"`
 }
 
 // renderObjects renders the chart with values and returns its objects by
@@ -132,5 +153,47 @@ func TestRecoveryRejectsSnapshot(t *testing.T) {
 	}
 	if _, err := render(t, path); err == nil || !strings.Contains(err.Error(), "snapshot") {
 		t.Errorf("helm template = %v, want an error about the snapshot", err)
+	}
+}
+
+// TestDoctorHelmTest checks the Helm test (§4.8): a pod that runs
+// `pressfleet doctor` as the control plane would, kept until the next run.
+func TestDoctorHelmTest(t *testing.T) {
+	objects := renderObjects(t, podCIDRs+"config:\n  secretName: pressfleet-config\n")
+	test, ok := objects["Pod/doctor-test"]
+	if !ok {
+		t.Fatal("no doctor-test Pod")
+	}
+	if got := test.Metadata.Annotations["helm.sh/hook"]; got != "test" {
+		t.Errorf("hook = %q, want test", got)
+	}
+	// Creating the pod fails while the last run's is still there.
+	if got := test.Metadata.Annotations["helm.sh/hook-delete-policy"]; !strings.Contains(got, "before-hook-creation") {
+		t.Errorf("hook-delete-policy = %q, want before-hook-creation", got)
+	}
+	// The Service and the NetworkPolicies select the control plane by its
+	// component; the test must not be taken for it.
+	if got := test.Metadata.Labels["app.kubernetes.io/component"]; got == "control-plane" {
+		t.Error("the test pod is labeled as the control plane")
+	}
+
+	pod, cp := test.Spec.lifecyclePod, objects["Deployment/control-plane"].Spec.Template.Spec
+	// Doctor checks the control plane's RBAC, and starts its probe pods,
+	// as the control plane.
+	if pod.ServiceAccountName != cp.ServiceAccountName {
+		t.Errorf("serviceAccountName = %q, want the control plane's %q", pod.ServiceAccountName, cp.ServiceAccountName)
+	}
+	c, want := pod.Containers[0], cp.Containers[0]
+	if c.Image != want.Image {
+		t.Errorf("image %s, want the control plane's %s", c.Image, want.Image)
+	}
+	if script := strings.Join(append(c.Command, c.Args...), " "); !strings.HasPrefix(script, "sh -c pressfleet doctor;") {
+		t.Errorf("command %q, want pressfleet doctor", script)
+	}
+	if !slices.Equal(c.Env, want.Env) {
+		t.Errorf("env %v, want the control plane's %v", c.Env, want.Env)
+	}
+	if !slices.Equal(c.VolumeMounts, want.VolumeMounts) || !slices.Equal(pod.Volumes, cp.Volumes) {
+		t.Errorf("volumes %v mounted at %v, want the control plane's %v at %v", pod.Volumes, c.VolumeMounts, cp.Volumes, want.VolumeMounts)
 	}
 }

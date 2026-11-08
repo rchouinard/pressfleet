@@ -12,6 +12,10 @@ Traefik's external address, where the dashboard and preview domains must point:
 The dashboard: https://{{ . }}
 {{- end }}
 
+Check the cluster with doctor once the pods are ready:
+
+  helm test {{ .Release.Name }} --namespace {{ .Release.Namespace }} --logs
+
 Run state commands in the control plane, for example to create the first user:
 
   kubectl -n {{ .Release.Namespace }} exec deploy/control-plane -- pressfleet user create --help
