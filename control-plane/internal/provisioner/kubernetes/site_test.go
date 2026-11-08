@@ -82,6 +82,9 @@ func TestSiteLifecycle(t *testing.T) {
 	if namespace.Labels["pod-security.kubernetes.io/enforce"] != "restricted" {
 		t.Errorf("namespace labels %v: Pod Security restricted isn't enforced", namespace.Labels)
 	}
+	if got := namespace.Labels[PlatformNamespaceLabel]; got != "pressfleet" {
+		t.Errorf("namespace label %s = %q, want the platform namespace", PlatformNamespaceLabel, got)
+	}
 	checks := map[string]func() error{
 		"service": func() error { _, err := core.Services(ns).Get(ctx, "nginx", metav1.GetOptions{}); return err },
 		"volume": func() error {
@@ -275,13 +278,64 @@ func TestPullSecrets(t *testing.T) {
 }
 
 func TestDeleteSiteRefusesForeignNamespace(t *testing.T) {
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "pf-" + testSiteID}}
-	p := cluster(t, nil, ns)
-	if err := p.DeleteSite(t.Context(), testSiteID); !errors.Is(err, ErrInvalidSite) {
-		t.Errorf("DeleteSite = %v, want ErrInvalidSite", err)
+	tests := map[string]map[string]string{
+		"not PressFleet's": nil,
+		// Another install with the same site namespace prefix (K6).
+		"another install's": {managedByLabel: FieldManager, siteIDLabel: testSiteID, PlatformNamespaceLabel: "other"},
 	}
-	if _, err := p.typed.CoreV1().Namespaces().Get(t.Context(), ns.Name, metav1.GetOptions{}); err != nil {
-		t.Errorf("the namespace was deleted: %v", err)
+	for name, labels := range tests {
+		t.Run(name, func(t *testing.T) {
+			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "pf-" + testSiteID, Labels: labels}}
+			p := cluster(t, nil, ns)
+			if err := p.DeleteSite(t.Context(), testSiteID); !errors.Is(err, ErrInvalidSite) {
+				t.Errorf("DeleteSite = %v, want ErrInvalidSite", err)
+			}
+			if _, err := p.typed.CoreV1().Namespaces().Get(t.Context(), ns.Name, metav1.GetOptions{}); err != nil {
+				t.Errorf("the namespace was deleted: %v", err)
+			}
+		})
+	}
+}
+
+// Manifests rendered before the platform namespace label existed, such as
+// a render snapshot, get it when applied: taking it off is refused by the
+// chart's admission policy.
+func TestLabelNamespaces(t *testing.T) {
+	p := cluster(t, nil)
+	objs, err := DecodeManifests([]byte(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: pf-site
+  labels:
+    app.kubernetes.io/managed-by: pressfleet
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pf-other
+  labels:
+    pressfleet.io/platform-namespace: other
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  namespace: pf-site
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.labelNamespaces(objs)
+	for _, obj := range objs[:2] {
+		if got := obj.GetLabels()[PlatformNamespaceLabel]; got != "pressfleet" {
+			t.Errorf("namespace %s: label %q, want pressfleet", obj.GetName(), got)
+		}
+	}
+	if objs[0].GetLabels()[managedByLabel] != FieldManager {
+		t.Errorf("labelNamespaces dropped a label: %v", objs[0].GetLabels())
+	}
+	if _, ok := objs[2].GetLabels()[PlatformNamespaceLabel]; ok {
+		t.Errorf("the Service got the namespace label: %v", objs[2].GetLabels())
 	}
 }
 

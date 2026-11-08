@@ -723,6 +723,11 @@ func TestStartup(t *testing.T) {
 		&corev1.Secret{ObjectMeta: meta("pressfleet", "task-def", taskLabels)},
 		&networkingv1.NetworkPolicy{ObjectMeta: meta("pressfleet", "task-def", taskLabels)},
 		&corev1.Pod{ObjectMeta: meta("pressfleet", "control-plane-1", map[string]string{"app.kubernetes.io/component": "control-plane"})},
+		// Another install's site, with the same prefix (K6): left alone.
+		&corev1.Namespace{ObjectMeta: meta("", "pf-other", map[string]string{
+			managedByLabel: FieldManager, siteIDLabel: "other", PlatformNamespaceLabel: "other",
+		})},
+		&corev1.Pod{ObjectMeta: meta("pf-other", "task-ghi", taskLabels)},
 		clone(site),
 		clone("pf-gone"),
 	)
@@ -736,6 +741,9 @@ func TestStartup(t *testing.T) {
 		if _, err := core.Pods(k[0]).Get(t.Context(), k[1], metav1.GetOptions{}); err != nil {
 			t.Errorf("pod %s/%s: %v", k[0], k[1], err)
 		}
+	}
+	if _, err := core.Pods("pf-other").Get(t.Context(), "task-ghi", metav1.GetOptions{}); err != nil {
+		t.Errorf("another install's task pod: %v", err)
 	}
 	if _, err := core.PersistentVolumes().Get(t.Context(), DataCloneName(site), metav1.GetOptions{}); err != nil {
 		t.Errorf("the live site's clone: %v", err)

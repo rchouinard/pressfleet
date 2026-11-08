@@ -883,7 +883,9 @@ func (p *Provisioner) Startup(ctx context.Context) error {
 	}
 	namespaces := map[string]bool{}
 	for _, ns := range list.Items {
-		if !strings.HasPrefix(ns.Name, p.namespacePrefix) {
+		// Another install's namespaces may share the prefix; a label
+		// selector can't also match a missing PlatformNamespaceLabel.
+		if !strings.HasPrefix(ns.Name, p.namespacePrefix) || !p.ownsNamespace(ns.Labels) {
 			continue
 		}
 		namespaces[ns.Name] = true

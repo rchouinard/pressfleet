@@ -11,6 +11,7 @@ metadata:
     pressfleet.io/rendered: "true"
     pressfleet.io/site-id: "01hzy3k5q7m9c2v4b6n8r0t1wx"
     pressfleet.io/client-group-id: "01hzy3k0000000000000000000"
+    pressfleet.io/platform-namespace: "pressfleet"
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
     pod-security.kubernetes.io/warn: restricted
