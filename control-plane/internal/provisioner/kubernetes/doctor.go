@@ -624,3 +624,13 @@ func (p *ClusterProbe) CgroupV2(ctx context.Context, nodes []doctor.ClusterNode)
 	}
 	return out, nil
 }
+
+// ClusterAddresses implements doctor.ClusterProbe with what the driver
+// reads to keep sites from the nodes and the API server.
+func (p *ClusterProbe) ClusterAddresses(ctx context.Context) (doctor.ClusterAddresses, error) {
+	a, err := p.c.ClusterAddresses(ctx)
+	if err != nil {
+		return doctor.ClusterAddresses{}, err
+	}
+	return doctor.ClusterAddresses{Nodes: a.Nodes, APIServer: a.APIServer}, nil
+}

@@ -114,6 +114,18 @@ type ClusterProbe interface {
 	TraefikAddresses(ctx context.Context) ([]string, error)
 	// PlatformMemoryRequests returns the memory the platform's pods request.
 	PlatformMemoryRequests(ctx context.Context) (uint64, error)
+	// ClusterAddresses returns the nodes' and the API server's addresses,
+	// which the driver leaves out of sites' egress.
+	ClusterAddresses(ctx context.Context) (ClusterAddresses, error)
+}
+
+// ClusterAddresses are the cluster's own addresses that sites must not
+// reach.
+type ClusterAddresses struct {
+	// Nodes are the nodes' InternalIP and ExternalIP addresses.
+	Nodes []netip.Addr
+	// APIServer are the API server's endpoints.
+	APIServer []netip.Addr
 }
 
 // rwxIncapable lists provisioners of block or node-local storage that
@@ -334,6 +346,44 @@ func checkK8sNetworkPolicy(ctx context.Context, e *env) outcome {
 		"couldn't prove that NetworkPolicy is enforced: %s", res.Detail)
 }
 
+// checkK8sClusterEgress checks that the driver can read what it leaves out
+// of sites' egress besides the private ranges: the nodes' and the API
+// server's addresses, which may be public (security review K4). Without
+// them it can't create or update sites, and existing sites keep the
+// addresses last written.
+func checkK8sClusterEgress(ctx context.Context, e *env) outcome {
+	c, err := e.cluster()
+	if err != nil {
+		return clusterUnreachable()
+	}
+	addrs, err := c.ClusterAddresses(ctx)
+	if err != nil {
+		return warn("Give the control plane's service account the rights to list nodes and to get the EndpointSlice kubernetes in namespace default; the Helm chart's RBAC does.",
+			"can't read the node and API server addresses that sites must not reach, so sites can't be created or updated, "+
+				"and existing sites may reach nodes added since: %v", err)
+	}
+	switch {
+	case len(addrs.Nodes) == 0:
+		return warn("Check the nodes' status: each should report an InternalIP.",
+			"no node reports an address, so sites' egress can only leave out the private ranges")
+	case len(addrs.APIServer) == 0:
+		return warn("Check the EndpointSlice kubernetes in namespace default: the API server publishes its addresses there.",
+			"the API server publishes no endpoint address, so sites' egress can only leave out the private ranges and the nodes")
+	}
+	public := 0
+	for _, a := range append(slices.Clone(addrs.Nodes), addrs.APIServer...) {
+		if !a.IsPrivate() && !a.IsLinkLocalUnicast() && !a.IsLoopback() && !sharedAddressSpace.Contains(a) {
+			public++
+		}
+	}
+	return pass("sites can't reach the %d node and %d API server addresses (%d outside private ranges)",
+		len(addrs.Nodes), len(addrs.APIServer), public)
+}
+
+// sharedAddressSpace is 100.64.0.0/10, which sites' egress leaves out
+// too, but netip doesn't count as private.
+var sharedAddressSpace = netip.MustParsePrefix("100.64.0.0/10")
+
 func checkK8sTraefik(ctx context.Context, e *env) outcome {
 	c, err := e.cluster()
 	if err != nil {
@@ -460,6 +510,7 @@ func clusterChecks() []Check {
 		{ID: "k8s-storage-data", Name: "Data storage class", Severity: Required, Scopes: both, ClusterOnly: true, run: checkK8sStorage("data", data, true)},
 		{ID: "k8s-metrics", Name: "metrics.k8s.io", Severity: Required, Scopes: both, ClusterOnly: true, run: checkK8sMetrics},
 		{ID: "k8s-networkpolicy", Name: "NetworkPolicy enforcement", Severity: Required, Scopes: both, ClusterOnly: true, run: checkK8sNetworkPolicy},
+		{ID: "k8s-cluster-egress", Name: "Sites kept from nodes and the API server", Severity: Recommended, Scopes: both, ClusterOnly: true, run: checkK8sClusterEgress},
 		{ID: "k8s-traefik", Name: "Traefik external address", Severity: Recommended, Scopes: both, ClusterOnly: true, run: checkK8sTraefik},
 		{ID: "k8s-dns-dashboard", Name: "Dashboard DNS", Severity: Recommended, Scopes: both, ClusterOnly: true, run: checkK8sDashboardDNS},
 		{ID: "k8s-dns-preview", Name: "Wildcard preview DNS", Severity: Recommended, Scopes: both, ClusterOnly: true, run: checkK8sPreviewDNS},
