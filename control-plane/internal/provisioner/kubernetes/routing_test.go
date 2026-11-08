@@ -8,10 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-
 	"github.com/rchouinard/pressfleet/control-plane/internal/ingress"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 )
@@ -29,66 +25,76 @@ func liveSite() *provisioner.SiteConfig {
 	return cfg
 }
 
+// otherSiteID is a second site's ID.
+const otherSiteID = "01hzy3k5q7m9c2v4b6n8r0t1wy"
+
 func TestRoutingGolden(t *testing.T) {
 	p := testProvisioner(t)
 	dir, err := p.RenderSite(t.Context(), liveSite())
 	if err != nil {
 		t.Fatal(err)
 	}
-	routes, err := os.ReadFile(filepath.Join(dir, "routes.yaml"))
+	routes, err := os.ReadFile(filepath.Join(dir, RoutesFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	golden(t, "routes-live.yaml", routes)
+	golden(t, "routes-live.json", routes)
 	siteDir, _ := p.layout.SiteDir(testSiteID)
 	maint, err := os.ReadFile(filepath.Join(siteDir, MaintenanceFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	golden(t, "maintenance-live.yaml", maint)
-
-	// Both apply, and the maintenance routes are outside the site's
-	// namespace, where the control plane may write them.
-	if err := p.ApplyDir(t.Context(), dir); err != nil {
-		t.Fatal(err)
-	}
-	objs, err := DecodeManifests(maint)
+	golden(t, "maintenance-live.json", maint)
+	// Not a manifest: nothing of the routes goes to the API server.
+	objs, err := LoadDir(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, o := range objs {
-		if o.GetNamespace() != p.platformNamespace {
-			t.Errorf("%s %s is in %q, want the platform namespace", o.GetKind(), o.GetName(), o.GetNamespace())
+		if strings.Contains(o.GetAPIVersion(), "traefik") {
+			t.Errorf("a Traefik object is among the manifests: %s %s", o.GetKind(), o.GetName())
 		}
 	}
 }
 
-// routeNames lists the names of the objects of kind in namespace.
-func routeNames(t *testing.T, p *Provisioner, gvk string, namespace string) []string {
+// served returns what the provider serves Traefik, failing the test if it
+// can't.
+func served(t *testing.T, p *Provisioner) traefikConfig {
 	t.Helper()
-	for k := range kinds {
-		if k.Kind != gvk {
-			continue
-		}
-		list, err := p.resource(kinds[k], namespace).List(t.Context(), metav1.ListOptions{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		var names []string
-		for _, o := range list.Items {
-			names = append(names, o.GetName())
-		}
-		slices.Sort(names)
-		return names
+	c, err := p.servedRoutes()
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Fatalf("no kind %s", gvk)
-	return nil
+	return c
+}
+
+// routerNames lists the names of the routers in c whose name has the
+// suffix (all of them for "").
+func routerNames(c traefikConfig, suffix string) []string {
+	var names []string
+	for n := range c.HTTP.Routers {
+		if strings.HasSuffix(n, suffix) {
+			names = append(names, n)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	var out []string
+	for k := range m {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
 }
 
 func TestSiteRouting(t *testing.T) {
 	id := testSiteID
 	name := func(s ...string) string { return ingress.SiteName(id, s...) }
 	alias := func(a string) string { return name(ingress.SuffixAlias, ingress.AliasKey(a)) }
+	const service = "http://nginx.pf-x.svc"
 
 	tests := []struct {
 		name     string
@@ -110,7 +116,7 @@ func TestSiteRouting(t *testing.T) {
 		site: liveSite,
 		hsts: true,
 		routers: []string{
-			name("preview"), name("primary"), alias("www.example.com"), alias("example.org"), name("preview-redirect"),
+			alias("example.org"), alias("www.example.com"), name("preview"), name("preview-redirect"), name("primary"),
 		},
 		mw: []string{
 			name("alias-redirect"), name("hsts"), name("noindex"), name("preview-auth"), name("preview-redirect"),
@@ -122,7 +128,7 @@ func TestSiteRouting(t *testing.T) {
 		site: liveSite,
 		hsts: false,
 		routers: []string{
-			name("preview"), name("primary"), alias("www.example.com"), alias("example.org"), name("preview-redirect"),
+			alias("example.org"), alias("www.example.com"), name("preview"), name("preview-redirect"), name("primary"),
 		},
 		mw: []string{
 			name("alias-redirect"), name("noindex"), name("preview-auth"), name("preview-redirect"),
@@ -132,52 +138,53 @@ func TestSiteRouting(t *testing.T) {
 	}}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r, m, err := siteRouting(tt.site(), tt.hsts)
+			r, m, err := siteRouting(tt.site(), tt.hsts, service)
 			if err != nil {
 				t.Fatal(err)
 			}
-			var routers, mw []string
-			for _, rt := range r.Routes {
-				routers = append(routers, rt.Name)
+			slices.Sort(tt.routers)
+			if got := sortedKeys(r.HTTP.Routers); !slices.Equal(got, tt.routers) {
+				t.Errorf("routers = %q, want %q", got, tt.routers)
 			}
-			mw = append(mw, r.NoIndex)
-			if r.Auth != nil {
-				mw = append(mw, r.Auth.Name)
+			if got := sortedKeys(r.HTTP.Middlewares); !slices.Equal(got, tt.mw) {
+				t.Errorf("middlewares = %q, want %q", got, tt.mw)
 			}
-			if r.HSTS != "" {
-				mw = append(mw, r.HSTS)
-			}
-			for _, rd := range r.Redirects {
-				mw = append(mw, rd.Name)
-			}
-			slices.Sort(mw)
-			if !slices.Equal(routers, tt.routers) {
-				t.Errorf("routers = %q, want %q", routers, tt.routers)
-			}
-			if !slices.Equal(mw, tt.mw) {
-				t.Errorf("middlewares = %q, want %q", mw, tt.mw)
-			}
-			if got := r.Routes[0].Middlewares; !slices.Equal(got, tt.previewM) {
+			if got := r.HTTP.Routers[name("preview")].Middlewares; !slices.Equal(got, tt.previewM) {
 				t.Errorf("preview middlewares = %q, want %q", got, tt.previewM)
 			}
 			if tt.aliasM != nil {
-				if got := r.Routes[2].Middlewares; !slices.Equal(got, tt.aliasM) {
+				if got := r.HTTP.Routers[alias("www.example.com")].Middlewares; !slices.Equal(got, tt.aliasM) {
 					t.Errorf("alias middlewares = %q, want %q", got, tt.aliasM)
 				}
 			}
+			// One service, the site's nginx, under the name Traefik's
+			// metrics are mapped to sites by.
+			svc, ok := r.HTTP.Services[ingress.SiteService(id)]
+			if len(r.HTTP.Services) != 1 || !ok || len(svc.LoadBalancer.Servers) != 1 || svc.LoadBalancer.Servers[0].URL != service {
+				t.Errorf("services = %+v", r.HTTP.Services)
+			}
+			for n, rt := range r.HTTP.Routers {
+				if rt.Service != ingress.SiteService(id) || !slices.Equal(rt.EntryPoints, []string{ingress.EntryPointHTTPS}) {
+					t.Errorf("router %s = %+v", n, rt)
+				}
+			}
+			if !r.owns(id) || !m.owns(id) {
+				t.Error("the routes name something that isn't the site's")
+			}
 			// One maintenance twin per router, except the preview redirect,
 			// which its twin shadows; twins win over everything.
-			wantTwins := len(r.Routes)
+			wantTwins := len(r.HTTP.Routers)
 			if tt.site().PrimaryDomain != "" {
 				wantTwins--
 			}
-			if len(m.Routes) != wantTwins {
-				t.Fatalf("%d maintenance routes, want %d", len(m.Routes), wantTwins)
+			if len(m.HTTP.Routers) != wantTwins || len(m.HTTP.Middlewares) != 0 || len(m.HTTP.Services) != 0 {
+				t.Fatalf("maintenance routes = %+v, want %d routers", m.HTTP, wantTwins)
 			}
-			for i, tw := range m.Routes {
-				if tw.Name != r.Routes[i].Name+"-maintenance" || tw.Rule != r.Routes[i].Rule ||
-					tw.CertResolver != r.Routes[i].CertResolver || tw.Priority != ingress.MaintenancePriority {
-					t.Errorf("twin %d = %+v of %+v", i, tw, r.Routes[i])
+			for n, tw := range m.HTTP.Routers {
+				orig, ok := r.HTTP.Routers[strings.TrimSuffix(n, "-maintenance")]
+				if !ok || tw.Rule != orig.Rule || tw.TLS != orig.TLS || tw.Priority != ingress.MaintenancePriority ||
+					tw.Service != "pf-maintenance@file" || len(tw.Middlewares) != 0 {
+					t.Errorf("twin %s = %+v of %+v", n, tw, orig)
 				}
 			}
 		})
@@ -185,20 +192,25 @@ func TestSiteRouting(t *testing.T) {
 }
 
 func TestSiteRoutingResolvers(t *testing.T) {
-	r, _, err := siteRouting(liveSite(), true)
+	r, _, err := siteRouting(liveSite(), true, "http://nginx")
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := map[string]string{}
-	for _, rt := range r.Routes {
-		got[rt.Name] = rt.CertResolver
+	routers := r.HTTP.Routers
+	if routers[ingress.SiteName(testSiteID, "preview")].TLS.CertResolver != ingress.CertResolverPreview ||
+		routers[ingress.SiteName(testSiteID, "primary")].TLS.CertResolver != ingress.CertResolverHTTP {
+		t.Errorf("routers = %+v", routers)
 	}
-	if got[ingress.SiteName(testSiteID, "preview")] != ingress.CertResolverPreview ||
-		got[ingress.SiteName(testSiteID, "primary")] != ingress.CertResolverHTTP {
-		t.Errorf("resolvers = %v", got)
+	if rd := routers[ingress.SiteName(testSiteID, "preview-redirect")]; rd.Priority != ingress.PreviewRedirectPriority ||
+		rd.TLS.CertResolver != ingress.CertResolverPreview || rd.Rule != "Host(`blog.preview.example.com`)" {
+		t.Errorf("preview redirect = %+v", rd)
 	}
-	if last := r.Routes[len(r.Routes)-1]; last.Priority != ingress.PreviewRedirectPriority {
-		t.Errorf("preview redirect priority = %d", last.Priority)
+	redirect := r.HTTP.Middlewares[ingress.SiteName(testSiteID, "alias-redirect")].RedirectRegex
+	if redirect == nil || redirect.Replacement != "https://example.com${1}" || !redirect.Permanent {
+		t.Errorf("alias redirect = %+v", redirect)
+	}
+	if hsts := r.HTTP.Middlewares[ingress.SiteName(testSiteID, "hsts")].Headers; hsts == nil || hsts.STSSeconds != ingress.HSTSMaxAge {
+		t.Errorf("HSTS = %+v", hsts)
 	}
 }
 
@@ -223,7 +235,7 @@ func TestSiteRoutingRejects(t *testing.T) {
 }
 
 // Going live, changing aliases, or changing the preview password changes
-// IngressRoutes and Middlewares and nothing of the pod.
+// the routes and nothing of the pod.
 func TestDomainChangesLeavePodAlone(t *testing.T) {
 	p := testProvisioner(t)
 	deployment := func(cfg *provisioner.SiteConfig) string {
@@ -246,15 +258,14 @@ func TestDomainChangesLeavePodAlone(t *testing.T) {
 	}
 }
 
-// Domains change, and routes the site no longer has are deleted.
+// Domains change, and routes the site no longer has stop being served.
 func TestUpdateSiteReroutes(t *testing.T) {
 	p := cluster(t, nil)
 	ctx := t.Context()
-	ns := p.SiteNamespace(testSiteID)
 	if _, err := p.CreateSite(ctx, liveSite()); err != nil {
 		t.Fatal(err)
 	}
-	routes := routeNames(t, p, "IngressRoute", ns)
+	routes := routerNames(served(t, p), "")
 	if len(routes) != 5 {
 		t.Fatalf("live site routes = %q, want 5", routes)
 	}
@@ -266,14 +277,12 @@ func TestUpdateSiteReroutes(t *testing.T) {
 	if _, err := p.UpdateSite(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if got := routeNames(t, p, "IngressRoute", ns); len(got) != 4 {
+	c := served(t, p)
+	if got := routerNames(c, ""); len(got) != 4 {
 		t.Errorf("routes after dropping an alias = %q", got)
 	}
-	if got := routeNames(t, p, "Middleware", ns); slices.Contains(got, ingress.SiteName(testSiteID, "preview-auth")) {
-		t.Errorf("the auth middleware is left: %q", got)
-	}
-	if _, err := p.typed.CoreV1().Secrets(ns).Get(ctx, ingress.SiteName(testSiteID, "preview-auth"), metav1.GetOptions{}); !apierrors.IsNotFound(err) {
-		t.Errorf("the auth Secret is left: %v", err)
+	if _, ok := c.HTTP.Middlewares[ingress.SiteName(testSiteID, "preview-auth")]; ok {
+		t.Errorf("the auth middleware is left: %q", sortedKeys(c.HTTP.Middlewares))
 	}
 	if after := p.testDeployment(t).ResourceVersion; after != before {
 		t.Errorf("the Deployment was touched (resource version %s -> %s)", before, after)
@@ -283,28 +292,33 @@ func TestUpdateSiteReroutes(t *testing.T) {
 	if _, err := p.UpdateSite(ctx, testSite()); err != nil {
 		t.Fatal(err)
 	}
-	if got := routeNames(t, p, "IngressRoute", ns); len(got) != 1 {
+	if got := routerNames(served(t, p), ""); len(got) != 1 {
 		t.Errorf("routes of a site that is not live = %q", got)
 	}
 }
 
-func TestPreviewAuthSecret(t *testing.T) {
+// Preview protection is served as Traefik's basicAuth with the bcrypt hash
+// alone: no Secret, which Traefik could no longer read, and never the
+// password.
+func TestPreviewAuth(t *testing.T) {
 	p := testProvisioner(t)
 	dir, err := p.RenderSite(t.Context(), liveSite())
 	if err != nil {
 		t.Fatal(err)
 	}
 	name := ingress.SiteName(testSiteID, ingress.SuffixPreviewAuth)
-	secret := renderedObject(t, dir, "Secret", name)
-	if users, _, _ := unstructured.NestedString(secret.Object, "stringData", "users"); users != "client:"+liveSite().PreviewAuth.PasswordHash {
-		t.Errorf("users = %q", users)
+	auth := served(t, p).HTTP.Middlewares[name].BasicAuth
+	if auth == nil || !slices.Equal(auth.Users, []string{"client:" + liveSite().PreviewAuth.PasswordHash}) || !auth.RemoveHeader {
+		t.Errorf("basicAuth = %+v", auth)
 	}
-	mw := renderedObject(t, dir, "Middleware", name)
-	if ref, _, _ := unstructured.NestedString(mw.Object, "spec", "basicAuth", "secret"); ref != name {
-		t.Errorf("basicAuth secret = %q", ref)
+	objs, err := LoadDir(dir)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if rm, _, _ := unstructured.NestedBool(mw.Object, "spec", "basicAuth", "removeHeader"); !rm {
-		t.Error("the Authorization header isn't removed")
+	for _, o := range objs {
+		if o.GetKind() == "Secret" && o.GetName() != "wp-config" {
+			t.Errorf("a Secret %s is rendered", o.GetName())
+		}
 	}
 }
 
@@ -324,8 +338,7 @@ func TestSetMaintenance(t *testing.T) {
 	if _, err := p.CreateSite(ctx, site); err != nil {
 		t.Fatal(err)
 	}
-	platform := p.platformNamespace
-	if got := routeNames(t, p, "IngressRoute", platform); len(got) != 0 {
+	if got := routerNames(served(t, p), "-maintenance"); len(got) != 0 {
 		t.Fatalf("maintenance routes of a site that isn't in maintenance mode: %q", got)
 	}
 
@@ -339,43 +352,30 @@ func TestSetMaintenance(t *testing.T) {
 		ingress.SiteName(testSiteID, "alias", ingress.AliasKey("www.example.com"), "maintenance"),
 	}
 	slices.Sort(want)
-	got := routeNames(t, p, "IngressRoute", platform)
-	if !slices.Equal(got, want) {
+	c := served(t, p)
+	if got := routerNames(c, "-maintenance"); !slices.Equal(got, want) {
 		t.Fatalf("maintenance routes = %q, want %q", got, want)
+	}
+	if on, err := p.inMaintenance(testSiteID); err != nil || !on {
+		t.Errorf("inMaintenance = %v, %v", on, err)
 	}
 	// Twice is the same.
 	if err := p.SetMaintenance(ctx, testSiteID, true); err != nil {
 		t.Fatal(err)
 	}
-
-	obj, err := p.resource(kinds[ingressRouteKind], platform).Get(ctx, ingress.SiteName(testSiteID, "primary", "maintenance"), metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
+	r := c.HTTP.Routers[ingress.SiteName(testSiteID, "primary", "maintenance")]
+	if r.Rule != "Host(`example.com`)" || r.Priority != ingress.MaintenancePriority || r.Service != "pf-maintenance@file" {
+		t.Errorf("primary twin = %+v", r)
 	}
-	route, _, _ := unstructured.NestedSlice(obj.Object, "spec", "routes")
-	r := route[0].(map[string]any)
-	svc := r["services"].([]any)[0].(map[string]any)
-	if r["match"] != "Host(`example.com`)" || r["priority"] != int64(ingress.MaintenancePriority) ||
-		svc["name"] != ingress.MaintenanceHost || svc["port"] != int64(ingress.MaintenancePort) {
-		t.Errorf("primary twin = %v", r)
-	}
-	if obj.GetLabels()[MaintenanceLabel] != testSiteID {
-		t.Errorf("labels = %v", obj.GetLabels())
-	}
-	// A twin never takes a namespace-crossing reference: the service is
-	// the maintenance page's, in the namespace of the route itself.
-	if _, ok := svc["namespace"]; ok {
-		t.Error("the twin names a namespace for its service")
-	}
-	// The site's own routes are untouched.
-	if got := routeNames(t, p, "IngressRoute", p.SiteNamespace(testSiteID)); len(got) != 5 {
-		t.Errorf("site routes = %q", got)
+	// The site's own routes are still served, below the twins.
+	if got := routerNames(c, ""); len(got) != 5+4 {
+		t.Errorf("routes = %q", got)
 	}
 
 	if err := p.SetMaintenance(ctx, testSiteID, false); err != nil {
 		t.Fatal(err)
 	}
-	if got := routeNames(t, p, "IngressRoute", platform); len(got) != 0 {
+	if got := routerNames(served(t, p), "-maintenance"); len(got) != 0 {
 		t.Errorf("routes left after turning maintenance off: %q", got)
 	}
 }
@@ -385,13 +385,13 @@ func TestSetMaintenance(t *testing.T) {
 func TestMaintenanceAcrossUpdate(t *testing.T) {
 	p := cluster(t, nil)
 	ctx := t.Context()
-	platform := p.platformNamespace
 	cfg := testSite()
 	cfg.Maintenance = true
 	if _, err := p.CreateSite(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if got := routeNames(t, p, "IngressRoute", platform); len(got) != 1 {
+	twins := func() []string { return routerNames(served(t, p), "-maintenance") }
+	if got := twins(); len(got) != 1 {
 		t.Fatalf("a site created in maintenance mode has routes %q", got)
 	}
 
@@ -400,14 +400,14 @@ func TestMaintenanceAcrossUpdate(t *testing.T) {
 	if _, err := p.UpdateSite(ctx, live); err != nil {
 		t.Fatal(err)
 	}
-	if got := routeNames(t, p, "IngressRoute", platform); len(got) != 4 {
+	if got := twins(); len(got) != 4 {
 		t.Errorf("after going live in maintenance mode: %q", got)
 	}
 	live.Aliases = nil
 	if _, err := p.UpdateSite(ctx, live); err != nil {
 		t.Fatal(err)
 	}
-	if got := routeNames(t, p, "IngressRoute", platform); len(got) != 2 {
+	if got := twins(); len(got) != 2 {
 		t.Errorf("after dropping the aliases: %q", got)
 	}
 
@@ -415,12 +415,12 @@ func TestMaintenanceAcrossUpdate(t *testing.T) {
 	if _, err := p.UpdateSite(ctx, live); err != nil {
 		t.Fatal(err)
 	}
-	if got := routeNames(t, p, "IngressRoute", platform); len(got) != 0 {
+	if got := twins(); len(got) != 0 {
 		t.Errorf("after leaving maintenance mode: %q", got)
 	}
 }
 
-func TestDeleteSiteRemovesMaintenanceRoutes(t *testing.T) {
+func TestDeleteSiteRemovesRoutes(t *testing.T) {
 	p := cluster(t, nil)
 	ctx := t.Context()
 	if _, err := p.CreateSite(ctx, testSite()); err != nil {
@@ -432,26 +432,24 @@ func TestDeleteSiteRemovesMaintenanceRoutes(t *testing.T) {
 	if err := p.DeleteSite(ctx, testSiteID); err != nil {
 		t.Fatal(err)
 	}
-	if got := routeNames(t, p, "IngressRoute", p.platformNamespace); len(got) != 0 {
+	if got := routerNames(served(t, p), ""); len(got) != 0 {
 		t.Errorf("routes left after DeleteSite: %q", got)
 	}
 }
 
-// Other sites' and the platform's own routes aren't touched.
+// One site's maintenance mode leaves the other's routes alone, and the
+// provider serves both sites.
 func TestMaintenanceLeavesOtherRoutes(t *testing.T) {
 	p := cluster(t, nil)
 	ctx := t.Context()
-	other := &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "traefik.io/v1alpha1", "kind": "IngressRoute",
-		"metadata": map[string]any{"name": "pf-dashboard", "namespace": p.platformNamespace},
-	}}
-	other2 := other.DeepCopy()
-	other2.SetName("pf-other-preview-maintenance")
-	other2.SetLabels(map[string]string{MaintenanceLabel: "other"})
-	if err := p.Apply(ctx, []*unstructured.Unstructured{other, other2}); err != nil {
-		t.Fatal(err)
+	other := testSite()
+	other.ID, other.PreviewDomain = otherSiteID, "other.preview.example.com"
+	for _, cfg := range []*provisioner.SiteConfig{testSite(), other} {
+		if _, err := p.CreateSite(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := p.CreateSite(ctx, testSite()); err != nil {
+	if err := p.SetMaintenance(ctx, otherSiteID, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.SetMaintenance(ctx, testSiteID, true); err != nil {
@@ -460,7 +458,17 @@ func TestMaintenanceLeavesOtherRoutes(t *testing.T) {
 	if err := p.SetMaintenance(ctx, testSiteID, false); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(routeNames(t, p, "IngressRoute", p.platformNamespace), ","); got != "pf-dashboard,pf-other-preview-maintenance" {
-		t.Errorf("routes = %s", got)
+	want := []string{
+		ingress.SiteName(otherSiteID, "preview"),
+		ingress.SiteName(otherSiteID, "preview", "maintenance"),
+		ingress.SiteName(testSiteID, "preview"),
+	}
+	slices.Sort(want)
+	c := served(t, p)
+	if got := routerNames(c, ""); !slices.Equal(got, want) {
+		t.Errorf("routes = %q, want %q", got, want)
+	}
+	if got := c.HTTP.Services[ingress.SiteService(otherSiteID)].LoadBalancer.Servers; len(got) != 1 || got[0].URL != "http://nginx."+p.SiteNamespace(otherSiteID)+".svc" {
+		t.Errorf("the other site's service = %+v", got)
 	}
 }

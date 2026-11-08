@@ -10,7 +10,8 @@ import (
 
 func TestKubernetesDefaults(t *testing.T) {
 	k := config.Default().Kubernetes
-	if k.PlatformNamespace != "pressfleet" || k.SiteNamespacePrefix != "pf-" || k.TraefikService != "traefik" || k.Kubeconfig != "" || k.DataClaim != "control-plane-data" {
+	if k.PlatformNamespace != "pressfleet" || k.SiteNamespacePrefix != "pf-" || k.TraefikService != "traefik" || k.Kubeconfig != "" || k.DataClaim != "control-plane-data" ||
+		k.TraefikProviderListen != ":8081" {
 		t.Errorf("defaults = %+v", k)
 	}
 	if got := k.SiteNamespace("01hzy3k5q7m9c2v4b6n8r0t1wx"); got != "pf-01hzy3k5q7m9c2v4b6n8r0t1wx" {
@@ -86,6 +87,17 @@ func TestValidateKubernetes(t *testing.T) {
 		{"volume size", func(c *config.Config) { c.Kubernetes.SiteVolumeSize = "50Gi" }, ""},
 		{"volume size in decimal units", func(c *config.Config) { c.Kubernetes.SiteVolumeSize = "10G" }, "kubernetes.site_volume_size"},
 		{"empty volume size", func(c *config.Config) { c.Kubernetes.SiteVolumeSize = "" }, "kubernetes.site_volume_size"},
+		{"traefik provider listen", func(c *config.Config) { c.Kubernetes.TraefikProviderListen = "10.0.0.1:9000" }, ""},
+		{"traefik provider listen without port", func(c *config.Config) { c.Kubernetes.TraefikProviderListen = "8081" }, "kubernetes.traefik_provider_listen"},
+		{"empty traefik provider listen", func(c *config.Config) { c.Kubernetes.TraefikProviderListen = "" }, "kubernetes.traefik_provider_listen"},
+		{"traefik provider on the API's port", func(c *config.Config) {
+			kubernetesDriver(c)
+			c.Kubernetes.TraefikProviderListen = "0.0.0.0:8080"
+		}, "kubernetes.traefik_provider_listen"},
+		{"traefik provider on the SFTP port", func(c *config.Config) {
+			kubernetesDriver(c)
+			c.Kubernetes.TraefikProviderListen = c.SFTP.Listen
+		}, "kubernetes.traefik_provider_listen"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

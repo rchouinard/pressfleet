@@ -1,0 +1,125 @@
+{
+  "http": {
+    "routers": {
+      "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-alias-80fc0fb926": {
+        "entryPoints": [
+          "websecure"
+        ],
+        "rule": "Host(`www.example.com`)",
+        "middlewares": [
+          "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-hsts",
+          "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-alias-redirect"
+        ],
+        "service": "pf-01hzy3k5q7m9c2v4b6n8r0t1wx",
+        "tls": {
+          "certResolver": "acme-http"
+        }
+      },
+      "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-alias-bfabc37432": {
+        "entryPoints": [
+          "websecure"
+        ],
+        "rule": "Host(`example.org`)",
+        "middlewares": [
+          "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-hsts",
+          "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-alias-redirect"
+        ],
+        "service": "pf-01hzy3k5q7m9c2v4b6n8r0t1wx",
+        "tls": {
+          "certResolver": "acme-http"
+        }
+      },
+      "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-preview": {
+        "entryPoints": [
+          "websecure"
+        ],
+        "rule": "Host(`blog.preview.example.com`)",
+        "middlewares": [
+          "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-noindex",
+          "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-preview-auth"
+        ],
+        "service": "pf-01hzy3k5q7m9c2v4b6n8r0t1wx",
+        "tls": {
+          "certResolver": "acme-preview"
+        }
+      },
+      "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-preview-redirect": {
+        "entryPoints": [
+          "websecure"
+        ],
+        "rule": "Host(`blog.preview.example.com`)",
+        "priority": 10000,
+        "middlewares": [
+          "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-noindex",
+          "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-preview-auth",
+          "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-preview-redirect"
+        ],
+        "service": "pf-01hzy3k5q7m9c2v4b6n8r0t1wx",
+        "tls": {
+          "certResolver": "acme-preview"
+        }
+      },
+      "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-primary": {
+        "entryPoints": [
+          "websecure"
+        ],
+        "rule": "Host(`example.com`)",
+        "middlewares": [
+          "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-hsts"
+        ],
+        "service": "pf-01hzy3k5q7m9c2v4b6n8r0t1wx",
+        "tls": {
+          "certResolver": "acme-http"
+        }
+      }
+    },
+    "middlewares": {
+      "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-alias-redirect": {
+        "redirectRegex": {
+          "regex": "^https?://[^/]+(.*)$",
+          "replacement": "https://example.com${1}",
+          "permanent": true
+        }
+      },
+      "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-hsts": {
+        "headers": {
+          "stsSeconds": 31536000
+        }
+      },
+      "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-noindex": {
+        "headers": {
+          "customResponseHeaders": {
+            "X-Robots-Tag": "noindex"
+          }
+        }
+      },
+      "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-preview-auth": {
+        "basicAuth": {
+          "users": [
+            "client:$2y$10$abcdefghijklmnopqrstuuK0.8mQY1jQ5mVJm0Xx5r8oZ9c3w1y2K"
+          ],
+          "realm": "Preview",
+          "removeHeader": true
+        }
+      },
+      "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-preview-redirect": {
+        "redirectRegex": {
+          "regex": "^https?://[^/]+(.*)$",
+          "replacement": "https://example.com${1}",
+          "permanent": true
+        }
+      }
+    },
+    "services": {
+      "pf-01hzy3k5q7m9c2v4b6n8r0t1wx": {
+        "loadBalancer": {
+          "servers": [
+            {
+              "url": "http://nginx.pf-01hzy3k5q7m9c2v4b6n8r0t1wx.svc"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

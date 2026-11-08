@@ -1,7 +1,6 @@
 package kubernetes
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,50 +10,46 @@ import (
 	"regexp"
 	"slices"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-
 	"github.com/rchouinard/pressfleet/control-plane/internal/ingress"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 )
 
-// Routing and maintenance mode (#217, design doc §5.1, §5.2, §5.4, §4.8).
+// Routing and maintenance mode (#217, #322, design doc §5.1, §5.2, §5.4,
+// §4.8).
 //
-// A site's routes are IngressRoutes and Middlewares in its namespace, named
-// as on Compose (package ingress) and rendered from templates/k8s/routes.yaml.tmpl.
-// They are separate objects from the Deployment, so changing domains
-// changes no pod: Traefik's CRD provider picks the objects up within a
-// moment.
+// A site's routes are Traefik routers, middlewares, and a service, named as
+// on Compose (package ingress), which the control plane serves to Traefik's
+// HTTP provider (traefikconfig.go). RenderSite writes them, as JSON, to
+// RoutesFile in the site's manifest directory, where the templates
+// rollout's snapshots keep them with the manifests; Traefik picks a
+// change up within its poll interval. They are no object of the cluster,
+// so changing domains changes no pod, and the site's service is its nginx
+// Service by name (nginx.<site namespace>.svc), which Traefik reaches
+// through the site's NetworkPolicy.
 //
-// Maintenance routes can't be in the site's namespace. Traefik runs with
-// allowCrossNamespace: false, so a route there can't name the maintenance
-// page's Service in the platform namespace, and running a maintenance page
-// in every site namespace would multiply a Deployment and a NetworkPolicy
-// hole by the number of sites. Instead the twins are IngressRoutes in the
-// platform namespace, next to the Service, where the control plane's Role
-// lets it manage them (the chart). They hold only host names and the
-// maintenance page's address: no site data, and no way to reach a site's
-// pod. RenderSite writes them to MaintenanceFile in the site's directory;
-// SetMaintenance applies or deletes them, and they carry MaintenanceLabel
-// so the driver finds them without remembering a list. Deleting the site's
-// namespace doesn't delete them, so DeleteSite does.
+// Maintenance routes are a twin of each router at a higher priority,
+// pointing at the maintenance page's service, which the chart defines in
+// Traefik's file provider (pf-maintenance@file). RenderSite writes them to
+// MaintenanceFile in the site's directory; SetMaintenance copies that to
+// MaintenanceRoutesFile, which is served, or removes the copy. DeleteSite
+// removes both of the served files before anything else, so a site being
+// deleted stops being routed at once.
 
-// MaintenanceFile is the site's maintenance routes, which RenderSite writes
-// into the site's directory (not its manifest directory: they belong to
-// the platform namespace).
-const MaintenanceFile = "kubernetes-maintenance.yaml"
+// RoutesFile is the site's routes, in its manifest directory (not a
+// manifest: LoadDir reads only *.yaml).
+const RoutesFile = "traefik-routes.json"
 
-// MaintenanceLabel marks a site's maintenance routes in the platform
-// namespace, with the site's ID as the value.
-const MaintenanceLabel = "pressfleet.io/maintenance-for"
+// MaintenanceFile is the site's maintenance routes as RenderSite writes
+// them into the site's directory, and MaintenanceRoutesFile the copy that
+// SetMaintenance serves while the site is in maintenance mode.
+const (
+	MaintenanceFile       = "kubernetes-maintenance.json"
+	MaintenanceRoutesFile = "traefik-maintenance.json"
+)
 
-// ErrMaintenanceUnavailable means the site can't be put into maintenance
-// mode: its maintenance routes were never rendered, or the cluster doesn't
-// have Traefik's CRDs.
-var ErrMaintenanceUnavailable = errors.New("kubernetes: maintenance mode is unavailable")
-
-var ingressRouteKind = schema.GroupVersionKind{Group: "traefik.io", Version: "v1alpha1", Kind: "IngressRoute"}
+// maintenanceService is the maintenance page's Traefik service, from the
+// chart's file provider (charts/pressfleet/templates/traefik-config.yaml).
+const maintenanceService = ingress.MaintenanceService + "@file"
 
 // redirectRegex matches any URL Traefik sees and captures its path and
 // query, which a redirect to the primary domain keeps (as on Compose).
@@ -67,110 +62,78 @@ var hostname = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0
 
 func validHostname(h string) bool { return len(h) <= 253 && hostname.MatchString(h) }
 
-// routeData is one IngressRoute, as the templates see it.
-type routeData struct {
-	Name         string
-	Rule         string
-	CertResolver string
-	Priority     int
-	Middlewares  []string
-	// Domain marks a custom domain's router.
-	Domain bool
-}
-
-type authData struct {
-	// Name is both the middleware's and its Secret's.
-	Name string
-	// Users is the htpasswd line: only the bcrypt hash of the password.
-	Users string
-}
-
-type redirectData struct {
-	Name, Regex, Replacement string
-}
-
-// routingData is what routes.yaml.tmpl and maintenance-routes.tmpl see.
-type routingData struct {
-	EntryPoint string
-	Routes     []routeData
-	NoIndex    string
-	Auth       *authData
-	// HSTS is the HSTS middleware's name, empty if the security set's
-	// headers are off (§6.1).
-	HSTS       string
-	HSTSMaxAge int
-	Redirects  []redirectData
-}
-
-// maintenanceData is the maintenance twins of the site's routers.
-type maintenanceData struct {
-	Service string
-	Port    int
-	Routes  []routeData
-}
-
-// siteRouting derives the site's routes from its configuration. Its list of
-// routers is ingress.SiteRouters, the Compose driver's too: the preview domain's, then, once
-// the site is live, the primary domain's and one per alias, in the order of
+// siteRouting derives the site's routes and their maintenance twins from
+// its configuration. Its list of routers is ingress.SiteRouters, the
+// Compose driver's too: the preview domain's, then, once the site is live,
+// the primary domain's and one per alias, in the order of
 // SiteConfig.Aliases, and the preview redirect that takes the preview
 // domain over. hsts adds the HSTS middleware to the custom domains (§6.1).
-func siteRouting(site *provisioner.SiteConfig, hsts bool) (routingData, maintenanceData, error) {
+// service is the site's nginx Service as Traefik reaches it.
+func siteRouting(site *provisioner.SiteConfig, hsts bool, service string) (routes, maintenance traefikConfig, err error) {
 	if err := validateRouting(site); err != nil {
-		return routingData{}, maintenanceData{}, fmt.Errorf("%w: %w", ErrInvalidSite, err)
+		return routes, maintenance, fmt.Errorf("%w: %w", ErrInvalidSite, err)
 	}
 	name := func(suffixes ...string) string { return ingress.SiteName(site.ID, suffixes...) }
-
-	r := routingData{EntryPoint: ingress.EntryPointHTTPS, NoIndex: name(ingress.SuffixNoIndex)}
-	if a := site.PreviewAuth; a != nil {
-		r.Auth = &authData{Name: name(ingress.SuffixPreviewAuth), Users: a.Username + ":" + a.PasswordHash}
-	}
-	var routers []routeData
-	for _, rt := range ingress.SiteRouters(site, hsts) {
-		routers = append(routers, routeData{
-			Name:         rt.Name,
-			Rule:         rt.Rule,
-			CertResolver: rt.CertResolver,
-			Middlewares:  rt.Middlewares,
-			Domain:       rt.Domain,
-		})
-	}
-	if hsts && site.PrimaryDomain != "" {
-		r.HSTS, r.HSTSMaxAge = name(ingress.SuffixHSTS), ingress.HSTSMaxAge
-	}
-	preview := ingress.PreviewMiddlewares(site)
-
-	// Maintenance twins mirror the routers above only: the preview redirect
-	// is shadowed by the twin of the preview router, which has a higher
-	// priority.
-	m := maintenanceData{Service: ingress.MaintenanceHost, Port: ingress.MaintenancePort}
-	for _, rt := range routers {
-		m.Routes = append(m.Routes, routeData{
-			Name:         rt.Name + "-" + ingress.SuffixMaintenance,
-			Rule:         rt.Rule,
-			CertResolver: rt.CertResolver,
-			Priority:     ingress.MaintenancePriority,
-		})
-	}
-
-	if site.PrimaryDomain != "" {
-		// The preview domain now redirects to the primary domain, behind the
-		// preview router's own middlewares, so a protected preview domain
-		// asks for the password before it reveals where the site went.
-		routers = append(routers, routeData{
-			Name:         name(ingress.SuffixPreviewRedirect),
-			Rule:         ingress.HostRule(site.PreviewDomain),
-			CertResolver: ingress.CertResolverPreview,
-			Priority:     ingress.PreviewRedirectPriority,
-			Middlewares:  append(slices.Clone(preview), name(ingress.SuffixPreviewRedirect)),
-		})
-		replacement := "https://" + site.PrimaryDomain + "${1}"
-		r.Redirects = []redirectData{
-			{Name: name(ingress.SuffixPreviewRedirect), Regex: redirectRegex, Replacement: replacement},
-			{Name: name(ingress.SuffixAliasRedirect), Regex: redirectRegex, Replacement: replacement},
+	svc := ingress.SiteService(site.ID)
+	routes.add(traefikConfig{})
+	maintenance.add(traefikConfig{})
+	router := func(rt ingress.Router, priority int, service string) traefikRouter {
+		return traefikRouter{
+			EntryPoints: []string{ingress.EntryPointHTTPS},
+			Rule:        rt.Rule,
+			Priority:    priority,
+			Middlewares: rt.Middlewares,
+			Service:     service,
+			TLS:         traefikRouterTLS{CertResolver: rt.CertResolver},
 		}
 	}
-	r.Routes = routers
-	return r, m, nil
+
+	routes.HTTP.Services[svc] = traefikService{LoadBalancer: traefikLoadBalancer{Servers: []traefikServer{{URL: service}}}}
+	for _, rt := range ingress.SiteRouters(site, hsts) {
+		routes.HTTP.Routers[rt.Name] = router(rt, 0, svc)
+		// Twins mirror these routers only: the preview redirect is
+		// shadowed by the twin of the preview router, which has a higher
+		// priority.
+		twin := rt
+		twin.Middlewares = nil
+		maintenance.HTTP.Routers[rt.Name+"-"+ingress.SuffixMaintenance] = router(twin, ingress.MaintenancePriority, maintenanceService)
+	}
+
+	// Preview domains stay out of search engines (§5.1).
+	routes.HTTP.Middlewares[name(ingress.SuffixNoIndex)] = traefikMiddleware{
+		Headers: &traefikHeaders{CustomResponseHeaders: map[string]string{"X-Robots-Tag": "noindex"}},
+	}
+	if a := site.PreviewAuth; a != nil {
+		// Preview password protection (§5.1): only the bcrypt hash is
+		// served. The Authorization header is removed before the request
+		// reaches WordPress, which would otherwise try it as an
+		// application password and refuse REST API requests.
+		routes.HTTP.Middlewares[name(ingress.SuffixPreviewAuth)] = traefikMiddleware{
+			BasicAuth: &traefikBasicAuth{Users: []string{a.Username + ":" + a.PasswordHash}, Realm: "Preview", RemoveHeader: true},
+		}
+	}
+	if site.PrimaryDomain == "" {
+		return routes, maintenance, nil
+	}
+	if hsts {
+		// Without includeSubDomains: a client's other subdomains may not
+		// serve HTTPS (§6.1).
+		routes.HTTP.Middlewares[name(ingress.SuffixHSTS)] = traefikMiddleware{Headers: &traefikHeaders{STSSeconds: ingress.HSTSMaxAge}}
+	}
+	// The preview domain now redirects to the primary domain, behind the
+	// preview router's own middlewares, so a protected preview domain asks
+	// for the password before it reveals where the site went.
+	routes.HTTP.Routers[name(ingress.SuffixPreviewRedirect)] = router(ingress.Router{
+		Rule:         ingress.HostRule(site.PreviewDomain),
+		CertResolver: ingress.CertResolverPreview,
+		Middlewares:  append(slices.Clone(ingress.PreviewMiddlewares(site)), name(ingress.SuffixPreviewRedirect)),
+	}, ingress.PreviewRedirectPriority, svc)
+	redirect := traefikMiddleware{RedirectRegex: &traefikRedirectRegex{
+		Regex: redirectRegex, Replacement: "https://" + site.PrimaryDomain + "${1}", Permanent: true,
+	}}
+	routes.HTTP.Middlewares[name(ingress.SuffixPreviewRedirect)] = redirect
+	routes.HTTP.Middlewares[name(ingress.SuffixAliasRedirect)] = redirect
+	return routes, maintenance, nil
 }
 
 // validateRouting checks what the routes are made from: every domain must
@@ -205,21 +168,10 @@ func validateRouting(site *provisioner.SiteConfig) error {
 	return errors.Join(errs...)
 }
 
-// renderMaintenance writes the site's maintenance routes into its
-// directory, unless they are unchanged.
-func renderMaintenance(siteDir string, data manifestData) error {
-	tmpl, err := siteTemplates()
-	if err != nil {
-		return fmt.Errorf("parsing site templates: %w", err)
-	}
-	var buf bytes.Buffer
-	if err := tmpl.ExecuteTemplate(&buf, "maintenance-routes.tmpl", data); err != nil {
-		return fmt.Errorf("rendering maintenance-routes.tmpl: %w", err)
-	}
-	if _, err := DecodeManifests(buf.Bytes()); err != nil {
-		return fmt.Errorf("rendering maintenance-routes.tmpl: %w", err)
-	}
-	return writeIfChanged(filepath.Join(siteDir, MaintenanceFile), buf.Bytes())
+// siteService is the address Traefik reaches the site's nginx Service at
+// (service.yaml.tmpl: Service nginx, port 80).
+func (p *Provisioner) siteService(siteID string) string {
+	return "http://nginx." + p.SiteNamespace(siteID) + ".svc"
 }
 
 // SetMaintenance implements provisioner.Provisioner: it puts the site's
@@ -231,9 +183,9 @@ func (p *Provisioner) SetMaintenance(ctx context.Context, siteID string, enabled
 	}
 	var err error
 	if enabled {
-		err = p.applyMaintenance(ctx, siteID)
+		err = p.applyMaintenance(siteID)
 	} else {
-		err = p.removeMaintenance(ctx, siteID, nil)
+		err = p.removeMaintenance(siteID)
 	}
 	if err != nil {
 		return fmt.Errorf("set maintenance of site %s: %w", siteID, err)
@@ -242,9 +194,9 @@ func (p *Provisioner) SetMaintenance(ctx context.Context, siteID string, enabled
 	return nil
 }
 
-// applyMaintenance applies the site's rendered maintenance routes to the
-// platform namespace and deletes twins of routers the site no longer has.
-func (p *Provisioner) applyMaintenance(ctx context.Context, siteID string) error {
+// applyMaintenance serves the site's rendered maintenance routes, in place
+// of any it served before.
+func (p *Provisioner) applyMaintenance(siteID string) error {
 	dir, err := p.layout.SiteDir(siteID)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidSite, err)
@@ -255,39 +207,45 @@ func (p *Provisioner) applyMaintenance(ctx context.Context, siteID string) error
 	} else if err != nil {
 		return err
 	}
-	objs, err := DecodeManifests(content)
-	if err != nil {
-		return err
-	}
-	if err := p.Apply(ctx, objs); err != nil {
-		if apierrors.IsNotFound(err) {
-			return fmt.Errorf("%w: Traefik's CRDs aren't installed: %w", ErrMaintenanceUnavailable, err)
-		}
-		return err
-	}
-	keep := map[string]bool{}
-	for _, o := range objs {
-		keep[o.GetName()] = true
-	}
-	return p.removeMaintenance(ctx, siteID, keep)
+	return writeIfChanged(filepath.Join(dir, MaintenanceRoutesFile), content)
 }
 
-// removeMaintenance deletes the site's maintenance routes from the platform
-// namespace, except those named in keep. Any site can have them removed.
-func (p *Provisioner) removeMaintenance(ctx context.Context, siteID string, keep map[string]bool) error {
-	res := p.resource(kinds[ingressRouteKind], p.platformNamespace)
-	list, err := res.List(ctx, metav1.ListOptions{LabelSelector: MaintenanceLabel + "=" + siteID})
-	if apierrors.IsNotFound(err) {
-		return nil // no CRDs, so no routes
-	} else if err != nil {
-		return fmt.Errorf("listing maintenance routes: %w", err)
+// removeMaintenance stops serving the site's maintenance routes. Any site
+// can have them removed.
+func (p *Provisioner) removeMaintenance(siteID string) error {
+	dir, err := p.layout.SiteDir(siteID)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidSite, err)
 	}
-	for _, item := range list.Items {
-		if keep[item.GetName()] {
-			continue
-		}
-		if err := res.Delete(ctx, item.GetName(), metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("deleting maintenance route %s/%s: %w", p.platformNamespace, item.GetName(), err)
+	if err := os.Remove(filepath.Join(dir, MaintenanceRoutesFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// inMaintenance reports whether the site's maintenance routes are served.
+func (p *Provisioner) inMaintenance(siteID string) (bool, error) {
+	dir, err := p.layout.SiteDir(siteID)
+	if err != nil {
+		return false, fmt.Errorf("%w: %w", ErrInvalidSite, err)
+	}
+	_, err = os.Stat(filepath.Join(dir, MaintenanceRoutesFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// unroute stops serving all of the site's routes, its maintenance routes
+// included.
+func (p *Provisioner) unroute(siteID string) error {
+	dir, err := p.layout.SiteDir(siteID)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidSite, err)
+	}
+	for _, f := range []string{filepath.Join(dir, SiteManifestDir, RoutesFile), filepath.Join(dir, MaintenanceRoutesFile)} {
+		if err := os.Remove(f); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
 		}
 	}
 	return nil
@@ -296,11 +254,11 @@ func (p *Provisioner) removeMaintenance(ctx context.Context, siteID string, keep
 // maintenanceBeforeApply puts a site that is in maintenance mode on the
 // maintenance page before its pod is replaced, so visitors see the page
 // rather than errors.
-func (p *Provisioner) maintenanceBeforeApply(ctx context.Context, cfg *provisioner.SiteConfig) error {
+func (p *Provisioner) maintenanceBeforeApply(cfg *provisioner.SiteConfig) error {
 	if !cfg.Maintenance {
 		return nil
 	}
-	if err := p.applyMaintenance(ctx, cfg.ID); err != nil {
+	if err := p.applyMaintenance(cfg.ID); err != nil {
 		return fmt.Errorf("maintenance mode: %w", err)
 	}
 	return nil
@@ -309,11 +267,11 @@ func (p *Provisioner) maintenanceBeforeApply(ctx context.Context, cfg *provision
 // maintenanceAfterApply takes a site that isn't in maintenance mode off the
 // page once its pod is ready, which also repairs routes left by a failed
 // job.
-func (p *Provisioner) maintenanceAfterApply(ctx context.Context, cfg *provisioner.SiteConfig) error {
+func (p *Provisioner) maintenanceAfterApply(cfg *provisioner.SiteConfig) error {
 	if cfg.Maintenance {
 		return nil
 	}
-	if err := p.removeMaintenance(ctx, cfg.ID, nil); err != nil {
+	if err := p.removeMaintenance(cfg.ID); err != nil {
 		return fmt.Errorf("maintenance mode: %w", err)
 	}
 	return nil

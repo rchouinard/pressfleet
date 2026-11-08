@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -131,9 +132,6 @@ type manifestData struct {
 	StorageClass string
 	VolumeSize   string
 	Egress       egress
-	// Routing and Maintenance are the site's routes (routing.go).
-	Routing     routingData
-	Maintenance maintenanceData
 }
 
 // siteImages are a site's container images.
@@ -188,7 +186,10 @@ type siteInputs struct {
 // file whose template no longer exists is removed, and unchanged files
 // aren't rewritten. Every rendered object must be one Apply accepts, in the
 // site's namespace (the namespace itself aside), and labeled RenderedLabel.
-// It returns the manifest directory.
+// The site's routes go next to the manifests (RoutesFile), where Traefik's
+// provider serves them from, and its maintenance routes into the site's
+// directory (MaintenanceFile; routing.go). It returns the manifest
+// directory.
 func (p *Provisioner) RenderSite(ctx context.Context, cfg *provisioner.SiteConfig) (string, error) {
 	if cfg == nil {
 		return "", fmt.Errorf("%w: site config is required", ErrInvalidSite)
@@ -211,11 +212,23 @@ func (p *Provisioner) RenderSite(ctx context.Context, cfg *provisioner.SiteConfi
 	if err != nil {
 		return "", fmt.Errorf("site %s: %w", cfg.ID, err)
 	}
-	dir := filepath.Join(siteDir, SiteManifestDir)
-	if err := renderManifests(dir, data); err != nil {
+	routes, maintenance, err := siteRouting(cfg, p.security.Headers, p.siteService(cfg.ID))
+	if err != nil {
+		return "", fmt.Errorf("site %s: %w", cfg.ID, err)
+	}
+	routesJSON, err := encodeTraefikConfig(routes)
+	if err != nil {
 		return "", fmt.Errorf("rendering site %s: %w", cfg.ID, err)
 	}
-	if err := renderMaintenance(siteDir, data); err != nil {
+	maintenanceJSON, err := encodeTraefikConfig(maintenance)
+	if err != nil {
+		return "", fmt.Errorf("rendering site %s: %w", cfg.ID, err)
+	}
+	dir := filepath.Join(siteDir, SiteManifestDir)
+	if err := renderManifests(dir, data, map[string][]byte{RoutesFile: routesJSON}); err != nil {
+		return "", fmt.Errorf("rendering site %s: %w", cfg.ID, err)
+	}
+	if err := writeIfChanged(filepath.Join(siteDir, MaintenanceFile), maintenanceJSON); err != nil {
 		return "", fmt.Errorf("rendering site %s: %w", cfg.ID, err)
 	}
 	return dir, nil
@@ -245,10 +258,6 @@ func (p *Provisioner) manifestData(cfg *provisioner.SiteConfig, in siteInputs) (
 		// every request as plain HTTP from Traefik.
 		return manifestData{}, fmt.Errorf("%w: kubernetes.pod_cidrs is not set", ErrInvalidSite)
 	}
-	routing, maintenance, err := siteRouting(cfg, p.security.Headers)
-	if err != nil {
-		return manifestData{}, err
-	}
 	sum := sha256.Sum256(in.wpConfig)
 	return manifestData{
 		SiteID:                     cfg.ID,
@@ -272,18 +281,18 @@ func (p *Provisioner) manifestData(cfg *provisioner.SiteConfig, in siteInputs) (
 		StorageClass:               p.storageClass,
 		VolumeSize:                 p.volumeSize,
 		Egress:                     p.egress,
-		Routing:                    routing,
-		Maintenance:                maintenance,
 	}, nil
 }
 
-// renderManifests executes every manifest template into dir.
-func renderManifests(dir string, data manifestData) error {
+// renderManifests executes every manifest template into dir, with the
+// other rendered files (the routes) in files.
+func renderManifests(dir string, data manifestData, files map[string][]byte) error {
 	tmpl, err := siteTemplates()
 	if err != nil {
 		return fmt.Errorf("parsing site templates: %w", err)
 	}
 	rendered := map[string][]byte{}
+	maps.Copy(rendered, files)
 	for _, t := range tmpl.Templates() {
 		name, ok := strings.CutSuffix(t.Name(), templateExt)
 		if !ok {
@@ -329,14 +338,15 @@ func checkRendered(obj interface {
 	return nil
 }
 
-// syncManifests makes the manifest files (*.yaml) of dir those of files:
-// others are removed, and unchanged ones aren't rewritten.
+// syncManifests makes the rendered files of dir (the manifests, *.yaml, and
+// RoutesFile) those of files: others are removed, and unchanged ones aren't
+// rewritten.
 func syncManifests(dir string, files map[string][]byte) error {
 	existing, err := filepath.Glob(filepath.Join(dir, "*"+manifestExt))
 	if err != nil {
 		return err
 	}
-	for _, f := range existing {
+	for _, f := range append(existing, filepath.Join(dir, RoutesFile)) {
 		if _, ok := files[filepath.Base(f)]; !ok {
 			if err := os.Remove(f); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return err
@@ -364,6 +374,23 @@ func readManifests(dir string) (map[string][]byte, error) {
 			return nil, err
 		}
 		out[filepath.Base(f)] = content
+	}
+	return out, nil
+}
+
+// readRendered reads what RenderSite rendered into dir: the manifests and,
+// if it is there, RoutesFile.
+func readRendered(dir string) (map[string][]byte, error) {
+	out, err := readManifests(dir)
+	if err != nil {
+		return nil, err
+	}
+	routes, err := os.ReadFile(filepath.Join(dir, RoutesFile)) //nolint:gosec // G304: rendered into the site's directory
+	switch {
+	case err == nil:
+		out[RoutesFile] = routes
+	case !errors.Is(err, fs.ErrNotExist):
+		return nil, err
 	}
 	return out, nil
 }

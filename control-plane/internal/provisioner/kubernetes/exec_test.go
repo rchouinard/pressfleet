@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
@@ -394,35 +395,41 @@ func TestFPMStatus(t *testing.T) {
 	}
 }
 
-func traefikPod(name string, running bool) *corev1.Pod {
-	pod := sitePodObject(running, 65532)
-	pod.Name, pod.Namespace = name, "pressfleet"
-	pod.Labels = map[string]string{"app.kubernetes.io/name": "pressfleet", "app.kubernetes.io/component": "traefik"}
-	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "traefik", State: pod.Status.ContainerStatuses[0].State}}
-	return pod
-}
-
+// Traefik's metrics come over the network, from the chart's Service, with
+// no exec into Traefik's pod (#322).
 func TestTraefikMetrics(t *testing.T) {
-	ex := answering("traefik_service_requests_total 1\n", nil)
-	p := execCluster(t, ex, traefikPod("traefik-a", false), traefikPod("traefik-b", true))
+	var path string
+	status, body := http.StatusOK, "traefik_service_requests_total 1\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	ex := &fakeExec{}
+	p := execCluster(t, ex)
+	if got, want := p.traefikMetricsURL(), "http://traefik-metrics.pressfleet.svc:9100/metrics"; got != want {
+		t.Errorf("metrics URL = %q, want %q", got, want)
+	}
+	p.metricsURL = srv.URL + "/metrics"
 	out, err := p.TraefikMetrics(t.Context())
-	if err != nil || string(out) != "traefik_service_requests_total 1\n" {
-		t.Fatalf("TraefikMetrics = %q, %v", out, err)
+	if err != nil || string(out) != body || path != "/metrics" {
+		t.Fatalf("TraefikMetrics = %q, %v (path %q)", out, err, path)
 	}
-	c := ex.last(t)
-	if c.Target != (execTarget{Namespace: "pressfleet", Pod: "traefik-b", Container: "traefik"}) {
-		t.Errorf("target = %+v", c.Target)
-	}
-	if got := strings.Join(c.Command, " "); got != "wget -q -O- http://127.0.0.1:8082/metrics" {
-		t.Errorf("command = %q", got)
+	if n := ex.count(); n != 0 {
+		t.Errorf("TraefikMetrics ran %d commands in pods", n)
 	}
 
-	p = execCluster(t, &fakeExec{}, traefikPod("traefik-a", false))
+	status = http.StatusNotFound
 	if _, err := p.TraefikMetrics(t.Context()); !errors.Is(err, ErrTraefikMetrics) {
-		t.Errorf("no running pod: %v", err)
+		t.Errorf("status 404: %v", err)
 	}
-	p = execCluster(t, answering("wget: can't connect", exitCode(1)), traefikPod("traefik-a", true))
+	status, body = http.StatusOK, strings.Repeat("x", traefikMaxOutput+1)
+	if _, err := p.TraefikMetrics(t.Context()); !errors.Is(err, ErrOutputTruncated) {
+		t.Errorf("too much: %v", err)
+	}
+	srv.Close()
 	if _, err := p.TraefikMetrics(t.Context()); !errors.Is(err, ErrTraefikMetrics) {
-		t.Errorf("wget failure: %v", err)
+		t.Errorf("no Traefik: %v", err)
 	}
 }

@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"path/filepath"
 	"regexp"
@@ -62,7 +63,17 @@ type KubernetesConfig struct {
 	// tasks directly and site tasks through a PersistentVolume of their own
 	// namespace that points at the same storage.
 	DataClaim string `yaml:"data_claim"`
+	// TraefikProviderListen is the address the control plane serves
+	// Traefik's dynamic configuration on (Traefik's HTTP provider, #322):
+	// a listener of its own, which the chart's NetworkPolicy opens to
+	// Traefik's pod alone.
+	TraefikProviderListen string `yaml:"traefik_provider_listen"`
 }
+
+// DefaultTraefikProviderListen is the default
+// kubernetes.traefik_provider_listen, the port the Helm chart points
+// Traefik's HTTP provider at.
+const DefaultTraefikProviderListen = ":8081"
 
 // DefaultDataClaim is the default kubernetes.data_claim, the claim the
 // Helm chart creates.
@@ -94,6 +105,8 @@ func DefaultKubernetes() KubernetesConfig {
 		SiteVolumeSize:      DefaultSiteVolumeSize,
 		TraefikService:      "traefik",
 		DataClaim:           DefaultDataClaim,
+
+		TraefikProviderListen: DefaultTraefikProviderListen,
 	}
 }
 
@@ -162,6 +175,9 @@ func (k KubernetesConfig) Validate() error {
 	if !dnsSubdomain.MatchString(k.DataClaim) {
 		errs = append(errs, fmt.Errorf("kubernetes.data_claim must be a PersistentVolumeClaim name, got %q", k.DataClaim))
 	}
+	if _, port, err := net.SplitHostPort(k.TraefikProviderListen); err != nil || !validPort(port) {
+		errs = append(errs, fmt.Errorf("kubernetes.traefik_provider_listen must be host:port or :port, like :8081, got %q", k.TraefikProviderListen))
+	}
 	if _, err := k.PodPrefixes(); err != nil {
 		errs = append(errs, err)
 	}
@@ -191,8 +207,20 @@ func (c Config) validateKubernetesDriver() error {
 		// database is a PostgreSQL the operator provides (§4.8).
 		errs = append(errs, fmt.Errorf("driver kubernetes requires database.driver %q, got %q", DriverPostgres, c.Database.Driver))
 	}
+	if samePort(c.Kubernetes.TraefikProviderListen, c.Listen) || samePort(c.Kubernetes.TraefikProviderListen, c.SFTP.Listen) {
+		// Traefik routes the API and SFTP ports from the internet; its
+		// configuration must stay off them.
+		errs = append(errs, fmt.Errorf("kubernetes.traefik_provider_listen %q needs a port of its own, not listen's or sftp.listen's", c.Kubernetes.TraefikProviderListen))
+	}
 	if len(c.Kubernetes.PodCIDRs) == 0 {
 		errs = append(errs, errors.New("kubernetes.pod_cidrs is required when driver is kubernetes: site nginx trusts forwarded headers from the pod network"))
 	}
 	return errors.Join(errs...)
+}
+
+// samePort reports whether two listen addresses use the same port.
+func samePort(a, b string) bool {
+	_, pa, errA := net.SplitHostPort(a)
+	_, pb, errB := net.SplitHostPort(b)
+	return errA == nil && errB == nil && pa == pb
 }

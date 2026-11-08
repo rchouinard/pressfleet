@@ -125,6 +125,10 @@ type Provisioner struct {
 	wpcliMaxOutput int
 
 	registry *http.Client
+	// metricsClient reads Traefik's metrics, from metricsURL if set (in
+	// tests) or else the chart's Service (traefikMetricsURL).
+	metricsClient *http.Client
+	metricsURL    string
 	// insecureRegistries are asked over plain HTTP (registryURL).
 	insecureRegistries []string
 	observe            observers
@@ -198,6 +202,7 @@ func newWithClient(cfg Config, c *Client) *Provisioner {
 	if p.registry == nil {
 		p.registry = &http.Client{Timeout: DefaultRegistryTimeout}
 	}
+	p.metricsClient = inClusterHTTPClient()
 	p.setupErr = p.setupNetwork(cfg)
 	p.tasks = newTaskSettings(cfg)
 	return p
@@ -340,4 +345,17 @@ func (p *Provisioner) resolve(ctx context.Context, cfg *provisioner.SiteConfig) 
 		return siteInputs{}, fmt.Errorf("%w: %w", ErrInvalidSite, err)
 	}
 	return in, nil
+}
+
+// inClusterHTTPClient is a client for the platform's own Services: no
+// proxy from the environment, which would see Traefik's metrics, and no
+// redirects.
+func inClusterHTTPClient() *http.Client {
+	t, _ := http.DefaultTransport.(*http.Transport)
+	t = t.Clone()
+	t.Proxy = nil
+	return &http.Client{
+		Transport:     t,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 }

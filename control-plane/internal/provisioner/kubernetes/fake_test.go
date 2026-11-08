@@ -4,12 +4,9 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -21,8 +18,7 @@ import (
 // the built-in kinds, as they share the API server, and that store applies
 // server-side apply patches with field ownership, as the API server does:
 // the driver applies through the dynamic client and reads through the typed
-// one. Traefik's kinds, which the typed clientset doesn't know, live in the
-// dynamic client's own store.
+// one.
 func fakeClient(t *testing.T, typed ...runtime.Object) (*Client, *dynamicfake.FakeDynamicClient) {
 	t.Helper()
 	cs := kubefake.NewClientset(typed...)
@@ -35,34 +31,7 @@ func fakeClient(t *testing.T, typed ...runtime.Object) (*Client, *dynamicfake.Fa
 		listKinds[k.resource] = gvk.Kind + "List"
 	}
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds)
-	shared := k8stesting.ObjectReaction(cs.Tracker())
-	dyn.PrependReactor("*", "*", func(a k8stesting.Action) (bool, runtime.Object, error) {
-		if a.GetResource().Group == "traefik.io" {
-			return false, nil, nil
-		}
-		return shared(a)
-	})
-	// The dynamic fake's own store patches only objects that exist;
-	// server-side apply creates them too.
-	dyn.PrependReactor("patch", "*", func(a k8stesting.Action) (bool, runtime.Object, error) {
-		pa, ok := a.(k8stesting.PatchAction)
-		if !ok || pa.GetPatchType() != types.ApplyPatchType || pa.GetResource().Group != "traefik.io" {
-			return false, nil, nil
-		}
-		obj := &unstructured.Unstructured{}
-		if err := obj.UnmarshalJSON(pa.GetPatch()); err != nil {
-			return true, nil, err
-		}
-		tracker, gvr, ns := dyn.Tracker(), pa.GetResource(), pa.GetNamespace()
-		_, err := tracker.Get(gvr, ns, pa.GetName())
-		switch {
-		case apierrors.IsNotFound(err):
-			err = tracker.Create(gvr, obj, ns)
-		case err == nil:
-			err = tracker.Update(gvr, obj, ns)
-		}
-		return true, obj, err
-	})
+	dyn.PrependReactor("*", "*", k8stesting.ObjectReaction(cs.Tracker()))
 	c := newClient(cs, dyn, nil)
 	c.poll = 5e6 // 5ms
 	return c, dyn

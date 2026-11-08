@@ -48,12 +48,6 @@ var kinds = map[schema.GroupVersionKind]kind{
 	{Group: "rbac.authorization.k8s.io", Version: "v1", Kind: "RoleBinding"}: {
 		schema.GroupVersionResource{Group: "rbac.authorization.k8s.io", Version: "v1", Resource: "rolebindings"}, true,
 	},
-	{Group: "traefik.io", Version: "v1alpha1", Kind: "IngressRoute"}: {
-		schema.GroupVersionResource{Group: "traefik.io", Version: "v1alpha1", Resource: "ingressroutes"}, true,
-	},
-	{Group: "traefik.io", Version: "v1alpha1", Kind: "Middleware"}: {
-		schema.GroupVersionResource{Group: "traefik.io", Version: "v1alpha1", Resource: "middlewares"}, true,
-	},
 }
 
 // DecodeManifests parses YAML documents into objects, skipping empty
@@ -178,8 +172,7 @@ func (c *Client) ApplyDir(ctx context.Context, dir string) error {
 // Server-side apply only changes the objects it is given, so without this
 // an object dropped from the templates would stay behind. Objects without
 // the label, such as task pods, are left alone, and so is a kind whose
-// resource the cluster doesn't have (Traefik's, before its CRDs are
-// installed).
+// resource the cluster doesn't have.
 func (c *Client) Prune(ctx context.Context, namespace string, keep []*unstructured.Unstructured) error {
 	type key struct {
 		gvk  schema.GroupVersionKind

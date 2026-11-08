@@ -214,13 +214,10 @@ func kindInstance(p *Provisioner) conformance.Instance {
 			return left, nil
 		},
 
-		InMaintenance: func(ctx context.Context, siteID string) (bool, error) {
-			list, err := p.resource(kinds[ingressRouteKind], p.platformNamespace).List(ctx,
-				metav1.ListOptions{LabelSelector: MaintenanceLabel + "=" + siteID})
-			if err != nil {
-				return false, err
-			}
-			return len(list.Items) > 0, nil
+		// Whether the site's maintenance routes are among those served to
+		// Traefik.
+		InMaintenance: func(_ context.Context, siteID string) (bool, error) {
+			return p.inMaintenance(siteID)
 		},
 	}
 }
