@@ -102,6 +102,8 @@ The GitHub release notes list the commits since the previous release ([Releasing
 
 ### The next release (after 1.1.0)
 
+**Kubernetes (#102).** PressFleet can run on a Kubernetes cluster: a Helm chart installs the platform, `pressfleet init --target kubernetes` writes its values and Secrets, and a driver runs sites as namespaces of pods. Nothing changes for Docker Compose installs, and the orchestrator can't be changed on an existing install. The guide is [PressFleet on Kubernetes](kubernetes.md), with a k3s walkthrough. For Kubernetes installs, this page's `pressfleet upgrade`, its rollback, and held rollouts don't apply; [Helm does the upgrade](#kubernetes). The release publishes the chart as `oci://ghcr.io/rchouinard/pressfleet/charts/pressfleet` and as a release asset, for Kubernetes 1.35 and later. The built-in **Disk nearly full** alert has no data on Kubernetes, so watch disks with the cluster's monitoring.
+
 **Automatic rollback (#249).** `pressfleet upgrade` now rolls back a failed upgrade on its own ([Automatic rollback](#automatic-rollback)), and exits with `2` when it did. Scripts that took any non-zero exit for a platform left failed should accept `2` as "failed, and back on the previous release". `--no-rollback` keeps the previous behavior: the platform is left as it failed, and the recovery steps are printed. The upgrade record's statuses `rolling-back`, `rolled-back`, and `rollback-failed` are spelled with hyphens; a record with underscores is an unknown status, which holds the rollouts.
 
 **PostgreSQL.** The automatic rollback and `--rollback` restore a PostgreSQL install only when the upgrade didn't migrate the state database. Otherwise they refuse, change nothing, and print the steps that restore your own backup ([PostgreSQL state databases](#postgresql-state-databases)). Take that backup before every upgrade, as before.
@@ -276,17 +278,17 @@ Alternatively, fix the cause and run `pressfleet upgrade` again. A retry keeps t
 
 ## Kubernetes
 
-On a Kubernetes install, the Helm chart takes the place of the platform Compose project, and `helm upgrade` the place of `pressfleet upgrade` (design doc §4.8). `pressfleet upgrade` refuses to run with `driver: kubernetes`. The CLI and control plane version skew rules don't apply, because the chart and the control plane always come from the same release.
+[PressFleet on Kubernetes](kubernetes.md#upgrading) has the whole procedure, with the backups around it. On a Kubernetes install, the Helm chart takes the place of the platform Compose project, and `helm upgrade` the place of `pressfleet upgrade` (design doc §4.8). `pressfleet upgrade` refuses to run with `driver: kubernetes`. The CLI and control plane version skew rules don't apply, because the chart and the control plane always come from the same release.
 
 Before you upgrade, read the release notes, and **back up the PostgreSQL state database** yourself: the control plane migrates it when it starts, and PressFleet doesn't take pre-migration backups of PostgreSQL ([PostgreSQL state databases](#postgresql-state-databases)).
 
-Helm installs a chart's CRDs on the first install only, never on an upgrade, so apply the new release's Traefik CRDs first. Then upgrade, keeping your values:
+Helm installs a chart's CRDs on the first install only, never on an upgrade, so apply the new release's Traefik CRDs first. Then upgrade, with the values file `pressfleet init --target kubernetes` wrote (it is the record of what you run, and new chart defaults reach you; `--reuse-values` keeps the old release's defaults):
 
 ```sh
 helm show crds oci://ghcr.io/rchouinard/pressfleet/charts/pressfleet --version <new release> \
   | kubectl apply --server-side -f -
 helm upgrade pressfleet oci://ghcr.io/rchouinard/pressfleet/charts/pressfleet --version <new release> \
-  --namespace pressfleet --reuse-values --wait --timeout 15m
+  --namespace pressfleet --values pressfleet-kubernetes/values.yaml --wait --timeout 15m
 ```
 
 Before it changes anything, the chart's pre-upgrade hook runs the upgrade preflight on the new control plane image, in the Job `upgrade-preflight`. It applies the same policy as on Compose: no downgrade, no upgrade from below the oldest release the new one upgrades from, and no change of MariaDB's release series (unless MariaDB is external). It reads the running control plane's version and MariaDB image from the cluster, so it needs no access to the API server. If it refuses, `helm upgrade` fails with nothing changed, and the Job stays so that you can read why:

@@ -1,5 +1,7 @@
 # Operating PressFleet
 
+On a Kubernetes cluster, [PressFleet on Kubernetes](kubernetes.md#day-to-day) replaces the Compose-specific parts of this page with `kubectl`.
+
 How the platform is laid out on the host, where its logs are, which commands run where, and how to watch it.
 
 ## The platform project
@@ -141,7 +143,7 @@ Only the read paths of the query API are served (`/api/v1/query`, `query_range`,
 - It doesn't touch client group backups: snapshots stay in the repositories.
 - While an upgrade is unconfirmed, the core, image, and template rollouts are held ([Held rollouts](upgrading.md#held-rollouts)); `pressfleet doctor` warns.
 
-Kubernetes installs upgrade and roll back with Helm ([Kubernetes](upgrading.md#kubernetes)).
+Kubernetes installs upgrade and roll back with Helm ([Kubernetes](upgrading.md#kubernetes)). The rest of this page assumes Compose; on a cluster the same services run as pods in the platform namespace, and the commands that run in the control plane run with `kubectl exec` ([Day to day](kubernetes.md#day-to-day)).
 
 ## Routine tasks
 
