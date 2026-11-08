@@ -1163,3 +1163,27 @@ func (a *app) upgradeProject(name, dir string, files []string) UpgradeProject {
 	}
 	return compose.Project{Name: name, Dir: dir, Files: files}
 }
+
+// runsPreviousControlPlane reports whether the control plane container
+// runs the image the record says it ran before the upgrade: the same image
+// ID, or the same reference, by tag or by one of its digests.
+func (u *upgrader) runsPreviousControlPlane(ctx context.Context) (bool, error) {
+	prev, ok := u.record.PreviousImages[controlPlaneService]
+	if !ok {
+		return false, nil
+	}
+	c, err := u.project.ServiceContainer(ctx, controlPlaneService)
+	if errors.Is(err, compose.ErrNoContainer) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("finding the control plane's image: %w", err)
+	}
+	switch {
+	case c.ImageID != "" && c.ImageID == prev.ImageID:
+		return true, nil
+	case c.Image == "":
+		return false, nil
+	}
+	return c.Image == prev.Image || slices.Contains(prev.Digests, c.Image), nil
+}
