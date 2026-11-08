@@ -122,7 +122,7 @@ func (a *app) metricsService(db *store.DB, rt *driver.Runtime, secretStore secre
 	if rt.TraefikMetrics != nil {
 		traefik := metrics.TraefikCollector{Reader: rt.TraefikMetrics}
 		if n, ok := rt.TraefikMetrics.(provisioner.TraefikServiceNamer); ok {
-			traefik.ServiceName = n.TraefikServiceName
+			traefik.ServiceSite = n.TraefikServiceSite
 		}
 		if err := svc.Register(traefik); err != nil {
 			return nil, err

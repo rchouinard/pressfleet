@@ -17,12 +17,15 @@ type TraefikMetricsReader interface {
 }
 
 // TraefikServiceNamer is implemented by a driver whose Traefik names a
-// site's service differently from the Docker provider's pf-<site-id>@docker
-// (the Kubernetes CRD provider names it after the namespace). The traffic
-// collector maps Traefik's per-service series to sites with it. It is
-// optional: without it the collector assumes the Docker names.
+// site's services differently from the Docker provider's pf-<site-id>@docker
+// (the Kubernetes CRD provider names one per route, after the namespace).
+// The traffic collector maps Traefik's per-service series to sites with it,
+// summing a site's services. It is optional: without it the collector
+// assumes the Docker names.
 type TraefikServiceNamer interface {
-	// TraefikServiceName returns the name Traefik's metrics give the
-	// site's service, provider suffix included.
-	TraefikServiceName(siteID string) string
+	// TraefikServiceSite returns the ID of the site that serves the
+	// Traefik service with this name (the metrics' service label,
+	// provider suffix included), or false if it is no site's. It does
+	// not check that the site exists.
+	TraefikServiceSite(service string) (siteID string, ok bool)
 }

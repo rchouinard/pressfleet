@@ -94,38 +94,34 @@ func TestKubernetesAcceptance(t *testing.T) {
 		}
 	})
 
-	t.Run("Traefik names the site's service as the metrics expect", func(t *testing.T) {
-		// TraefikServiceNamer's guess (#226): the CRD provider's name for
-		// the site's Service. Without a match, the traffic charts stay
-		// empty.
-		want := `service="` + k.SiteNamespace(site.ID) + `-nginx-80@kubernetescrd"`
-		var metrics string
-		for deadline := time.Now().Add(time.Minute); ; time.Sleep(2 * time.Second) {
+	t.Run("Traefik's services are attributed to the site", func(t *testing.T) {
+		// The CRD provider names a route's service
+		// <namespace>-<IngressRoute>-<hash>@kubernetescrd (#316); the
+		// driver maps those back to the site, or the traffic charts
+		// stay empty. A rate needs two scrapes, so keep the traffic up.
+		deadline := time.Now().Add(4 * time.Minute)
+		for ; ; time.Sleep(5 * time.Second) {
 			ingressGet(t, hc, preview, nil)
-			out, err := k.Kubectl(ctx, nil, "exec", "-n", k.Namespace, "deploy/traefik", "--", "wget", "-qO-", "http://127.0.0.1:8082/metrics")
+			start := time.Now().Add(-15 * time.Minute)
+			r, err := p.Client.QuerySiteMetricsWithResponse(ctx, site.ID, &client.QuerySiteMetricsParams{Metric: &[]string{"request_rate", "status_codes"}, Start: &start})
 			if err != nil {
 				t.Fatal(err)
 			}
-			metrics = string(out)
-			if strings.Contains(metrics, `service="`+k.SiteNamespace(site.ID)+"-") || time.Now().After(deadline) {
-				break
+			if r.JSON200 == nil {
+				t.Fatalf("site metrics: status %d: %s", r.StatusCode(), r.Body)
+			}
+			for _, m := range r.JSON200.Metrics {
+				for _, s := range m.Series {
+					if len(s.Points) > 0 {
+						return
+					}
+				}
+			}
+			if time.Now().After(deadline) {
+				out, _ := k.Kubectl(ctx, nil, "exec", "-n", k.Namespace, "deploy/traefik", "--", "wget", "-qO-", "http://127.0.0.1:8082/metrics")
+				t.Fatalf("the site's traffic metrics have no data; Traefik's metrics:\n%s", out)
 			}
 		}
-		if strings.Contains(metrics, want) {
-			return
-		}
-		var services []string
-		for line := range strings.Lines(metrics) {
-			if strings.Contains(line, `service="`+k.SiteNamespace(site.ID)+"-") {
-				services = append(services, strings.TrimSpace(line))
-			}
-		}
-		if len(services) == 0 {
-			t.Fatalf("Traefik's metrics have no service of the site's namespace:\n%s", metrics)
-		}
-		// The CRD provider names a route's service
-		// <namespace>-<IngressRoute>-<hash>@kubernetescrd instead.
-		t.Skipf("#316: Traefik's metrics have no %s, but:\n%s", want, strings.Join(services, "\n"))
 	})
 
 	two, twoSite := k8sSite(t, p, groupID, "E2E Kubernetes Two")
