@@ -2,6 +2,7 @@ package e2e_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -81,6 +82,9 @@ func TestKubernetesAcceptance(t *testing.T) {
 		if got := k.MustKubectl(t, "get", "namespace", ns, "-o", `jsonpath={.metadata.labels.pod-security\.kubernetes\.io/enforce}`); got != "restricted" {
 			t.Errorf("namespace %s enforces Pod Security %q, want restricted", ns, got)
 		}
+		if got := k.MustKubectl(t, "get", "namespace", ns, "-o", `jsonpath={.metadata.labels.pressfleet\.io/platform-namespace}`); got != k.Namespace {
+			t.Errorf("namespace %s belongs to install %q, want %q", ns, got, k.Namespace)
+		}
 		// The loopback probe trusts X-Forwarded-Proto from the pod
 		// network: WordPress sees HTTPS (#218).
 		if got := siteWP(t, one, "eval", "echo home_url();"); got != "https://"+site.PreviewDomain {
@@ -129,6 +133,7 @@ func TestKubernetesAcceptance(t *testing.T) {
 	two, twoSite := k8sSite(t, p, groupID, "E2E Kubernetes Two")
 	t.Run("isolation", func(t *testing.T) { checkK8sIsolation(t, p, site, one, two, twoSite) })
 	t.Run("control plane's rights", func(t *testing.T) { checkK8sControlPlaneRights(t, p, site) })
+	t.Run("another install's namespaces", func(t *testing.T) { checkK8sOtherInstall(t, p, site) })
 
 	t.Run("maintenance", func(t *testing.T) {
 		set := func(enabled bool) {
@@ -446,11 +451,12 @@ func checkK8sControlPlaneRights(t *testing.T, p *e2e.Platform, site client.Site)
 			"subjects": []any{map[string]any{"kind": "ServiceAccount", "name": "control-plane", "namespace": subjectNS}},
 		}
 	}
-	namespace := func(version string) map[string]any {
+	namespace := func(version, owner string) map[string]any {
 		m := meta(k.SitePrefix+"review", "")
 		m["labels"] = map[string]any{
 			"app.kubernetes.io/managed-by":               "pressfleet",
 			"pressfleet.io/site-id":                      "review",
+			"pressfleet.io/platform-namespace":           owner,
 			"pod-security.kubernetes.io/enforce":         "restricted",
 			"pod-security.kubernetes.io/enforce-version": version,
 		}
@@ -482,7 +488,8 @@ func checkK8sControlPlaneRights(t *testing.T, p *e2e.Platform, site client.Site)
 		admitted, refused map[string]any
 	}{
 		{"a RoleBinding of the site ClusterRole to another subject", roleBinding(k.Namespace), roleBinding(siteNS)},
-		{"a namespace at an old Pod Security version", namespace("latest"), namespace("v1.25")},
+		{"a namespace at an old Pod Security version", namespace("latest", k.Namespace), namespace("v1.25", k.Namespace)},
+		{"a namespace labeled for another install", namespace("latest", k.Namespace), namespace("latest", "other-install")},
 		{"a NodePort Service", service(map[string]any{"type": "ClusterIP"}), service(map[string]any{"type": "NodePort"})},
 		{"a Service with external IPs", service(map[string]any{}), service(map[string]any{"externalIPs": []any{"203.0.113.10"}})},
 		{"a pod with a ServiceAccount token", pod("default", false), pod("default", true)},
@@ -493,6 +500,92 @@ func checkK8sControlPlaneRights(t *testing.T, p *e2e.Platform, site client.Site)
 		}
 		if err := dryRun(c.refused); err == nil || !strings.Contains(err.Error(), "denied request") {
 			t.Errorf("%s: want the admission policy's refusal, got %v", c.name, err)
+		}
+	}
+}
+
+// checkK8sOtherInstall checks that the control plane can't manage the site
+// namespaces of another install that shares its site namespace prefix
+// (security review K6, #326). As the operator, it creates two namespaces
+// that look like sites: one labeled for another install, and one without
+// pressfleet.io/platform-namespace, as sites created before the label are.
+// As the control plane, with server-side dry runs, it may label the second
+// as its own (how the template rollout migrates its sites) and delete it,
+// but may not change or delete the first, or bind its site ClusterRole in
+// either before it is labeled as its own.
+func checkK8sOtherInstall(t *testing.T, p *e2e.Platform, site client.Site) {
+	k := p.Kube
+	ctx := t.Context()
+	as := "--as=system:serviceaccount:" + k.Namespace + ":control-plane"
+	foreign, legacy := k.SitePrefix+"k6-foreign", k.SitePrefix+"k6-legacy"
+	for name, owner := range map[string]string{foreign: "other-install", legacy: ""} {
+		labels := map[string]any{
+			"app.kubernetes.io/managed-by":               "pressfleet",
+			"pressfleet.io/site-id":                      name,
+			"pod-security.kubernetes.io/enforce":         "restricted",
+			"pod-security.kubernetes.io/enforce-version": "latest",
+		}
+		if owner != "" {
+			labels["pressfleet.io/platform-namespace"] = owner
+		}
+		body, err := json.Marshal(map[string]any{
+			"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{"name": name, "labels": labels},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := k.Kubectl(ctx, bytes.NewReader(body), "create", "-f", "-"); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			_, _ = k.Kubectl(context.WithoutCancel(ctx), nil, "delete", "namespace", name, "--wait=false", "--ignore-not-found")
+		})
+	}
+
+	roleBinding := func(ns string) error {
+		body, err := json.Marshal(map[string]any{
+			"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding",
+			"metadata": map[string]any{"name": "pf-review", "namespace": ns},
+			"roleRef":  map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "pressfleet:" + k.Namespace + ":site"},
+			"subjects": []any{map[string]any{"kind": "ServiceAccount", "name": "control-plane", "namespace": k.Namespace}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = k.Kubectl(ctx, bytes.NewReader(body), "create", "--dry-run=server", "-f", "-", as)
+		return err
+	}
+	label := func(ns, l string) error {
+		_, err := k.Kubectl(ctx, nil, "label", "--dry-run=server", "--overwrite", "namespace", ns, l, as)
+		return err
+	}
+	own := "pressfleet.io/platform-namespace=" + k.Namespace
+	del := func(ns string) error {
+		_, err := k.Kubectl(ctx, nil, "delete", "--dry-run=server", "namespace", ns, as)
+		return err
+	}
+	siteNS := k.SiteNamespace(site.ID)
+	for _, c := range []struct {
+		name     string
+		admitted bool
+		err      error
+	}{
+		{"change its own site namespace", true, label(siteNS, "pressfleet.io/review=true")},
+		{"label a site namespace from before the label as its own", true, label(legacy, own)},
+		{"label another install's namespace as its own", false, label(foreign, own)},
+		{"change a site namespace from before the label but leave it unlabeled", false, label(legacy, "pressfleet.io/review=true")},
+		{"change another install's namespace", false, label(foreign, "pressfleet.io/review=true")},
+		{"delete a site namespace from before the label", true, del(legacy)},
+		{"delete another install's namespace", false, del(foreign)},
+		{"bind its ClusterRole in its own site namespace", true, roleBinding(siteNS)},
+		{"bind its ClusterRole in a namespace not yet labeled as its own", false, roleBinding(legacy)},
+		{"bind its ClusterRole in another install's namespace", false, roleBinding(foreign)},
+	} {
+		switch {
+		case c.admitted && c.err != nil:
+			t.Errorf("%s: refused: %v", c.name, c.err)
+		case !c.admitted && (c.err == nil || !strings.Contains(c.err.Error(), "denied request")):
+			t.Errorf("%s: want the admission policy's refusal, got %v", c.name, c.err)
 		}
 	}
 }

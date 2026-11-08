@@ -2,9 +2,11 @@
 Who may reach the platform services (design doc §4.8, §6), in place of the
 Compose project's networks. Nothing in the platform namespace accepts
 traffic unless a policy below allows it. Site pods are those in namespaces
-the control plane created (labeled app.kubernetes.io/managed-by=pressfleet
-and pressfleet.io/site-id; admission-policy.yaml keeps anyone else's
-namespaces from getting the label through the control plane).
+the control plane created (labeled app.kubernetes.io/managed-by=pressfleet,
+pressfleet.io/site-id, and pressfleet.io/platform-namespace with this
+namespace; admission-policy.yaml keeps anyone else's namespaces from
+getting the labels through the control plane). See pressfleet.sitePods
+for site namespaces from before the platform namespace label.
 */ -}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
