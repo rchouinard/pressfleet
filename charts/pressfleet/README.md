@@ -6,7 +6,7 @@ Installs PressFleet on a Kubernetes cluster: the control plane and the platform 
 
 ## What it installs
 
-Everything goes in the release's namespace, which is the platform namespace (`kubernetes.platform_namespace`). Install one release per namespace: the services have fixed names, as on Compose.
+Everything goes in the release's namespace, which is the platform namespace (`kubernetes.platform_namespace`). Install one release per namespace: the services have fixed names, as on Compose. Give each install in a cluster its own `kubernetes.siteNamespacePrefix`: until [#326](https://github.com/rchouinard/pressfleet/issues/326), installs that share a prefix can manage each other's site namespaces.
 
 | Object | Notes |
 | --- | --- |
@@ -55,15 +55,17 @@ Values that the chart and the control plane both need are passed to the control 
 The control plane's ServiceAccount, `control-plane`, gets:
 
 - **ClusterRole `pressfleet:<namespace>:control-plane`:** create, change, and delete namespaces; write RoleBindings and `bind` the site ClusterRole only; create, label, and delete PersistentVolumes (the data volume's clones, below); read nodes, node metrics, and storage classes. No Secrets, `nodes/proxy`, or `pods/exec` outside its namespaces.
-- **ClusterRole `pressfleet:<namespace>:site`:** a site's objects (pods, exec, attach, logs, Secrets, Services, PVCs, ConfigMaps, Deployments, NetworkPolicies, IngressRoutes, Middlewares, pod metrics). Never bound cluster-wide: the driver binds it in each site namespace with a RoleBinding to `system:serviceaccount:<namespace>:control-plane`.
-- **Role `control-plane`** in the platform namespace: repository task pods, their Secrets and NetworkPolicies, exec and attach, IngressRoutes and Middlewares, and read access to Services, PVCs, events, workloads, and pod metrics.
+- **ClusterRole `pressfleet:<namespace>:site`:** a site's objects (pods, exec, attach, logs, Secrets, Services, PVCs, Deployments, NetworkPolicies, IngressRoutes, Middlewares, pod metrics). Pods are created and deleted, never changed in place. Never bound cluster-wide: the driver binds it in each site namespace with a RoleBinding to `system:serviceaccount:<namespace>:control-plane`.
+- **Role `control-plane`** in the platform namespace: repository task pods (created and deleted, never changed), their Secrets and NetworkPolicies, exec and attach, IngressRoutes and Middlewares, and read access to Services, PVCs, events, workloads, and pod metrics.
 
 RBAC can't name namespaces that don't exist yet, so the namespace and RoleBinding rights are cluster-wide. The `ValidatingAdmissionPolicy` `control-plane.<namespace>.pressfleet.io` narrows them to the control plane's own namespaces:
 
 - **Site namespaces** are named `<siteNamespacePrefix>...` and labeled `app.kubernetes.io/managed-by: pressfleet`.
 - **Doctor's probe namespaces** (#225) are named `<namespace>-doctor-...` and labeled `pressfleet.io/doctor-probe: "true"`.
 
-Both kinds must enforce Pod Security `restricted`. A RoleBinding must be in one of them and bind the site ClusterRole.
+Both kinds must enforce Pod Security `restricted`, at the latest version. A RoleBinding must be in one of them and bind the site ClusterRole to the control plane's own ServiceAccount.
+
+The `ValidatingAdmissionPolicy` `workloads.<namespace>.pressfleet.io` (`workload-policy.yaml`) covers the pods and Services the control plane writes, in any namespace. A pod must run as its namespace's `default` ServiceAccount without a token, share no host namespace, mount no hostPath, and run nothing privileged, so the control plane can't borrow another ServiceAccount (Traefik's, for one) or the node, even in a platform namespace that doesn't enforce Pod Security. A Service must be a ClusterIP Service without `externalIPs` (CVE-2020-8554).
 
 ### The data volume in site namespaces
 
@@ -74,7 +76,7 @@ A PersistentVolume could point at anything, a node's filesystem included, and Po
 - **`data-volume.<namespace>.pressfleet.io`:** a PersistentVolume the control plane creates must be a clone as described, labeled `pressfleet.io/data-clone: <namespace>`; it may delete only such clones; and the only change it may make is to label the PersistentVolume bound to the data claim `pressfleet.io/data-volume: <namespace>`, changing nothing else.
 - **`data-volume-clones.<namespace>.pressfleet.io`:** takes the PersistentVolume with that label as its parameter, and admits a clone only if its source and mount options are the same. Until the control plane has labeled the data volume (before its first site task), it admits no PersistentVolume at all.
 
-Traefik's ServiceAccount gets the cluster-wide read access its CRD provider needs, which includes Secrets (basicAuth middlewares name them).
+Traefik's ServiceAccount gets the cluster-wide read access its CRD provider needs, which includes Secrets (basicAuth middlewares name them). That is more than it should have: [#322](https://github.com/rchouinard/pressfleet/issues/322) tracks narrowing it (security review finding K1).
 
 NetworkPolicies deny ingress to the platform namespace by default and then allow:
 

@@ -1,0 +1,75 @@
+{{- /*
+The pods and Services the control plane creates (design doc §4.8, §6;
+security review K2 and K5). RBAC lets it create pods in the platform
+namespace and in its own namespaces, and Services in its own namespaces,
+but a pod can name any ServiceAccount of its namespace and mount its token,
+and Pod Security covers the platform namespace only if the operator labels
+it. Traefik's ServiceAccount in particular reads every Secret in the
+cluster. So, whatever its namespace, a pod the control plane writes must:
+
+- mount no ServiceAccount token, and run as the namespace's default
+  ServiceAccount;
+- share no host namespace, mount no hostPath, and run no privileged
+  container.
+
+Every pod the driver starts (tasks, sessions, doctor's probes) already
+does. A Service it writes must be a ClusterIP Service without external
+IPs: a NodePort or LoadBalancer would expose a site's pod past Traefik, and
+externalIPs would let it take over traffic to any address in the cluster
+(CVE-2020-8554).
+*/ -}}
+{{- $user := printf "request.userInfo.username == '%s'" (include "pressfleet.controlPlaneUser" .) }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ printf "workloads.%s.pressfleet.io" .Release.Namespace | quote }}
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "control-plane") | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods, services]
+  matchConditions:
+    - name: control-plane
+      expression: {{ $user | quote }}
+  variables:
+    - name: isPod
+      expression: "request.resource.resource == 'pods'"
+  validations:
+    - expression: >-
+        !variables.isPod ||
+        (has(object.spec.automountServiceAccountToken) && object.spec.automountServiceAccountToken == false &&
+        (!has(object.spec.serviceAccountName) || object.spec.serviceAccountName == '' || object.spec.serviceAccountName == 'default') &&
+        (!has(object.spec.serviceAccount) || object.spec.serviceAccount == '' || object.spec.serviceAccount == 'default'))
+      messageExpression: >-
+        'a pod the PressFleet control plane creates must run as the default ServiceAccount, without its token: ' + object.metadata.name
+    - expression: >-
+        !variables.isPod ||
+        ((!has(object.spec.hostNetwork) || !object.spec.hostNetwork) &&
+        (!has(object.spec.hostPID) || !object.spec.hostPID) &&
+        (!has(object.spec.hostIPC) || !object.spec.hostIPC) &&
+        (!has(object.spec.volumes) || object.spec.volumes.all(v, !has(v.hostPath))) &&
+        object.spec.containers.all(c, !has(c.securityContext) || !has(c.securityContext.privileged) || !c.securityContext.privileged) &&
+        (!has(object.spec.initContainers) || object.spec.initContainers.all(c, !has(c.securityContext) || !has(c.securityContext.privileged) || !c.securityContext.privileged)))
+      messageExpression: >-
+        'a pod the PressFleet control plane creates must not share a namespace of the node, mount a hostPath, or run privileged: ' + object.metadata.name
+    - expression: >-
+        variables.isPod ||
+        ((!has(object.spec.type) || object.spec.type == 'ClusterIP') &&
+        (!has(object.spec.externalIPs) || size(object.spec.externalIPs) == 0))
+      messageExpression: >-
+        'a Service the PressFleet control plane writes must be a ClusterIP Service without external IPs: ' + object.metadata.name
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ printf "workloads.%s.pressfleet.io" .Release.Namespace | quote }}
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "control-plane") | nindent 4 }}
+spec:
+  policyName: {{ printf "workloads.%s.pressfleet.io" .Release.Namespace | quote }}
+  validationActions: [Deny]

@@ -1,8 +1,10 @@
 package e2e_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"slices"
 	"strings"
@@ -130,6 +132,7 @@ func TestKubernetesAcceptance(t *testing.T) {
 
 	two, twoSite := k8sSite(t, p, groupID, "E2E Kubernetes Two")
 	t.Run("isolation", func(t *testing.T) { checkK8sIsolation(t, p, site, one, two, twoSite) })
+	t.Run("control plane's rights", func(t *testing.T) { checkK8sControlPlaneRights(t, p, site) })
 
 	t.Run("maintenance", func(t *testing.T) {
 		set := func(enabled bool) {
@@ -345,6 +348,8 @@ func checkK8sIsolation(t *testing.T, p *e2e.Platform, site client.Site, one *e2e
 	apiServer := svcIP("default", "kubernetes")
 	twoNS := k.SiteNamespace(two.ID)
 	pn := k.Namespace
+	traefik := k.MustKubectl(t, "get", "pods", "-n", pn, "-l", "app.kubernetes.io/component=traefik", "-o", "jsonpath={.items[0].status.podIP}")
+	node := k.MustKubectl(t, "get", "nodes", "-o", `jsonpath={.items[0].status.addresses[?(@.type=="InternalIP")].address}`)
 	open := []string{
 		"mariadb." + pn + ".svc:3306",
 		"redis." + pn + ".svc:6379",
@@ -361,6 +366,10 @@ func checkK8sIsolation(t *testing.T, p *e2e.Platform, site client.Site, one *e2e
 		apiServer + ":443",
 		"169.254.169.254:80",
 		"postgres.pfk8s-postgres.svc:5432",
+		// Traefik's metrics and ping stay on its loopback (F5), and the
+		// node's kubelet is out of reach (#229).
+		net.JoinHostPort(traefik, "8082"),
+		net.JoinHostPort(node, "10250"),
 	}
 	got := k8sProbe(t, one, append(slices.Clone(open), closed...))
 	for _, target := range open {
@@ -378,6 +387,114 @@ func checkK8sIsolation(t *testing.T, p *e2e.Platform, site client.Site, one *e2e
 	for target, r := range back {
 		if r.open {
 			t.Errorf("site two reaches %s", target)
+		}
+	}
+}
+
+// checkK8sControlPlaneRights checks the control plane's rights as its
+// ServiceAccount (security review of the Kubernetes target, #229): RBAC
+// gives it no Secrets, exec, or kubelet outside its namespaces and never
+// lets it change a pod in place, and the chart's admission policies refuse
+// what RBAC can't: a RoleBinding to another subject, a namespace at an old
+// Pod Security version, a Service past Traefik or with external IPs, and a
+// pod with a ServiceAccount token or another ServiceAccount. Each refused
+// object has an admitted twin, so a refusal is the policy's.
+func checkK8sControlPlaneRights(t *testing.T, p *e2e.Platform, site client.Site) {
+	k := p.Kube
+	ctx := t.Context()
+	as := "--as=system:serviceaccount:" + k.Namespace + ":control-plane"
+	siteNS := k.SiteNamespace(site.ID)
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"get", "secrets", "-n", "kube-system"}, "no"},
+		{[]string{"list", "secrets", "--all-namespaces"}, "no"},
+		{[]string{"create", "pods/exec", "-n", "kube-system"}, "no"},
+		{[]string{"get", "nodes/proxy"}, "no"},
+		{[]string{"patch", "pods", "-n", k.Namespace}, "no"},
+		{[]string{"update", "pods", "-n", siteNS}, "no"},
+		{[]string{"create", "serviceaccounts/token", "-n", k.Namespace}, "no"},
+		{[]string{"create", "clusterrolebindings"}, "no"},
+		{[]string{"create", "pods/exec", "-n", siteNS}, "yes"},
+		{[]string{"get", "secrets", "-n", siteNS}, "yes"},
+	} {
+		// can-i exits 1 for no; its answer is on standard output either way.
+		out, _ := k.Kubectl(ctx, nil, append([]string{"auth", "can-i", as}, c.args...)...)
+		if got := strings.TrimSpace(string(out)); got != c.want {
+			t.Errorf("can the control plane %s? %q, want %q", strings.Join(c.args, " "), got, c.want)
+		}
+	}
+
+	dryRun := func(obj map[string]any) error {
+		body, err := json.Marshal(obj)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = k.Kubectl(ctx, bytes.NewReader(body), "create", "--dry-run=server", "-f", "-", as)
+		return err
+	}
+	meta := func(name, ns string) map[string]any {
+		m := map[string]any{"name": name}
+		if ns != "" {
+			m["namespace"] = ns
+		}
+		return m
+	}
+	roleBinding := func(subjectNS string) map[string]any {
+		return map[string]any{
+			"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding", "metadata": meta("pf-review", siteNS),
+			"roleRef":  map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "pressfleet:" + k.Namespace + ":site"},
+			"subjects": []any{map[string]any{"kind": "ServiceAccount", "name": "control-plane", "namespace": subjectNS}},
+		}
+	}
+	namespace := func(version string) map[string]any {
+		m := meta(k.SitePrefix+"review", "")
+		m["labels"] = map[string]any{
+			"app.kubernetes.io/managed-by":               "pressfleet",
+			"pressfleet.io/site-id":                      "review",
+			"pod-security.kubernetes.io/enforce":         "restricted",
+			"pod-security.kubernetes.io/enforce-version": version,
+		}
+		return map[string]any{"apiVersion": "v1", "kind": "Namespace", "metadata": m}
+	}
+	service := func(spec map[string]any) map[string]any {
+		spec["selector"] = map[string]any{"pressfleet.io/component": "site"}
+		spec["ports"] = []any{map[string]any{"port": 80, "targetPort": 8080}}
+		return map[string]any{"apiVersion": "v1", "kind": "Service", "metadata": meta("pf-review", siteNS), "spec": spec}
+	}
+	pod := func(serviceAccount string, token bool) map[string]any {
+		return map[string]any{
+			"apiVersion": "v1", "kind": "Pod", "metadata": meta("pf-review", k.Namespace),
+			"spec": map[string]any{
+				"serviceAccountName":           serviceAccount,
+				"automountServiceAccountToken": token,
+				"securityContext": map[string]any{
+					"runAsNonRoot": true, "runAsUser": 65534, "seccompProfile": map[string]any{"type": "RuntimeDefault"},
+				},
+				"containers": []any{map[string]any{
+					"name": "c", "image": k.Image, "command": []any{"true"},
+					"securityContext": map[string]any{"allowPrivilegeEscalation": false, "capabilities": map[string]any{"drop": []any{"ALL"}}},
+				}},
+			},
+		}
+	}
+	for _, c := range []struct {
+		name              string
+		admitted, refused map[string]any
+	}{
+		{"a RoleBinding of the site ClusterRole to another subject", roleBinding(k.Namespace), roleBinding(siteNS)},
+		{"a namespace at an old Pod Security version", namespace("latest"), namespace("v1.25")},
+		{"a NodePort Service", service(map[string]any{"type": "ClusterIP"}), service(map[string]any{"type": "NodePort"})},
+		{"a Service with external IPs", service(map[string]any{}), service(map[string]any{"externalIPs": []any{"203.0.113.10"}})},
+		{"a pod with a ServiceAccount token", pod("default", false), pod("default", true)},
+		{"a pod as Traefik's ServiceAccount", pod("default", false), pod("traefik", false)},
+	} {
+		if err := dryRun(c.admitted); err != nil {
+			t.Errorf("%s: its admitted twin was refused: %v", c.name, err)
+		}
+		if err := dryRun(c.refused); err == nil || !strings.Contains(err.Error(), "denied request") {
+			t.Errorf("%s: want the admission policy's refusal, got %v", c.name, err)
 		}
 	}
 }
