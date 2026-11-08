@@ -737,7 +737,16 @@ func TestResticTaskSecrets(t *testing.T) {
 				t.Errorf("%q reaches the task's command or environment:\n%s", leak, all)
 			}
 		}
-		if task.Command[0] != "restic" || task.Command[1] != "--no-cache" || task.WPContent != provisioner.MountNone {
+		command := task.Command
+		if command[len(command)-1] == "init" {
+			// init shares what it created with the repository group
+			// itself, as its owner.
+			if want := []string{"sh", "-c", `"$@" && chmod -R g=u ` + provisioner.TaskRepositoryPath, "sh"}; !slices.Equal(command[:4], want) {
+				t.Errorf("init command = %v", command)
+			}
+			command = command[4:]
+		}
+		if command[0] != "restic" || command[1] != "--no-cache" || task.WPContent != provisioner.MountNone {
 			t.Errorf("command = %v, wp-content %v", task.Command, task.WPContent)
 		}
 	}

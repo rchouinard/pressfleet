@@ -167,9 +167,9 @@ func (tc *taskCluster) attach(ctx context.Context, ns, name, container string, s
 	tc.stdin = string(in)
 	tc.mu.Unlock()
 
-	if _, err := io.WriteString(s.Stdout, f.stdout); err != nil {
-		return err
-	}
+	// Like client-go's streams on a cluster, a failing writer doesn't end
+	// the attachment: the task runs on until ctx ends (#228).
+	_, _ = io.WriteString(s.Stdout, f.stdout)
 	if _, err := io.WriteString(s.Stderr, f.stderr); err != nil {
 		return err
 	}

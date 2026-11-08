@@ -331,7 +331,14 @@ func testStats(t *testing.T, env Env) {
 		return m
 	}
 
-	first := sample()
+	var first map[provisioner.Component]provisioner.ComponentStats
+	eventually(t, statsWait, "the first Stats of both components", func() string {
+		first = sample()
+		if len(first) < 2 {
+			return fmt.Sprintf("samples: %+v", first)
+		}
+		return ""
+	})
 	for _, c := range []provisioner.Component{provisioner.ComponentPHP, provisioner.ComponentNginx} {
 		s, ok := first[c]
 		if !ok {
@@ -350,10 +357,16 @@ func testStats(t *testing.T, env Env) {
 
 	// CPU time is cumulative: it grows with work and never goes back.
 	f.wp(ctx, t, cfg, "--skip-wordpress", "eval", "$e = microtime( true ) + 3; while ( microtime( true ) < $e ) {}")
-	second := sample()
-	if grew := second[provisioner.ComponentPHP].CPUUsage - first[provisioner.ComponentPHP].CPUUsage; grew < time.Second {
-		t.Errorf("php CPU time grew by %s over 3 seconds of work", grew)
-	}
+	// A driver that reads usage from a metrics pipeline sees the work
+	// when it next scrapes.
+	var second map[provisioner.Component]provisioner.ComponentStats
+	eventually(t, statsWait, "php CPU time growing over 3 seconds of work", func() string {
+		second = sample()
+		if grew := second[provisioner.ComponentPHP].CPUUsage - first[provisioner.ComponentPHP].CPUUsage; grew < time.Second {
+			return fmt.Sprintf("grew by %s", grew)
+		}
+		return ""
+	})
 	for c, s := range second {
 		if s.CPUUsage < first[c].CPUUsage {
 			t.Errorf("%s CPU time went back from %s to %s", c, first[c].CPUUsage, s.CPUUsage)

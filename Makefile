@@ -122,6 +122,29 @@ test-e2e: ## Run the end-to-end tests against a freshly built image and real Doc
 test-e2e-smoke: ## Run the quick tier of the end-to-end tests (E2E_SMOKE), as labeled PRs do
 	$(MAKE) test-e2e RUN='$(E2E_SMOKE)'
 
+# The Kubernetes end-to-end tests (#228): a kind cluster with what the chart
+# needs (scripts/kind/cluster.sh), the control plane image pushed to its
+# registry under a tag of its own (nodes cache tags), and the published site
+# images (or, with KIND_SITE_IMAGES=local, the ones `make images` built).
+# K8S_TIER=smoke runs the quick tier; RUN replaces the tier with a pattern.
+# KEEP_CLUSTER=1 leaves the cluster for the next run, which reuses it.
+K8S_TIER ?= full
+K8S_SMOKE := ^(TestAPI|TestKubernetesAcceptance)$$
+test-k8s-e2e: export K8S_E2E_RUN := $(if $(value RUN),$(value RUN),$(if $(filter smoke,$(K8S_TIER)),$(K8S_SMOKE),))
+
+.PHONY: test-k8s-e2e
+test-k8s-e2e: ## Run the Kubernetes end-to-end tests on a kind cluster; RUN=<regexp> or K8S_TIER=smoke selects tests (see docs/testing.md)
+	$(MAKE) image IMAGE=pressfleet-control-plane:k8s-e2e
+	scripts/kind/cluster.sh up
+	tag="k8s-e2e-$$(date +%s)" && \
+	scripts/kind/cluster.sh push pressfleet-control-plane:k8s-e2e "control-plane:$$tag" && \
+	scripts/kind/cluster.sh site-images && \
+	env $$(scripts/kind/cluster.sh env) PRESSFLEET_K8S_IMAGE_TAG="$$tag" \
+		go test -count=1 -v -timeout 150m -run "$$K8S_E2E_RUN" ./control-plane/internal/e2e/; \
+		status=$$?; \
+		if [ -z "$(KEEP_CLUSTER)" ]; then scripts/kind/cluster.sh down; fi; \
+		docker image rm pressfleet-control-plane:k8s-e2e >/dev/null; exit $$status
+
 # TestBackupMemory, which the regular suite skips because it writes tens of GiB.
 # TMPDIR must be on disk: the test refuses tmpfs (see docs/testing.md).
 .PHONY: test-backup-memory

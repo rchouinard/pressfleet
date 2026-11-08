@@ -100,7 +100,7 @@ func testLifecycle(t *testing.T, env Env) {
 	if f.procStart(ctx, t, cfg, provisioner.ComponentPHP) == phpStart {
 		t.Error("php was not recreated after wp-config.php changed")
 	}
-	if f.procStart(ctx, t, cfg, provisioner.ComponentNginx) != nginxStart {
+	if !f.inst.OnePod && f.procStart(ctx, t, cfg, provisioner.ComponentNginx) != nginxStart {
 		t.Error("nginx was recreated although only wp-config.php changed")
 	}
 	if got := f.wp(ctx, t, cfg, "eval", "echo AUTH_KEY;"); got == oldSalt {

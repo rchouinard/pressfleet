@@ -9,3 +9,8 @@ pnpm = "10"
 # Restic backs up client group repositories (package internal/backup/repository);
 # its tests run the real binary.
 "aqua:restic/restic" = "0.19.1"
+# The Kubernetes end-to-end tests (make test-k8s-e2e, scripts/kind) run a
+# kind cluster and drive it with kubectl. kubectl stays within one minor
+# release of the node image kind runs (scripts/kind/cluster.sh).
+kind = "0.33.0"
+kubectl = "1.37.2"

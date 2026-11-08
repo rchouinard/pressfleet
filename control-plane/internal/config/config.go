@@ -698,6 +698,7 @@ var listEnvVars = []struct {
 	{"PRESSFLEET_ACME_DNS_RESOLVERS", func(c *Config) *[]string { return &c.ACME.DNSResolvers }},
 	{"PRESSFLEET_KUBERNETES_POD_CIDRS", func(c *Config) *[]string { return &c.Kubernetes.PodCIDRs }},
 	{"PRESSFLEET_KUBERNETES_IMAGE_PULL_SECRETS", func(c *Config) *[]string { return &c.Kubernetes.ImagePullSecrets }},
+	{"PRESSFLEET_KUBERNETES_INSECURE_REGISTRIES", func(c *Config) *[]string { return &c.Kubernetes.InsecureRegistries }},
 }
 
 // envVars maps environment variables to the fields they set.

@@ -230,9 +230,12 @@ func (p *Provisioner) attachSession(ctx context.Context, spec taskSpec, s provis
 	}
 
 	// A failing writer (the client has gone) ends the attachment; the pod
-	// is then deleted, which kills the command.
-	stdout := &recordingWriter{w: s.Stdout}
-	attachErr := p.attacher()(ctx, spec.namespace, spec.name, taskContainer, remotecommand.StreamOptions{
+	// is then deleted, which kills the command. The stream doesn't end by
+	// itself when its writer fails (#228), so the writer cancels it.
+	actx, cancelAttach := context.WithCancel(ctx)
+	defer cancelAttach()
+	stdout := &recordingWriter{w: s.Stdout, onErr: cancelAttach}
+	attachErr := p.attacher()(actx, spec.namespace, spec.name, taskContainer, remotecommand.StreamOptions{
 		Stdin: io.MultiReader(strings.NewReader("\n"), s.Stdin), Stdout: stdout, Stderr: stderr,
 	})
 	if err := ctx.Err(); err != nil {

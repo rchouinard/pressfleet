@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -136,15 +137,16 @@ func parseImageRef(image string) (imageRef, error) {
 }
 
 // registryURL is the URL of path on the registry host: HTTPS, except for a
-// registry on the loopback interface, which development setups run
-// without TLS.
-func registryURL(host, path string) string {
+// registry on the loopback interface or one of insecure
+// (kubernetes.insecure_registries), which development setups run without
+// TLS.
+func registryURL(host, path string, insecure []string) string {
 	scheme := "https"
 	h := host
 	if hh, _, err := net.SplitHostPort(host); err == nil {
 		h = hh
 	}
-	if ip := net.ParseIP(h); h == "localhost" || (ip != nil && ip.IsLoopback()) {
+	if ip := net.ParseIP(h); h == "localhost" || (ip != nil && ip.IsLoopback()) || slices.Contains(insecure, host) {
 		scheme = "http"
 	}
 	return scheme + "://" + host + path
@@ -154,7 +156,7 @@ func registryURL(host, path string) string {
 // tag names, with an anonymous token if the registry wants one (GHCR and
 // Docker Hub want one even for public images).
 func (p *Provisioner) manifestDigest(ctx context.Context, ref imageRef) (string, error) {
-	u := registryURL(ref.host, "/v2/"+ref.repository+"/manifests/"+url.PathEscape(ref.tag))
+	u := registryURL(ref.host, "/v2/"+ref.repository+"/manifests/"+url.PathEscape(ref.tag), p.insecureRegistries)
 	token := ""
 	for attempt := 0; ; attempt++ {
 		resp, err := p.registryRequest(ctx, http.MethodHead, u, token)

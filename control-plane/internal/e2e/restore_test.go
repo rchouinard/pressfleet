@@ -108,7 +108,7 @@ const restoreKeep = "pf-e2e-restore-keep-2b1c"
 type restoreChecks struct {
 	p    *e2e.Platform
 	site client.Site
-	proj compose.Project
+	proj e2e.SiteExec
 }
 
 // setUp gives the site the state to come back to, a file in wp-content and
@@ -167,7 +167,7 @@ func (rc restoreChecks) sameSite(t *testing.T, snapshot string) {
 	if b := list.JSON200.Items[0]; b.Kind != client.PreRestore || b.Status != client.BackupStatusSucceeded {
 		t.Errorf("newest backup = %+v, want the pre-restore backup", b)
 	}
-	out, err := p.Project.Exec(ctx, e2e.Service, "find", p.DataDir+"/tmp", "-mindepth", "1", "-name", "restore-*")
+	out, err := p.ExecControlPlane(ctx, nil, "find", p.DataDir+"/tmp", "-mindepth", "1", "-name", "restore-*")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func (rc restoreChecks) rollback(t *testing.T) {
 
 // siteSh runs a shell script in the site's php container and returns its
 // trimmed output.
-func siteSh(t *testing.T, proj compose.Project, script string) string {
+func siteSh(t *testing.T, proj e2e.SiteExec, script string) string {
 	t.Helper()
 	out, err := proj.ExecService(t.Context(), "php", "sh", "-c", script)
 	if err != nil {
@@ -225,7 +225,7 @@ func siteSh(t *testing.T, proj compose.Project, script string) string {
 
 // siteWP runs WP-CLI in the site's php container and returns its trimmed
 // output.
-func siteWP(t *testing.T, proj compose.Project, args ...string) string {
+func siteWP(t *testing.T, proj e2e.SiteExec, args ...string) string {
 	t.Helper()
 	out, err := proj.ExecService(t.Context(), "php", append([]string{"wp"}, args...)...)
 	if err != nil {

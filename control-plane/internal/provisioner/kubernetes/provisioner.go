@@ -125,9 +125,11 @@ type Provisioner struct {
 	wpcliMaxOutput int
 
 	registry *http.Client
-	observe  observers
-	pinsMu   sync.Mutex
-	pins     map[string]string // tag reference -> pinned reference
+	// insecureRegistries are asked over plain HTTP (registryURL).
+	insecureRegistries []string
+	observe            observers
+	pinsMu             sync.Mutex
+	pins               map[string]string // tag reference -> pinned reference
 
 	// tasks is how tasks run (task.go); attach, if set, replaces
 	// Client.attachPod in tests.
@@ -160,25 +162,26 @@ func newWithREST(cfg Config, rc *rest.Config) (*Provisioner, error) {
 func newWithClient(cfg Config, c *Client) *Provisioner {
 	k := cfg.Kubernetes
 	p := &Provisioner{
-		Client:            c,
-		layout:            cfg.Layout,
-		platformNamespace: k.PlatformNamespace,
-		namespacePrefix:   k.SiteNamespacePrefix,
-		log:               cfg.logger(),
-		waitTimeout:       cfg.WaitTimeout,
-		secrets:           cfg.Secrets,
-		images:            cfg.Images,
-		security:          cfg.WordPressSecurity,
-		smtp:              cfg.SMTP,
-		loginKey:          cfg.LoginPublicKey,
-		podCIDRs:          k.PodCIDRs,
-		pullSecrets:       k.ImagePullSecrets,
-		storageClass:      k.StorageClasses.Sites,
-		volumeSize:        k.SiteVolumeSize,
-		registry:          cfg.Registry,
-		pins:              map[string]string{},
-		wpcliTimeout:      cfg.WPCLITimeout,
-		wpcliMaxOutput:    cfg.WPCLIMaxOutput,
+		Client:             c,
+		layout:             cfg.Layout,
+		platformNamespace:  k.PlatformNamespace,
+		namespacePrefix:    k.SiteNamespacePrefix,
+		log:                cfg.logger(),
+		waitTimeout:        cfg.WaitTimeout,
+		secrets:            cfg.Secrets,
+		images:             cfg.Images,
+		security:           cfg.WordPressSecurity,
+		smtp:               cfg.SMTP,
+		loginKey:           cfg.LoginPublicKey,
+		podCIDRs:           k.PodCIDRs,
+		pullSecrets:        k.ImagePullSecrets,
+		storageClass:       k.StorageClasses.Sites,
+		volumeSize:         k.SiteVolumeSize,
+		registry:           cfg.Registry,
+		insecureRegistries: k.InsecureRegistries,
+		pins:               map[string]string{},
+		wpcliTimeout:       cfg.WPCLITimeout,
+		wpcliMaxOutput:     cfg.WPCLIMaxOutput,
 	}
 	if p.waitTimeout <= 0 {
 		p.waitTimeout = DefaultWaitTimeout

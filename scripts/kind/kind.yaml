@@ -1,0 +1,26 @@
+# The kind cluster of the Kubernetes end-to-end tests (scripts/kind/cluster.sh,
+# docs/testing.md). Two nodes, so that tests see more than one node (metrics,
+# scheduling, the data volume mounted on several nodes).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  # Calico replaces kindnet, which ignores NetworkPolicy (§4.8 requires a
+  # CNI that enforces it).
+  disableDefaultCNI: true
+  # kubernetes.pod_cidrs of the platforms the tests install.
+  podSubnet: 10.244.0.0/16
+# Registry hosts in /etc/containerd/certs.d (cluster.sh writes the local
+# registry's).
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.cri.v1.images".registry]
+      config_path = "/etc/containerd/certs.d"
+kubeadmConfigPatches:
+  # A pod spec can't limit its processes: the kubelet's podPidsLimit does,
+  # for every pod. SFTP and database sessions rely on it (#220).
+  - |
+    kind: KubeletConfiguration
+    podPidsLimit: 1024
+nodes:
+  - role: control-plane
+  - role: worker

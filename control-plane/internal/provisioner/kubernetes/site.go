@@ -261,7 +261,16 @@ func (p *Provisioner) deployment(ctx context.Context, siteID string) (*appsv1.De
 	if err := p.validSiteNamespace(siteID); err != nil {
 		return nil, err
 	}
-	d, err := p.typed.AppsV1().Deployments(p.SiteNamespace(siteID)).Get(ctx, SiteDeployment, metav1.GetOptions{})
+	ns := p.SiteNamespace(siteID)
+	d, err := p.typed.AppsV1().Deployments(ns).Get(ctx, SiteDeployment, metav1.GetOptions{})
+	if apierrors.IsForbidden(err) {
+		// The control plane's rights in a site's namespace come from a
+		// RoleBinding in it (charts/pressfleet), so without the namespace
+		// the API server refuses rather than finds nothing (#228).
+		if _, nerr := p.typed.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{}); apierrors.IsNotFound(nerr) {
+			err = nerr
+		}
+	}
 	if apierrors.IsNotFound(err) {
 		return nil, fmt.Errorf("site %s: %w", siteID, provisioner.ErrSiteNotFound)
 	} else if err != nil {

@@ -106,10 +106,23 @@ containers:
       - name: data
         mountPath: {{ $dataDir | quote }}
       # The master key, the platform credentials, and the config file,
-      # at the paths the config defaults name, as on Compose.
+      # at the paths the config defaults name, as on Compose. One file at a
+      # time: the ServiceAccount token goes to
+      # /var/run/secrets/kubernetes.io, and /var/run is /run in the image,
+      # so a read-only volume at /run/secrets leaves the runtime nowhere
+      # to mount it.
+      {{- range $file := list "master_key" "mariadb_root_password" "redis_admin_password" "ssh_host_key" }}
       - name: secrets
-        mountPath: /run/secrets
+        mountPath: {{ printf "/run/secrets/%s" $file | quote }}
+        subPath: {{ $file | quote }}
         readOnly: true
+      {{- end }}
+      {{- if $root.Values.config.secretName }}
+      - name: secrets
+        mountPath: /run/secrets/pressfleet_config
+        subPath: pressfleet_config
+        readOnly: true
+      {{- end }}
       - name: tmp
         mountPath: /tmp
     {{- include "pressfleet.containerSecurityContext" (dict "readOnly" true) | nindent 4 }}

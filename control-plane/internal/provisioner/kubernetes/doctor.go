@@ -14,6 +14,7 @@ import (
 	authv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -387,6 +388,13 @@ func (p *ClusterProbe) runProbes(ctx context.Context, probes []probe, policies [
 		}
 	}()
 
+	// The control plane's rights in a namespace of its own come from a
+	// RoleBinding of the site ClusterRole, as in a site's namespace: RBAC
+	// can't name a namespace before it exists (charts/pressfleet).
+	if err := p.bindProbeNamespace(ctx, nsName); err != nil {
+		return nil, err
+	}
+
 	var pullSecrets []corev1.LocalObjectReference
 	for _, name := range p.cfg.Kubernetes.ImagePullSecrets {
 		src, err := p.c.typed.CoreV1().Secrets(p.cfg.Kubernetes.PlatformNamespace).Get(ctx, name, metav1.GetOptions{})
@@ -405,16 +413,53 @@ func (p *ClusterProbe) runProbes(ctx context.Context, probes []probe, policies [
 	for _, pol := range policies {
 		pol = pol.DeepCopy()
 		pol.Namespace = nsName
-		if _, err := p.c.typed.NetworkingV1().NetworkPolicies(nsName).Create(ctx, pol, metav1.CreateOptions{}); err != nil {
+		if err := p.whileForbidden(ctx, func() error {
+			_, err := p.c.typed.NetworkingV1().NetworkPolicies(nsName).Create(ctx, pol, metav1.CreateOptions{})
+			return err
+		}); err != nil {
 			return nil, fmt.Errorf("creating the probe NetworkPolicy: %w", err)
 		}
 	}
 	for _, pr := range probes {
-		if _, err := p.c.typed.CoreV1().Pods(nsName).Create(ctx, p.pod(nsName, pr, pullSecrets), metav1.CreateOptions{}); err != nil {
+		if err := p.whileForbidden(ctx, func() error {
+			_, err := p.c.typed.CoreV1().Pods(nsName).Create(ctx, p.pod(nsName, pr, pullSecrets), metav1.CreateOptions{})
+			return err
+		}); err != nil {
 			return nil, fmt.Errorf("creating probe pod %s: %w", pr.name, err)
 		}
 	}
 	return p.waitProbes(ctx, nsName, probes)
+}
+
+// bindProbeNamespace gives the control plane's ServiceAccount the site
+// ClusterRole in the probe namespace.
+func (p *ClusterProbe) bindProbeNamespace(ctx context.Context, ns string) error {
+	rb := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "pressfleet-control-plane", Namespace: ns, Labels: map[string]string{probeLabel: "true"}},
+		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: SiteClusterRole(p.cfg.Kubernetes.PlatformNamespace)},
+		Subjects: []rbacv1.Subject{{
+			Kind: rbacv1.ServiceAccountKind, Name: ControlPlaneServiceAccount, Namespace: p.cfg.Kubernetes.PlatformNamespace,
+		}},
+	}
+	if _, err := p.c.typed.RbacV1().RoleBindings(ns).Create(ctx, rb, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("binding the control plane's role in the probe namespace: %w", err)
+	}
+	return nil
+}
+
+// whileForbidden retries create while the API server refuses it as
+// forbidden, for a while: a new RoleBinding takes a moment to reach the
+// authorizer.
+func (p *ClusterProbe) whileForbidden(ctx context.Context, create func() error) error {
+	err := create()
+	for deadline := time.Now().Add(30 * time.Second); apierrors.IsForbidden(err) && time.Now().Before(deadline); err = create() {
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(p.c.poll):
+		}
+	}
+	return err
 }
 
 // pod builds a probe pod that satisfies Pod Security's restricted profile.

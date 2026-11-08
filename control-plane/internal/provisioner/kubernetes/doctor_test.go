@@ -10,10 +10,13 @@ import (
 	authv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/version"
 	fakediscovery "k8s.io/client-go/discovery/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
@@ -466,5 +469,39 @@ func TestLeadingInt(t *testing.T) {
 		if got := leadingInt(in); got != want {
 			t.Errorf("leadingInt(%q) = %d, want %d", in, got, want)
 		}
+	}
+}
+
+// The probe namespace gets the site ClusterRole's RoleBinding before
+// anything else is created in it, as a site's namespace does (#228), and
+// creations the authorizer refuses while the binding is new are retried.
+func TestProbeBindsItsNamespace(t *testing.T) {
+	p, cs := testProbe(t, "img")
+	p.c.poll = time.Millisecond
+	podResults(cs, map[string]corev1.PodPhase{"allowed": corev1.PodSucceeded, "denied": corev1.PodSucceeded})
+	var binding *rbacv1.RoleBinding
+	cs.PrependReactor("create", "rolebindings", func(a k8stesting.Action) (bool, runtime.Object, error) {
+		binding = a.(k8stesting.CreateAction).GetObject().(*rbacv1.RoleBinding)
+		return false, nil, nil
+	})
+	refusals := 2
+	cs.PrependReactor("create", "networkpolicies", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if refusals > 0 {
+			refusals--
+			return true, nil, apierrors.NewForbidden(schema.GroupResource{Group: "networking.k8s.io", Resource: "networkpolicies"}, "", errors.New("not yet"))
+		}
+		return false, nil, nil
+	})
+	created := recordCreated(cs)
+	if _, err := p.NetworkPolicy(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if binding == nil || !strings.HasPrefix(binding.Namespace, "pressfleet-doctor-") ||
+		binding.RoleRef.Name != SiteClusterRole("pressfleet") || len(binding.Subjects) != 1 ||
+		binding.Subjects[0].Name != ControlPlaneServiceAccount || binding.Subjects[0].Namespace != "pressfleet" {
+		t.Fatalf("RoleBinding = %+v", binding)
+	}
+	if refusals != 0 || len(*created) < 3 || !strings.HasPrefix((*created)[1], "rolebindings/") {
+		t.Errorf("created %q, %d refusals left", *created, refusals)
 	}
 }

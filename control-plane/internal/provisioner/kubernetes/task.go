@@ -540,13 +540,17 @@ func (p *Provisioner) attachTask(ctx context.Context, target taskTarget, spec ta
 
 	var out io.Writer = stdout
 	var streamed *recordingWriter
+	actx, cancelAttach := context.WithCancel(ctx)
+	defer cancelAttach()
 	if task.Stdout != nil {
 		// Streamed: the result's Stdout stays empty. A failing writer ends
-		// the attachment, and the pod is deleted, which kills the task.
-		streamed = &recordingWriter{w: task.Stdout}
+		// the attachment, and the pod is deleted, which kills the task. The
+		// stream doesn't end by itself when its writer fails (#228), so the
+		// writer cancels it.
+		streamed = &recordingWriter{w: task.Stdout, onErr: cancelAttach}
 		out = streamed
 	}
-	attachErr := p.attacher()(ctx, spec.namespace, spec.name, taskContainer, remotecommand.StreamOptions{
+	attachErr := p.attacher()(actx, spec.namespace, spec.name, taskContainer, remotecommand.StreamOptions{
 		Stdin: strings.NewReader("\n"), Stdout: out, Stderr: stderr,
 	})
 	if err := ctx.Err(); err != nil {
@@ -947,6 +951,8 @@ type recordingWriter struct {
 	mu  sync.Mutex
 	w   io.Writer
 	err error
+	// onErr, if set, is called once, with the first error.
+	onErr func()
 }
 
 func (r *recordingWriter) Write(p []byte) (int, error) {
@@ -958,6 +964,9 @@ func (r *recordingWriter) Write(p []byte) (int, error) {
 	n, err := r.w.Write(p)
 	if err != nil {
 		r.err = err
+		if r.onErr != nil {
+			r.onErr()
+		}
 	}
 	return n, err
 }
