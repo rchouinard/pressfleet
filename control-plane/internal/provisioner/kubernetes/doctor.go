@@ -372,6 +372,7 @@ func (p *ClusterProbe) runProbes(ctx context.Context, probes []probe, policies [
 		Name: nsName,
 		Labels: map[string]string{
 			probeLabel:                           "true",
+			PlatformNamespaceLabel:               p.cfg.Kubernetes.PlatformNamespace,
 			"pod-security.kubernetes.io/enforce": "restricted",
 		},
 	}}

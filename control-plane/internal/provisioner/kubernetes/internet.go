@@ -236,7 +236,8 @@ func (p *Provisioner) SyncInternetPolicies(ctx context.Context) error {
 	var errs []error
 	n := 0
 	for _, ns := range list.Items {
-		if !strings.HasPrefix(ns.Name, p.namespacePrefix) || ns.DeletionTimestamp != nil {
+		// Another install's namespaces may share the prefix (Startup).
+		if !strings.HasPrefix(ns.Name, p.namespacePrefix) || !p.ownsNamespace(ns.Labels) || ns.DeletionTimestamp != nil {
 			continue
 		}
 		err := p.writeInternetPolicy(ctx, ns.Name, ns.Labels[siteIDLabel], addrs)

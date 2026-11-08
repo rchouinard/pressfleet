@@ -28,6 +28,45 @@ const PullSecretLabel = "pressfleet.io/image-pull-secret"
 // didn't: DeleteSite only deletes namespaces that carry it.
 const managedByLabel = "app.kubernetes.io/managed-by"
 
+// PlatformNamespaceLabel names, on each site namespace and doctor probe
+// namespace, the platform namespace of the install that owns it. Several
+// installs may share a cluster and a site namespace prefix; the chart's
+// admission policy and platform NetworkPolicies tell their namespaces apart
+// by this label (security review K6).
+const PlatformNamespaceLabel = "pressfleet.io/platform-namespace"
+
+// ownsNamespace reports whether labels mark a site namespace of this
+// install. Namespaces created before PlatformNamespaceLabel existed lack it
+// until their next apply adds it, so a missing label counts as this
+// install's, as it does in the chart's admission policy; another install's
+// label never does.
+func (p *Provisioner) ownsNamespace(labels map[string]string) bool {
+	if labels[managedByLabel] != FieldManager {
+		return false
+	}
+	owner, ok := labels[PlatformNamespaceLabel]
+	return !ok || owner == p.platformNamespace
+}
+
+// labelNamespaces sets PlatformNamespaceLabel on the namespaces among objs.
+// The templates render it too, but manifests rendered before it existed (a
+// render snapshot that RestoreRender puts back) don't, and applying them
+// would take the label off again, which the chart's admission policy
+// refuses.
+func (p *Provisioner) labelNamespaces(objs []*unstructured.Unstructured) {
+	for _, obj := range objs {
+		if obj.GetKind() != "Namespace" || obj.GetAPIVersion() != "v1" {
+			continue
+		}
+		labels := obj.GetLabels()
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		labels[PlatformNamespaceLabel] = p.platformNamespace
+		obj.SetLabels(labels)
+	}
+}
+
 // sitePodSelector selects the site's pod, and no task pods.
 var sitePodSelector = ComponentLabel + "=" + SiteComponent
 
@@ -103,6 +142,7 @@ func (p *Provisioner) applySite(ctx context.Context, siteID, dir string) error {
 	if err != nil {
 		return err
 	}
+	p.labelNamespaces(objs)
 	ns := p.SiteNamespace(siteID)
 	var first, rest []*unstructured.Unstructured
 	for _, obj := range objs {
@@ -230,8 +270,8 @@ func (p *Provisioner) DeleteSite(ctx context.Context, siteID string) error {
 	case apierrors.IsNotFound(err):
 	case err != nil:
 		return fmt.Errorf("delete site %s: %w", siteID, err)
-	case ns.Labels[managedByLabel] != FieldManager:
-		return fmt.Errorf("delete site %s: %w: namespace %s isn't PressFleet's", siteID, ErrInvalidSite, name)
+	case !p.ownsNamespace(ns.Labels):
+		return fmt.Errorf("delete site %s: %w: namespace %s isn't this install's", siteID, ErrInvalidSite, name)
 	case ns.DeletionTimestamp == nil:
 		policy := metav1.DeletePropagationBackground
 		err := namespaces.Delete(ctx, name, metav1.DeleteOptions{

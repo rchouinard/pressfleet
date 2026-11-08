@@ -1,7 +1,9 @@
 {{- /*
   The site's namespace (design doc §4.8): everything of one site lives in
   it, and deleting the site deletes it. Pod Security "restricted" is
-  enforced on every pod in it (§6).
+  enforced on every pod in it (§6). pressfleet.io/platform-namespace names
+  the install it belongs to, which the chart's admission policy and platform
+  NetworkPolicies require (kubernetes.PlatformNamespaceLabel).
 */ -}}
 {{ template "header" . }}
 apiVersion: v1
@@ -10,6 +12,7 @@ metadata:
   name: {{ q .Namespace }}
   labels:
 {{- template "labels" . }}
+    pressfleet.io/platform-namespace: {{ q .PlatformNamespace }}
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
     pod-security.kubernetes.io/warn: restricted

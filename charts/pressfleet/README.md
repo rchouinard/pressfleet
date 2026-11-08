@@ -6,7 +6,7 @@ Installs PressFleet on a Kubernetes cluster: the control plane and the platform 
 
 ## What it installs
 
-Everything goes in the release's namespace, which is the platform namespace (`kubernetes.platform_namespace`). Install one release per namespace: the services have fixed names, as on Compose. Give each install in a cluster its own `kubernetes.siteNamespacePrefix`: until [#326](https://github.com/rchouinard/pressfleet/issues/326), installs that share a prefix can manage each other's site namespaces.
+Everything goes in the release's namespace, which is the platform namespace (`kubernetes.platform_namespace`). Install one release per namespace: the services have fixed names, as on Compose. Several installs may share a cluster: each labels its site namespaces `pressfleet.io/platform-namespace: <namespace>`, and its admission policy and NetworkPolicies keep to the namespaces with its own label ([#326](https://github.com/rchouinard/pressfleet/issues/326)). Still give each install its own `kubernetes.siteNamespacePrefix`: the data volume clones' policy checks a clone's namespace by prefix alone, and site namespaces from before the label (below) are told apart only by it.
 
 | Object | Notes |
 | --- | --- |
@@ -64,7 +64,7 @@ RBAC can't name namespaces that don't exist yet, so the namespace and RoleBindin
 - **Site namespaces** are named `<siteNamespacePrefix>...` and labeled `app.kubernetes.io/managed-by: pressfleet`.
 - **Doctor's probe namespaces** (#225) are named `<namespace>-doctor-...` and labeled `pressfleet.io/doctor-probe: "true"`.
 
-Both kinds must enforce Pod Security `restricted`, at the latest version. A RoleBinding must be in one of them and bind the site ClusterRole to the control plane's own ServiceAccount.
+Both kinds must be labeled `pressfleet.io/platform-namespace: <namespace>` and enforce Pod Security `restricted`, at the latest version. A RoleBinding must be in one of them and bind the site ClusterRole to the control plane's own ServiceAccount. Site namespaces created before the platform namespace label lack it: the control plane may change or delete such a namespace, and the change must add the label, which the template rollout after the upgrade does for every site. Until then, it can't write RoleBindings there, and another install that shares the prefix could claim it the same way.
 
 The `ValidatingAdmissionPolicy` `workloads.<namespace>.pressfleet.io` (`workload-policy.yaml`) covers the pods and Services the control plane writes, in any namespace. A pod must run as its namespace's `default` ServiceAccount without a token, share no host namespace, mount no hostPath, and run nothing privileged, so the control plane can't borrow another ServiceAccount (Traefik's, for one) or the node, even in a platform namespace that doesn't enforce Pod Security. A Service must be a ClusterIP Service without `externalIPs` (CVE-2020-8554).
 
@@ -83,7 +83,7 @@ NetworkPolicies deny ingress to the platform namespace by default and then allow
 
 - Traefik from anywhere.
 - The control plane and the maintenance page from Traefik.
-- MariaDB and Valkey from the control plane and from pods in site namespaces (labeled `app.kubernetes.io/managed-by: pressfleet` and `pressfleet.io/site-id`).
+- MariaDB and Valkey from the control plane and from pods in this install's site namespaces (labeled `app.kubernetes.io/managed-by: pressfleet`, `pressfleet.io/site-id`, and `pressfleet.io/platform-namespace: <namespace>`). Site namespaces without `pressfleet.io/platform-namespace`, from before the label, are admitted too until the template rollout labels them.
 - VictoriaMetrics from the control plane.
 
 Policies select platform pods by `app.kubernetes.io/name: pressfleet` and `app.kubernetes.io/component`. Site NetworkPolicies should select Traefik the same way: `app.kubernetes.io/component: traefik` in the platform namespace. Pods the driver starts in the platform namespace (repository tasks) must not carry these labels.

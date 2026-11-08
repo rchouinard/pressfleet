@@ -56,8 +56,8 @@ var ErrUnexpectedUser = errors.New("compose: php container does not run as a sit
 //
 // args reach WP-CLI verbatim as its argv: nothing passes through a shell,
 // and they follow a "--" so neither the docker CLI nor timeout(1) reads them
-// as options. They may hold secrets (e.g. `user create --user_pass=...`), so
-// they never appear in errors or logs.
+// as options. They should hold no secrets (provisioner.Provisioner says
+// why), but they never appear in errors or logs all the same.
 //
 // The run is bounded by ctx and the configured WP-CLI timeout. Killing the
 // docker CLI does not stop a process started with `docker exec`, so WP-CLI
@@ -67,6 +67,13 @@ var ErrUnexpectedUser = errors.New("compose: php container does not run as a sit
 // yields a *provisioner.ExecError carrying the exit code and the end of
 // standard error.
 func (p *Provisioner) ExecWPCLI(ctx context.Context, siteID string, args []string) (string, error) {
+	return p.ExecWPCLIInput(ctx, siteID, args, nil)
+}
+
+// ExecWPCLIInput is ExecWPCLI with stdin as WP-CLI's standard input:
+// `docker compose exec` forwards the docker CLI's own standard input to the
+// process. A nil stdin gives WP-CLI an empty one.
+func (p *Provisioner) ExecWPCLIInput(ctx context.Context, siteID string, args []string, stdin io.Reader) (string, error) {
 	if err := validSiteID(siteID); err != nil {
 		return "", fmt.Errorf("exec wp-cli: %w", err)
 	}
@@ -85,7 +92,7 @@ func (p *Provisioner) ExecWPCLI(ctx context.Context, siteID string, args []strin
 	deadline, _ := ctx.Deadline()
 	proj := p.project(siteID)
 	proj.Docker = p.wpcliDocker
-	out, err := proj.run(ctx, nil, wpCLIArgv(user, time.Until(deadline), args)...)
+	out, err := proj.run(ctx, stdin, wpCLIArgv(user, time.Until(deadline), args)...)
 	truncated := len(out) > p.wpcliMaxOutput
 	if truncated {
 		out = out[:p.wpcliMaxOutput]

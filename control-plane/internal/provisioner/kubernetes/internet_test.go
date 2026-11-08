@@ -171,8 +171,14 @@ func TestSyncInternetPoliciesFollowsNodes(t *testing.T) {
 	}
 	// A namespace of another install's prefix, which isn't this driver's.
 	other := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "other-x", Labels: map[string]string{managedByLabel: FieldManager, siteIDLabel: "x"}}}
-	if _, err := cs.CoreV1().Namespaces().Create(ctx, other, metav1.CreateOptions{}); err != nil {
-		t.Fatal(err)
+	// And one with this prefix, of another install (K6).
+	foreign := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "pf-foreign", Labels: map[string]string{
+		managedByLabel: FieldManager, siteIDLabel: "foreign", PlatformNamespaceLabel: "elsewhere",
+	}}}
+	for _, ns := range []*corev1.Namespace{other, foreign} {
+		if _, err := cs.CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	pod := map[string]string{ComponentLabel: SiteComponent}
 
@@ -208,8 +214,10 @@ func TestSyncInternetPoliciesFollowsNodes(t *testing.T) {
 	if open := openTo(t, sitePolicies(t, p), pod, joined); len(open) > 0 {
 		t.Errorf("the site reaches the new node %s through %v", joined, open)
 	}
-	if _, err := cs.NetworkingV1().NetworkPolicies(other.Name).Get(ctx, InternetPolicy, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
-		t.Errorf("a namespace without the site prefix got an internet policy: %v", err)
+	for _, ns := range []string{other.Name, foreign.Name} {
+		if _, err := cs.NetworkingV1().NetworkPolicies(ns).Get(ctx, InternetPolicy, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+			t.Errorf("namespace %s, not this install's, got an internet policy: %v", ns, err)
+		}
 	}
 
 	// It leaves: its address is the internet again.

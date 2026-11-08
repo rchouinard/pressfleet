@@ -171,7 +171,7 @@ pfk pressfleet repository check --help
 | Which release? | `helm list -n pressfleet`. `pressfleet version` on Kubernetes says to ask Helm |
 | Is the cluster fit? | `pfk pressfleet doctor`, or the dashboard's **Platform overview** |
 
-Release notices say "install its CLI and run `pressfleet upgrade`" ([Release check](upgrading.md#release-check)). On Kubernetes, read them as "upgrade the chart".
+Release notices ([Release check](upgrading.md#release-check)) in the dashboard's About dialog, the control plane's log, and `pfk pressfleet version` say to read the release notes, apply the new chart's CRDs, and run `helm upgrade`, as in [Upgrading](#upgrading).
 
 ### Doctor on Kubernetes
 

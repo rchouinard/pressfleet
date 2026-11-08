@@ -28,9 +28,9 @@ What the suite covers, as subtests of `Run`:
 
 | Group | Contract |
 | --- | --- |
-| `Lifecycle` | Create, update, get, start, stop, and delete, each idempotent (converging an unchanged site recreates nothing; wp-config.php changes recreate PHP only); data survives restarts; delete leaves nothing behind; every method reports a missing site as `ErrSiteNotFound` |
+| `Lifecycle` | WordPress installed with its admin password on standard input (`ExecWPCLIInput`); create, update, get, start, stop, and delete, each idempotent (converging an unchanged site recreates nothing; wp-config.php changes recreate PHP only); data survives restarts; delete leaves nothing behind; every method reports a missing site as `ErrSiteNotFound` |
 | `Maintenance` | `SetMaintenance` on a running and a stopped site, surviving an update (`SiteConfig.Maintenance`), WP-CLI working meanwhile |
-| `ExecWPCLI` | The site's UID, hostile arguments verbatim, `*ExecError`, a deadline that ends the process, `ErrSiteNotRunning` |
+| `ExecWPCLI` | The site's UID, hostile arguments verbatim, standard input (`ExecWPCLIInput`) whole and none without it, `*ExecError`, a deadline that ends the process, `ErrSiteNotRunning` |
 | `PurgeCache`, `ReloadCode`, `ProbeHTTP` | The page cache of a running and a stopped site; PHP running changed code after a reload without a restart; the probe's status, HTTPS, no redirects, and its errors |
 | `Environment` | `Environment` and `DisableMail` reach the site as `WP_ENVIRONMENT_TYPE` and `PRESSFLEET_DISABLE_MAIL` on a new site and through `UpdateSite`; `provisioner.HasMailSwitch` answers through `ExecWPCLI` |
 | `ObjectCache`, `PinImage` | A site uses the Valkey it is given; pinned images run |

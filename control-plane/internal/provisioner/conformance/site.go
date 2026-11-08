@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +27,11 @@ func testLifecycle(t *testing.T, env Env) {
 	f.install(ctx, t, cfg, "Lifecycle")
 	if got := f.wp(ctx, t, cfg, "option", "get", "blogname"); got != "Lifecycle" {
 		t.Errorf("blogname = %q", got)
+	}
+	// The administrator's password is the one install read from stdin.
+	check := fmt.Sprintf(`echo wp_check_password( '%s', get_user_by( 'login', 'admin' )->user_pass ) ? 'match' : 'mismatch';`, testAdminPassword)
+	if got := f.wp(ctx, t, cfg, "eval", check); got != "match" {
+		t.Errorf("the admin password from standard input: check printed %q", got)
 	}
 
 	// Create again converges without recreating anything.
@@ -314,8 +320,23 @@ func testExecWPCLI(t *testing.T, env Env) {
 		t.Error("an argument was executed by a shell")
 	}
 
+	// Standard input reaches WP-CLI whole and ends, and ExecWPCLI gives it
+	// none.
+	input := "first line\n" + strings.Repeat("x", 100<<10) + "\nlast line, no newline"
+	readStdin := []string{"eval", "--skip-wordpress", "$in = stream_get_contents( STDIN ); echo strlen( $in ), ':', hash( 'sha256', $in );"}
+	out, err := f.d.ExecWPCLIInput(ctx, cfg.ID, readStdin, strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("ExecWPCLIInput: %v", err)
+	}
+	if want := fmt.Sprintf("%d:%x", len(input), sha256.Sum256([]byte(input))); strings.TrimSpace(out) != want {
+		t.Errorf("WP-CLI read stdin as %q, want %q", strings.TrimSpace(out), want)
+	}
+	if got := f.wp(ctx, t, cfg, readStdin...); got != "0:"+fmt.Sprintf("%x", sha256.Sum256(nil)) {
+		t.Errorf("ExecWPCLI gave WP-CLI standard input: %q", got)
+	}
+
 	// A non-zero exit is an *ExecError with the exit code and the streams.
-	_, err := f.d.ExecWPCLI(ctx, cfg.ID, []string{"eval", "--skip-wordpress", "echo 'out'; fwrite( STDERR, 'boom' ); exit( 3 );"})
+	_, err = f.d.ExecWPCLI(ctx, cfg.ID, []string{"eval", "--skip-wordpress", "echo 'out'; fwrite( STDERR, 'boom' ); exit( 3 );"})
 	var ee *provisioner.ExecError
 	if !errors.As(err, &ee) {
 		t.Fatalf("err = %v, want *provisioner.ExecError", err)

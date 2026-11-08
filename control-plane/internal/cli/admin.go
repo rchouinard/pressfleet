@@ -358,10 +358,13 @@ func (a *app) recordedRelease() *adminRelease {
 
 // updateNotice tells the operator a newer release is available and how to
 // upgrade to it: `pressfleet upgrade` moves the platform to the CLI's own
-// version, so an older CLI has to be replaced first.
+// version, so an older CLI has to be replaced first. On Kubernetes, Helm
+// does the upgrade instead (design doc §4.8).
 func (a *app) updateNotice(r adminRelease) string {
 	how := fmt.Sprintf("install the %s CLI from the release page and run `pressfleet upgrade`", r.LatestVersion)
-	if _, err := skew.Parse(a.opts.Version); err == nil && !releasecheck.UpdateAvailable(a.opts.Version, r.LatestVersion) {
+	if a.cfg.Driver == config.SiteDriverKubernetes {
+		how = "read its release notes, apply the new chart's CRDs, and run `helm upgrade` (docs/kubernetes.md, \"Upgrading\")"
+	} else if _, err := skew.Parse(a.opts.Version); err == nil && !releasecheck.UpdateAvailable(a.opts.Version, r.LatestVersion) {
 		how = "run `pressfleet upgrade` with this CLI"
 	}
 	return fmt.Sprintf("A newer PressFleet release is available: %s (%s).\nTo upgrade, %s.", r.LatestVersion, r.ReleaseURL, how)

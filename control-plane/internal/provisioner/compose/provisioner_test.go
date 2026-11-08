@@ -84,6 +84,8 @@ type fakeDocker struct {
 	execOut  []byte
 	execErr  error
 	execArgs []string
+	// execStdin is the standard input of the last docker call, nil if none.
+	execStdin *string
 }
 
 func newFakeDocker(t *testing.T) *fakeDocker {
@@ -97,7 +99,16 @@ func newFakeDocker(t *testing.T) *fakeDocker {
 
 var errNoSuchContainer = &compose.CommandError{Stderr: "Error response from daemon: No such container: x", Err: errors.New("exit status 1")}
 
-func (f *fakeDocker) exec(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+func (f *fakeDocker) exec(_ context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+	f.execStdin = nil
+	if stdin != nil {
+		b, err := io.ReadAll(stdin)
+		if err != nil {
+			return nil, err
+		}
+		in := string(b)
+		f.execStdin = &in
+	}
 	call := args
 	if args[0] == "compose" {
 		call = append([]string{"compose"}, args[5:]...)
