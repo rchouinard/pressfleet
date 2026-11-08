@@ -227,8 +227,16 @@ sense inside the control plane container.`,
 				a.cfg = cfg
 			}
 			if a.cfg.Driver == config.SiteDriverKubernetes {
-				_, err := fmt.Fprintln(out, kubernetesVersionNote)
-				return err
+				if _, err := fmt.Fprintln(out, kubernetesVersionNote); err != nil {
+					return err
+				}
+				// Inside the control plane pod, its release check's
+				// record is at hand; a host has none.
+				if r := a.recordedRelease(); r != nil && r.UpdateAvailable {
+					_, err := fmt.Fprintf(out, "\n%s\n", a.updateNotice(*r))
+					return err
+				}
+				return nil
 			}
 			return a.writeControlPlaneVersion(cmd.Context(), out)
 		},

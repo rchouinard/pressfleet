@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/rchouinard/pressfleet/control-plane/internal/config"
 	"github.com/rchouinard/pressfleet/control-plane/internal/releasecheck"
 )
 
@@ -15,9 +16,10 @@ func (a *app) releaseChecker() (*releasecheck.Checker, error) {
 		src = releasecheck.GitHub{Version: a.opts.Version}
 	}
 	return releasecheck.New(releasecheck.Options{
-		Source:  src,
-		Version: a.opts.Version,
-		File:    a.cfg.Layout().ReleaseCheckFile(),
-		Logger:  a.log.With("component", "releasecheck"),
+		Source:     src,
+		Version:    a.opts.Version,
+		Kubernetes: a.cfg.Driver == config.SiteDriverKubernetes,
+		File:       a.cfg.Layout().ReleaseCheckFile(),
+		Logger:     a.log.With("component", "releasecheck"),
 	})
 }

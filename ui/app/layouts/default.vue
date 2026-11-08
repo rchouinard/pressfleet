@@ -98,6 +98,6 @@ watch(() => route.fullPath, () => {
       </div>
     </div>
 
-    <AppAbout v-if="platform" v-model:open="about" :build="platform.build" :release="platform.release" />
+    <AppAbout v-if="platform" v-model:open="about" :build="platform.build" :release="platform.release" :orchestrator="platform.orchestrator" />
   </div>
 </template>

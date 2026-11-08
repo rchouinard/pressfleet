@@ -102,6 +102,40 @@ func TestCheck(t *testing.T) {
 	}
 }
 
+// The line logged about a newer release names the upgrade of the install's
+// driver: on Kubernetes, Helm does it (#319).
+func TestCheckAnnouncesUpgrade(t *testing.T) {
+	tests := []struct {
+		name       string
+		kubernetes bool
+		want       string
+		notWant    string
+	}{
+		{"compose", false, "install its CLI and run pressfleet upgrade", "helm"},
+		{"kubernetes", true, "read its release notes, apply the new chart's CRDs, and run helm upgrade", "pressfleet upgrade"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src, _ := fixed(nil, rel("v1.3.0"))
+			log, buf := logger()
+			c, err := releasecheck.New(releasecheck.Options{
+				Source: src, Version: "v1.2.3", Kubernetes: tt.kubernetes, Now: func() time.Time { return now }, Logger: log,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.Check(context.Background())
+			out := buf.String()
+			if !strings.Contains(out, "level=INFO") || !strings.Contains(out, tt.want) {
+				t.Errorf("log lacks %q:\n%s", tt.want, out)
+			}
+			if strings.Contains(out, tt.notWant) {
+				t.Errorf("log mentions %q:\n%s", tt.notWant, out)
+			}
+		})
+	}
+}
+
 // A failed check is logged at debug level only, and keeps what an earlier
 // check found.
 func TestCheckFailure(t *testing.T) {

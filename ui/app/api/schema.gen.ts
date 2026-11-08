@@ -4628,7 +4628,9 @@ export interface components {
             /**
              * @description Whether `latest_version` is newer than the running control plane.
              *     To upgrade, install that release's CLI on the host and run
-             *     `pressfleet upgrade`. Always false for a development build.
+             *     `pressfleet upgrade`; on Kubernetes (`orchestrator`), apply the
+             *     new chart's CRDs and run `helm upgrade`. Always false for a
+             *     development build.
              */
             update_available: boolean;
         };
