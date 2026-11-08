@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +18,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	utilexec "k8s.io/client-go/util/exec"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
@@ -25,6 +29,7 @@ import (
 type fakeCall struct {
 	Target  execTarget
 	Command []string
+	Stdin   *string // nil when no input stream was requested
 }
 
 // fakeExec is an executor that answers from a function and records what it
@@ -36,8 +41,16 @@ type fakeExec struct {
 	do func(ctx context.Context, c fakeCall, stdout, stderr io.Writer) error
 }
 
-func (f *fakeExec) Exec(ctx context.Context, t execTarget, command []string, stdout, stderr io.Writer) error {
+func (f *fakeExec) Exec(ctx context.Context, t execTarget, command []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	c := fakeCall{Target: t, Command: command}
+	if stdin != nil {
+		b, err := io.ReadAll(stdin)
+		if err != nil {
+			return err
+		}
+		in := string(b)
+		c.Stdin = &in
+	}
 	f.mu.Lock()
 	f.calls = append(f.calls, c)
 	f.mu.Unlock()
@@ -278,6 +291,85 @@ func TestRedactQuery(t *testing.T) {
 	exit := exitCode(2)
 	if got := redactQuery(exit, u); !errors.Is(got, exit) {
 		t.Errorf("exit error changed: %v", got)
+	}
+}
+
+func TestExecWPCLIInput(t *testing.T) {
+	ex := answering("ok", nil)
+	p := execCluster(t, ex, runningSite()...)
+	if _, err := p.ExecWPCLIInput(t.Context(), testSiteID, []string{"user", "update", "1", "--prompt=user_pass"}, strings.NewReader("pw\n")); err != nil {
+		t.Fatal(err)
+	}
+	if c := ex.last(t); c.Stdin == nil || *c.Stdin != "pw\n" {
+		t.Errorf("stdin = %v, want %q", c.Stdin, "pw\n")
+	}
+	// ExecWPCLI requests no input stream.
+	if _, err := p.ExecWPCLI(t.Context(), testSiteID, []string{"option", "get", "home"}); err != nil {
+		t.Fatal(err)
+	}
+	if c := ex.last(t); c.Stdin != nil {
+		t.Errorf("ExecWPCLI sent stdin %q", *c.Stdin)
+	}
+}
+
+// TestSiteInstallExecURL runs a site install, the way package sites does,
+// through the driver's real exec client against a stand-in API server, and
+// checks the requests' URLs, which the API server's audit log records: the
+// admin password travels on standard input and appears in none of them.
+func TestSiteInstallExecURL(t *testing.T) {
+	const password = "Sup3r-s3cret-admin-pw"
+	var (
+		mu   sync.Mutex
+		uris []string
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		uris = append(uris, r.RequestURI)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Forbidden","code":403}`)
+	}))
+	t.Cleanup(srv.Close)
+	rc := &rest.Config{Host: srv.URL}
+	cs, err := kubernetes.NewForConfig(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := cluster(t, nil, runningSite()...)
+	p.exec = newRemoteExecutor(cs, rc)
+
+	args := []string{
+		"core", "install", "--url=https://example.com", "--title=Example",
+		"--admin_user=owner", "--admin_email=owner@example.com", "--skip-email", "--prompt=admin_password",
+	}
+	_, err = p.ExecWPCLIInput(t.Context(), testSiteID, args, strings.NewReader(password+"\n"))
+	if err == nil {
+		t.Fatal("the stand-in API server refuses every exec, but the install succeeded")
+	}
+	if strings.Contains(err.Error(), password) {
+		t.Errorf("error leaks the password: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(uris) == 0 {
+		t.Fatal("no exec request reached the API server")
+	}
+	for _, uri := range uris {
+		u, err := url.Parse(uri)
+		if err != nil {
+			t.Fatal(err)
+		}
+		q := u.Query()
+		if !strings.HasSuffix(u.Path, "/pods/site-abc/exec") || !slices.Contains(q["command"], "--prompt=admin_password") {
+			t.Errorf("request %q isn't the install's exec", uri)
+		}
+		if q.Get("stdin") != "true" {
+			t.Errorf("request %q opens no standard input", uri)
+		}
+		if decoded, _ := url.QueryUnescape(uri); strings.Contains(decoded, password) || strings.Contains(uri, password) {
+			t.Errorf("request URL holds the password: %q", uri)
+		}
 	}
 }
 

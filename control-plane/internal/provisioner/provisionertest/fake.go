@@ -22,6 +22,7 @@ type Call struct {
 	SiteID     string
 	Repository string            // RunRepositoryTask's client group ID or provisioner.StateRepository
 	Args       []string          // ExecWPCLI arguments
+	Stdin      string            // ExecWPCLIInput standard input
 	Task       *provisioner.Task // RunTask and RunRepositoryTask task
 }
 
@@ -258,9 +259,25 @@ func (f *Fake) SetMaintenance(_ context.Context, siteID string, enabled bool) er
 }
 
 // ExecWPCLI implements provisioner.Provisioner.
-func (f *Fake) ExecWPCLI(_ context.Context, siteID string, args []string) (string, error) {
+func (f *Fake) ExecWPCLI(ctx context.Context, siteID string, args []string) (string, error) {
+	return f.ExecWPCLIInput(ctx, siteID, args, nil)
+}
+
+// ExecWPCLIInput implements provisioner.Provisioner. It is recorded as an
+// "ExecWPCLI" call whose Stdin holds what it read, and WPCLI handles it as
+// it does ExecWPCLI.
+func (f *Fake) ExecWPCLIInput(_ context.Context, siteID string, args []string, stdin io.Reader) (string, error) {
+	var input []byte
+	if stdin != nil {
+		var err error
+		if input, err = io.ReadAll(stdin); err != nil {
+			return "", fmt.Errorf("reading standard input: %w", err)
+		}
+	}
 	f.mu.Lock()
-	if err := f.begin("ExecWPCLI", siteID, args); err != nil {
+	err := f.begin("ExecWPCLI", siteID, args)
+	f.calls[len(f.calls)-1].Stdin = string(input)
+	if err != nil {
 		f.mu.Unlock()
 		return "", err
 	}

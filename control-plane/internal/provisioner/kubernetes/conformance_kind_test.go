@@ -98,7 +98,7 @@ func TestConformance(t *testing.T) {
 func kindInstance(p *Provisioner) conformance.Instance {
 	run := func(ctx context.Context, target execTarget, argv ...string) (string, error) {
 		var stdout, stderr bytes.Buffer
-		if err := p.exec.Exec(ctx, target, argv, &stdout, &stderr); err != nil {
+		if err := p.exec.Exec(ctx, target, argv, nil, &stdout, &stderr); err != nil {
 			return stdout.String(), fmt.Errorf("%v: %w: %s", argv, err, stderr.String())
 		}
 		return stdout.String(), nil

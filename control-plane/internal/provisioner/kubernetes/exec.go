@@ -68,9 +68,9 @@ type execTarget struct {
 // executor runs a command in a container over the exec API. A command that
 // ran and exited non-zero yields an error that satisfies
 // [utilexec.ExitError]. It is the seam unit tests fake: the fake clientset
-// can't serve the exec API's streams.
+// can't serve the exec API's streams. A nil stdin opens no input stream.
 type executor interface {
-	Exec(ctx context.Context, target execTarget, command []string, stdout, stderr io.Writer) error
+	Exec(ctx context.Context, target execTarget, command []string, stdin io.Reader, stdout, stderr io.Writer) error
 }
 
 // remoteExecutor runs commands against a cluster, over WebSocket where the
@@ -85,11 +85,8 @@ func newRemoteExecutor(cs kubernetes.Interface, cfg *rest.Config) *remoteExecuto
 }
 
 // Exec implements executor.
-func (r *remoteExecutor) Exec(ctx context.Context, t execTarget, command []string, stdout, stderr io.Writer) error {
-	u := r.client.Post().Namespace(t.Namespace).Resource("pods").Name(t.Pod).SubResource("exec").
-		VersionedParams(&corev1.PodExecOptions{
-			Container: t.Container, Command: command, Stdout: true, Stderr: true,
-		}, scheme.ParameterCodec).URL()
+func (r *remoteExecutor) Exec(ctx context.Context, t execTarget, command []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	u := execURL(r.client, t, command, stdin != nil)
 	ws, err := remotecommand.NewWebSocketExecutor(r.cfg, "GET", u.String())
 	if err != nil {
 		return redactQuery(err, u)
@@ -104,8 +101,18 @@ func (r *remoteExecutor) Exec(ctx context.Context, t execTarget, command []strin
 	if err != nil {
 		return redactQuery(err, u)
 	}
-	err = ex.StreamWithContext(ctx, remotecommand.StreamOptions{Stdout: stdout, Stderr: stderr})
+	err = ex.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: stdin, Stdout: stdout, Stderr: stderr})
 	return redactQuery(err, u)
+}
+
+// execURL is the exec request for command in the target. The command is in
+// its query, which the API server's audit log records; standard input, if
+// requested, is a stream of the upgraded connection.
+func execURL(client rest.Interface, t execTarget, command []string, stdin bool) *url.URL {
+	return client.Post().Namespace(t.Namespace).Resource("pods").Name(t.Pod).SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Container: t.Container, Command: command, Stdin: stdin, Stdout: true, Stderr: true,
+		}, scheme.ParameterCodec).URL()
 }
 
 // redactQuery keeps the command line, which holds the command's arguments
@@ -136,12 +143,17 @@ type execResult struct {
 // bytes are kept. A command that exits non-zero yields a
 // *provisioner.ExecError, and ctx ending yields its error.
 func (p *Provisioner) run(ctx context.Context, t execTarget, command []string, stdoutMax int) (execResult, error) {
+	return p.runInput(ctx, t, command, nil, stdoutMax)
+}
+
+// runInput is run with stdin as the command's standard input.
+func (p *Provisioner) runInput(ctx context.Context, t execTarget, command []string, stdin io.Reader, stdoutMax int) (execResult, error) {
 	if p.exec == nil {
 		return execResult{}, fmt.Errorf("%w: the driver has no exec connection", ErrExecFailed)
 	}
 	stdout := &outbuf.Head{Max: stdoutMax + 1}
 	stderr := &outbuf.Tail{Max: stderrKept}
-	err := p.exec.Exec(ctx, t, command, stdout, stderr)
+	err := p.exec.Exec(ctx, t, command, stdin, stdout, stderr)
 	res := execResult{Stdout: stdout.Bytes(), Stderr: stderr.String()}
 	if len(res.Stdout) > stdoutMax {
 		res.Stdout, res.Truncated = res.Stdout[:stdoutMax], true

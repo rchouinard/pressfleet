@@ -182,11 +182,25 @@ func TestProvisioning(t *testing.T) {
 		}
 		for _, want := range []string{
 			"--url=https://acme-marketing." + testPreviewBase, "--title=Acme Marketing", "--admin_user=" + site.AdminUsername,
-			"--admin_password=" + password.Reveal(), "--admin_email=owner@example.com", "--skip-email",
+			"--prompt=admin_password", "--admin_email=owner@example.com", "--skip-email",
 		} {
 			if !slices.Contains(installs[0], want) {
 				t.Errorf("install args %q lack %q", installs[0], want)
 			}
+		}
+		// The password goes on standard input, never in argv, which a
+		// driver may log (the Kubernetes API server's audit log).
+		var stdin []string
+		for _, c := range e.prov.Calls() {
+			if c.Op == "ExecWPCLI" && c.SiteID == site.ID && strings.Contains(strings.Join(c.Args, " "), password.Reveal()) {
+				t.Errorf("WP-CLI argv holds the admin password: %q", c.Args)
+			}
+			if c.Op == "ExecWPCLI" && c.SiteID == site.ID && len(c.Args) > 1 && c.Args[0] == "core" && c.Args[1] == "install" {
+				stdin = append(stdin, c.Stdin)
+			}
+		}
+		if !slices.Equal(stdin, []string{password.Reveal() + "\n"}) {
+			t.Errorf("install standard input = %q, want the password and a newline", stdin)
 		}
 		if strings.Contains(jobLog(d), password.Reveal()) {
 			t.Error("the admin password appears in the job's log, errors, data, or result")
