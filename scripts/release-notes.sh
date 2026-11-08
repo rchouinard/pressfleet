@@ -47,16 +47,19 @@ See [installation.md](https://github.com/rchouinard/pressfleet/blob/$tag/docs/in
 The Helm chart is published with this release. It needs Kubernetes **$kube_version** or later.
 
 \`\`\`sh
-helm install pressfleet oci://ghcr.io/rchouinard/pressfleet/charts/pressfleet --version ${tag#v}
+pressfleet init --target kubernetes --output-dir pressfleet-kubernetes
+# apply the Secrets it wrote, then:
+helm install pressfleet oci://ghcr.io/rchouinard/pressfleet/charts/pressfleet --version ${tag#v} \\
+  --namespace pressfleet --values pressfleet-kubernetes/values.yaml --wait --timeout 15m
 \`\`\`
 
 ${chart_digest:+Chart digest: \`$chart_digest\`
 
-}The chart package (\`pressfleet-${tag#v}.tgz\`) and its SBOM are also release assets. See the [chart README](https://github.com/rchouinard/pressfleet/blob/$tag/charts/pressfleet/README.md).
+}The chart package (\`pressfleet-${tag#v}.tgz\`) and its SBOM are also release assets. See [kubernetes.md](https://github.com/rchouinard/pressfleet/blob/$tag/docs/kubernetes.md) and the [chart README](https://github.com/rchouinard/pressfleet/blob/$tag/charts/pressfleet/README.md).
 
 ## Upgrade
 
-\`pressfleet upgrade\` upgrades control planes from **$min_upgrade_from** or later. Older installs upgrade through an intermediate release first. See [upgrading.md](https://github.com/rchouinard/pressfleet/blob/$tag/docs/upgrading.md).
+\`pressfleet upgrade\` upgrades control planes from **$min_upgrade_from** or later. Older installs upgrade through an intermediate release first. On Kubernetes, \`helm upgrade\` does the upgrade instead. See [upgrading.md](https://github.com/rchouinard/pressfleet/blob/$tag/docs/upgrading.md).
 
 ## Images
 

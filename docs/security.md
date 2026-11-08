@@ -49,6 +49,15 @@ A [staging site](staging.md) is a copy of a production site, so it holds the sam
 - **Roles are platform-wide,** so any Operator can create a staging site of any client's site, and push one to production. Creating, refreshing, pushing, and deleting staging sites are Operator permissions that don't ask for a fresh second factor. The push is limited in the dashboard by typing the production slug, but not in the API ([Automating pushes](staging.md#what-a-database-push-or-an-all-files-push-loses)). Give an API token that scripts pushes to an Operator, not an Admin ([API tokens](#api-tokens)).
 - **Everything about them is in the audit log,** like other site actions.
 
+## Kubernetes
+
+On a cluster ([PressFleet on Kubernetes](kubernetes.md)), Kubernetes replaces the Docker socket and the host as what you must protect:
+
+- **Whoever can read Secrets in the platform namespace owns the platform.** `pressfleet-master-key` holds the master key, `pressfleet-postgres` the state database's DSN. Whoever can `exec` in the control plane pod can do what it does. Limit who has such rights in that namespace, and encrypt Secrets at rest in etcd if your cluster supports it. `secrets.yaml` from `init` holds the same Secrets: keep it with the master key, off the cluster and out of version control.
+- **The cluster's network plugin enforces site isolation.** Sites reach each other, the nodes, and the API server only if NetworkPolicy fails. The control plane refuses to start where doctor can't prove the plugin enforces it. Keep the plugin working through cluster upgrades.
+- **The control plane's rights are narrow, but cluster-wide in two ways.** It can create and delete namespaces and bind one role in them, and create PersistentVolumes. Admission policies the chart installs hold it to namespaces with the site prefix (`pf-`), to namespaces that enforce Pod Security `restricted`, and to copies of the data volume. Outside its own namespaces it has no Secret access, `nodes/proxy`, or `pods/exec`. Don't delete those policies, and don't give anyone else a namespace with the `pf-` prefix. Traefik's service account reads Secrets cluster-wide, which its Kubernetes provider needs for basic auth.
+- **Site images are pinned by digest, pulled by your nodes.** Site images must be public in this release, so don't put anything secret in them.
+
 ## Rotating secrets
 
 Rotate on a schedule that fits your risk, when someone who knew a secret leaves, and at once if one leaks. Where a procedure says "create the new credential first", do it so there is no gap.

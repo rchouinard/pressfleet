@@ -17,6 +17,8 @@ Work down this list. Most problems show themselves in the first three steps.
 5. **The Audit log** (Admins) to see who changed what and when.
 6. **`pressfleet version`.** If the CLI and control plane are incompatible, host commands refuse to run, and it says what to do ([CLI and control plane versions](installation.md#cli-and-control-plane-versions)).
 
+On Kubernetes, start with `kubectl -n pressfleet exec deploy/control-plane -- pressfleet doctor` and `kubectl -n pressfleet get pods`, and see [Kubernetes](#kubernetes) below.
+
 Where each log lives: [Logs](operating.md#logs). Getting a shell in the control plane, and which commands must run there: [Commands that run in the control plane container](operating.md#commands-that-run-in-the-control-plane-container).
 
 ## Installing
@@ -251,6 +253,26 @@ A `pressfleet upgrade --rollback` that refuses says why and changes nothing:
 `pressfleet doctor` warns `upgrade-rollouts`, and the core, image, and template rollouts report `held: true` with a reason (`GET /api/v1/core-rollout`, `/image-rollout`, `/template-rollout`; the dashboard's platform overview shows it too). The control plane holds them while the record `<data_dir>/upgrade/upgrade.json` says `in-progress`, `failed`, `rolling-back`, or `rollback-failed`, or can't be read. An upgrade that was interrupted (the CLI was killed, the SSH session dropped) or left failed with `--no-rollback` is the usual cause. Updates you start by hand still run.
 
 Run `pressfleet upgrade` to retry or resume, or `pressfleet upgrade --rollback`; either ends in `succeeded` or `rolled-back`, and the rollouts resume within 15 minutes without a restart ([Held rollouts](upgrading.md#held-rollouts)). If you returned to the previous release by hand with the [recovery steps](upgrading.md#recovering-from-a-failed-upgrade), run their last step, `pressfleet upgrade --rollback`, with the CLI that upgraded: it finds the platform back on the previous release and marks the record `rolled-back`, changing nothing else ([After the recovery steps](upgrading.md#after-the-recovery-steps)). If it says the control plane runs neither release, or starts a rollback, the recovery isn't finished. Don't edit the record.
+
+## Kubernetes
+
+The guide is [PressFleet on Kubernetes](kubernetes.md). Read the control plane's log first: `kubectl -n pressfleet logs deploy/control-plane`. Its startup preflight names the failed [cluster check](installation.md#kubernetes-checks).
+
+| Symptom | Cause and fix |
+| --- | --- |
+| The control plane crash-loops with `required preflight checks failed: k8s-networkpolicy` | The cluster's network plugin ignores NetworkPolicy (flannel alone, kindnet). Use one that enforces it. k3s does unless started with `--disable-network-policy`. If the check could only warn, it says why: usually the nodes couldn't pull the control plane image for the probe pod |
+| `k8s-storage-data` fails, or `control-plane-data` stays `Pending` | The data class can't serve ReadWriteMany (`local-path` and block storage can't), the class doesn't exist, or its provisioner isn't running. `kubectl -n pressfleet describe pvc control-plane-data` says which |
+| The control plane starts but backups or imports fail on a file permission | The data volume isn't writable by the control plane (UID 60001, group 60001 and 60000). On NFS, export with `no_root_squash` and check the directory's mode |
+| A site's backup, import, or export fails with `kubernetes: data volume: persistent volume ... is neither CSI nor NFS`, or its task pod can't mount `pressfleet-data` | Site tasks mount a copy of the data volume's PersistentVolume, which must be a CSI or NFS volume (hostPath and local volumes can't be copied), on storage that accepts several PersistentVolumes on one volume (NFS, CephFS, EFS). Also set its reclaim policy to `Retain` (`kubectl patch pv`) |
+| `helm upgrade` fails in the pre-upgrade hook | The upgrade preflight refused. `kubectl -n pressfleet logs job/upgrade-preflight` says why; nothing changed |
+| `helm upgrade` or `helm install` says a CRD or field is unknown | Traefik's CRDs weren't applied for this release. Apply `helm show crds` first ([Upgrading](kubernetes.md#upgrading)) |
+| `helm install` times out | Read `kubectl -n pressfleet get pods` and `describe` the one that isn't ready. The first start pulls images; a private registry needs `kubernetes.imagePullSecrets` |
+| The dashboard certificate isn't issued | Port 80 isn't reaching Traefik, or the name doesn't resolve to its Service address ([Certificates and ACME](#certificates-and-acme)). `kubectl -n pressfleet logs deploy/traefik` has the ACME messages. With k3s, check that its own Traefik is disabled: two Traefiks can't both publish ports 80 and 443 |
+| A new site stays in provisioning, its pod `Pending` | Not enough memory on the nodes, or the site's volume is on another node. `kubectl -n pf-<site-id> describe pod` |
+| A site can't reach a database or API on your network | Sites may only reach public addresses, DNS, MariaDB, the object cache, and the SMTP relay ([Behavior that differs from Compose](kubernetes.md#behavior-that-differs-from-compose)) |
+| A site's image pin fails with `unauthorized` | The site images must be public in this release ([Images and registries](kubernetes.md#images-and-registries)) |
+| The disk fills and no alert fires | The **Disk nearly full** rule has no data on Kubernetes. Watch disks with your cluster's monitoring |
+| Rollback after a failed upgrade | There is no automatic rollback: scale the control plane to zero, restore your PostgreSQL backup, and `helm rollback` ([Upgrading](upgrading.md#kubernetes)) |
 
 ## Still stuck
 

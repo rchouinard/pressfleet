@@ -10,11 +10,14 @@ PressFleet is a self-hostable WordPress application platform for agencies. These
 4. [Backups](backups.md): where they go, the schedule and retention, restoring, exporting, and offboarding a client.
 5. [Operating](operating.md): the platform's containers, logs, the commands that run in the control plane container, monitoring, alerts, and Grafana.
 
+On a Kubernetes cluster instead of a single Docker host, read [PressFleet on Kubernetes](kubernetes.md) in place of steps 1 and 2, and use the other pages as it points.
+
 ## Run it
 
 | I want to... | Read |
 | --- | --- |
-| Upgrade PressFleet | [Upgrading](upgrading.md) (release check, version skew, recovery from a failed upgrade) |
+| Install, upgrade, or recover PressFleet on a Kubernetes cluster (k3s walkthrough included) | [PressFleet on Kubernetes](kubernetes.md) |
+| Upgrade PressFleet | [Upgrading](upgrading.md) (release check, version skew, recovery from a failed upgrade; Helm on Kubernetes) |
 | Recover from losing the server | [Disaster recovery](disaster-recovery.md) |
 | Try a change on a copy of a site, and push it to production | [Staging sites](staging.md) |
 | Fix something that's broken | [Troubleshooting](troubleshooting.md) |
@@ -37,4 +40,4 @@ PressFleet is a self-hostable WordPress application platform for agencies. These
 
 ## Not in this release
 
-These come up often enough to say plainly. They are planned, not built: passwordless sign-in, per-client access (roles are platform-wide), a Kubernetes driver, automatic rollback of a failed upgrade, rotating the master key, and a settings page in the dashboard (settings are changed in the config file).
+These come up often enough to say plainly. They are planned, not built: passwordless sign-in, per-client access (roles are platform-wide), a highly available control plane or sites scaled out on Kubernetes, rotating the master key, and a settings page in the dashboard (settings are changed in the config file).

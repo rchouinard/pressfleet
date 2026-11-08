@@ -1,6 +1,6 @@
 # Installation
 
-This page installs PressFleet on a host that is already prepared. It is the second step of the [operator guide](README.md).
+This page installs PressFleet on a host that is already prepared. It is the second step of the [operator guide](README.md). To install on a Kubernetes cluster instead, read [PressFleet on Kubernetes](kubernetes.md), which uses [`init --target kubernetes`](#kubernetes) below.
 
 > **⚠️ Master key warning.** `pressfleet init` generates a **master key** and shows it once. Every secret PressFleet stores is encrypted with it, including the password of every backup repository. **If the host is lost and you don't have the key, every backup is unreadable and every secret is gone.** Before you let `init` continue, copy the key into a password manager or other safe place that is *not* on this host and not in the backups. See [Master key](#master-key).
 
@@ -248,7 +248,7 @@ Statuses: `PASS`; `FAIL` (a required check failed); `WARN` (a recommended check 
 
 ### Kubernetes checks
 
-With `driver: kubernetes`, `doctor` checks the cluster instead of the Docker host. It runs at control plane startup, in `pressfleet doctor` (which connects with `kubernetes.kubeconfig`, or the pod's service account), and as a Helm test. The Docker checks, the host memory check, and the host DNS checks are `UNAVAILABLE`, because a cluster has no single host. The dashboard's platform overview shows the same checks, except that the two that run pods (cgroup v2 and NetworkPolicy) are `UNAVAILABLE` there, so that opening the dashboard doesn't create pods.
+With `driver: kubernetes`, `doctor` checks the cluster instead of the Docker host. It runs at control plane startup (the required checks must pass for the control plane to start) and in `pressfleet doctor`, which connects with `kubernetes.kubeconfig` or the pod's service account: run it in the control plane pod with `kubectl exec`. The chart has no Helm test. The Docker checks, the host memory check, and the host DNS checks are `UNAVAILABLE`, because a cluster has no single host. The dashboard's platform overview shows the same checks, except that the two that run pods (cgroup v2 and NetworkPolicy) are `UNAVAILABLE` there, so that opening the dashboard doesn't create pods.
 
 | Check | What it means | If it fails |
 | --- | --- | --- |
@@ -318,7 +318,7 @@ The design (§4.1) also has `init` collect the backup repository and alert chann
 
 ## Kubernetes
 
-On a Kubernetes cluster, the Helm chart installs PressFleet (design doc §4.8; the chart's requirements are in [its README](../charts/pressfleet/README.md)). `pressfleet init --target kubernetes` asks init's questions and writes what the chart reads, without talking to the cluster:
+On a Kubernetes cluster, the Helm chart installs PressFleet (design doc §4.8; the chart's requirements are in [its README](../charts/pressfleet/README.md)). [PressFleet on Kubernetes](kubernetes.md) is the guide: requirements, storage, DNS, upgrades, recovery, and a k3s walkthrough. In short: `pressfleet init --target kubernetes` asks init's questions and writes what the chart reads, without talking to the cluster:
 
 ```sh
 pressfleet init --target kubernetes --output-dir ./pressfleet-kubernetes
@@ -345,4 +345,4 @@ kubectl -n pressfleet exec deploy/control-plane -- pressfleet user create --emai
 
 Running init again over the same output directory needs `--force`. It never replaces the master key or the generated credentials: it reuses them from `secrets.yaml`, since MariaDB and Valkey keep their first passwords and SSH clients remember the host key, and takes its defaults from the earlier `values.yaml`, which it keeps as `values.yaml.bak`. Apply the Secrets again and run `helm upgrade` with the new values.
 
-The commands that run inside the control plane container on Compose (`user`, `state`, `repository`, and the rest) run in the control plane pod with `kubectl exec`, as above. The host commands that drive the platform Compose project (`upgrade`, `recover`, `metrics-access`) refuse to run with `driver: kubernetes` and say what replaces them; the version skew check doesn't apply, because the chart and the control plane come from one release. Upgrading is in [Upgrading](upgrading.md#kubernetes), and recovery in [Disaster recovery](disaster-recovery.md#kubernetes).
+The commands that run inside the control plane container on Compose (`user`, `state`, `repository`, and the rest) run in the control plane pod with `kubectl exec`, as above. The host commands that drive the platform Compose project (`upgrade`, `recover`, `metrics-access`) refuse to run with `driver: kubernetes` and say what replaces them; the version skew check doesn't apply, because the chart and the control plane come from one release. Upgrading is in [Upgrading](upgrading.md#kubernetes), and recovery in [Disaster recovery](disaster-recovery.md#kubernetes); the guide ties them together.
