@@ -55,9 +55,9 @@
 //	pressfleet_site_backup_last_success_timestamp_seconds        gauge      site                        backup_last_success
 //	pressfleet_site_backup_size_bytes                            gauge      site                        backup_size
 //	pressfleet_site_backup_duration_seconds                      gauge      site                        backup_duration
-//	pressfleet_host_cpu_seconds_total                            counter    cpu, mode                   host_cpu
-//	pressfleet_host_memory_total_bytes                           gauge      (none)                      host_memory
-//	pressfleet_host_memory_available_bytes                       gauge      (none)                      host_memory
+//	pressfleet_host_cpu_seconds_total                            counter    cpu, mode, node             host_cpu
+//	pressfleet_host_memory_total_bytes                           gauge      node                        host_memory
+//	pressfleet_host_memory_available_bytes                       gauge      node                        host_memory
 //	pressfleet_host_filesystem_size_bytes                        gauge      mountpoint                  host_disk_usage
 //	pressfleet_host_filesystem_avail_bytes                       gauge      mountpoint                  host_disk_usage
 //	pressfleet_host_disk_read_bytes_total                        counter    device (summed)             host_disk_io
@@ -97,6 +97,16 @@
 //   - pressfleet_host_cpu_seconds_total has a mode label whose values include
 //     "idle"; the query sums over cpu, so per-core series are fine.
 //   - The disk I/O counters may have a device label; the query sums over it.
+//   - The node label is set on Kubernetes, where the host metrics are one
+//     series per node from metrics.k8s.io: mode is "used" or "idle" (no cpu
+//     label), the memory total is the node's allocatable memory, and the
+//     available figure is what its working set leaves of it. On Compose
+//     there is no node label and the queries return one series. A cluster
+//     has no filesystem or disk I/O series, so host_disk_usage and
+//     host_disk_io are empty there, and so is the "disk nearly full" rule.
+//   - On Kubernetes the container series come from metrics.k8s.io and Pod
+//     status, and Traefik's per-service series are named after the site's
+//     namespace instead of pf-<site-id> (pressfleet_site_* are unchanged).
 //
 // The dependency list of each entry is derived from its templates
 // ([Entry.Metrics]), and a test checks that this table names exactly the

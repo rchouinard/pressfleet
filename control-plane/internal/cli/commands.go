@@ -120,7 +120,11 @@ func (a *app) metricsService(db *store.DB, rt *driver.Runtime, secretStore secre
 		return nil, err
 	}
 	if rt.TraefikMetrics != nil {
-		if err := svc.Register(metrics.TraefikCollector{Reader: rt.TraefikMetrics}); err != nil {
+		traefik := metrics.TraefikCollector{Reader: rt.TraefikMetrics}
+		if n, ok := rt.TraefikMetrics.(provisioner.TraefikServiceNamer); ok {
+			traefik.ServiceName = n.TraefikServiceName
+		}
+		if err := svc.Register(traefik); err != nil {
 			return nil, err
 		}
 	}
@@ -129,6 +133,7 @@ func (a *app) metricsService(db *store.DB, rt *driver.Runtime, secretStore secre
 	}
 	uptime, err := metrics.NewUptimeCollector(metrics.UptimeOptions{
 		Aliases: store.NewSites(db), Secrets: secretStore, Logger: log.With("collector", "uptime"),
+		Client: metrics.NewUptimeClientVia(rt.EdgeAddress),
 	})
 	if err != nil {
 		return nil, err
@@ -140,7 +145,7 @@ func (a *app) metricsService(db *store.DB, rt *driver.Runtime, secretStore secre
 	if rt.FPMStatus != nil {
 		collectors = append(collectors, metrics.PHPFPMCollector{Status: rt.FPMStatus})
 	}
-	for _, c := range append(collectors, a.hostStorageCollectors(rt.Driver, repos)...) {
+	for _, c := range append(collectors, a.hostStorageCollectors(rt, repos)...) {
 		if err := svc.Register(c); err != nil {
 			return nil, err
 		}

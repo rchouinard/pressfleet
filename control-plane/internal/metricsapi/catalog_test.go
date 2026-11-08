@@ -208,10 +208,10 @@ func TestRender(t *testing.T) {
 			[]string{`pressfleet_site_backup_duration_seconds{site_id="s"}`}},
 		// Platform entries have no selector, and a site ID is ignored.
 		{"host_cpu", Selector{SiteID: "s"}, 2 * time.Minute, []string{
-			`1 - sum(rate(pressfleet_host_cpu_seconds_total{mode="idle"}[120s])) / sum(rate(pressfleet_host_cpu_seconds_total[120s]))`}},
+			`1 - sum by (node) (rate(pressfleet_host_cpu_seconds_total{mode="idle"}[120s])) / sum by (node) (rate(pressfleet_host_cpu_seconds_total[120s]))`}},
 		{"host_memory", Selector{}, time.Minute, []string{
-			`pressfleet_host_memory_total_bytes - pressfleet_host_memory_available_bytes`,
-			`pressfleet_host_memory_total_bytes`,
+			`sum by (node) (pressfleet_host_memory_total_bytes - pressfleet_host_memory_available_bytes)`,
+			`sum by (node) (pressfleet_host_memory_total_bytes)`,
 		}},
 		{"host_disk_usage", Selector{}, time.Minute,
 			[]string{`1 - pressfleet_host_filesystem_avail_bytes / pressfleet_host_filesystem_size_bytes`}},

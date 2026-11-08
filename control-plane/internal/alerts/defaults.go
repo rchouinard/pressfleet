@@ -173,7 +173,8 @@ func DefaultRules() []store.AlertRule {
 			BuiltinKey: KeyDiskNearlyFull,
 			Name:       "Disk nearly full",
 			Description: "A filesystem the platform uses is nearly full. The threshold is the used share: " +
-				"0.9 is 90%.",
+				"0.9 is 90%. On Kubernetes this rule has nothing to evaluate, because the platform reports no " +
+				"host disk metrics there; the cluster's own monitoring covers the nodes' disks.",
 			Scope:     store.AlertScopePlatform,
 			Kind:      store.AlertKindThreshold,
 			Expr:      diskUsedRatioExpr,

@@ -30,6 +30,10 @@ func TestGetPlatform(t *testing.T) {
 		t.Errorf("build = %+v", b)
 	}
 
+	if got.Orchestrator != gen.Compose {
+		t.Errorf("orchestrator = %q, want the default, compose", got.Orchestrator)
+	}
+
 	// An unknown commit is left out rather than sent empty.
 	h = newHandler(t, api.Options{Authenticator: &fakeAuth{}, Build: buildinfo.Info{Version: "dev"}})
 	w = do(t, h, request{authed: true, method: http.MethodGet, target: "/api/v1/platform"})
@@ -38,6 +42,14 @@ func TestGetPlatform(t *testing.T) {
 	}
 	if w := do(t, h, request{method: http.MethodGet, target: "/api/v1/platform"}); w.Code != http.StatusUnauthorized {
 		t.Errorf("unauthenticated: %d", w.Code)
+	}
+}
+
+func TestGetPlatformOrchestrator(t *testing.T) {
+	h := newHandler(t, api.Options{Authenticator: &fakeAuth{}, Orchestrator: "kubernetes"})
+	w := do(t, h, request{authed: true, method: http.MethodGet, target: "/api/v1/platform"})
+	if got := decodeJSON[gen.Platform](t, w.Body.Bytes()); got.Orchestrator != gen.Kubernetes {
+		t.Errorf("orchestrator = %q, want kubernetes (%s)", got.Orchestrator, w.Body)
 	}
 }
 

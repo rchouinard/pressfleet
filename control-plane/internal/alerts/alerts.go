@@ -78,6 +78,10 @@
 //	pressfleet_redis_evicted_keys_total                          counter  (none)                                   redis_eviction_spike
 //	pressfleet_site_pending_updates                              gauge    site_id, client_group_id, kind           updates_pending
 //
+// disk_nearly_full has nothing to evaluate on Kubernetes: the driver reports
+// per-node CPU and memory but no host disk metrics, so the rule never fires
+// there (the rule's description says so).
+//
 // What each one means:
 //
 //   - pressfleet_site_up is 1 while the control plane's HTTP check of the

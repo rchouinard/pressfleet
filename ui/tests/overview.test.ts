@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import {
-  assessCapacity, doctorRows, doctorSummary, fetchReadiness, platformHealth, rolloutHold, rolloutNames, summaryValue, worstDisk, type PlatformCapacity, type Readiness,
+  assessCapacity, doctorRows, doctorSummary, fetchReadiness, hostFigures, orchestratorName, platformHealth, rolloutHold, rolloutNames, summarySum, summaryValue, worstDisk, type PlatformCapacity, type Readiness,
 } from '../app/utils/overview'
 import CapacityWarning from '../app/components/overview/CapacityWarning.vue'
 import DoctorChecks from '../app/components/overview/DoctorChecks.vue'
@@ -35,6 +35,64 @@ describe('assessCapacity', () => {
     const a = assessCapacity(cap(9216, 'exceeded'))
     expect(a.message).toContain('9 GiB')
     expect(a.message).toContain('8 GiB')
+  })
+})
+
+describe('assessCapacity on Kubernetes', () => {
+  it('compares with the cluster\'s allocatable memory', () => {
+    const a = assessCapacity(cap(9216, 'exceeded'), 'kubernetes')
+    expect(a.message).toContain('allocatable memory')
+    expect(a.message).toContain('nodes')
+    expect(a.message).not.toContain('host')
+    expect(assessCapacity(cap(100, 'unknown', null), 'kubernetes').message).toContain('allocatable memory')
+  })
+
+  it('keeps the host wording on Compose', () => {
+    expect(assessCapacity(cap(9216, 'exceeded'), 'compose').message).toContain("host's memory")
+  })
+})
+
+describe('orchestratorName', () => {
+  it('names the platform', () => {
+    expect(orchestratorName('kubernetes')).toBe('Kubernetes')
+    expect(orchestratorName('compose')).toBe('Docker Compose')
+    expect(orchestratorName(undefined)).toBe('Docker Compose')
+  })
+})
+
+describe('hostFigures', () => {
+  const nodes = [
+    { id: 'host_cpu', values: [
+      { labels: { node: 'a' }, time: 't', value: 0.2 },
+      { labels: { node: 'b' }, time: 't', value: 0.7 },
+    ] },
+    { id: 'host_memory', values: [
+      { labels: { type: 'used', node: 'a' }, time: 't', value: 1 },
+      { labels: { type: 'used', node: 'b' }, time: 't', value: 2 },
+      { labels: { type: 'total', node: 'a' }, time: 't', value: 10 },
+      { labels: { type: 'total', node: 'b' }, time: 't', value: 20 },
+    ] },
+  ]
+
+  it('sums memory over the nodes and shows the busiest node\'s CPU', () => {
+    expect(summarySum(nodes, 'host_memory', { type: 'total' })).toBe(30)
+    expect(summarySum(nodes, 'host_memory', { type: 'none' })).toBeUndefined()
+    const f = hostFigures(nodes, 'kubernetes')
+    expect(f.cpu).toEqual({ label: 'CPU (busiest node, b)', ratio: 0.7 })
+    expect(f.memory).toEqual({ label: 'Cluster memory', used: 3, total: 30 })
+    expect(f.disk).toBeUndefined()
+  })
+
+  it('reads one host as before on Compose', () => {
+    const one = [
+      { id: 'host_cpu', values: [{ labels: {}, time: 't', value: 0.5 }] },
+      { id: 'host_memory', values: [{ labels: { type: 'used' }, time: 't', value: 1 }, { labels: { type: 'total' }, time: 't', value: 2 }] },
+      { id: 'host_disk_usage', values: [{ labels: { mountpoint: '/data' }, time: 't', value: 0.9 }] },
+    ]
+    const f = hostFigures(one, 'compose')
+    expect(f.cpu.ratio).toBe(0.5)
+    expect(f.memory).toEqual({ label: 'Host memory', used: 1, total: 2 })
+    expect(f.disk).toEqual({ label: 'Disk (/data)', ratio: 0.9 })
   })
 })
 

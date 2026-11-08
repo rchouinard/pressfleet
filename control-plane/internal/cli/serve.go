@@ -332,6 +332,7 @@ func (a *app) buildServer(ctx context.Context) (_ *server, err error) {
 		TrustedProxies:   proxies,
 		Build:            a.build(),
 		LatestRelease:    latestRelease,
+		Orchestrator:     a.cfg.Driver,
 		SFTP:             api.SFTPInfo{Enabled: a.cfg.SFTP.Enabled(), Host: a.cfg.DashboardDomain, Port: a.cfg.SFTP.Port},
 		SecureCookies:    a.cfg.HTTP.SecureCookies == config.SecureCookiesAlways,
 	})

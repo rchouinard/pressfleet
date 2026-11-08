@@ -4596,6 +4596,13 @@ export interface components {
             failed_at: components["schemas"]["Timestamp"];
         };
         Platform: {
+            /**
+             * @description What runs the sites (the configured `driver`). On `kubernetes`
+             *     the host metrics are per node, from the cluster's metrics API,
+             *     and there are no host disk metrics.
+             * @enum {string}
+             */
+            orchestrator: "compose" | "kubernetes";
             sftp: components["schemas"]["PlatformSftp"];
             build: components["schemas"]["PlatformBuild"];
             release?: components["schemas"]["PlatformRelease"];

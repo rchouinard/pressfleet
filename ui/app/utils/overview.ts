@@ -18,6 +18,25 @@ export function summaryValue(
 
 export type CapacityLevel = PlatformCapacity['level']
 
+/** What runs the sites (`GET /api/v1/platform`). */
+export type Orchestrator = components['schemas']['Platform']['orchestrator']
+
+/** The orchestrator as the dashboard names it. */
+export function orchestratorName(o: Orchestrator | undefined): string {
+  return o === 'kubernetes' ? 'Kubernetes' : 'Docker Compose'
+}
+
+/**
+ * What the capacity compares the reservations with: one host's memory, or
+ * on Kubernetes the cluster's allocatable memory (the sum over its nodes of
+ * what they offer to pods).
+ */
+function memoryNoun(o: Orchestrator | undefined): { whose: string, what: string } {
+  return o === 'kubernetes'
+    ? { whose: "the cluster's", what: "the cluster's allocatable memory" }
+    : { whose: "the host's", what: "the host's memory" }
+}
+
 export interface CapacityAssessment {
   level: CapacityLevel
   reservedMb: number
@@ -39,7 +58,8 @@ export function formatMb(mb: number): string {
  * The server decides which sites count and where the caution and error
  * thresholds are; this only phrases the level it returns.
  */
-export function assessCapacity(c: PlatformCapacity): CapacityAssessment {
+export function assessCapacity(c: PlatformCapacity, orchestrator?: Orchestrator): CapacityAssessment {
+  const noun = memoryNoun(orchestrator)
   const reservedMb = c.reserved_memory_mb
   const hostMb = c.host_memory_mb ?? undefined
   const ratio = c.ratio ?? undefined
@@ -48,7 +68,7 @@ export function assessCapacity(c: PlatformCapacity): CapacityAssessment {
     return {
       ...base,
       level: 'unknown',
-      message: `${formatMb(reservedMb)} is reserved by sites, but the host's memory is not known yet, so it can't be compared.`,
+      message: `${formatMb(reservedMb)} is reserved by sites, but ${noun.what} is not known yet, so it can't be compared.`,
     }
   }
   const pct = `${Math.round(ratio * 100)}%`
@@ -56,17 +76,17 @@ export function assessCapacity(c: PlatformCapacity): CapacityAssessment {
     case 'exceeded':
       return {
         ...base,
-        message: `Site memory reservations (${formatMb(reservedMb)}) exceed the host's memory (${formatMb(hostMb)}). Stop or delete sites, lower their reservations, or add memory.`,
+        message: `Site memory reservations (${formatMb(reservedMb)}) exceed ${noun.what} (${formatMb(hostMb)}). Stop or delete sites, lower their reservations, or add ${orchestrator === 'kubernetes' ? 'nodes or memory' : 'memory'}.`,
       }
     case 'caution':
       return {
         ...base,
-        message: `Site memory reservations (${formatMb(reservedMb)}) use ${pct} of the host's memory (${formatMb(hostMb)}). Little room is left for new sites.`,
+        message: `Site memory reservations (${formatMb(reservedMb)}) use ${pct} of ${noun.what} (${formatMb(hostMb)}). Little room is left for new sites.`,
       }
     default:
       return {
         ...base,
-        message: `Site memory reservations (${formatMb(reservedMb)}) use ${pct} of the host's memory (${formatMb(hostMb)}).`,
+        message: `Site memory reservations (${formatMb(reservedMb)}) use ${pct} of ${noun.what} (${formatMb(hostMb)}).`,
       }
   }
 }
@@ -106,6 +126,58 @@ export const overviewMetricIds = [
   'job_queue_depth',
   'job_failure_rate',
 ] as const
+
+/** The sum of the matching values: the nodes of a cluster add up to its capacity. */
+export function summarySum(
+  metrics: readonly Pick<MetricSummaryResult, 'id' | 'values'>[],
+  id: string,
+  labels: Record<string, string> = {},
+): number | undefined {
+  const m = metrics.find(x => x.id === id)
+  const vs = (m?.values ?? []).filter(x => Object.entries(labels).every(([k, want]) => x.labels[k] === want))
+  return vs.length === 0 ? undefined : vs.reduce((a, v) => a + v.value, 0)
+}
+
+/** The busiest node's CPU share, with its name when there are several. */
+export function busiestNode(metrics: readonly Pick<MetricSummaryResult, 'id' | 'values'>[]): { node: string | undefined, ratio: number, nodes: number } | undefined {
+  const m = metrics.find(x => x.id === 'host_cpu')
+  if (!m || m.values.length === 0) return undefined
+  const top = m.values.reduce((a, b) => (b.value > a.value ? b : a))
+  return { node: top.labels.node, ratio: top.value, nodes: m.values.length }
+}
+
+/**
+ * The host figures of the overview. On Kubernetes the host is the cluster:
+ * CPU is the busiest node's, memory the sum over the nodes, and there is no
+ * disk figure, because the platform collects no host disk metrics there.
+ */
+export function hostFigures(
+  metrics: readonly Pick<MetricSummaryResult, 'id' | 'values'>[],
+  orchestrator?: Orchestrator,
+): { cpu: { label: string, ratio: number | undefined }, memory: { label: string, used: number | undefined, total: number | undefined }, disk: { label: string, ratio: number | undefined } | undefined } {
+  if (orchestrator !== 'kubernetes') {
+    const disk = worstDisk(metrics)
+    return {
+      cpu: { label: 'Host CPU', ratio: summaryValue(metrics, 'host_cpu') },
+      memory: { label: 'Host memory', used: summaryValue(metrics, 'host_memory', { type: 'used' }), total: summaryValue(metrics, 'host_memory', { type: 'total' }) },
+      disk: { label: disk ? `Disk (${disk.mountpoint})` : 'Disk', ratio: disk?.ratio },
+    }
+  }
+  const cpu = busiestNode(metrics)
+  const nodes = cpu?.nodes ?? 0
+  return {
+    cpu: {
+      label: nodes > 1 && cpu?.node ? `CPU (busiest node, ${cpu.node})` : 'Node CPU',
+      ratio: cpu?.ratio,
+    },
+    memory: {
+      label: 'Cluster memory',
+      used: summarySum(metrics, 'host_memory', { type: 'used' }),
+      total: summarySum(metrics, 'host_memory', { type: 'total' }),
+    },
+    disk: undefined,
+  }
+}
 
 /** The fullest filesystem, for a single disk figure. */
 export function worstDisk(metrics: readonly Pick<MetricSummaryResult, 'id' | 'values'>[]): { mountpoint: string, ratio: number } | undefined {

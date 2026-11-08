@@ -20,8 +20,14 @@ type observers struct {
 	// metrics.k8s.io.
 	podMetrics func(ctx context.Context, ns string) ([]podMetrics, error)
 
+	// nodeMetrics lists the metrics of the cluster's nodes; nil means
+	// metrics.k8s.io.
+	nodeMetrics func(ctx context.Context) ([]nodeMetrics, error)
+
 	mu  sync.Mutex
 	cpu map[string]cpuState // by namespace/pod/container
+	// nodeCPU is the busy and idle time accumulated per node name.
+	nodeCPU map[string]nodeCPUState
 }
 
 // podMetrics is one item of metrics.k8s.io's PodMetricsList, which the
@@ -34,4 +40,12 @@ type podMetrics struct {
 		Name  string              `json:"name"`
 		Usage corev1.ResourceList `json:"usage"`
 	} `json:"containers"`
+}
+
+// nodeMetrics is one item of metrics.k8s.io's NodeMetricsList.
+type nodeMetrics struct {
+	Metadata  metav1.ObjectMeta   `json:"metadata"`
+	Timestamp metav1.Time         `json:"timestamp"`
+	Window    metav1.Duration     `json:"window"`
+	Usage     corev1.ResourceList `json:"usage"`
 }
