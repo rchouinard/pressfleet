@@ -121,13 +121,19 @@ func TestBuildAndRemoveImage(t *testing.T) {
 	if err := compose.BuildImage(context.Background(), docker, "e2e.local/x:1", "FROM scratch\n"); err != nil {
 		t.Fatal(err)
 	}
+	if err := compose.BuildImageDir(context.Background(), docker, "e2e.local/z:1", "/tmp/context"); err != nil {
+		t.Fatal(err)
+	}
 	if err := compose.TagImage(context.Background(), docker, "e2e.local/x:1", "e2e.local/y:1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := compose.RemoveImage(context.Background(), docker, "e2e.local/x:1"); err != nil {
 		t.Errorf("removing a missing image: %v", err)
 	}
-	want := []string{"build --quiet --tag e2e.local/x:1 -", "image tag e2e.local/x:1 e2e.local/y:1", "image rm -- e2e.local/x:1"}
+	want := []string{
+		"build --quiet --tag e2e.local/x:1 -", "build --quiet --tag e2e.local/z:1 -- /tmp/context",
+		"image tag e2e.local/x:1 e2e.local/y:1", "image rm -- e2e.local/x:1",
+	}
 	if !slices.Equal(calls, want) || stdin != "FROM scratch\n" {
 		t.Errorf("calls = %q (stdin %q), want %q", calls, stdin, want)
 	}

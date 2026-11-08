@@ -71,7 +71,7 @@ make images SITE_PHP="8.5 8.4"
 
 If the proxy intercepts traffic transparently instead (build containers' HTTPS reaches it without any proxy setting), `PRESSFLEET_BUILD_EXTRA_CA` alone is enough.
 
-The settings reach `make image` (and so `make test-e2e`, `make test-ui-e2e`, `make test-platform`, `make dev-up`, and `make dev-update`, which build the control plane image with it), `make images`, `images/test.sh`, and `compose.BuildImage`, which the end-to-end tests use to derive images (`TestImageUpdate`, `TestCoreUpdate`, `TestUpgradeRecovery`); `images/build-flags.sh` and `compose.BuildFlags` turn them into `docker build` options by the same rules. With none of them set the builds are exactly as before; CI sets none of them.
+The settings reach `make image` (and so `make test-e2e`, `make test-ui-e2e`, `make test-platform`, `make dev-up`, and `make dev-update`, which build the control plane image with it), `make images`, `images/test.sh`, and `compose.BuildImage` and `compose.BuildImageDir`, which the end-to-end tests use to derive images (`TestImageUpdate`, `TestCoreUpdate`, `TestUpgradeRecovery`, the `TestUpgradeRollback` tests); `images/build-flags.sh` and `compose.BuildFlags` turn them into `docker build` options by the same rules. With none of them set the builds are exactly as before; CI sets none of them.
 
 How the Dockerfiles use the CA: every `RUN` that downloads (apt, curl, npm and pnpm, `go mod download`, the Go build) mounts the `extra_ca` secret (`required=false`) and bind-mounts [`images/shared/extra-ca.sh`](../images/shared/extra-ca.sh), which it sources first. With the secret present, the script writes the system bundle plus the CA to a temporary file and points `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS`, and apt's `Acquire::https::CaInfo` (through `APT_CONFIG`) at it for that `RUN` only. It never touches the system trust store, and secret and bind mounts aren't part of any layer, so no image (or intermediate stage) carries the CA. Secrets don't count towards the build cache key either, so builds with and without the CA share cached layers. The site-php image's PECL extensions are downloaded in a fetch stage from `pecl.php.net/get/<name>-<version>.tgz` and verified against the SHA-256 in [`images/shared/pecl.json`](../images/shared/pecl.json), so they build from local tarballs without network access: igbinary and redis with `pecl install <tarball>`, imagick with `docker-php-ext-install` (with `pecl install`, its build regenerates its `*_arginfo.h` and downloads PHP-Parser from GitHub for that; see the comment in `images/site-php/Dockerfile`).
 
@@ -100,7 +100,7 @@ When the test ends, pass or fail, the harness runs `docker compose down --volume
 mise exec -- make test-e2e
 ```
 
-This builds the control plane image as `pressfleet-control-plane:e2e`, runs the tests against it with verbose output, and removes the image afterwards. The first run also pulls MariaDB and Valkey. The whole suite runs one test after another, which takes about 25 minutes on a workstation and about 40 on a CI runner.
+This builds the control plane image as `pressfleet-control-plane:e2e`, runs the tests against it with verbose output, and removes the image afterwards. The first run also pulls MariaDB and Valkey. The whole suite runs one test after another, which takes about 35 minutes on a workstation and about 50 on a CI runner.
 
 `RUN` selects tests with `go test -run`, and `make test-e2e-smoke` runs the quick tier, the tests that labeled PRs run in CI:
 
@@ -138,7 +138,13 @@ docker compose -p pf-<site-id> down --volumes   # for each site it created
 4. Checks that the control plane is back at the release and ready, that the admin logs in, that the client group and site exist and the site serves the same title, and that an on-demand backup succeeds.
 5. Upgrades to the tested image, which must succeed from the recovered platform.
 
-During both upgrades, `e2e.ProbeTraffic` requests the site through Traefik every 250 ms. Unless the upgrade recreated Traefik, MariaDB, or the object cache, every request must succeed: upgrading only the control plane doesn't interrupt sites (#95).
+During both upgrades, `e2e.ProbeTraffic` requests the site through Traefik every 250 ms. Unless the upgrade recreated Traefik, MariaDB, or the object cache, every request must succeed: upgrading only the control plane doesn't interrupt sites (#95). The test runs the upgrade with `--no-rollback`; the automatic rollback has tests of its own.
+
+The upgrade rollback (#251) has three tests, in the full tier only: they install a platform and upgrade it several times, each failed upgrade waiting about two minutes for the broken control plane's healthcheck to give up. A rollback restores the state database only if the upgrade migrated it, and that is the path they test: when an upgrade wouldn't migrate (from this tree's own image, or from a release with the tree's schema), they upgrade to a control plane image whose binary is built on the host with the `e2emigration` build tag, which adds a no-op migration (`store/migrate_e2e.go`). Building it needs Go on the test host, as running the tests does.
+
+- `TestUpgradeRollback` installs the minimum upgradable-from release, like `TestUpgradeRecovery`, and upgrades it to the broken control plane image. The upgrade must exit `2`, back on the release with its state database restored, its client group and site, and the site's title and WordPress release; the site must serve throughout, by the same rule as `TestUpgradeRecovery` (an upgrade from v0.1.0 recreates Traefik and MariaDB, so there failed requests are only logged), and the broken control plane must report its core, image, and template rollouts held while it runs. Then it runs the upgrade again with a CLI built from the tree as a process of its own, and sends it SIGTERM once the new control plane has migrated and answers ready: it must roll back and exit `2` too.
+- `TestUpgradeRollbackRepository` (#277) installs the tree, and backs a site up for the first time while an upgrade to the broken control plane is waiting for it, which creates the client group's repository after the state backup. After the rollback, the site must back up again, and the repository must be set aside (`unopenable-<group>-<time>`).
+- `TestUpgradeRollbackOnDemand` installs the tree under a tag of its own, upgrades it to the migrating image, and rolls back with `pressfleet upgrade --rollback`, which must exit `0`, drop a client group created since, and refuse a second time. After another upgrade, a site created since makes `--rollback` refuse (exit `1`) and change nothing, and `--rollback --force` roll back. Last, it removes the previous image's tag while an upgrade to the broken control plane runs: the rollback stops at the state restore and exits `1`, and once the tag is back, the printed manual steps, run verbatim, must recover the platform.
 
 Anything else that starts a platform in a test, like `TestPlatformUp` (`make test-platform`), must write the override too, or Traefik takes the host's ports 80 and 443.
 
@@ -359,7 +365,7 @@ The `Plan` job decides what runs and writes it to the run's summary. When the ch
 
 The dashboard suite runs in the same workflow as its own job, `Dashboard E2E`, side by side with this one (see [Dashboard end-to-end tests](#dashboard-end-to-end-tests)).
 
-The tests run one after another. `make test-e2e` gives `go test` 60 minutes and the job 75 (30 for the quick tier), room for a cold runner that also builds the site images; raise both together when the suite outgrows them. Besides the site images, the tests pull the platform's pinned images, Pebble and its DNS server (`ghcr.io/letsencrypt`), and RustFS (Docker Hub) for `TestSiteBackupS3`. They need no MariaDB client on the runner: SQL runs in the platform's MariaDB container, or through the Go driver for database sessions.
+The tests run one after another. `make test-e2e` gives `go test` 75 minutes and the job 90 (30 for the quick tier), room for a cold runner that also builds the site images; raise both together when the suite outgrows them. Besides the site images, the tests pull the platform's pinned images, Pebble and its DNS server (`ghcr.io/letsencrypt`), and RustFS (Docker Hub) for `TestSiteBackupS3`. They need no MariaDB client on the runner: SQL runs in the platform's MariaDB container, or through the Go driver for database sessions.
 
 ## Dashboard end-to-end tests
 
@@ -558,7 +564,7 @@ Left out of the dashboard on purpose, so not covered here (their own e2e or unit
 
 | Operation | Why it isn't in the dashboard |
 | --- | --- |
-| `pressfleet init`, `doctor`, `upgrade`, `recover` | Host CLI commands: they install, check, replace, or rebuild the platform the dashboard runs on (§4.7). `TestInit`, `TestUpgrade`, `TestUpgradeRecovery`, and `TestDisasterRecovery` cover them; the overview page shows the control plane's own doctor checks (#177) |
+| `pressfleet init`, `doctor`, `upgrade`, `recover` | Host CLI commands: they install, check, replace, or rebuild the platform the dashboard runs on (§4.7). `TestInit`, `TestUpgrade`, `TestUpgradeRecovery`, the `TestUpgradeRollback` tests, and `TestDisasterRecovery` cover them; the overview page shows the control plane's own doctor checks (#177) |
 | `pressfleet user create` (the first admin), `user reset-password`, `user reset-two-factor` | Recovery and bootstrap paths for when nobody can sign in (§4.7) |
 | `pressfleet repository create`, `export`, `check`, `prune` | Operator tools for a client group's backup repository; exports hand the client a copy on the host. The group page shows the commands; prune and check also run on a schedule |
 | `pressfleet state restore`, `key generate`, `metrics-access rotate` | Restoring the state database from a backup, making a master key, and replacing the public metrics password: platform administration on the host or in the control plane container (§4.7) |

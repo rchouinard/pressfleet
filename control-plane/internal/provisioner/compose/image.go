@@ -73,6 +73,21 @@ func BuildImage(ctx context.Context, docker ExecFunc, tag, dockerfile string) er
 	return nil
 }
 
+// BuildImageDir is BuildImage with dir as the build context, which holds
+// the Dockerfile and the files it copies, such as a binary built on the
+// host for a test image.
+func BuildImageDir(ctx context.Context, docker ExecFunc, tag, dir string) error {
+	if docker == nil {
+		docker = DockerExec
+	}
+	args := append([]string{"build", "--quiet"}, BuildFlags(os.Getenv)...)
+	args = append(args, "--tag", tag, "--", dir)
+	if _, err := docker(ctx, nil, args...); err != nil {
+		return fmt.Errorf("building image %s: %w", tag, err)
+	}
+	return nil
+}
+
 // proxyVars are the proxy variables BuildFlags passes on, which Docker
 // predefines as build args: RUN steps see them, but the image and its
 // history don't keep them.
