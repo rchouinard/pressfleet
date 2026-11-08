@@ -193,7 +193,10 @@ func (p *Provisioner) servedRoutes() (traefikConfig, error) {
 }
 
 // TraefikConfigHandler serves the sites' routes at TraefikConfigPath to
-// Traefik's HTTP provider. When they can't be read it answers with an
+// Traefik's HTTP provider. It authenticates nothing, and what it serves is
+// sensitive: every site's host names, and the usernames and bcrypt hashes
+// of preview passwords (basicAuth.users). The chart's NetworkPolicy, which
+// admits Traefik's pod alone to the listener, is its only protection. When they can't be read it answers with an
 // error, and Traefik keeps the routes it has rather than dropping every
 // site's.
 func (p *Provisioner) TraefikConfigHandler() http.Handler {

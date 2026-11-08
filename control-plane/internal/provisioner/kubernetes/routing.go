@@ -104,10 +104,11 @@ func siteRouting(site *provisioner.SiteConfig, hsts bool, service string) (route
 		Headers: &traefikHeaders{CustomResponseHeaders: map[string]string{"X-Robots-Tag": "noindex"}},
 	}
 	if a := site.PreviewAuth; a != nil {
-		// Preview password protection (§5.1): only the bcrypt hash is
-		// served. The Authorization header is removed before the request
-		// reaches WordPress, which would otherwise try it as an
-		// application password and refuse REST API requests.
+		// Preview password protection (§5.1): the bcrypt hash, never the
+		// password, which makes the provider endpoint sensitive
+		// (TraefikConfigHandler). The Authorization header is removed
+		// before the request reaches WordPress, which would otherwise try
+		// it as an application password and refuse REST API requests.
 		routes.HTTP.Middlewares[name(ingress.SuffixPreviewAuth)] = traefikMiddleware{
 			BasicAuth: &traefikBasicAuth{Users: []string{a.Username + ":" + a.PasswordHash}, Realm: "Preview", RemoveHeader: true},
 		}
