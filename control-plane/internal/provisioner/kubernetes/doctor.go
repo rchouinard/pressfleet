@@ -413,7 +413,7 @@ func (p *ClusterProbe) runProbes(ctx context.Context, probes []probe, policies [
 	for _, pol := range policies {
 		pol = pol.DeepCopy()
 		pol.Namespace = nsName
-		if err := p.whileForbidden(ctx, func() error {
+		if err := p.c.whileForbidden(ctx, func() error {
 			_, err := p.c.typed.NetworkingV1().NetworkPolicies(nsName).Create(ctx, pol, metav1.CreateOptions{})
 			return err
 		}); err != nil {
@@ -421,7 +421,7 @@ func (p *ClusterProbe) runProbes(ctx context.Context, probes []probe, policies [
 		}
 	}
 	for _, pr := range probes {
-		if err := p.whileForbidden(ctx, func() error {
+		if err := p.c.whileForbidden(ctx, func() error {
 			_, err := p.c.typed.CoreV1().Pods(nsName).Create(ctx, p.pod(nsName, pr, pullSecrets), metav1.CreateOptions{})
 			return err
 		}); err != nil {
@@ -445,21 +445,6 @@ func (p *ClusterProbe) bindProbeNamespace(ctx context.Context, ns string) error 
 		return fmt.Errorf("binding the control plane's role in the probe namespace: %w", err)
 	}
 	return nil
-}
-
-// whileForbidden retries create while the API server refuses it as
-// forbidden, for a while: a new RoleBinding takes a moment to reach the
-// authorizer.
-func (p *ClusterProbe) whileForbidden(ctx context.Context, create func() error) error {
-	err := create()
-	for deadline := time.Now().Add(30 * time.Second); apierrors.IsForbidden(err) && time.Now().Before(deadline); err = create() {
-		select {
-		case <-ctx.Done():
-			return err
-		case <-time.After(p.c.poll):
-		}
-	}
-	return err
 }
 
 // pod builds a probe pod that satisfies Pod Security's restricted profile.

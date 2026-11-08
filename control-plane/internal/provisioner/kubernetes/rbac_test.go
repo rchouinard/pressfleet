@@ -36,3 +36,25 @@ func TestMissingSiteUnderRBAC(t *testing.T) {
 		t.Errorf("ExecWPCLI refused in an existing namespace = %v, want the refusal", err)
 	}
 }
+
+// A new RoleBinding takes a moment to reach the authorizer, so the first
+// calls in a site's new namespace can be refused; the driver waits for
+// them rather than failing the site.
+func TestCreateSiteWaitsForRoleBinding(t *testing.T) {
+	p := cluster(t, nil)
+	cs := p.typed.(*kubefake.Clientset)
+	refusals := 2
+	cs.PrependReactor("list", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if refusals == 0 {
+			return false, nil, nil
+		}
+		refusals--
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "", errors.New("no RoleBinding yet"))
+	})
+	if _, err := p.CreateSite(t.Context(), testSite()); err != nil {
+		t.Fatalf("CreateSite while the RoleBinding settles: %v", err)
+	}
+	if refusals != 0 {
+		t.Errorf("%d refusals left; the driver didn't list the namespace's secrets", refusals)
+	}
+}

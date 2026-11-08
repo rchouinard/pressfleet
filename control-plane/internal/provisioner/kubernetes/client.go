@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -125,4 +126,23 @@ func (w slogWarnings) HandleWarningHeaderWithContext(ctx context.Context, code i
 		return // Only 299 is a warning the API server means for its client.
 	}
 	w.log.WarnContext(ctx, "the Kubernetes API server warned", "warning", text, "agent", agent)
+}
+
+// rbacSettle bounds how long whileForbidden waits for a new RoleBinding.
+const rbacSettle = 30 * time.Second
+
+// whileForbidden retries op while the API server refuses it as forbidden,
+// for a while: a new RoleBinding takes a moment to reach the authorizer,
+// so the first calls in a namespace the control plane has just bound
+// itself in can be refused. op must be safe to repeat.
+func (c *Client) whileForbidden(ctx context.Context, op func() error) error {
+	err := op()
+	for deadline := time.Now().Add(rbacSettle); apierrors.IsForbidden(err) && time.Now().Before(deadline); err = op() {
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(c.poll):
+		}
+	}
+	return err
 }
