@@ -160,10 +160,15 @@ func testTasks(t *testing.T, env Env) {
 	f.wantNoLeftovers(ctx, t, siteID, false)
 
 	// The platform's services are what the site reaches the same way: a
-	// task has no more network than the site's own.
+	// task has no more network than the site's own. Where only the edge
+	// router may reach a site, its tasks can't either.
 	if addr := f.address(ctx, t, siteID); addr != "" {
-		if got := f.taskConnector(ctx, t, siteID)(addr); got != "connected" {
-			t.Errorf("a task reaching its own site's web server: %s, want connected", got)
+		want := "connected"
+		if f.inst.EdgeOnlyIngress {
+			want = "refused"
+		}
+		if got := f.taskConnector(ctx, t, siteID)(addr); got != want {
+			t.Errorf("a task reaching its own site's web server: %s, want %s", got, want)
 		}
 	}
 

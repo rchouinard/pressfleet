@@ -8,7 +8,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -47,7 +46,7 @@ func (c *cutShort) Read(p []byte) (int, error) {
 // Expiry and removal after the consuming job are covered by the uploads
 // package's tests with a fake clock.
 func TestUploads(t *testing.T) {
-	p := e2e.Start(t)
+	p := e2e.StartPlatform(t)
 	ctx := t.Context()
 	groupID := createGroup(t, p, "E2E Upload Agency")
 	uploadsDir := config.Layout{Root: p.DataDir}.UploadsDir()
@@ -87,8 +86,8 @@ func TestUploads(t *testing.T) {
 		return *resp.JSON200, resp.StatusCode()
 	}
 	fileGone := func(uploadID string) bool {
-		_, err := os.Stat(filepath.Join(uploadsDir, uploadID))
-		return errors.Is(err, os.ErrNotExist)
+		_, ok := p.DataFileSize(ctx, t, filepath.Join(uploadsDir, uploadID))
+		return !ok
 	}
 
 	u := create(len(data), &sumHex)
@@ -128,8 +127,8 @@ func TestUploads(t *testing.T) {
 	if done.JSON200 == nil || done.JSON200.Status != client.Complete || done.JSON200.Sha256 == nil || *done.JSON200.Sha256 != sumHex {
 		t.Fatalf("complete: status %d: %s", done.StatusCode(), done.Body)
 	}
-	if info, err := os.Stat(filepath.Join(uploadsDir, u.ID)); err != nil || info.Size() != int64(len(data)) {
-		t.Errorf("uploaded file: %v, %v; want %d bytes", info, err, len(data))
+	if size, ok := p.DataFileSize(ctx, t, filepath.Join(uploadsDir, u.ID)); !ok || size != int64(len(data)) {
+		t.Errorf("uploaded file: %d bytes (exists %t); want %d bytes", size, ok, len(data))
 	}
 
 	// A chunk over the limit is refused.

@@ -13,7 +13,7 @@ import (
 // sessions, CSRF on unsafe requests, bearer tokens, and 401 for everyone
 // else.
 func TestAPI(t *testing.T) {
-	p := e2e.Start(t)
+	p := e2e.StartPlatform(t)
 
 	t.Run("current user", func(t *testing.T) {
 		resp, err := p.Client.GetCurrentUserWithResponse(t.Context())

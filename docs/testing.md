@@ -1,12 +1,13 @@
 # Testing
 
-PressFleet has four kinds of tests.
+PressFleet has five kinds of tests.
 
 | Kind | Command | Needs | Runs in CI |
 | --- | --- | --- | --- |
 | Unit | `make test` | A C compiler (race detector) | Every push and PR |
 | Docker | `make test-platform`, `make images-test`, `PRESSFLEET_DOCKER_TESTS=1 go test ./...` | Docker Engine with Compose v2 | `images-test` in the Images workflow |
 | End to end | `make test-e2e`, `make test-e2e-smoke` | Docker Engine with Compose v2 | Nightly, manual runs, and PRs labeled `e2e` (quick tier) or `e2e:full` |
+| Kubernetes end to end | `make test-k8s-e2e` | Docker Engine, kind, kubectl, and Helm (pinned in `mise.toml`), the host's `nfs` and `nfsd` kernel modules | Nightly, manual runs, and PRs labeled `e2e:k8s` |
 | Dashboard end to end | `make test-ui-e2e` | Docker Engine with Compose v2, Node.js and pnpm, Chromium | Nightly, manual runs, PRs labeled `e2e:full`, and PRs labeled `e2e` that change `ui/` or `api/` |
 
 Unit tests never need Docker. Besides `make test-platform`, a few packages have Docker tests that start the pinned platform image they need, such as `sitedb/mariadb` and `objectcache/redis` (the object cache isolation test: one site can't read, list, or flush another's keys). Tests that do are skipped unless `PRESSFLEET_DOCKER_TESTS=1`. The `sitedb/mariadb` dump and import round trip also runs the `mariadb-dump` and `mariadb` client programs, from `PATH` or from the directory in `PRESSFLEET_TEST_MARIADB_CLIENT_DIR`, and is skipped if they aren't found. State database tests run against SQLite, and also against PostgreSQL when `PRESSFLEET_TEST_POSTGRES_DSN` is set.
@@ -46,6 +47,8 @@ To run the suite against another driver, call `conformance.Run(t, conformance.En
 | `Exec` | Yes | Runs a command in a component of a running site, as the component's user (`docker exec`, `kubectl exec`) |
 | `Get` | Yes | Sends a GET to the site's web server from inside the runtime, with a Host header, as the edge router would |
 | `Address` | No | `host:port` where a peer would reach the site's web server; without it the isolation checks are skipped |
+| `OnePod` | No | The site's components are recreated together (a Kubernetes pod), so a `wp-config.php` change recreates nginx too; without it, nginx must keep running |
+| `EdgeOnlyIngress` | No | The site's web server admits only the edge router, so a task of the site is refused at `Address` too (Kubernetes); without it, a task must reach its own site |
 | `Leftovers` | No | Lists the runtime objects left for a site or client group (task containers, secrets, and, after a delete, everything of the site); without it those checks are skipped |
 | `InMaintenance` | No | Whether the edge sends the site's visitors to the maintenance page |
 
@@ -366,6 +369,53 @@ The `Plan` job decides what runs and writes it to the run's summary. When the ch
 The dashboard suite runs in the same workflow as its own job, `Dashboard E2E`, side by side with this one (see [Dashboard end-to-end tests](#dashboard-end-to-end-tests)).
 
 The tests run one after another. `make test-e2e` gives `go test` 75 minutes and the job 90 (30 for the quick tier), room for a cold runner that also builds the site images; raise both together when the suite outgrows them. Besides the site images, the tests pull the platform's pinned images, Pebble and its DNS server (`ghcr.io/letsencrypt`), and RustFS (Docker Hub) for `TestSiteBackupS3`. They need no MariaDB client on the runner: SQL runs in the platform's MariaDB container, or through the Go driver for database sessions.
+
+## Kubernetes end-to-end tests
+
+The Kubernetes tests (#228) install the platform with the Helm chart on a [kind](https://kind.sigs.k8s.io/) cluster and drive it through the same API client as the Compose tests. They live in `control-plane/internal/e2e` too, and are skipped unless `PRESSFLEET_K8S_TESTS=1`.
+
+```sh
+mise exec -- make test-k8s-e2e                          # everything, about 45 minutes
+mise exec -- make test-k8s-e2e K8S_TIER=smoke           # the install and the acceptance test
+mise exec -- make test-k8s-e2e RUN=TestKubernetesConformance KEEP_CLUSTER=1
+```
+
+`make test-k8s-e2e` builds the control plane image, creates the cluster with `scripts/kind/cluster.sh up` (or reuses it), pushes the image to the cluster's registry under a tag of its own (nodes cache images by tag), pushes the site images, runs the tests, and deletes the cluster unless `KEEP_CLUSTER=1`. `scripts/kind/cluster.sh down` deletes it by hand.
+
+### The cluster
+
+`scripts/kind/cluster.sh up` creates what design doc §4.8 asks of a cluster, on two nodes of Kubernetes 1.37 (kind's node image for the version in `mise.toml`):
+
+| Piece | What |
+| --- | --- |
+| CNI | Calico (kind's own kindnet ignores NetworkPolicy) |
+| Metrics | metrics-server with `--kubelet-insecure-tls` |
+| Storage | kind's local-path class `standard` (ReadWriteOnce, the default) and `nfs`: csi-driver-nfs and a kernel NFS server in the cluster (ReadWriteMany, reclaim policy `Retain`) |
+| Kubelet | `podPidsLimit: 1024`, which bounds the processes of session pods (#220) |
+| Registry | `pfk8s-registry`, on the host's `127.0.0.1:5001` and on the kind network as `pfk8s-registry:5000`, plain HTTP: nodes pull through containerd's `hosts.toml`, and the control plane pins images there with `kubernetes.insecure_registries` |
+| State database | PostgreSQL in `pfk8s-postgres`; each platform gets a database of its own |
+
+The NFS server is the kernel's, so `up` loads the `nfs` and `nfsd` modules with `modprobe` (through `sudo` when needed). The cluster's kubeconfig is `~/.cache/pressfleet-e2e/kubeconfig-pfk8s-e2e`, not the user's own; `scripts/kind/cluster.sh env` prints the variables the tests read (`PRESSFLEET_K8S_CONTEXT`, `PRESSFLEET_K8S_KUBECONFIG`, `PRESSFLEET_K8S_REGISTRY`), and `PRESSFLEET_K8S_IMAGE_TAG` names the control plane's tag in the registry. `cluster.sh site-images` pulls the published site images of the latest WordPress on the two newest PHP branches and pushes them; with `KIND_SITE_IMAGES=local` it pushes the ones `make images` built instead.
+
+### The harness
+
+`e2e.StartKubernetes` installs a platform the way an operator does: `pressfleet init --target kubernetes` writes the values and Secrets into a temporary directory, the harness adds `kubernetes.insecure_registries` to the config file in the `pressfleet-config` Secret, creates the namespace `pfk-<random>` with Pod Security `restricted` enforced, applies the Secrets, and runs `helm install` of `charts/pressfleet` with init's values and its own: the tree's control plane image, the site namespace prefix `pfk-<random>-` (so platforms on one cluster can't see each other's sites), Traefik as a NodePort Service, and small volumes. Then it writes a copy of `images/manifest.json` that names the cluster's registry onto the data volume and points the control plane at it (`PRESSFLEET_IMAGE_MANIFEST_FILE`, a restart), creates the admin with `kubectl exec ... pressfleet user create`, and logs in.
+
+The test reaches Traefik on its NodePorts at the address of Traefik's node (kind's node containers are reachable from a Linux host, not from Docker Desktop's), and the API through Traefik with the dashboard domain, as a browser does. `p.IngressClient` and `p.SFTPAddr` work as on Compose. `p.Kube` has `Kubectl`, `Helm`, `ExecControlPlane`, and `Site(siteID)`, whose `ExecService` runs in a site's containers like `compose.Project`'s does: tests and helpers that take an `e2e.SiteExec` (`siteSh`, `siteWP`, `restoreChecks`) run on both targets. `p.ExecControlPlane` and `p.DataFileSize` work on both too, and `e2e.StartPlatform` starts a platform on the target the environment selects, so `TestAPI`, `TestUploads`, and `TestTwoFactor` run on Kubernetes unchanged. `e2e.KubeOptions{Pebble: true}` deploys Pebble and its DNS server into the platform namespace; the DNS server answers every name with Traefik Service's cluster address, so Pebble validates HTTP-01 challenges against Traefik.
+
+When a test ends, the harness uninstalls the release, deletes the platform's and its sites' namespaces, the PersistentVolumes they leave (the `nfs` class retains them), and the state database, and fails the test if a namespace is left. A failed test logs the objects, events, and pod logs of every namespace first.
+
+| Test | Covers |
+| --- | --- |
+| `TestKubernetesAcceptance` | The doctor (the API's report, and `pressfleet doctor` in the control plane for the checks that start pods: NetworkPolicy enforcement, cgroup v2, RBAC); a site over HTTPS on its preview domain; the site namespace's Pod Security; isolation from another site, the control plane, VictoriaMetrics, PostgreSQL, the API server, and the metadata address; maintenance mode; backup and restore with a rollback (`restoreChecks`, shared with Compose); the data volume's clones and the admission policies; SFTP through Traefik and the session pod's lifecycle; a database session through an `ssh -L` tunnel; a staging clone, refresh, and push; stop, start, and delete with nothing left in the cluster or MariaDB |
+| `TestKubernetesConformance` | The driver conformance suite (see [Driver conformance tests](#driver-conformance-tests)), in the cluster |
+| `TestAPI`, `TestUploads`, `TestTwoFactor` | The Compose tests, unchanged |
+
+`TestKubernetesConformance` builds the `provisioner/kubernetes` test binary and runs its `TestConformance` (skipped unless `PRESSFLEET_K8S_CONFORMANCE=1`) in a pod of a platform the chart installed, with the control plane's ServiceAccount and the data volume at the data directory: tasks mount what the suite puts there, and the suite runs under the chart's RBAC and admission policies. The control plane is scaled to zero meanwhile, since its `Startup` would remove the suite's task pods. `PRESSFLEET_K8S_CONFORMANCE_RUN` narrows the suite, e.g. `TestConformance/Tasks`. The instance's `Address` is the site pod's address and `EdgeOnlyIngress` is set: only Traefik may reach a site, so a site's own tasks are refused too.
+
+### In CI
+
+The `E2E Kubernetes` workflow (`.github/workflows/e2e-k8s.yml`) runs `make test-k8s-e2e` on the runner's Docker Engine: nightly on `main` unless a nightly run already tested the commit, on manual runs (`gh workflow run e2e-k8s.yml --ref my-branch -f tier=smoke`, or `-f run=TestKubernetesConformance`), and on PRs when the `e2e:k8s` label is added, which runs everything. Add it to PRs that change the Kubernetes driver, the chart, or `scripts/kind`, and re-add it to test new commits. When the change touches `images/`, the workflow builds the site images from the tree first, as the Compose workflow does.
 
 ## Dashboard end-to-end tests
 

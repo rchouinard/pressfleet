@@ -178,15 +178,17 @@ func TestParseChallenge(t *testing.T) {
 
 func TestRegistryURL(t *testing.T) {
 	for host, want := range map[string]string{
-		"ghcr.io":         "https://ghcr.io/v2/",
-		"localhost:5001":  "http://localhost:5001/v2/",
-		"127.0.0.1:5000":  "http://127.0.0.1:5000/v2/",
-		"registry.local":  "https://registry.local/v2/",
-		"10.0.0.5:5000":   "https://10.0.0.5:5000/v2/",
-		"[::1]:5000":      "http://[::1]:5000/v2/",
-		"registry.test:1": "https://registry.test:1/v2/",
+		"ghcr.io":            "https://ghcr.io/v2/",
+		"localhost:5001":     "http://localhost:5001/v2/",
+		"127.0.0.1:5000":     "http://127.0.0.1:5000/v2/",
+		"registry.local":     "https://registry.local/v2/",
+		"10.0.0.5:5000":      "https://10.0.0.5:5000/v2/",
+		"[::1]:5000":         "http://[::1]:5000/v2/",
+		"registry.test:1":    "https://registry.test:1/v2/",
+		"kind-registry:5000": "http://kind-registry:5000/v2/",
+		"kind-registry":      "https://kind-registry/v2/",
 	} {
-		if got := registryURL(host, "/v2/"); got != want {
+		if got := registryURL(host, "/v2/", []string{"kind-registry:5000"}); got != want {
 			t.Errorf("registryURL(%s) = %s, want %s", host, got, want)
 		}
 	}

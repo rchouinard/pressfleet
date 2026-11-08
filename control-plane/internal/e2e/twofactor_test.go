@@ -22,7 +22,7 @@ import (
 // control plane container. The flows themselves, their failures, and the
 // policies are covered on both dialects by the api and auth packages.
 func TestTwoFactor(t *testing.T) {
-	p := e2e.Start(t)
+	p := e2e.StartPlatform(t)
 	ctx := t.Context()
 
 	const email = "mfa-admin@e2e.test"
@@ -129,7 +129,7 @@ func TestTwoFactor(t *testing.T) {
 	})
 
 	t.Run("CLI reset", func(t *testing.T) {
-		out, err := p.Project.Exec(ctx, e2e.Service, "pressfleet", "user", "reset-two-factor", "--email", email, "--yes")
+		out, err := p.ExecControlPlane(ctx, nil, "pressfleet", "user", "reset-two-factor", "--email", email, "--yes")
 		if err != nil {
 			t.Fatalf("reset-two-factor: %v: %s", err, out)
 		}

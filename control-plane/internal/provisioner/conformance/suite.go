@@ -246,21 +246,32 @@ func (f *fixture) procStart(ctx context.Context, t *testing.T, cfg *provisioner.
 	return f.exec(ctx, t, cfg, c, "sh", "-c", `cut -d' ' -f22 /proc/1/stat`)
 }
 
-// memoryLimit returns a component's memory limit as Stats reports it.
+// memoryLimit returns a component's memory limit as Stats reports it,
+// waiting for the component's first sample (statsWait).
 func (f *fixture) memoryLimit(ctx context.Context, t *testing.T, cfg *provisioner.SiteConfig, c provisioner.Component) uint64 {
 	t.Helper()
-	stats, err := f.d.Stats(ctx, cfg.ID)
-	if err != nil {
-		t.Fatalf("Stats: %v", err)
-	}
-	for _, s := range stats {
-		if s.Component == c {
-			return s.MemoryLimitBytes
+	var limit uint64
+	eventually(t, statsWait, "Stats of "+string(c), func() string {
+		stats, err := f.d.Stats(ctx, cfg.ID)
+		if err != nil {
+			t.Fatalf("Stats: %v", err)
 		}
-	}
-	t.Fatalf("Stats has no %s sample: %+v", c, stats)
-	return 0
+		for _, s := range stats {
+			if s.Component == c {
+				limit = s.MemoryLimitBytes
+				return ""
+			}
+		}
+		return fmt.Sprintf("no %s sample: %+v", c, stats)
+	})
+	return limit
 }
+
+// statsWait bounds how long a new container may go without a Stats
+// sample: a driver that reads usage from a metrics pipeline only has one
+// once it has scraped the container (metrics-server's window on
+// Kubernetes, about a minute).
+const statsWait = 2 * time.Minute
 
 // get fetches a path of the site's web server as a visitor of its preview
 // domain, retrying while the web server finds the php component again after

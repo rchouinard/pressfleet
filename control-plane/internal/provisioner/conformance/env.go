@@ -82,6 +82,16 @@ type Instance struct {
 	// server if nothing stopped it. The isolation checks try it from other
 	// sites and from tasks; without it they are skipped.
 	Address func(ctx context.Context, siteID string) (string, error)
+	// EdgeOnlyIngress says that a site's web server takes connections only
+	// from the edge router, so its own tasks can't reach it at Address
+	// either, as on Kubernetes, where the site's NetworkPolicy admits only
+	// Traefik. Without it, a site's task must reach its own site.
+	EdgeOnlyIngress bool
+	// OnePod says that a site's components run in one unit that is
+	// recreated as a whole, as a Kubernetes pod is: a change to
+	// wp-config.php recreates nginx with php. Without it, nginx must keep
+	// running.
+	OnePod bool
 	// Leftovers, if set, lists the runtime objects the driver has for an
 	// owner, which is a site ID or a client group ID. With deleted false it
 	// lists only objects that must not outlive the task or session that

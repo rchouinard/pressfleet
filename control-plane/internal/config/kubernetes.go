@@ -49,6 +49,13 @@ type KubernetesConfig struct {
 	// only use a Secret of its own namespace, so the driver copies them
 	// into each site namespace.
 	ImagePullSecrets []string `yaml:"image_pull_secrets"`
+	// InsecureRegistries are registry hosts (host or host:port) that the
+	// driver asks over plain HTTP when it pins site and task images to a
+	// digest, such as a development registry inside the cluster. Nodes
+	// pull from them by their own configuration (containerd's hosts.toml,
+	// k3s's registries.yaml). A registry on the loopback interface is
+	// always asked over HTTP.
+	InsecureRegistries []string `yaml:"insecure_registries"`
 	// DataClaim is the PersistentVolumeClaim of the control plane's data
 	// directory in the platform namespace: the chart's, or the one
 	// controlPlane.data.existingClaim names. Task pods mount it, repository
@@ -116,6 +123,10 @@ var dnsLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 // objects (storage classes, Secrets).
 var dnsSubdomain = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)
 
+// registryHost matches a registry host as image references name it: a
+// host name or IPv4 address, with an optional port.
+var registryHost = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9.-]{0,251}[a-zA-Z0-9])?(:[0-9]{1,5})?$`)
+
 // namespacePrefix matches the start of an RFC 1123 label.
 var namespacePrefix = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
@@ -157,6 +168,11 @@ func (k KubernetesConfig) Validate() error {
 	for _, s := range k.ImagePullSecrets {
 		if !dnsSubdomain.MatchString(s) {
 			errs = append(errs, fmt.Errorf("kubernetes.image_pull_secrets must be Secret names, got %q", s))
+		}
+	}
+	for _, s := range k.InsecureRegistries {
+		if !registryHost.MatchString(s) {
+			errs = append(errs, fmt.Errorf("kubernetes.insecure_registries must be registry hosts like registry.local:5000, got %q", s))
 		}
 	}
 	return errors.Join(errs...)

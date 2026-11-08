@@ -80,7 +80,7 @@ func TestEnsureInTaskSharesAndHotPathRunsNothing(t *testing.T) {
 		}
 		var cmds []string
 		for _, c := range repositoryTasks(fake) {
-			cmds = append(cmds, c.Task.Command[2])
+			cmds = append(cmds, c.Task.Command[slices.Index(c.Task.Command, "--no-cache")+1])
 		}
 		// The probes find no directory and so no repository without a task.
 		if want := []string{"init"}; !slices.Equal(cmds, want) {

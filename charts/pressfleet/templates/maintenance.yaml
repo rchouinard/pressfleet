@@ -48,7 +48,12 @@ spec:
             - name: http
               containerPort: 8080
           {{- include "pressfleet.containerSecurityContext" (dict "readOnly" true) | nindent 10 }}
-          {{- include "pressfleet.memory" 24 | nindent 10 }}
+          {{- /*
+            Twice Compose's 24 MiB: the kubelet runs the liveness and
+            readiness probes at once, each a pressfleet process of its own
+            beside the server, which went over 24 MiB on kind (#228).
+          */}}
+          {{- include "pressfleet.memory" 48 | nindent 10 }}
           livenessProbe:
             exec:
               command: ["pressfleet", "maintenance-page", "--check", "--listen", ":8080"]

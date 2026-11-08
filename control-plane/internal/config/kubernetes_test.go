@@ -25,6 +25,7 @@ func TestKubernetesFromEnvAndFile(t *testing.T) {
 		"PRESSFLEET_KUBERNETES_IMAGE_PULL_SECRETS":    "ghcr, quay",
 		"PRESSFLEET_KUBERNETES_KUBECONFIG":            "/home/dev/.kube/config",
 		"PRESSFLEET_KUBERNETES_DATA_CLAIM":            "pressfleet-data",
+		"PRESSFLEET_KUBERNETES_INSECURE_REGISTRIES":   "registry.local:5000",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -33,7 +34,8 @@ func TestKubernetesFromEnvAndFile(t *testing.T) {
 	if cfg.Driver != config.SiteDriverKubernetes || k.PlatformNamespace != "fleet" || k.SiteNamespacePrefix != "site-" ||
 		k.StorageClasses != (config.KubernetesStorageClasses{Sites: "fast", Data: "nfs"}) ||
 		!slices.Equal(k.PodCIDRs, []string{"10.244.0.0/16"}) || !slices.Equal(k.ImagePullSecrets, []string{"ghcr", "quay"}) ||
-		k.Kubeconfig != "/home/dev/.kube/config" || k.TraefikService != "traefik" || k.DataClaim != "pressfleet-data" {
+		k.Kubeconfig != "/home/dev/.kube/config" || k.TraefikService != "traefik" || k.DataClaim != "pressfleet-data" ||
+		!slices.Equal(k.InsecureRegistries, []string{"registry.local:5000"}) {
 		t.Errorf("Kubernetes = %+v", k)
 	}
 }
@@ -79,6 +81,8 @@ func TestValidateKubernetes(t *testing.T) {
 		{"pod CIDR with host bits", func(c *config.Config) { c.Kubernetes.PodCIDRs = []string{"10.42.0.1/16"} }, "kubernetes.pod_cidrs"},
 		{"pull secret", func(c *config.Config) { c.Kubernetes.ImagePullSecrets = []string{"ghcr_token"} }, "kubernetes.image_pull_secrets"},
 		{"data claim", func(c *config.Config) { c.Kubernetes.DataClaim = "" }, "kubernetes.data_claim"},
+		{"insecure registry", func(c *config.Config) { c.Kubernetes.InsecureRegistries = []string{"kind-registry:5000", "10.0.0.5"} }, ""},
+		{"insecure registry URL", func(c *config.Config) { c.Kubernetes.InsecureRegistries = []string{"http://kind-registry:5000"} }, "kubernetes.insecure_registries"},
 		{"volume size", func(c *config.Config) { c.Kubernetes.SiteVolumeSize = "50Gi" }, ""},
 		{"volume size in decimal units", func(c *config.Config) { c.Kubernetes.SiteVolumeSize = "10G" }, "kubernetes.site_volume_size"},
 		{"empty volume size", func(c *config.Config) { c.Kubernetes.SiteVolumeSize = "" }, "kubernetes.site_volume_size"},

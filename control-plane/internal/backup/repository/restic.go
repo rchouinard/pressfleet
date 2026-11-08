@@ -127,6 +127,13 @@ func (m *Manager) runIO(ctx context.Context, rec Repository, password redact.Sec
 	}
 	task.Stdout = stdout
 	task.Command = slices.Concat([]string{"restic", "--no-cache"}, args)
+	if rec.Backend == BackendLocal && len(args) > 0 && args[0] == "init" {
+		// What init creates belongs to the task's user, and only its owner
+		// or root may change its mode. On Kubernetes the control plane
+		// isn't root, so shareLocal can't give the files to the group
+		// afterwards (#228): the task does, as shareLocal would.
+		task.Command = slices.Concat([]string{"sh", "-c", `"$@" && chmod -R g=u ` + provisioner.TaskRepositoryPath, "sh"}, task.Command)
+	}
 	if stdin != nil {
 		dir, err := m.stageStdin(stdin)
 		if err != nil {

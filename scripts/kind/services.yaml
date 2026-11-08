@@ -1,0 +1,132 @@
+# Cluster services the Kubernetes end-to-end tests expect besides the CNI and
+# metrics-server (scripts/kind/cluster.sh): an NFS server for the
+# ReadWriteMany storage class of the control plane's data volume, and the
+# PostgreSQL that platforms keep their state in (one database per platform).
+# Test fixtures only: no persistence, fixed passwords.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pfk8s-nfs
+  labels:
+    # The kernel NFS server needs a privileged container.
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nfs-server
+  namespace: pfk8s-nfs
+spec:
+  selector:
+    app: nfs-server
+  ports:
+    - name: nfs
+      port: 2049
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfs-server
+  namespace: pfk8s-nfs
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nfs-server
+  template:
+    metadata:
+      labels:
+        app: nfs-server
+    spec:
+      # On the control plane node, where nothing mounts it: cluster.sh down
+      # removes the other nodes first, while the server still answers. A
+      # node with a hard NFS mount whose server is gone can't be killed.
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: nfs-server
+          image: itsthenetwork/nfs-server-alpine:12@sha256:7fa99ae65c23c5af87dd4300e543a86b119ed15ba61422444207efc7abd0ba20
+          env:
+            - name: SHARED_DIRECTORY
+              value: /exports
+          ports:
+            - containerPort: 2049
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: exports
+              mountPath: /exports
+      volumes:
+        - name: exports
+          emptyDir: {}
+---
+# The data volume's class (kubernetes.storage_classes.data). Retain, as the
+# chart's README asks of the data volume's PersistentVolume; the harness
+# deletes what its platforms leave.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nfs
+provisioner: nfs.csi.k8s.io
+parameters:
+  server: nfs-server.pfk8s-nfs.svc.cluster.local
+  share: /
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+mountOptions:
+  - nfsvers=4.1
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pfk8s-postgres
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: pfk8s-postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: pfk8s-postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
+          env:
+            - name: POSTGRES_PASSWORD
+              value: pfk8s-postgres
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            periodSeconds: 2
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql
+      volumes:
+        - name: data
+          emptyDir: {}

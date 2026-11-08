@@ -997,9 +997,30 @@ spec:
             - name: data
               mountPath: "/var/lib/pressfleet"
             # The master key, the platform credentials, and the config file,
-            # at the paths the config defaults name, as on Compose.
+            # at the paths the config defaults name, as on Compose. One file at a
+            # time: the ServiceAccount token goes to
+            # /var/run/secrets/kubernetes.io, and /var/run is /run in the image,
+            # so a read-only volume at /run/secrets leaves the runtime nowhere
+            # to mount it.
             - name: secrets
-              mountPath: /run/secrets
+              mountPath: "/run/secrets/master_key"
+              subPath: "master_key"
+              readOnly: true
+            - name: secrets
+              mountPath: "/run/secrets/mariadb_root_password"
+              subPath: "mariadb_root_password"
+              readOnly: true
+            - name: secrets
+              mountPath: "/run/secrets/redis_admin_password"
+              subPath: "redis_admin_password"
+              readOnly: true
+            - name: secrets
+              mountPath: "/run/secrets/ssh_host_key"
+              subPath: "ssh_host_key"
+              readOnly: true
+            - name: secrets
+              mountPath: /run/secrets/pressfleet_config
+              subPath: pressfleet_config
               readOnly: true
             - name: tmp
               mountPath: /tmp
@@ -1118,9 +1139,9 @@ spec:
               drop: [ALL]
           resources:
             requests:
-              memory: 24Mi
+              memory: 48Mi
             limits:
-              memory: 24Mi
+              memory: 48Mi
           livenessProbe:
             exec:
               command: ["pressfleet", "maintenance-page", "--check", "--listen", ":8080"]
@@ -1764,6 +1785,14 @@ spec:
         apiVersions: [v1]
         operations: [CREATE]
         resources: [persistentvolumes]
+    # Only clones, which the policy above makes every PersistentVolume the
+    # control plane creates be. The binding looks its parameter up before
+    # matchConditions run, so without this, until the data volume is
+    # labeled, it would deny every PersistentVolume in the cluster,
+    # dynamically provisioned ones (MariaDB's, Traefik's) included (#228).
+    objectSelector:
+      matchLabels:
+        pressfleet.io/data-clone: "pressfleet"
   matchConditions:
     - name: control-plane
       expression: "request.userInfo.username == 'system:serviceaccount:pressfleet:control-plane'"

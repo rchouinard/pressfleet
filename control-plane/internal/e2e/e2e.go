@@ -203,6 +203,13 @@ type Platform struct {
 	// platform was started with StartWithPebble.
 	Pebble *Pebble
 
+	// Kube is the platform's Kubernetes side; nil for a platform on
+	// Compose. Project is the zero value then.
+	Kube *KubePlatform
+
+	// apiTransport, if set, is how clients reach BaseURL: on Kubernetes,
+	// through Traefik.
+	apiTransport http.RoundTripper
 	// override is the compose.override.yaml Start wrote, which Restart
 	// keeps.
 	override override
@@ -352,6 +359,10 @@ func WriteReleaseOverride(t *testing.T, dir string) {
 // MariaDB and the sites keep running.
 func (p *Platform) Restart(t *testing.T, env map[string]string) {
 	t.Helper()
+	if p.Kube != nil {
+		p.kubeRestart(t, env)
+		return
+	}
 	o := p.override
 	o.env = maps.Clone(p.override.env)
 	if o.env == nil {
@@ -427,6 +438,9 @@ func (p *Platform) newClient(t *testing.T, transport http.RoundTripper, opts ...
 	if err != nil {
 		t.Fatal(err)
 	}
+	if transport == nil {
+		transport = p.apiTransport
+	}
 	httpClient := &http.Client{Jar: jar, Transport: transport, Timeout: 30 * time.Second}
 	c, err := client.NewClientWithResponses(p.BaseURL, append([]client.ClientOption{client.WithHTTPClient(httpClient)}, opts...)...)
 	if err != nil {
@@ -444,6 +458,9 @@ func (p *Platform) Login(t *testing.T, email string, password redact.Secret) *cl
 	t.Helper()
 	var csrf string
 	rt := &reauthTransport{base: http.DefaultTransport}
+	if p.apiTransport != nil {
+		rt.base = p.apiTransport
+	}
 	c := p.newClient(t, rt, client.WithRequestEditorFn(func(_ context.Context, req *http.Request) error {
 		switch req.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
