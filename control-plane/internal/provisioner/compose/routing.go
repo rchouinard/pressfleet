@@ -29,78 +29,6 @@ func validHostname(h string) bool {
 	return len(h) <= 253 && hostname.MatchString(h)
 }
 
-// hostRule is a Traefik rule matching any of the hosts.
-func hostRule(hosts ...string) string {
-	parts := make([]string, len(hosts))
-	for i, h := range hosts {
-		parts[i] = "Host(`" + h + "`)"
-	}
-	return strings.Join(parts, " || ")
-}
-
-// router is one of a site's Traefik routers, as data the nginx labels,
-// the domains file (domains.go), and the maintenance routes
-// (maintenance.go) are made from.
-type router struct {
-	Name         string
-	Rule         string
-	CertResolver string
-	Middlewares  []string
-	// Domain marks a router of a custom domain, which the domains file
-	// defines rather than nginx's labels.
-	Domain bool
-}
-
-// siteRouters returns the site's routers: the preview domain's, then, once
-// the site is live, the primary domain's and one per alias, in the order of
-// SiteConfig.Aliases. Everything built from this list (labels, the domains
-// file, maintenance routes) follows. hsts adds the HSTS middleware to the
-// custom domains' routers (§6.1).
-func siteRouters(site *provisioner.SiteConfig, hsts bool) []router {
-	routers := []router{{
-		Name:         ingress.SiteName(site.ID, ingress.SuffixPreview),
-		Rule:         hostRule(site.PreviewDomain),
-		CertResolver: ingress.CertResolverPreview,
-		Middlewares:  previewMiddlewares(site),
-	}}
-	if site.PrimaryDomain == "" {
-		return routers
-	}
-	// HSTS is outermost, so the aliases' redirects carry it too.
-	var prod []string
-	if hsts {
-		prod = append(prod, ingress.SiteName(site.ID, ingress.SuffixHSTS))
-	}
-	routers = append(routers, router{
-		Name:         ingress.SiteName(site.ID, ingress.SuffixPrimary),
-		Rule:         hostRule(site.PrimaryDomain),
-		CertResolver: ingress.CertResolverHTTP,
-		Middlewares:  prod,
-		Domain:       true,
-	})
-	for _, alias := range site.Aliases {
-		routers = append(routers, router{
-			Name:         ingress.SiteName(site.ID, ingress.SuffixAlias, ingress.AliasKey(alias)),
-			Rule:         hostRule(alias),
-			CertResolver: ingress.CertResolverHTTP,
-			Middlewares:  append(slices.Clone(prod), ingress.SiteName(site.ID, ingress.SuffixAliasRedirect)),
-			Domain:       true,
-		})
-	}
-	return routers
-}
-
-// previewMiddlewares are the preview router's middlewares. The first is
-// the outermost, so noindex also marks the 401 that basic auth answers
-// with.
-func previewMiddlewares(site *provisioner.SiteConfig) []string {
-	mw := []string{ingress.SiteName(site.ID, ingress.SuffixNoIndex)}
-	if site.PreviewAuth != nil {
-		mw = append(mw, ingress.SiteName(site.ID, ingress.SuffixPreviewAuth))
-	}
-	return mw
-}
-
 // validateRouting checks what the routes are made from. Every domain must
 // be a lowercase host name, which keeps anything that could break out of a
 // Host(`...`) matcher or a redirect's replacement out of Traefik's
@@ -163,7 +91,7 @@ func routingLabels(platformProject string, site *provisioner.SiteConfig) ([]labe
 		m[auth+"removeheader"] = "true"
 		m[auth+"realm"] = "Preview"
 	}
-	for _, r := range siteRouters(site, false) {
+	for _, r := range ingress.SiteRouters(site, false) {
 		if r.Domain {
 			// In the domains file, so domain changes don't recreate nginx.
 			continue

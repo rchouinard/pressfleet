@@ -60,13 +60,13 @@ type fileRouter struct {
 }
 
 // maintenanceRoutes renders the site's maintenance routes: a twin of each
-// of its routers (siteRouters), with the same rule, entry point, and
+// of its routers (ingress.SiteRouters), with the same rule, entry point, and
 // certificate resolver, sending everything to the maintenance page. The
 // twins have none of the site's middlewares, which belong to the site's
 // containers and vanish with them; the page is public and holds nothing.
 func maintenanceRoutes(site *provisioner.SiteConfig) ([]byte, error) {
 	routers := map[string]fileRouter{}
-	for _, r := range siteRouters(site, false) {
+	for _, r := range ingress.SiteRouters(site, false) {
 		m := fileRouter{
 			Rule:        r.Rule,
 			EntryPoints: []string{ingress.EntryPointHTTPS},

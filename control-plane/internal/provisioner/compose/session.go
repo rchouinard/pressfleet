@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/outbuf"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 )
 
@@ -104,7 +105,7 @@ func (p *Provisioner) RunSession(ctx context.Context, siteID string, s provision
 		return fmt.Errorf("run session on site %s: creating the worker: %w", siteID, err)
 	}
 	stderr := s.Stderr
-	tail := &tailBuffer{max: sessionMaxStderr}
+	tail := &outbuf.Tail{Max: sessionMaxStderr}
 	if stderr == nil {
 		stderr = tail
 	}
@@ -117,7 +118,7 @@ func (p *Provisioner) RunSession(ctx context.Context, siteID string, s provision
 
 // sessionResult turns the attached run into RunSession's result, going by
 // the container's own exit code as taskResult does.
-func (p *Provisioner) sessionResult(ctx context.Context, siteID, name string, stderr *tailBuffer, runErr error) error {
+func (p *Provisioner) sessionResult(ctx context.Context, siteID, name string, stderr *outbuf.Tail, runErr error) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return fmt.Errorf("run session on site %s: %w", siteID, ctxErr)
 	}

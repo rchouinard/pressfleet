@@ -67,8 +67,6 @@ var hostname = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0
 
 func validHostname(h string) bool { return len(h) <= 253 && hostname.MatchString(h) }
 
-func hostRule(host string) string { return "Host(`" + host + "`)" }
-
 // routeData is one IngressRoute, as the templates see it.
 type routeData struct {
 	Name         string
@@ -111,8 +109,8 @@ type maintenanceData struct {
 	Routes  []routeData
 }
 
-// siteRouting derives the site's routes from its configuration. It mirrors
-// the Compose driver's list of routers: the preview domain's, then, once
+// siteRouting derives the site's routes from its configuration. Its list of
+// routers is ingress.SiteRouters, the Compose driver's too: the preview domain's, then, once
 // the site is live, the primary domain's and one per alias, in the order of
 // SiteConfig.Aliases, and the preview redirect that takes the preview
 // domain over. hsts adds the HSTS middleware to the custom domains (§6.1).
@@ -122,44 +120,24 @@ func siteRouting(site *provisioner.SiteConfig, hsts bool) (routingData, maintena
 	}
 	name := func(suffixes ...string) string { return ingress.SiteName(site.ID, suffixes...) }
 
-	// The first preview middleware is the outermost, so noindex also marks
-	// the 401 that basic auth answers with.
-	preview := []string{name(ingress.SuffixNoIndex)}
 	r := routingData{EntryPoint: ingress.EntryPointHTTPS, NoIndex: name(ingress.SuffixNoIndex)}
 	if a := site.PreviewAuth; a != nil {
-		preview = append(preview, name(ingress.SuffixPreviewAuth))
 		r.Auth = &authData{Name: name(ingress.SuffixPreviewAuth), Users: a.Username + ":" + a.PasswordHash}
 	}
-	routers := []routeData{{
-		Name:         name(ingress.SuffixPreview),
-		Rule:         hostRule(site.PreviewDomain),
-		CertResolver: ingress.CertResolverPreview,
-		Middlewares:  preview,
-	}}
-	if site.PrimaryDomain != "" {
-		// HSTS is outermost, so the aliases' redirects carry it too.
-		var prod []string
-		if hsts {
-			r.HSTS, r.HSTSMaxAge = name(ingress.SuffixHSTS), ingress.HSTSMaxAge
-			prod = append(prod, r.HSTS)
-		}
+	var routers []routeData
+	for _, rt := range ingress.SiteRouters(site, hsts) {
 		routers = append(routers, routeData{
-			Name:         name(ingress.SuffixPrimary),
-			Rule:         hostRule(site.PrimaryDomain),
-			CertResolver: ingress.CertResolverHTTP,
-			Middlewares:  prod,
-			Domain:       true,
+			Name:         rt.Name,
+			Rule:         rt.Rule,
+			CertResolver: rt.CertResolver,
+			Middlewares:  rt.Middlewares,
+			Domain:       rt.Domain,
 		})
-		for _, alias := range site.Aliases {
-			routers = append(routers, routeData{
-				Name:         name(ingress.SuffixAlias, ingress.AliasKey(alias)),
-				Rule:         hostRule(alias),
-				CertResolver: ingress.CertResolverHTTP,
-				Middlewares:  append(slices.Clone(prod), name(ingress.SuffixAliasRedirect)),
-				Domain:       true,
-			})
-		}
 	}
+	if hsts && site.PrimaryDomain != "" {
+		r.HSTS, r.HSTSMaxAge = name(ingress.SuffixHSTS), ingress.HSTSMaxAge
+	}
+	preview := ingress.PreviewMiddlewares(site)
 
 	// Maintenance twins mirror the routers above only: the preview redirect
 	// is shadowed by the twin of the preview router, which has a higher
@@ -180,7 +158,7 @@ func siteRouting(site *provisioner.SiteConfig, hsts bool) (routingData, maintena
 		// asks for the password before it reveals where the site went.
 		routers = append(routers, routeData{
 			Name:         name(ingress.SuffixPreviewRedirect),
-			Rule:         hostRule(site.PreviewDomain),
+			Rule:         ingress.HostRule(site.PreviewDomain),
 			CertResolver: ingress.CertResolverPreview,
 			Priority:     ingress.PreviewRedirectPriority,
 			Middlewares:  append(slices.Clone(preview), name(ingress.SuffixPreviewRedirect)),

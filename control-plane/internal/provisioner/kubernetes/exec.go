@@ -20,6 +20,7 @@ import (
 	utilexec "k8s.io/client-go/util/exec"
 	"k8s.io/streaming/pkg/httpstream"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/outbuf"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 )
 
@@ -138,8 +139,8 @@ func (p *Provisioner) run(ctx context.Context, t execTarget, command []string, s
 	if p.exec == nil {
 		return execResult{}, fmt.Errorf("%w: the driver has no exec connection", ErrExecFailed)
 	}
-	stdout := &headBuffer{max: stdoutMax + 1}
-	stderr := &tailBuffer{max: stderrKept}
+	stdout := &outbuf.Head{Max: stdoutMax + 1}
+	stderr := &outbuf.Tail{Max: stderrKept}
 	err := p.exec.Exec(ctx, t, command, stdout, stderr)
 	res := execResult{Stdout: stdout.Bytes(), Stderr: stderr.String()}
 	if len(res.Stdout) > stdoutMax {

@@ -1,7 +1,6 @@
 package compose
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/outbuf"
 	"github.com/rchouinard/pressfleet/control-plane/internal/provisioner"
 )
 
@@ -184,59 +184,13 @@ func DockerExecLimited(stdoutMax, stderrMax int) ExecFunc {
 	return func(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
 		// Arguments are passed directly to docker, never through a shell.
 		cmd := exec.CommandContext(ctx, "docker", args...) //nolint:gosec // G204: running docker with caller-built arguments is the point
-		stdout := &headBuffer{max: stdoutMax + 1}
-		stderr := &tailBuffer{max: stderrMax}
+		stdout := &outbuf.Head{Max: stdoutMax + 1}
+		stderr := &outbuf.Tail{Max: stderrMax}
 		cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 		cmd.WaitDelay = wpcliWaitDelay
 		if err := cmd.Run(); err != nil {
-			return stdout.buf, &CommandError{Args: args, Stderr: strings.TrimSpace(stderr.String()), Err: err}
+			return stdout.Bytes(), &CommandError{Args: args, Stderr: strings.TrimSpace(stderr.String()), Err: err}
 		}
-		return stdout.buf, nil
+		return stdout.Bytes(), nil
 	}
-}
-
-// headBuffer keeps the first max bytes written to it and discards the rest.
-type headBuffer struct {
-	buf []byte
-	max int
-}
-
-func (b *headBuffer) Write(p []byte) (int, error) {
-	if room := b.max - len(b.buf); room > 0 {
-		b.buf = append(b.buf, p[:min(room, len(p))]...)
-	}
-	return len(p), nil
-}
-
-// tailBuffer keeps the last max bytes written to it.
-type tailBuffer struct {
-	buf     []byte
-	max     int
-	dropped int
-}
-
-func (b *tailBuffer) Write(p []byte) (int, error) {
-	b.buf = append(b.buf, p...)
-	// Trim only once the buffer holds twice the limit, so trimming costs
-	// amortized constant time per byte.
-	if len(b.buf) > 2*b.max {
-		b.trim()
-	}
-	return len(p), nil
-}
-
-func (b *tailBuffer) trim() {
-	if cut := len(b.buf) - b.max; cut > 0 {
-		b.dropped += cut
-		b.buf = append(b.buf[:0], b.buf[cut:]...)
-	}
-}
-
-// String returns the kept bytes, prefixed with a note if some were dropped.
-func (b *tailBuffer) String() string {
-	b.trim()
-	if b.dropped == 0 {
-		return string(b.buf)
-	}
-	return fmt.Sprintf("[%d bytes truncated]\n%s", b.dropped, bytes.ToValidUTF8(b.buf, nil))
 }

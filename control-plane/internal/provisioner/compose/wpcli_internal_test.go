@@ -2,7 +2,6 @@ package compose
 
 import (
 	"slices"
-	"strings"
 	"testing"
 	"time"
 )
@@ -31,36 +30,5 @@ func TestWPCLIArgv(t *testing.T) {
 				t.Errorf("argv = %q, want %q", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestHeadBuffer(t *testing.T) {
-	b := &headBuffer{max: 5}
-	for _, s := range []string{"ab", "cdef", "gh"} {
-		if n, err := b.Write([]byte(s)); n != len(s) || err != nil {
-			t.Fatalf("Write(%q) = %d, %v", s, n, err)
-		}
-	}
-	if got := string(b.buf); got != "abcde" {
-		t.Errorf("kept %q, want abcde", got)
-	}
-}
-
-func TestTailBuffer(t *testing.T) {
-	b := &tailBuffer{max: 4}
-	if _, _ = b.Write([]byte("ab")); b.String() != "ab" {
-		t.Errorf("short = %q", b.String())
-	}
-	for range 10 {
-		if n, err := b.Write([]byte("0123456789")); n != 10 || err != nil {
-			t.Fatalf("Write = %d, %v", n, err)
-		}
-	}
-	got := b.String()
-	if !strings.HasSuffix(got, "\n6789") || !strings.HasPrefix(got, "[98 bytes truncated]") {
-		t.Errorf("String() = %q", got)
-	}
-	if len(b.buf) > 2*b.max {
-		t.Errorf("buffer holds %d bytes, limit %d", len(b.buf), b.max)
 	}
 }
