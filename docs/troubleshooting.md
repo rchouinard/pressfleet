@@ -223,7 +223,33 @@ At 90% a filesystem triggers the **Disk nearly full** alert. Container logs are 
 
 ## Upgrades
 
-If `pressfleet upgrade` fails, it prints the commands that return to the previous release: [Recovering from a failed upgrade](upgrading.md#recovering-from-a-failed-upgrade). Sites keep serving while the control plane is down, unless the upgrade recreated Traefik, MariaDB, or the object cache. `pressfleet upgrade` refuses a development build that sorts before its own release; that only affects builds from before a release.
+`pressfleet upgrade` rolls a failed upgrade back on its own and exits with `2`; the platform runs the previous release again, so fix the cause and run it again ([Automatic rollback](upgrading.md#automatic-rollback)). Sites keep serving while the control plane is down, unless the upgrade recreated Traefik, MariaDB, or the object cache. `pressfleet upgrade` refuses a development build that sorts before its own release; that only affects builds from before a release. Kubernetes installs use Helm, not these steps ([Kubernetes](upgrading.md#kubernetes)).
+
+### A rollback failed or was refused
+
+Exit code `1` after "The rollback stopped", "The rollback didn't start", or "The rollback was interrupted" means the platform isn't back on the previous release, and `upgrade` printed the commands that finish the job, filled in for where it stopped. Read the message first:
+
+| Message | What to do |
+| --- | --- |
+| `the upgrade migrated the PostgreSQL state database, which PressFleet doesn't back up` | Nothing was changed. Restore your own backup with the printed step 2, then the rest of the steps ([PostgreSQL state databases](upgrading.md#postgresql-state-databases)). |
+| `can't tell whether the upgrade migrated the state database` | Nothing was changed. Neither the host nor a container could read `<data_dir>/state/backups`; fix Docker access (or run as root) and try again, or follow the printed step 2, which lists the directory for you. Don't skip the check: a needed restore left out crash-loops the previous control plane. |
+| `the rollback can't start: there is no saved platform project` | Nothing was changed. `<data_dir>/upgrade/previous-platform` is missing or has no Compose file, so there is nothing to put back, and neither the rollback nor the printed steps can work. Put the directory back from your own copy of the data directory if you have one. |
+| A MariaDB release series change | Nothing was changed. MariaDB upgrades its data files in place, so the previous series can't read them. Releases don't change the series today, so this guards against later ones. |
+| `The rollback stopped at step N` | A step failed (the Docker error is shown). Fix the cause and run `pressfleet upgrade`, which offers to resume, or `pressfleet upgrade --rollback`; or run the printed steps. Steps already done are safe to repeat. |
+
+The record `<data_dir>/upgrade/upgrade.json` keeps the status (`rollback-failed`) and the step. When the steps are done, `pressfleet version` shows the previous release on the control plane.
+
+A `pressfleet upgrade --rollback` that refuses says why and changes nothing:
+
+- **`changes since the upgrade would be left behind`:** it lists the sites created or deleted, core updates, go-lives, and client groups deleted or offboarded since the upgrade. Undo them, or pass `--force` and clean up afterwards ([Rolling back an upgrade](upgrading.md#rolling-back-an-upgrade)).
+- **`can't tell what changed since the upgrade`:** the control plane didn't answer. Start it and retry, or pass `--force`.
+- **`nothing to roll back`:** there is no upgrade record, the last upgrade was rolled back already, the platform project from before it is gone, or the platform is back on the previous release already. Only the most recent upgrade can be rolled back, once.
+
+### Site updates are held after an upgrade
+
+`pressfleet doctor` warns `upgrade-rollouts`, and the core, image, and template rollouts report `held: true` with a reason (`GET /api/v1/core-rollout`, `/image-rollout`, `/template-rollout`; the dashboard's platform overview shows it too). The control plane holds them while the record `<data_dir>/upgrade/upgrade.json` says `in-progress`, `failed`, `rolling-back`, or `rollback-failed`, or can't be read. An upgrade that was interrupted (the CLI was killed, the SSH session dropped) or left failed with `--no-rollback` is the usual cause. Updates you start by hand still run.
+
+Run `pressfleet upgrade` to retry or resume, or `pressfleet upgrade --rollback`; either ends in `succeeded` or `rolled-back`, and the rollouts resume within 15 minutes without a restart ([Held rollouts](upgrading.md#held-rollouts)). If you finished the recovery by hand instead, the record keeps its status until the next `pressfleet upgrade` writes a new one; don't edit it.
 
 ## Still stuck
 

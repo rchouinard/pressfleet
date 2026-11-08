@@ -84,6 +84,10 @@ Run these steps as root on the new host. The data directory can be at another pa
 - **Uploads** and **exports** waiting to be downloaded aren't backed up.
 - **Failed recoveries:** a site whose `site.recover` job failed for good is marked `failed` with the reason, and what the job created is left in place. Fix the cause and [restore the site](backups.md#recovering-a-failed-site) from one of its backups, or delete it.
 
+## Upgrade rollback is not recovery
+
+`pressfleet upgrade` can return the platform to the release before the last upgrade ([Upgrading](upgrading.md#automatic-rollback)). It restores a copy of the state database taken right before the upgrade migrated it (SQLite only), and keeps the platform project from before the upgrade. It needs the host, the data directory, and the Docker volumes to be intact, and it covers one upgrade. It is the first thing to try after a failed or regretted upgrade, and it isn't a substitute for the state backups above: if the host is lost, or the rollback can't finish and the printed steps don't help, rebuild from a state backup. With PostgreSQL, a migrated database can only be rolled back from your own backup.
+
 ## Rehearsing
 
 Run the drill before you need it: on a spare machine or VM, follow [Rebuilding on a new host](#rebuilding-on-a-new-host) with a copy of the backup location, the master key, and the config file, and check that the sites come back. The end-to-end test `TestDisasterRecovery` runs the same drill on every change: it installs a platform with a site, takes its backups, deletes everything but the backup location and the master key (containers, volumes, data directory, config file), and rebuilds it with `pressfleet init --force` and `pressfleet recover` (see [Testing](testing.md#disaster-recovery)).
