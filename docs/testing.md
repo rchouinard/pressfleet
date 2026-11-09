@@ -409,9 +409,27 @@ When a test ends, the harness uninstalls the release, deletes the platform's and
 | --- | --- |
 | `TestKubernetesAcceptance` | The doctor (the API's report, and `pressfleet doctor` in the control plane for the checks that start pods: NetworkPolicy enforcement, cgroup v2, RBAC); a site over HTTPS on its preview domain; the site namespace's Pod Security; isolation from another site, the control plane, VictoriaMetrics, PostgreSQL, the API server, and the metadata address; maintenance mode; backup and restore with a rollback (`restoreChecks`, shared with Compose); the data volume's clones and the admission policies; SFTP through Traefik and the session pod's lifecycle; a database session through an `ssh -L` tunnel; a staging clone, refresh, and push; stop, start, and delete with nothing left in the cluster or MariaDB |
 | `TestKubernetesConformance` | The driver conformance suite (see [Driver conformance tests](#driver-conformance-tests)), in the cluster |
+| `TestKubernetesDriverBehaviour` | What the driver relies on the cluster for, beyond the driver contract (`TestKindBehaviour`, in the cluster; see below) |
 | `TestAPI`, `TestUploads`, `TestTwoFactor` | The Compose tests, unchanged |
 
 `TestKubernetesConformance` builds the `provisioner/kubernetes` test binary and runs its `TestConformance` (skipped unless `PRESSFLEET_K8S_CONFORMANCE=1`) in a pod of a platform the chart installed, with the control plane's ServiceAccount and the data volume at the data directory: tasks mount what the suite puts there, and the suite runs under the chart's RBAC and admission policies. The control plane is scaled to zero meanwhile, since its `Startup` would remove the suite's task pods. `PRESSFLEET_K8S_CONFORMANCE_RUN` narrows the suite, e.g. `TestConformance/Tasks`. The instance's `Address` is the site pod's address and `EdgeOnlyIngress` is set: only Traefik may reach a site, so a site's own tasks are refused too.
+
+`TestKubernetesDriverBehaviour` runs the same binary's `TestKindBehaviour` the same way (`PRESSFLEET_K8S_BEHAVIOUR_RUN` narrows it). Its subtests use the driver's internals and the cluster directly, for what the conformance suite can't see through the contract (#317):
+
+| Subtest | Checks |
+| --- | --- |
+| `WPCLIStops` | WP-CLI and the child it waits for end in the container at the deadline (`timeout(1)` signals the process group); after a cancellation they end by the driver's WP-CLI timeout at the latest, which a short one shows (cancellation alone doesn't end them, #346; a child that ignores SIGTERM outlives the deadline, #344) |
+| `SPDYFallback` | Exec (output, standard input, exit codes) and attach (a task, a session) through a proxy in the test that refuses WebSocket upgrades, so the driver falls back to SPDY |
+| `DataClones` | Clones of the data volume mounted side by side on one node, with the runner's own mount of it: a task that keeps using its clone goes on while another task's clone is unmounted and a deleted site's clone is removed |
+| `StreamedOutput` | 1 GiB of a task's standard output streamed through the attachment, whole (SHA-256), without the test's heap growing |
+| `OOMKilled` | A task over its memory limit fails with exit code 137 and says it was OOMKilled |
+| `Leftovers` | A control plane (a helper process of the test binary) killed with a site task, a repository task, and a session running: their pods, Secrets, and NetworkPolicy remain, the kubelet ends the tasks at their `activeDeadlineSeconds`, and `Startup` removes everything |
+| `BackupNetwork` | A repository task with `BackupNetwork` reaches an S3 service in the cluster (RustFS, which the e2e test deploys in a namespace of its own; restic initializes and writes a repository there) and the internet, but not a site or MariaDB; without it, neither S3 nor the internet |
+| `RestoreDump` | A database dump that is 0600 and another site's in the snapshot, restored as restic restores it, is readable by the control plane (skipped while it isn't: #348). The repository is initialized with package repository's own command, which fails on its last step on Kubernetes (#347) |
+| `SessionLimits` | A session's `/tmp` holds no more than its 16 MiB `sizeLimit`; a fork bomb in a session is stopped by its 128 MiB memory limit (OOMKilled) before 1024 processes, and in a task with 1 GiB by the kubelet's `podPidsLimit` (1024), which every pod has |
+| `Stats` | Samples of a new site within a minute (metrics-server's resolution is 15 seconds), php's CPU time rising under load and starting again when php restarts |
+| `LogsFollow` | Following logs goes on across a rollout (a new pod), and ends with `ErrNoPod` when the site stops |
+| `MetricsUnavailable` | `ErrMetricsUnavailable` from `Stats` without metrics-server. It runs last, alone: the test scales metrics-server to zero for it and back afterwards |
 
 ### In CI
 
