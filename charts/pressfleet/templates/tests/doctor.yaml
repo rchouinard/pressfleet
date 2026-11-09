@@ -1,0 +1,28 @@
+{{- /*
+The Helm test (design doc §4.8): `helm test` runs `pressfleet doctor` in a
+pod like the control plane's, with its settings, Secrets, data volume, and
+ServiceAccount, so doctor sees the cluster as the control plane does and
+runs the checks that start probe pods. Helm creates this pod as the
+operator; the probe pods doctor starts are the control plane's own, and the
+admission policies cover them as they do at startup. Doctor only reads the
+data volume, which is ReadWriteMany: task pods mount it too.
+
+Only a failed required check fails the test. Doctor exits 2 when only
+recommended checks fail or warn (a Traefik Service without an external
+address, DNS not set up yet); `helm test --logs` shows them.
+
+The pod is kept after the test, so that its log can be read, and replaced
+by the next run.
+*/ -}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: doctor-test
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "doctor-test") | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  {{- $script := `pressfleet doctor; status=$?; if [ "$status" -eq 2 ]; then exit 0; fi; exit "$status"` }}
+  {{- include "pressfleet.controlPlanePodSpec" (dict "root" . "command" (list "sh" "-c") "args" (list $script) "serve" false) | nindent 2 }}

@@ -1861,6 +1861,180 @@ spec:
   policyName: "workloads.pressfleet.pressfleet.io"
   validationActions: [Deny]
 ---
+# Source: pressfleet/templates/tests/doctor.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: doctor-test
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: doctor-test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  serviceAccountName: control-plane
+  # The driver talks to the API server as this ServiceAccount (RBAC in
+  # rbac.yaml).
+  automountServiceAccountToken: true
+  imagePullSecrets:
+    - name: "registry-credentials"
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 61000
+    runAsGroup: 61000
+    fsGroup: 61000
+    fsGroupChangePolicy: OnRootMismatch
+    supplementalGroups: [60000]
+    seccompProfile:
+      type: RuntimeDefault
+  restartPolicy: Never
+  containers:
+    - name: control-plane
+      image: "registry.agency.example/pressfleet/control-plane:1.2.0"
+      command: ["sh","-c"]
+      args: ["pressfleet doctor; status=$?; if [ \"$status\" -eq 2 ]; then exit 0; fi; exit \"$status\""]
+      env:
+        # The Go process's share of the memory limit, as on Compose (§4.1).
+        - name: GOMEMLIMIT
+          value: "96MiB"
+        - name: PRESSFLEET_DRIVER
+          value: kubernetes
+        - name: PRESSFLEET_DATA_DIR
+          value: "/var/lib/pressfleet"
+        - name: PRESSFLEET_LISTEN
+          value: ":8080"
+        - name: PRESSFLEET_MASTER_KEY_FILE
+          value: /run/secrets/master_key
+        # The operator's config file, for the settings not passed here.
+        # These variables take precedence over it.
+        - name: PRESSFLEET_CONFIG
+          value: /run/secrets/pressfleet_config
+        - name: PRESSFLEET_DATABASE_DRIVER
+          value: postgres
+        - name: PRESSFLEET_DATABASE_POSTGRES_DSN
+          valueFrom:
+            secretKeyRef:
+              name: "agency-postgres"
+              key: "url"
+        # Tasks run in the control plane's own image (§5.3).
+        - name: PRESSFLEET_TASK_IMAGE
+          value: "registry.agency.example/pressfleet/control-plane:1.2.0"
+        # Full names, so that sites in their own namespaces reach them too.
+        - name: PRESSFLEET_MARIADB_ADDRESS
+          value: "db.agency.example:3306"
+        - name: PRESSFLEET_REDIS_ADDRESS
+          value: "redis.pressfleet.svc:6379"
+        - name: PRESSFLEET_METRICS_URL
+          value: "http://victoria-metrics.pressfleet.svc:8428"
+        - name: PRESSFLEET_METRICS_RETENTION_DAYS
+          value: "30"
+        - name: PRESSFLEET_SFTP_PORT
+          value: "2022"
+        - name: PRESSFLEET_DASHBOARD_DOMAIN
+          value: "fleet.agency.example"
+        - name: PRESSFLEET_PREVIEW_BASE_DOMAIN
+          value: "preview.agency.example"
+        - name: PRESSFLEET_PUBLIC_IP
+          value: "203.0.113.7"
+        - name: PRESSFLEET_KUBERNETES_PLATFORM_NAMESPACE
+          value: "pressfleet"
+        - name: PRESSFLEET_KUBERNETES_SITE_NAMESPACE_PREFIX
+          value: "site-"
+        - name: PRESSFLEET_KUBERNETES_STORAGE_CLASSES_SITES
+          value: "fast-rwo"
+        - name: PRESSFLEET_KUBERNETES_STORAGE_CLASSES_DATA
+          value: "shared-rwx"
+        - name: PRESSFLEET_KUBERNETES_TRAEFIK_SERVICE
+          value: traefik
+        # Where Traefik's HTTP provider reads the sites' routes
+        # (traefik-config.yaml).
+        - name: PRESSFLEET_KUBERNETES_TRAEFIK_PROVIDER_LISTEN
+          value: ":8081"
+        # Task pods mount it too (#219).
+        - name: PRESSFLEET_KUBERNETES_DATA_CLAIM
+          value: "pressfleet-nfs"
+        - name: PRESSFLEET_KUBERNETES_POD_CIDRS
+          value: "10.42.0.0/16,fd00:10:42::/56"
+        - name: PRESSFLEET_KUBERNETES_IMAGE_PULL_SECRETS
+          value: "registry-credentials"
+      volumeMounts:
+        - name: data
+          mountPath: "/var/lib/pressfleet"
+        # The master key, the platform credentials, and the config file,
+        # at the paths the config defaults name, as on Compose. One file at a
+        # time: the ServiceAccount token goes to
+        # /var/run/secrets/kubernetes.io, and /var/run is /run in the image,
+        # so a read-only volume at /run/secrets leaves the runtime nowhere
+        # to mount it.
+        - name: secrets
+          mountPath: "/run/secrets/master_key"
+          subPath: "master_key"
+          readOnly: true
+        - name: secrets
+          mountPath: "/run/secrets/mariadb_root_password"
+          subPath: "mariadb_root_password"
+          readOnly: true
+        - name: secrets
+          mountPath: "/run/secrets/redis_admin_password"
+          subPath: "redis_admin_password"
+          readOnly: true
+        - name: secrets
+          mountPath: "/run/secrets/ssh_host_key"
+          subPath: "ssh_host_key"
+          readOnly: true
+        - name: secrets
+          mountPath: /run/secrets/pressfleet_config
+          subPath: pressfleet_config
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+      resources:
+        requests:
+          memory: 384Mi
+        limits:
+          memory: 384Mi
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: "pressfleet-nfs"
+    - name: secrets
+      projected:
+        # Readable by the control plane's group (fsGroup) only.
+        defaultMode: 0440
+        sources:
+          - secret:
+              name: "agency-master-key"
+              items:
+                - key: "key"
+                  path: master_key
+          - secret:
+              name: "agency-platform"
+              items:
+                - key: "mariadb"
+                  path: mariadb_root_password
+                - key: "redis"
+                  path: redis_admin_password
+                - key: "ssh"
+                  path: ssh_host_key
+          - secret:
+              name: "agency-pressfleet-config"
+              items:
+                - key: "config.yaml"
+                  path: pressfleet_config
+    - name: tmp
+      emptyDir: {}
+
+---
 # Source: pressfleet/templates/upgrade-preflight.yaml
 apiVersion: batch/v1
 kind: Job

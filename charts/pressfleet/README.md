@@ -21,6 +21,7 @@ Everything goes in the release's namespace, which is the platform namespace (`ku
 | RBAC, admission policy, NetworkPolicies | See below. |
 | `upgrade-preflight` Job | A `pre-upgrade` hook; see [Upgrades](#upgrades). |
 | `state-recover` Job | A `post-install`/`post-upgrade` hook, only with `recovery.enabled`; see [Recovery](#recovery). |
+| `doctor-test` Pod | The Helm test; see [Helm test](#helm-test). |
 
 Every pod meets Pod Security `restricted`, so the platform namespace can enforce it.
 
@@ -100,6 +101,12 @@ The control plane migrates the state database when it starts. Backing up Postgre
 `recovery.enabled` restores a state backup (design doc §5.10; docs/disaster-recovery.md, "Kubernetes"): the control plane Deployment goes to zero replicas, and the hook Job `state-recover` runs `pressfleet state recover --snapshot <recovery.snapshot>` (with `--force` for `recovery.force`) once the install or upgrade has applied, with the control plane's pod spec (`templates/_control-plane.tpl`): its settings, Secrets, data volume, and ServiceAccount, which starts the repository task pods. `helm` waits for it, and fails the release if it fails. The Job is kept for a day. Another `helm upgrade` with `recovery.enabled=false` starts the control plane, which recovers the sites.
 
 On a new cluster, install with `recovery.enabled` from the start. On a running install, scale the control plane to zero and wait for its pod to go first: the chart can't order the old pod's exit before the Job's start.
+
+## Helm test
+
+`helm test pressfleet --namespace <namespace> --logs` runs `pressfleet doctor` (design doc §4.8; docs/kubernetes.md, "Doctor on Kubernetes") in the pod `doctor-test` (`templates/tests/doctor.yaml`), with the control plane's pod spec (`templates/_control-plane.tpl`): its image, settings, Secrets, data volume, and ServiceAccount. So doctor checks the control plane's own RBAC and starts its probe pods (cgroup v2, NetworkPolicy) as the control plane, which the admission policies cover as at startup; Helm creates the test pod itself as the operator. Doctor only reads the data volume, which is ReadWriteMany, so the test runs beside the control plane. Its component label is `doctor-test`, so the control plane's Service and NetworkPolicies don't select it; it reaches only the API server, which no policy of the chart restricts.
+
+The test fails when a required check fails. Doctor exits 2 when only recommended checks fail or warn, which the test counts as passing; the report shows them. The pod is kept, for `kubectl logs doctor-test`, and replaced by the next run (`before-hook-creation`).
 
 ## Development
 
