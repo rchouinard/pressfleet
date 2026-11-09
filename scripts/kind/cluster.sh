@@ -243,6 +243,7 @@ env_vars() {
 	echo "PRESSFLEET_K8S_CONTEXT=$context"
 	echo "PRESSFLEET_K8S_KUBECONFIG=$KUBECONFIG"
 	echo "PRESSFLEET_K8S_REGISTRY=$registry:5000"
+	echo "PRESSFLEET_K8S_PUSH_REGISTRY=127.0.0.1:$registry_port"
 }
 
 case "${1:-}" in
