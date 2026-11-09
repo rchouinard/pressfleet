@@ -103,6 +103,7 @@ func TestRecoverSites(t *testing.T) {
 				t.Errorf("site %s is %s before its recovery", s.Name, s.Status)
 			}
 		}
+		flushes := map[string]int{running.ID: e.cache.Flushes(running.ID), stopped.ID: e.cache.Flushes(stopped.ID)}
 		// The startup reconciliation runs alongside and leaves them alone.
 		if _, err := e.svc.EnqueueReconcile(ctx); err != nil {
 			t.Fatal(err)
@@ -130,6 +131,10 @@ func TestRecoverSites(t *testing.T) {
 			}
 			if got := e.data(tc.site.ID); !strings.Contains(got, tc.data) {
 				t.Errorf("site %s database after recovery = %q", tc.site.Name, got)
+			}
+			// The object cache held the pre-recovery options (#341).
+			if e.cache.Flushes(tc.site.ID) <= flushes[tc.site.ID] {
+				t.Errorf("site %s: the object cache wasn't flushed", tc.site.Name)
 			}
 		}
 		if calls := e.wpCalls(running.ID, "core update-db"); len(calls) != 1 {
