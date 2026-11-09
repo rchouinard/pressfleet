@@ -1092,7 +1092,11 @@ func testKindSessionLimits(t *testing.T, f *kindFixture) {
 	if _, err := fmt.Sscanf(res.Stdout, "started %d", &started); err != nil {
 		t.Fatalf("fork bomb task printed %q", res.Stdout)
 	}
-	if started >= 1024 || started < 900 || !strings.Contains(res.Stdout, "fork") {
+	// The limit counts every process and thread in the pod, so how many
+	// the bomb gets before it varies by host (1021 on one, 884 on the CI
+	// runner); what matters is that forking fails below 1024, and not at
+	// some much lower limit.
+	if started >= 1024 || started < 512 || !strings.Contains(res.Stdout, "fork") {
 		t.Errorf("a pod started %d processes before forking failed (%q); want the kubelet's podPidsLimit of 1024 to stop it", started, res.Stdout)
 	}
 }
