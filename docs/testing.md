@@ -415,7 +415,7 @@ When a test ends, the harness uninstalls the release, deletes the platform's and
 
 ### In CI
 
-The `E2E Kubernetes` workflow (`.github/workflows/e2e-k8s.yml`) runs `make test-k8s-e2e` on the runner's Docker Engine: nightly on `main` unless a nightly run already tested the commit, on manual runs (`gh workflow run e2e-k8s.yml --ref my-branch -f tier=smoke`, or `-f run=TestKubernetesConformance`), and on PRs when the `e2e:k8s` label is added, which runs everything. Add it to PRs that change the Kubernetes driver, the chart, or `scripts/kind`, and re-add it to test new commits. When the change touches `images/`, the workflow builds the site images from the tree first, as the Compose workflow does.
+The `E2E Kubernetes` workflow (`.github/workflows/e2e-k8s.yml`) runs `make test-k8s-e2e` on the runner's Docker Engine: nightly on `main` unless a nightly run already tested the commit, on manual runs (`gh workflow run e2e-k8s.yml --ref my-branch -f tier=smoke`, or `-f run=TestKubernetesConformance`), and on PRs when the `e2e:k8s` label is added, which runs everything. Add it to PRs that change the Kubernetes driver, the chart, or `scripts/kind`, and re-add it to test new commits. When the change touches `images/`, the workflow builds the site images from the tree first, as the Compose workflow does. Runners on one host share its kind cluster, so runs from different branches take turns: each holds `/tmp/pressfleet-k8s-e2e.lock` for the whole of `make test-k8s-e2e`, and a waiting run logs that it is waiting.
 
 ## Dashboard end-to-end tests
 
