@@ -231,6 +231,8 @@ type object struct {
 		Name string `yaml:"name"`
 	} `yaml:"metadata"`
 	Spec struct {
+		// A Pod's spec is the pod itself.
+		pod      `yaml:",inline"`
 		Template struct {
 			Spec *pod `yaml:"spec"`
 		} `yaml:"template"`
@@ -290,6 +292,8 @@ func podSpec(o object) (*pod, bool) {
 	switch o.Kind {
 	case "Deployment", "StatefulSet", "DaemonSet", "Job":
 		return o.Spec.Template.Spec, o.Spec.Template.Spec != nil
+	case "Pod":
+		return &o.Spec.pod, true
 	}
 	return nil, false
 }

@@ -248,7 +248,7 @@ Statuses: `PASS`; `FAIL` (a required check failed); `WARN` (a recommended check 
 
 ### Kubernetes checks
 
-With `driver: kubernetes`, `doctor` checks the cluster instead of the Docker host. It runs at control plane startup (the required checks must pass for the control plane to start) and in `pressfleet doctor`, which connects with `kubernetes.kubeconfig` or the pod's service account: run it in the control plane pod with `kubectl exec`. The chart has no Helm test. The Docker checks, the host memory check, and the host DNS checks are `UNAVAILABLE`, because a cluster has no single host. The dashboard's platform overview shows the same checks, except that the two that run pods (cgroup v2 and NetworkPolicy) are `UNAVAILABLE` there, so that opening the dashboard doesn't create pods.
+With `driver: kubernetes`, `doctor` checks the cluster instead of the Docker host. It runs at control plane startup (the required checks must pass for the control plane to start) and in `pressfleet doctor`, which connects with `kubernetes.kubeconfig` or the pod's service account: run it in the control plane pod with `kubectl exec`. The chart's Helm test runs it too (`helm test pressfleet --namespace pressfleet --logs`), in a pod like the control plane's, and fails only when a required check fails ([Doctor on Kubernetes](kubernetes.md#doctor-on-kubernetes)). The Docker checks, the host memory check, and the host DNS checks are `UNAVAILABLE`, because a cluster has no single host. The dashboard's platform overview shows the same checks, except that the two that run pods (cgroup v2 and NetworkPolicy) are `UNAVAILABLE` there, so that opening the dashboard doesn't create pods.
 
 | Check | What it means | If it fails |
 | --- | --- | --- |

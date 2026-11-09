@@ -1,9 +1,11 @@
 {{/*
-The control plane's pod spec, shared by its Deployment and by the state
+The control plane's pod spec, shared by its Deployment, by the state
 recovery Job (state-recover.yaml), which runs `pressfleet state recover` with
 the same settings, Secrets, data volume, and ServiceAccount (its repository
-tasks are pods the driver starts). (dict "root" $ "args" (list "serve")
-"serve" true): serve adds the ports and probes of the running control plane.
+tasks are pods the driver starts), and by the Helm test (tests/doctor.yaml),
+whose probe pods are the driver's too. (dict "root" $ "args" (list "serve")
+"serve" true): serve adds the ports and probes of the running control plane;
+"command", if set, replaces the image's entrypoint.
 */}}
 {{- define "pressfleet.controlPlanePodSpec" -}}
 {{- $root := .root }}
@@ -25,6 +27,9 @@ restartPolicy: Never
 containers:
   - name: control-plane
     image: {{ include "pressfleet.controlPlaneImage" $root | quote }}
+    {{- with .command }}
+    command: {{ toJson . }}
+    {{- end }}
     args: {{ toJson .args }}
     env:
       # The Go process's share of the memory limit, as on Compose (§4.1).
