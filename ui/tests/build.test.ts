@@ -85,7 +85,7 @@ describe('AppAbout', () => {
   it.each([
     { orchestrator: 'compose' as const, want: 'install its pressfleet CLI on the host and run pressfleet upgrade', notWant: 'helm' },
     { orchestrator: undefined, want: 'pressfleet upgrade', notWant: 'helm' },
-    { orchestrator: 'kubernetes' as const, want: 'apply the new chart\'s CRDs, and run helm upgrade', notWant: 'pressfleet upgrade' },
+    { orchestrator: 'kubernetes' as const, want: 'read its release notes and run helm upgrade', notWant: 'pressfleet upgrade' },
   ])('names the upgrade of the $orchestrator orchestrator', ({ orchestrator, want, notWant }) => {
     const wrapper = mount(AppAbout, { props: { build: build(), release: release(), orchestrator, open: true }, global })
     const text = wrapper.find('[data-testid=update]').text().replace(/\s+/g, ' ')

@@ -112,7 +112,7 @@ func TestCheckAnnouncesUpgrade(t *testing.T) {
 		notWant    string
 	}{
 		{"compose", false, "install its CLI and run pressfleet upgrade", "helm"},
-		{"kubernetes", true, "read its release notes, apply the new chart's CRDs, and run helm upgrade", "pressfleet upgrade"},
+		{"kubernetes", true, "read its release notes and run helm upgrade", "pressfleet upgrade"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

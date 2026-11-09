@@ -8,9 +8,9 @@ import (
 )
 
 // Router is one of a site's Traefik routers, as data the drivers render
-// into labels, route files, or IngressRoutes. Both drivers build them from
-// [SiteRouters], so a router added there reaches every driver, its
-// maintenance twins included.
+// into labels, route files, or the routes they serve Traefik. Both drivers
+// build them from [SiteRouters], so a router added there reaches every
+// driver, its maintenance twins included.
 type Router struct {
 	Name         string
 	Rule         string

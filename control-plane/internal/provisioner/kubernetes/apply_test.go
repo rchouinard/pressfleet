@@ -32,10 +32,10 @@ kind: Namespace
 metadata:
   name: pf-site1
 ---
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
 metadata:
-  name: noindex
+  name: default-deny
   namespace: pf-site1
 `
 
@@ -48,7 +48,7 @@ func TestDecodeManifests(t *testing.T) {
 	for _, o := range objs {
 		got = append(got, o.GetKind()+" "+objectName(o))
 	}
-	want := []string{"Service pf-site1/nginx", "Namespace pf-site1", "Middleware pf-site1/noindex"}
+	want := []string{"Service pf-site1/nginx", "Namespace pf-site1", "NetworkPolicy pf-site1/default-deny"}
 	if !slices.Equal(got, want) {
 		t.Errorf("decoded %q, want %q", got, want)
 	}
@@ -94,7 +94,7 @@ func TestApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The namespace first, then the others in order.
-	want := []string{"namespaces /pf-site1", "services pf-site1/nginx", "middlewares pf-site1/noindex"}
+	want := []string{"namespaces /pf-site1", "services pf-site1/nginx", "networkpolicies pf-site1/default-deny"}
 	if got := applied(t, dyn); !slices.Equal(got, want) {
 		t.Errorf("applied %q, want %q", got, want)
 	}

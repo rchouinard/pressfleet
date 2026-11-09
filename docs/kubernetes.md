@@ -172,7 +172,7 @@ pfk pressfleet repository check --help
 | Which release? | `helm list -n pressfleet`. `pressfleet version` on Kubernetes says to ask Helm |
 | Is the cluster fit? | `helm test pressfleet -n pressfleet --logs`, `pfk pressfleet doctor`, or the dashboard's **Platform overview** |
 
-Release notices ([Release check](upgrading.md#release-check)) in the dashboard's About dialog, the control plane's log, and `pfk pressfleet version` say to read the release notes, apply the new chart's CRDs, and run `helm upgrade`, as in [Upgrading](#upgrading).
+Release notices ([Release check](upgrading.md#release-check)) in the dashboard's About dialog, the control plane's log, and `pfk pressfleet version` say to read the release notes and run `helm upgrade`, as in [Upgrading](#upgrading).
 
 ### Doctor on Kubernetes
 
@@ -211,14 +211,7 @@ Everything in [Upgrading](upgrading.md#kubernetes) applies; this is the order of
 
 1. Read the [release notes](upgrading.md#notes-for-specific-releases) and the GitHub release's notes for the oldest release the new one upgrades from.
 2. **Back up PostgreSQL** and take a state backup: `pfk pressfleet state backup`. The control plane migrates the schema when it starts, and a migration can't be undone except by restoring the backup.
-3. **Apply the new release's Traefik CRDs.** Helm never upgrades a chart's CRDs:
-
-   ```sh
-   helm show crds oci://ghcr.io/rchouinard/pressfleet/charts/pressfleet --version <new release> \
-     | kubectl apply --server-side -f -
-   ```
-
-4. **Upgrade**, with your values file. Prefer `--values` to `--reuse-values`: with the file, new defaults of the chart reach you, and the file is the record of what you run.
+3. **Upgrade**, with your values file. The chart has no CRDs to apply first: Traefik reads no Kubernetes API. Prefer `--values` to `--reuse-values`: with the file, new defaults of the chart reach you, and the file is the record of what you run.
 
    ```sh
    helm upgrade pressfleet oci://ghcr.io/rchouinard/pressfleet/charts/pressfleet --version <new release> \
@@ -226,7 +219,7 @@ Everything in [Upgrading](upgrading.md#kubernetes) applies; this is the order of
    ```
 
    The Job `upgrade-preflight` runs first and refuses a downgrade, an upgrade from a release older than the new one accepts, and a change of MariaDB's release series. When it refuses, nothing changed: `kubectl -n pressfleet logs job/upgrade-preflight`. The control plane then restarts on the new release; sites keep serving meanwhile.
-5. Check with `helm test pressfleet --namespace pressfleet --logs` (or `pfk pressfleet doctor`) and the dashboard. The control plane then updates sites' templates and images one at a time, as on Compose.
+4. Check with `helm test pressfleet --namespace pressfleet --logs` (or `pfk pressfleet doctor`) and the dashboard. The control plane then updates sites' templates and images one at a time, as on Compose.
 
 To undo an upgrade, scale the control plane to zero, restore the PostgreSQL backup from step 2, then `helm rollback pressfleet --namespace pressfleet --wait` ([Upgrading](upgrading.md#kubernetes)). Anything the control plane recorded after the upgrade is lost with the restore.
 
@@ -254,7 +247,9 @@ Rehearse once, as the [drill](disaster-recovery.md#rehearsing) says, before real
 - **CPU usage totals** are kept in the control plane's memory and restart after it restarts.
 - **Site images must be public** ([Images and registries](#images-and-registries)).
 - **An external MariaDB must be named by IP address** when it is in a private range.
-- **A preview site's basic auth** is a Secret next to the Traefik Middleware, in the site's namespace.
+- **Routes aren't objects of the cluster.** Traefik has no access to the Kubernetes API and no ServiceAccount token. Its own routes (dashboard, SFTP, the maintenance page) are in its ConfigMap; the control plane serves the sites' routes to Traefik's HTTP provider from a port of its own (8081, `kubernetes.traefik_provider_listen`), which only Traefik may reach, and Traefik polls it every 2 seconds, so a new site, domain, or maintenance mode routes within a couple of seconds of its job. IngressRoutes anyone creates in the cluster are ignored. While the control plane is down, Traefik keeps routing what it last read; a Traefik that starts meanwhile routes no site until the control plane is back.
+- **A preview site's basic auth** is served to Traefik with the username and the password's bcrypt hash; there is no Secret for it. The provider endpoint is unauthenticated, so those hashes are protected only by the NetworkPolicy that admits Traefik's pod alone to port 8081: keep a CNI that enforces NetworkPolicy (doctor checks it).
+- **Traefik's metrics** are on port 9100 of the `traefik-metrics` Service, which only the control plane may reach.
 - **Egress from sites** may not reach private, shared (100.64.0.0/10), or link-local addresses, nor the pod ranges, nor any node or API server endpoint address, public ones included: nothing in the cluster or on your network other than DNS, MariaDB, the object cache, and the SMTP relay's port. A site that must call an internal service needs it on a public address, or a change to the driver's policy, which isn't a setting.
 - **Namespaces.** A site's namespace is created when it is created and deleted with it. `helm uninstall` removes the platform's objects but not the sites' namespaces, the data volume (kept by `helm.sh/resource-policy: keep`), or PersistentVolumes. Delete the sites in the dashboard first if you mean to remove everything.
 - **Don't edit** a site's objects, the platform namespace's policies, or the admission policies by hand.
@@ -429,6 +424,6 @@ Everything should pass. If the control plane doesn't start, `kubectl -n pressfle
 
 ### 7. Upgrade and recover on k3s
 
-Upgrade as in [Upgrading](#upgrading): dump PostgreSQL, apply the CRDs, `helm upgrade --values`. For k3s itself, follow its upgrade guide, one minor release at a time, and run doctor afterwards.
+Upgrade as in [Upgrading](#upgrading): dump PostgreSQL, `helm upgrade --values`. For k3s itself, follow its upgrade guide, one minor release at a time, and run doctor afterwards.
 
 To recover a lost server: install k3s as in step 2 and the NFS class as in step 3 (with S3 backups, the NFS export starts empty; with `local` backups, put the saved `backups/` directory back in the export and install with `controlPlane.data.existingClaim` naming a claim on it), recreate PostgreSQL empty (or restore your dump and skip the recovery values), then run the commands of [Disaster recovery](disaster-recovery.md#kubernetes) with your saved `secrets.yaml` and `values.yaml`.

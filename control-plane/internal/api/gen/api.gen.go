@@ -3178,8 +3178,8 @@ type PlatformRelease struct {
 
 	// UpdateAvailable Whether `latest_version` is newer than the running control plane.
 	// To upgrade, install that release's CLI on the host and run
-	// `pressfleet upgrade`; on Kubernetes (`orchestrator`), apply the
-	// new chart's CRDs and run `helm upgrade`. Always false for a
+	// `pressfleet upgrade`; on Kubernetes (`orchestrator`), run
+	// `helm upgrade`. Always false for a
 	// development build.
 	UpdateAvailable bool `json:"update_available"`
 }

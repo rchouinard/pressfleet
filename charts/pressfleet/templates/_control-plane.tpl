@@ -92,6 +92,10 @@ containers:
         value: {{ $root.Values.kubernetes.storageClasses.data | quote }}
       - name: PRESSFLEET_KUBERNETES_TRAEFIK_SERVICE
         value: traefik
+      # Where Traefik's HTTP provider reads the sites' routes
+      # (traefik-config.yaml).
+      - name: PRESSFLEET_KUBERNETES_TRAEFIK_PROVIDER_LISTEN
+        value: ":8081"
       # Task pods mount it too (#219).
       - name: PRESSFLEET_KUBERNETES_DATA_CLAIM
         value: {{ $root.Values.controlPlane.data.existingClaim | default "control-plane-data" | quote }}
@@ -106,6 +110,9 @@ containers:
       # The SFTP gateway (§5.8); Traefik forwards sftp.port to it.
       - name: sftp
         containerPort: 2222
+      # Traefik's HTTP provider (kubernetes.traefik_provider_listen).
+      - name: traefik-config
+        containerPort: 8081
     {{- end }}
     volumeMounts:
       - name: data

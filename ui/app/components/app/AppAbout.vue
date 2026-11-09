@@ -45,7 +45,7 @@ const update = computed(() => availableUpdate(props.release))
       <div v-if="update" class="mt-4 rounded-md border border-default p-3 text-sm" data-testid="update">
         <p class="font-medium">PressFleet {{ update.latest_version }} is available</p>
         <p v-if="orchestrator === 'kubernetes'" class="mt-1 text-muted">
-          To upgrade, read its release notes, apply the new chart's CRDs, and run
+          To upgrade, read its release notes and run
           <code class="font-mono text-xs">helm upgrade</code> (docs/kubernetes.md, "Upgrading").
         </p>
         <p v-else class="mt-1 text-muted">

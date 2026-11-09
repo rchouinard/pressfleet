@@ -78,7 +78,7 @@ func (p *Provisioner) CreateSite(ctx context.Context, cfg *provisioner.SiteConfi
 	if err != nil {
 		return nil, fmt.Errorf("create site: %w", err)
 	}
-	if err := p.maintenanceBeforeApply(ctx, cfg); err != nil {
+	if err := p.maintenanceBeforeApply(cfg); err != nil {
 		return nil, fmt.Errorf("create site %s: %w", cfg.ID, err)
 	}
 	if err := p.applySite(ctx, cfg.ID, dir); err != nil {
@@ -90,7 +90,7 @@ func (p *Provisioner) CreateSite(ctx context.Context, cfg *provisioner.SiteConfi
 	if err := p.waitForSite(ctx, cfg.ID); err != nil {
 		return nil, fmt.Errorf("create site %s: %w", cfg.ID, err)
 	}
-	if err := p.maintenanceAfterApply(ctx, cfg); err != nil {
+	if err := p.maintenanceAfterApply(cfg); err != nil {
 		return nil, fmt.Errorf("create site %s: %w", cfg.ID, err)
 	}
 	p.log.InfoContext(ctx, "site created", "site_id", cfg.ID)
@@ -114,7 +114,7 @@ func (p *Provisioner) UpdateSite(ctx context.Context, cfg *provisioner.SiteConfi
 	if err != nil {
 		return nil, fmt.Errorf("update site: %w", err)
 	}
-	if err := p.maintenanceBeforeApply(ctx, cfg); err != nil {
+	if err := p.maintenanceBeforeApply(cfg); err != nil {
 		return nil, fmt.Errorf("update site %s: %w", cfg.ID, err)
 	}
 	if err := p.applySite(ctx, cfg.ID, dir); err != nil {
@@ -125,7 +125,7 @@ func (p *Provisioner) UpdateSite(ctx context.Context, cfg *provisioner.SiteConfi
 			return nil, fmt.Errorf("update site %s: %w", cfg.ID, err)
 		}
 	}
-	if err := p.maintenanceAfterApply(ctx, cfg); err != nil {
+	if err := p.maintenanceAfterApply(cfg); err != nil {
 		return nil, fmt.Errorf("update site %s: %w", cfg.ID, err)
 	}
 	p.log.InfoContext(ctx, "site updated", "site_id", cfg.ID)
@@ -250,8 +250,9 @@ func (p *Provisioner) StopSite(ctx context.Context, siteID string) error {
 	return nil
 }
 
-// DeleteSite deletes the site's namespace, which deletes everything in it,
-// the wp-content volume included, waits until it is gone, deletes the
+// DeleteSite stops serving the site's routes, deletes the site's namespace,
+// which deletes everything in it, the wp-content volume included, waits
+// until it is gone, deletes the
 // site's clone of the data volume (never the data volume's storage), and
 // removes the site's rendered directory. Deleting a site that doesn't exist succeeds. A
 // namespace of the site's name that PressFleet didn't create is refused.
@@ -282,14 +283,15 @@ func (p *Provisioner) DeleteSite(ctx context.Context, siteID string) error {
 			return fmt.Errorf("delete site %s: %w", siteID, err)
 		}
 	}
+	// Its routes go first, rather than at the end with the site's
+	// directory, so that Traefik stops sending visitors to a site that is
+	// going away.
+	if err := p.unroute(siteID); err != nil {
+		return fmt.Errorf("delete site %s: %w", siteID, err)
+	}
 	wctx, cancel := context.WithTimeout(ctx, p.waitTimeout)
 	defer cancel()
 	if err := p.WaitForNamespaceDeleted(wctx, name); err != nil {
-		return fmt.Errorf("delete site %s: %w", siteID, err)
-	}
-	// The namespace took its routes with it, but not the maintenance routes
-	// in the platform namespace.
-	if err := p.removeMaintenance(ctx, siteID, nil); err != nil {
 		return fmt.Errorf("delete site %s: %w", siteID, err)
 	}
 	// Cluster-wide, so not deleted with the namespace; the storage stays.

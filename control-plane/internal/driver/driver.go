@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"path/filepath"
 	"time"
 
@@ -64,6 +65,12 @@ type Runtime struct {
 	// HostProbe reads facts about the host's container engine for the
 	// doctor.
 	HostProbe doctor.DockerProbe
+	// TraefikConfig, when set, serves the edge router's dynamic
+	// configuration (the sites' routes) to Traefik's HTTP provider, on a
+	// listener of its own at TraefikConfigListen: the Kubernetes driver's
+	// Traefik has no API access to read routes from (#322).
+	TraefikConfig       http.Handler
+	TraefikConfigListen string
 }
 
 // StartupHook is implemented by a driver that has work to do when the
@@ -269,6 +276,9 @@ func newKubernetes(ctx context.Context, opts Options) (*Runtime, error) {
 		Templates:      prov,
 		Snapshots:      prov,
 		HostProbe:      noDockerHost{},
+
+		TraefikConfig:       prov.TraefikConfigHandler(),
+		TraefikConfigListen: k.TraefikProviderListen,
 	}, nil
 }
 

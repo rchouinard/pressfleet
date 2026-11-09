@@ -6,10 +6,12 @@ import "context"
 // interface, outside [Driver], so that the metrics collector is the only
 // thing that needs it.
 //
-// Traefik serves them on a loopback-only entry point, because anything on a
-// network it can be reached over, a site network included, would read every
-// site's traffic. The driver therefore fetches them from inside the Traefik
-// container rather than over the network.
+// They name every site and its traffic, so no site may read them. On
+// Compose, Traefik serves them on a loopback-only entry point, because it
+// is on every site's network, and the driver fetches them from inside the
+// Traefik container. On Kubernetes the entry point is on the pod network
+// behind a NetworkPolicy that admits the control plane alone, and the
+// driver reads it over the network, with no exec into Traefik's pod.
 type TraefikMetricsReader interface {
 	// TraefikMetrics returns the body of Traefik's /metrics endpoint in
 	// the Prometheus text exposition format.
@@ -18,7 +20,7 @@ type TraefikMetricsReader interface {
 
 // TraefikServiceNamer is implemented by a driver whose Traefik names a
 // site's services differently from the Docker provider's pf-<site-id>@docker
-// (the Kubernetes CRD provider names one per route, after the namespace).
+// (the Kubernetes driver's come from Traefik's HTTP provider, @http).
 // The traffic collector maps Traefik's per-service series to sites with it,
 // summing a site's services. It is optional: without it the collector
 // assumes the Docker names.

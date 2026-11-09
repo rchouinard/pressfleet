@@ -532,6 +532,14 @@ func (s *server) run(ctx context.Context) error {
 		w.Go("SFTP gateway", func(ctx context.Context) error { return s.gateway.Serve(ctx, s.gatewayLn) })
 	}
 
+	// Traefik polls its configuration every few seconds: no access log.
+	if h := s.rt.TraefikConfig; h != nil {
+		provider := httpserver.New(httpserver.Options{
+			Addr: s.rt.TraefikConfigListen, Handler: h, NoAccessLog: true,
+			Logger: s.log.With("component", "traefik-provider"),
+		})
+		w.Go("Traefik provider", provider.Run)
+	}
 	srv := httpserver.New(httpserver.Options{Addr: s.a.cfg.Listen, Handler: s.handler, Logger: s.log})
 	srvErr := srv.Run(ctx)
 	// Stop the workers too if the server failed on its own.

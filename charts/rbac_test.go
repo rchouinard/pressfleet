@@ -29,8 +29,20 @@ type rbacObject struct {
 		Kind string `yaml:"kind"`
 		Name string `yaml:"name"`
 	} `yaml:"roleRef"`
-	Spec struct {
+	Subjects []struct {
+		Kind string `yaml:"kind"`
+		Name string `yaml:"name"`
+	} `yaml:"subjects"`
+	// AutomountServiceAccountToken is a ServiceAccount's.
+	AutomountServiceAccountToken *bool `yaml:"automountServiceAccountToken"`
+	Spec                         struct {
 		PolicyName string `yaml:"policyName"`
+		Template   struct {
+			Spec struct {
+				ServiceAccountName           string `yaml:"serviceAccountName"`
+				AutomountServiceAccountToken *bool  `yaml:"automountServiceAccountToken"`
+			} `yaml:"spec"`
+		} `yaml:"template"`
 	} `yaml:"spec"`
 }
 
@@ -40,12 +52,15 @@ type rbacObject struct {
 // cluster-wide control plane role that reads no Secrets and reaches no
 // node or pod, pods that are never changed in place, an admission policy
 // for each cluster-wide right RBAC can't narrow, and outside the platform
-// namespace only the read of the API server's EndpointSlice (#324).
+// namespace only the read of the API server's EndpointSlice (#324). The
+// control plane is the only ServiceAccount with rights or a token: Traefik
+// reads nothing from the API (#322), so no binding names it, its pod
+// mounts no token, and no role names Traefik's resources. Nor does the
+// control plane run commands in the platform's pods.
 func TestRBACLeastPrivilege(t *testing.T) {
 	const (
 		controlPlane = "pressfleet:" + releaseNamespace + ":control-plane"
 		site         = "pressfleet:" + releaseNamespace + ":site"
-		traefik      = "pressfleet:" + releaseNamespace + ":traefik"
 		apiServer    = "pressfleet:" + releaseNamespace + ":api-server-endpoints"
 	)
 	// What the control plane's ClusterRole may name: group/resource, and
@@ -89,8 +104,24 @@ func TestRBACLeastPrivilege(t *testing.T) {
 				case "ValidatingAdmissionPolicyBinding":
 					bindings = append(bindings, o.Spec.PolicyName)
 				case "ClusterRoleBinding":
-					if o.RoleRef.Name != controlPlane && o.RoleRef.Name != traefik {
+					if o.RoleRef.Name != controlPlane {
 						t.Errorf("ClusterRoleBinding %s binds %s cluster-wide", o.Metadata.Name, o.RoleRef.Name)
+					}
+				case "ServiceAccount":
+					if o.Metadata.Name != "control-plane" && (o.AutomountServiceAccountToken == nil || *o.AutomountServiceAccountToken) {
+						t.Errorf("ServiceAccount %s mounts its token by default", o.Metadata.Name)
+					}
+				case "Deployment", "StatefulSet", "Job":
+					pod := o.Spec.Template.Spec
+					if pod.ServiceAccountName != "control-plane" && (pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken) {
+						t.Errorf("%s %s mounts a ServiceAccount token (%q)", o.Kind, o.Metadata.Name, pod.ServiceAccountName)
+					}
+				}
+				if o.Kind == "ClusterRoleBinding" || o.Kind == "RoleBinding" {
+					for _, sub := range o.Subjects {
+						if sub.Kind != "ServiceAccount" || sub.Name != "control-plane" {
+							t.Errorf("%s %s binds %s %s", o.Kind, o.Metadata.Name, sub.Kind, sub.Name)
+						}
 					}
 				}
 				if o.Kind != "ClusterRole" && o.Kind != "Role" {
@@ -134,8 +165,11 @@ func TestRBACLeastPrivilege(t *testing.T) {
 						case res == "nodes/proxy":
 							t.Errorf("%s: nodes/proxy", name)
 						}
-						if o.Metadata.Name == traefik && writes(r.Verbs) {
-							t.Errorf("%s: writes %s (%v)", name, res, r.Verbs)
+						if slices.Contains(r.APIGroups, "traefik.io") {
+							t.Errorf("%s: Traefik's %s; Traefik's routes aren't objects of the cluster", name, res)
+						}
+						if o.Kind == "Role" && res == "pods/exec" {
+							t.Errorf("%s: exec into the platform's pods", name)
 						}
 						if o.Metadata.Name != controlPlane {
 							continue
@@ -152,7 +186,7 @@ func TestRBACLeastPrivilege(t *testing.T) {
 					}
 				}
 			}
-			for _, want := range []string{"ClusterRole/" + controlPlane, "ClusterRole/" + site, "ClusterRole/" + traefik, "Role/control-plane", "Role/" + apiServer} {
+			for _, want := range []string{"ClusterRole/" + controlPlane, "ClusterRole/" + site, "Role/control-plane", "Role/" + apiServer} {
 				if !roles[want] {
 					t.Errorf("no %s rendered", want)
 				}

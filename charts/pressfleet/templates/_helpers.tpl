@@ -38,9 +38,6 @@ pressfleet:{{ .Release.Namespace }}:site
 {{- define "pressfleet.controlPlaneClusterRole" -}}
 pressfleet:{{ .Release.Namespace }}:control-plane
 {{- end }}
-{{- define "pressfleet.traefikClusterRole" -}}
-pressfleet:{{ .Release.Namespace }}:traefik
-{{- end }}
 {{- define "pressfleet.admissionPolicy" -}}
 control-plane.{{ .Release.Namespace }}.pressfleet.io
 {{- end }}

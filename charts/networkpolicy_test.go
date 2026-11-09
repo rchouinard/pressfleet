@@ -65,9 +65,15 @@ type networkPolicy struct {
 	} `yaml:"metadata"`
 	Spec struct {
 		Ingress []struct {
-			From []policyPeer `yaml:"from"`
+			From  []policyPeer `yaml:"from"`
+			Ports []policyPort `yaml:"ports"`
 		} `yaml:"ingress"`
 	} `yaml:"spec"`
+}
+
+// policyPort is a port of an ingress rule: a name or a number.
+type policyPort struct {
+	Port any `yaml:"port"`
 }
 
 type policyPeer struct {
@@ -141,6 +147,84 @@ func TestPlatformPoliciesAdmitOwnSites(t *testing.T) {
 					t.Errorf("%s: admitted by %v, want redis among them", ns.name, got)
 				case !ns.admitted && len(got) > 0:
 					t.Errorf("%s: admitted by %v, want none", ns.name, got)
+				}
+			}
+		})
+	}
+}
+
+// TestSensitivePortsAdmitOnePeer checks the ports whose content the
+// security review counts as sensitive (#322): the control plane's Traefik
+// provider (8081, preview bcrypt hashes and every host name), which only
+// Traefik's pod may reach, and Traefik's metrics, which only the control
+// plane's may. Every other pod of the platform namespace, repository task
+// pods included, and every pod of another namespace is refused.
+func TestSensitivePortsAdmitOnePeer(t *testing.T) {
+	pod := func(component string) map[string]string {
+		return map[string]string{"app.kubernetes.io/name": "pressfleet", "app.kubernetes.io/component": component}
+	}
+	others := map[string]map[string]string{
+		"repository task":  {"app.kubernetes.io/managed-by": "pressfleet", "pressfleet.io/task": "x", "pressfleet.io/component": "task"},
+		"mariadb":          pod("mariadb"),
+		"redis":            pod("redis"),
+		"maintenance":      pod("maintenance"),
+		"victoria-metrics": pod("victoria-metrics"),
+	}
+	ports := []struct{ policy, port, peer string }{
+		{"control-plane", "traefik-config", "traefik"},
+		{"traefik", "metrics", "control-plane"},
+	}
+	for _, values := range valuesFiles(t) {
+		t.Run(filepath.Base(values), func(t *testing.T) {
+			out, err := render(t, values)
+			if err != nil {
+				t.Fatalf("helm template: %v", err)
+			}
+			policies := map[string]networkPolicy{}
+			dec := yaml.NewDecoder(strings.NewReader(out))
+			for {
+				var np networkPolicy
+				if err := dec.Decode(&np); errors.Is(err, io.EOF) {
+					break
+				} else if err != nil {
+					t.Fatal(err)
+				}
+				if np.Kind == "NetworkPolicy" {
+					policies[np.Metadata.Name] = np
+				}
+			}
+			for _, p := range ports {
+				np, ok := policies[p.policy]
+				if !ok {
+					t.Fatalf("no NetworkPolicy %s", p.policy)
+				}
+				var found bool
+				for _, rule := range np.Spec.Ingress {
+					if !slices.ContainsFunc(rule.Ports, func(rp policyPort) bool {
+						return rp.Port == p.port
+					}) {
+						continue
+					}
+					found = true
+					if len(rule.From) == 0 {
+						t.Errorf("%s: port %s admits everyone", p.policy, p.port)
+					}
+					for _, peer := range rule.From {
+						if peer.NamespaceSelector != nil {
+							t.Errorf("%s: port %s admits other namespaces", p.policy, p.port)
+						}
+						if !selectorMatches(t, peer.PodSelector, pod(p.peer)) {
+							t.Errorf("%s: port %s admits a peer that isn't %s", p.policy, p.port, p.peer)
+						}
+						for name, labels := range others {
+							if selectorMatches(t, peer.PodSelector, labels) {
+								t.Errorf("%s: port %s admits %s pods", p.policy, p.port, name)
+							}
+						}
+					}
+				}
+				if !found {
+					t.Errorf("%s: no rule for port %s", p.policy, p.port)
 				}
 			}
 		})

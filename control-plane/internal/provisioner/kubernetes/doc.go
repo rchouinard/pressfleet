@@ -3,8 +3,8 @@
 // (§4.2; archtest enforces it).
 //
 // The driver talks to the API server with client-go's typed clientset, and
-// with its dynamic client for server-side apply, which also covers Traefik's
-// CRDs. It keeps no informer caches.
+// with its dynamic client for server-side apply. It keeps no informer
+// caches.
 //
 // Each site is the namespace pf-<site-id>, holding what the site's Compose
 // project holds: a single-replica Deployment whose pod runs nginx and php,
@@ -17,6 +17,10 @@
 // objects that the manifests no longer have ([Client.Prune]), and wait for
 // the cluster to converge. Starting and stopping a site scale its
 // Deployment between 1 and 0, and deleting it deletes its namespace.
+//
+// Sites' routes aren't objects of the cluster: the control plane serves
+// them to Traefik's HTTP provider ([Provisioner.TraefikConfigHandler]), so
+// Traefik needs no access to the Kubernetes API.
 //
 // Tasks are pods ([Provisioner.RunTask], [Provisioner.RunRepositoryTask]):
 // a site's in its namespace, mounting the data volume through a clone of

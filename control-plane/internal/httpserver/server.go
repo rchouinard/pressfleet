@@ -45,6 +45,9 @@ type Options struct {
 	ShutdownTimeout time.Duration
 	// MaxBodyBytes limits request body size.
 	MaxBodyBytes int64
+	// NoAccessLog leaves requests out of the log, for a listener polled
+	// every few seconds whose access log would be noise.
+	NoAccessLog bool
 }
 
 func (o *Options) setDefaults() {
@@ -74,12 +77,16 @@ type Server struct {
 func New(opts Options) *Server {
 	opts.setDefaults()
 	log := opts.Logger
+	access := AccessLog(log)
+	if opts.NoAccessLog {
+		access = func(next http.Handler) http.Handler { return next }
+	}
 	return &Server{
 		opts: opts,
 		log:  log,
 		handler: Chain(opts.Handler,
 			RequestID,
-			AccessLog(log),
+			access,
 			Recover(log),
 			MaxBodyBytes(opts.MaxBodyBytes),
 		),

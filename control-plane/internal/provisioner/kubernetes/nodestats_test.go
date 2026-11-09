@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,22 +91,21 @@ func TestNodeStatsUnavailable(t *testing.T) {
 
 func TestTraefikServiceSite(t *testing.T) {
 	p := observed(t)
-	ns := p.SiteNamespace(testSiteID)
-	other := p.SiteNamespace("01hzy3k5q7m9c2v4b6n8r0t1wy")
 	tests := []struct {
 		name    string
 		service string
 		want    string
 	}{
-		{"preview route", ns + "-pf-" + testSiteID + "-preview-e7f9c5922c7a22260b93@kubernetescrd", testSiteID},
-		{"domain route", ns + "-pf-" + testSiteID + "-domain-0123456789abcdef0123@kubernetescrd", testSiteID},
-		{"another site", other + "-pf-x-preview-e7f9@kubernetescrd", "01hzy3k5q7m9c2v4b6n8r0t1wy"},
-		{"no dash after the ID", ns + "x-route@kubernetescrd", ""},
-		{"ID only", ns + "@kubernetescrd", ""},
-		{"truncated ID", ns[:len(ns)-1] + "-route@kubernetescrd", ""},
+		{"site", "pf-" + testSiteID + "@http", testSiteID},
+		{"another site", "pf-01hzy3k5q7m9c2v4b6n8r0t1wy@http", "01hzy3k5q7m9c2v4b6n8r0t1wy"},
+		{"a router's name", "pf-" + testSiteID + "-preview@http", ""},
+		{"truncated ID", "pf-" + testSiteID[1:] + "@http", ""},
+		{"upper case", "pf-" + strings.ToUpper(testSiteID) + "@http", ""},
 		{"Docker provider", "pf-" + testSiteID + "@docker", ""},
-		{"platform namespace", "pressfleet-maintenance-route-abc123@kubernetescrd", ""},
-		{"other prefix", "xx-" + testSiteID + "-route@kubernetescrd", ""},
+		{"CRD provider", "pf-" + testSiteID + "-pf-" + testSiteID + "-preview-e7f9c5922c7a22260b93@kubernetescrd", ""},
+		{"maintenance page", "pf-maintenance@file", ""},
+		{"maintenance page from the provider", "pf-maintenance@http", ""},
+		{"other prefix", "xx-" + testSiteID + "@http", ""},
 		{"internal service", "api@internal", ""},
 	}
 	for _, tt := range tests {

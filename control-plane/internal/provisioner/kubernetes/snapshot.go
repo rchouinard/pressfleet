@@ -30,13 +30,13 @@ func (p *Provisioner) manifestDir(siteID string) (string, error) {
 }
 
 // SnapshotRender implements provisioner.RenderSnapshotter: it copies the
-// site's manifests into SnapshotDir, replacing an earlier copy.
+// site's manifests and routes into SnapshotDir, replacing an earlier copy.
 func (p *Provisioner) SnapshotRender(_ context.Context, siteID string) error {
 	dir, err := p.manifestDir(siteID)
 	if err != nil {
 		return fmt.Errorf("snapshot site render: %w", err)
 	}
-	files, err := readManifests(dir)
+	files, err := readRendered(dir)
 	if err != nil {
 		return fmt.Errorf("snapshot site render of %s: %w", siteID, err)
 	}
@@ -62,7 +62,7 @@ func (p *Provisioner) RestoreRender(ctx context.Context, siteID string) (*provis
 	if err != nil {
 		return nil, fmt.Errorf("restore site render: %w", err)
 	}
-	files, err := readManifests(filepath.Join(dir, SnapshotDir))
+	files, err := readRendered(filepath.Join(dir, SnapshotDir))
 	if err != nil {
 		return nil, fmt.Errorf("restore site render of %s: %w", siteID, err)
 	}

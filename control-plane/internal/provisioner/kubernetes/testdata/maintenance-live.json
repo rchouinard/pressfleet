@@ -1,0 +1,50 @@
+{
+  "http": {
+    "routers": {
+      "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-alias-80fc0fb926-maintenance": {
+        "entryPoints": [
+          "websecure"
+        ],
+        "rule": "Host(`www.example.com`)",
+        "priority": 100000,
+        "service": "pf-maintenance@file",
+        "tls": {
+          "certResolver": "acme-http"
+        }
+      },
+      "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-alias-bfabc37432-maintenance": {
+        "entryPoints": [
+          "websecure"
+        ],
+        "rule": "Host(`example.org`)",
+        "priority": 100000,
+        "service": "pf-maintenance@file",
+        "tls": {
+          "certResolver": "acme-http"
+        }
+      },
+      "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-preview-maintenance": {
+        "entryPoints": [
+          "websecure"
+        ],
+        "rule": "Host(`blog.preview.example.com`)",
+        "priority": 100000,
+        "service": "pf-maintenance@file",
+        "tls": {
+          "certResolver": "acme-preview"
+        }
+      },
+      "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-primary-maintenance": {
+        "entryPoints": [
+          "websecure"
+        ],
+        "rule": "Host(`example.com`)",
+        "priority": 100000,
+        "service": "pf-maintenance@file",
+        "tls": {
+          "certResolver": "acme-http"
+        }
+      }
+    }
+  }
+}

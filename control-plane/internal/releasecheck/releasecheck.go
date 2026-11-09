@@ -287,7 +287,7 @@ func (c *Checker) Check(ctx context.Context) {
 	if announce {
 		attrs := []any{"version", c.opts.Version, "latest", r.LatestVersion, "url", r.ReleaseURL}
 		if c.opts.Kubernetes {
-			log.Info("a newer PressFleet release is available; read its release notes, apply the new chart's CRDs, and run helm upgrade", attrs...)
+			log.Info("a newer PressFleet release is available; read its release notes and run helm upgrade", attrs...)
 		} else {
 			log.Info("a newer PressFleet release is available; install its CLI and run pressfleet upgrade", attrs...)
 		}

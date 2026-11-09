@@ -1,0 +1,39 @@
+{
+  "http": {
+    "routers": {
+      "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-preview": {
+        "entryPoints": [
+          "websecure"
+        ],
+        "rule": "Host(`blog.preview.example.com`)",
+        "middlewares": [
+          "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-noindex"
+        ],
+        "service": "pf-01hzy3k5q7m9c2v4b6n8r0t1wx",
+        "tls": {
+          "certResolver": "acme-preview"
+        }
+      }
+    },
+    "middlewares": {
+      "pf-01hzy3k5q7m9c2v4b6n8r0t1wx-noindex": {
+        "headers": {
+          "customResponseHeaders": {
+            "X-Robots-Tag": "noindex"
+          }
+        }
+      }
+    },
+    "services": {
+      "pf-01hzy3k5q7m9c2v4b6n8r0t1wx": {
+        "loadBalancer": {
+          "servers": [
+            {
+              "url": "http://nginx.pf-01hzy3k5q7m9c2v4b6n8r0t1wx.svc"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -11,7 +11,8 @@ replace the Docker socket:
 - in each of those namespaces, the site ClusterRole, which the driver (or
   doctor) binds there;
 - in the platform namespace, the Role below: repository task pods, their
-  Secrets and NetworkPolicies, exec into Traefik, and maintenance routes;
+  Secrets and NetworkPolicies. No exec there, and no routes: the control
+  plane serves Traefik's routes itself (#322);
 - in the default namespace, reading the one EndpointSlice where the API
   server publishes its addresses, which sites' egress leaves out with the
   nodes' (security review K4).
@@ -121,10 +122,6 @@ rules:
   - apiGroups: [networking.k8s.io]
     resources: [networkpolicies]
     verbs: {{ toJson $manage }}
-  # Routes: IngressRoute and Middleware objects, named as on Compose.
-  - apiGroups: [traefik.io]
-    resources: [ingressroutes, middlewares]
-    verbs: {{ toJson $manage }}
   # Container stats (§7.2).
   - apiGroups: [metrics.k8s.io]
     resources: [pods]
@@ -149,17 +146,14 @@ rules:
   - apiGroups: [networking.k8s.io]
     resources: [networkpolicies]
     verbs: {{ toJson $manage }}
-  # Traefik's metrics and repository task streams.
+  # Repository task streams. No exec: nothing here runs commands in the
+  # platform's pods (Traefik's metrics are read over the network, #322).
   - apiGroups: [""]
-    resources: [pods/exec, pods/attach]
+    resources: [pods/attach]
     verbs: [get, create]
   - apiGroups: [""]
     resources: [pods/log]
     verbs: [get]
-  # Routes that live with the platform services, such as maintenance routes.
-  - apiGroups: [traefik.io]
-    resources: [ingressroutes, middlewares]
-    verbs: {{ toJson $manage }}
   # Doctor and uptime checks: Traefik's Service address, the platform's
   # workloads and volumes.
   - apiGroups: [""]
