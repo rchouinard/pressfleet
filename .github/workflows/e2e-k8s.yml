@@ -154,4 +154,7 @@ jobs:
           if ! flock -n "$lock" true; then
             echo "Waiting for another run of the kind tests on this host"
           fi
-          flock "$lock" "$@"
+          # A cancelled run (re-adding the label cancels the one in
+          # progress) never reaches `cluster.sh down`; start from a
+          # fresh cluster rather than whatever it left.
+          flock "$lock" sh -c 'scripts/kind/cluster.sh down && exec "$@"' sh "$@"
