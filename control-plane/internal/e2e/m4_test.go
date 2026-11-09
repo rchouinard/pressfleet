@@ -143,26 +143,7 @@ func TestM4Acceptance(t *testing.T) {
 	home := "https://" + site.PreviewDomain + "/"
 	waitCertified(t, hc, home, nil, http.StatusOK, provisioned)
 
-	// Keep traffic flowing for the whole test: rates need requests in
-	// their window, and the page cache needs hits and misses (a query
-	// string always misses the cache).
-	go func() {
-		for i := 0; ctx.Err() == nil; i++ {
-			for _, path := range []string{"/", "/?s=m4", "/missing-m4/"} {
-				req, err := http.NewRequestWithContext(ctx, http.MethodGet, home[:len(home)-1]+path, nil)
-				if err != nil {
-					return
-				}
-				if resp, err := hc.Do(req); err == nil {
-					_ = resp.Body.Close()
-				}
-			}
-			select {
-			case <-ctx.Done():
-			case <-time.After(time.Second):
-			}
-		}
-	}()
+	keepTraffic(ctx, hc, home)
 
 	// A backup gives the backup metrics, and the repository, its size.
 	resp, err := p.Client.CreateSiteBackupWithResponse(ctx, site.ID)
@@ -184,7 +165,7 @@ func TestM4Acceptance(t *testing.T) {
 	})
 
 	t.Run("every metric of the design is collected and queryable", func(t *testing.T) {
-		checkMetrics(t, p, site.ID, groupID)
+		checkMetrics(t, p, site.ID, groupID, nil)
 	})
 
 	t.Run("each default alert rule fires and resolves", func(t *testing.T) {
@@ -192,10 +173,34 @@ func TestM4Acceptance(t *testing.T) {
 	})
 }
 
+// keepTraffic sends requests to a site's home page (an https:// URL ending
+// in "/") until ctx ends: rates need requests in their window, and the page
+// cache needs hits and misses (a query string always misses the cache).
+func keepTraffic(ctx context.Context, hc *http.Client, home string) {
+	go func() {
+		for ctx.Err() == nil {
+			for _, path := range []string{"/", "/?s=m4", "/missing-m4/"} {
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, home[:len(home)-1]+path, nil)
+				if err != nil {
+					return
+				}
+				if resp, err := hc.Do(req); err == nil {
+					_ = resp.Body.Close()
+				}
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Second):
+			}
+		}
+	}()
+}
+
 // checkMetrics checks the catalog and then, until m4MetricsWait is up, that
 // every entry has at least one point from the endpoint its scope belongs
-// to.
-func checkMetrics(t *testing.T, p *e2e.Platform, siteID, groupID string) {
+// to. targetNoSource adds the entries the target has no source for, with
+// the reason.
+func checkMetrics(t *testing.T, p *e2e.Platform, siteID, groupID string, targetNoSource map[string]string) {
 	ctx := t.Context()
 	resp, err := p.Client.GetMetricCatalogWithResponse(ctx)
 	if err != nil {
@@ -220,6 +225,7 @@ func checkMetrics(t *testing.T, p *e2e.Platform, siteID, groupID string) {
 	noSource := map[string]string{
 		"object_cache_hit_ratio": "Redis counts lookups for the whole instance, not per site (package metrics, RedisCollector), so there are no per-site hit and miss counters; redis_hit_ratio covers the instance",
 	}
+	maps.Copy(noSource, targetNoSource)
 
 	// hasData asks for one entry over the last 15 minutes.
 	hasData := func(e client.MetricDescriptor) (bool, error) {
@@ -414,9 +420,9 @@ func newM4Writer(t *testing.T, p *e2e.Platform, siteID, groupID string, scenario
 }
 
 // post sends a form or text body to VictoriaMetrics from inside its own
-// container: it has no published port, and its image has BusyBox's wget.
+// container (e2e.Platform.ExecVictoriaMetrics).
 func (w *m4Writer) post(ctx context.Context, path, body string) error {
-	out, err := w.p.Project.Exec(ctx, "victoria-metrics", "wget", "-q", "-O", "-", "--post-data", body, m4VictoriaMetrics+path)
+	out, err := w.p.ExecVictoriaMetrics(ctx, "wget", "-q", "-O", "-", "--post-data", body, m4VictoriaMetrics+path)
 	if err != nil {
 		return fmt.Errorf("posting to %s: %w: %s", path, err, out)
 	}
@@ -568,7 +574,8 @@ func checkAlerts(t *testing.T, p *e2e.Platform, siteID, groupID string) {
 	}
 
 	// A webhook channel that accepts any POST: VictoriaMetrics' health
-	// endpoint, on the platform network. What a delivery carries is the
+	// endpoint, on the platform network (on Kubernetes, its Service in the
+	// control plane's namespace). What a delivery carries is the
 	// alertchannels package's unit tests' business; here it matters that
 	// the engine's events arrive.
 	channelURL := "http://victoria-metrics:8428/health"

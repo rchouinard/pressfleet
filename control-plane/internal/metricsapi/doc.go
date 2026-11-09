@@ -105,8 +105,8 @@
 //     has no filesystem or disk I/O series, so host_disk_usage and
 //     host_disk_io are empty there, and so is the "disk nearly full" rule.
 //   - On Kubernetes the container series come from metrics.k8s.io and Pod
-//     status, and Traefik names a site's services after its namespace, one
-//     per route, instead of pf-<site-id>; the traffic series sum them
+//     status, and a site's Traefik service is pf-<site-id>@http, from the
+//     HTTP provider the control plane feeds, instead of @docker
 //     (pressfleet_site_* are unchanged). Requests answered by the
 //     maintenance page count for no site, as on Compose.
 //

@@ -1498,6 +1498,13 @@ spec:
             - -storageDataPath=/victoria-metrics-data
             - "-retentionPeriod=30d"
             - -httpListenAddr=:8428
+          env:
+            # It sizes per-CPU buffers and caches by GOMAXPROCS, every CPU
+            # of the node by default, whatever its memory limit: one CPU per
+            # 64 MiB of the limit, at least 2, keeps them inside it
+            # (platform.VictoriaMetricsCPUs).
+            - name: GOMAXPROCS
+              value: "8"
           ports:
             - name: http
               containerPort: 8428
