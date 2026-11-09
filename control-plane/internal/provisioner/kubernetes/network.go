@@ -9,8 +9,9 @@ import (
 	"strings"
 )
 
-// egress is what the site's egress NetworkPolicy allows besides DNS and
-// the internet (network-policies.yaml.tmpl).
+// egress is what the site's egress NetworkPolicy allows besides DNS
+// (network-policies.yaml.tmpl). The internet is in a policy of its own that
+// the driver writes (internet.go), because it follows the cluster's nodes.
 type egress struct {
 	// PlatformPorts are the TCP ports of the platform services in the
 	// platform namespace that sites use: MariaDB and Valkey.
@@ -19,7 +20,8 @@ type egress struct {
 	Hosts []egressHost
 	// SMTPPort is the SMTP relay's port, 0 without a relay.
 	SMTPPort int
-	// ExceptV4 and ExceptV6 are what the internet rule leaves out.
+	// ExceptV4 and ExceptV6 are what a repository task's internet rule
+	// leaves out: the non-internet ranges and the pod ranges.
 	ExceptV4, ExceptV6 []string
 }
 
@@ -30,10 +32,13 @@ type egressHost struct {
 }
 
 // nonInternet are the ranges that the internet rule of a site's egress
-// policy leaves out. The cluster's pod, service, and node addresses are in
-// private ranges on every cluster the driver supports, so leaving those out
-// keeps sites away from the rest of the cluster without knowing its ranges;
-// a pod range outside them is left out as configured (kubernetes.pod_cidrs).
+// leaves out. Pod and Service addresses are in them on every cluster the
+// driver supports, and so are the nodes of most clusters, but not all: a
+// node of k3s on a VPS has its public address as its InternalIP, and a
+// managed cluster's API server may have a public endpoint (security review
+// K4). So the rule also leaves out each node's and API server endpoint's
+// own address, which the driver keeps current (internet.go), and a pod
+// range outside these ranges as configured (kubernetes.pod_cidrs).
 var nonInternet = []netip.Prefix{
 	netip.MustParsePrefix("10.0.0.0/8"),     // private
 	netip.MustParsePrefix("100.64.0.0/10"),  // shared address space (carrier-grade NAT, some CNIs)
@@ -45,11 +50,22 @@ var nonInternet = []netip.Prefix{
 }
 
 // internetExceptions returns the ranges the internet rule leaves out: the
-// non-internet ranges, and the pod ranges outside them.
-func internetExceptions(pods []netip.Prefix) (v4, v6 []string) {
+// non-internet ranges, then the pod ranges and the hosts (as /32 or /128)
+// that those don't cover already. An exception must lie within the rule's
+// range, 0.0.0.0/0 or ::/0, which each one does.
+func internetExceptions(pods []netip.Prefix, hosts []netip.Addr) (v4, v6 []string) {
 	except := slices.Clone(nonInternet)
+	covered := func(p netip.Prefix) bool {
+		return slices.ContainsFunc(except, func(n netip.Prefix) bool { return n.Bits() <= p.Bits() && n.Contains(p.Addr()) })
+	}
 	for _, p := range pods {
-		if !slices.ContainsFunc(nonInternet, func(n netip.Prefix) bool { return n.Bits() <= p.Bits() && n.Contains(p.Addr()) }) {
+		if p = p.Masked(); !covered(p) {
+			except = append(except, p)
+		}
+	}
+	for _, h := range hosts {
+		h = h.Unmap()
+		if p := netip.PrefixFrom(h, h.BitLen()); h.IsValid() && !covered(p) {
 			except = append(except, p)
 		}
 	}
@@ -122,6 +138,6 @@ func siteEgress(services []platformAddress, smtpPort int, pods []netip.Prefix) e
 	}
 	slices.Sort(e.PlatformPorts)
 	e.SMTPPort = smtpPort
-	e.ExceptV4, e.ExceptV6 = internetExceptions(pods)
+	e.ExceptV4, e.ExceptV6 = internetExceptions(pods, nil)
 	return e
 }

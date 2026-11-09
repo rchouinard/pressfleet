@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -28,10 +29,11 @@ func pullSecret() *corev1.Secret {
 }
 
 // cluster is the driver on a fake cluster whose Deployments roll out at
-// once.
+// once, with a node and an API server on public addresses
+// (testClusterObjects).
 func cluster(t *testing.T, mutate func(*Config), objs ...runtime.Object) *Provisioner {
 	t.Helper()
-	c, _ := fakeClient(t, append([]runtime.Object{pullSecret()}, objs...)...)
+	c, _ := fakeClient(t, slices.Concat([]runtime.Object{pullSecret()}, testClusterObjects(), objs)...)
 	rollOut(c)
 	cfg := testConfig(t)
 	if mutate != nil {
@@ -104,8 +106,8 @@ func TestSiteLifecycle(t *testing.T) {
 		}
 	}
 	policies, err := p.typed.NetworkingV1().NetworkPolicies(ns).List(ctx, metav1.ListOptions{})
-	if err != nil || len(policies.Items) != 3 {
-		t.Errorf("network policies: %d, %v; want 3", len(policies.Items), err)
+	if err != nil || len(policies.Items) != 4 {
+		t.Errorf("network policies: %d, %v; want 4 (three rendered, and the internet)", len(policies.Items), err)
 	}
 	if d := p.testDeployment(t); replicas(d) != 1 {
 		t.Errorf("a new site has %d pods, want 1", replicas(d))
@@ -342,13 +344,13 @@ metadata:
 // Waiting gives up after the wait timeout, and says what the pod is
 // waiting for.
 func TestCreateSiteTimesOut(t *testing.T) {
-	c, _ := fakeClient(t, pullSecret(), &corev1.Pod{
+	c, _ := fakeClient(t, append(testClusterObjects(), pullSecret(), &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "site-1", Namespace: "pf-" + testSiteID, Labels: map[string]string{ComponentLabel: SiteComponent}},
 		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
 			Name:  "php",
 			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff", Message: "manifest unknown"}},
 		}}},
-	})
+	})...)
 	cfg := testConfig(t)
 	cfg.WaitTimeout = 50 * time.Millisecond
 	p := newWithClient(cfg, c)

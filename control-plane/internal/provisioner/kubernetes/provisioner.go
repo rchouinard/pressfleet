@@ -118,6 +118,8 @@ type Provisioner struct {
 	redis    platformAddress
 	egress   egress
 	setupErr error
+	// internet keeps sites' internet policies current (internet.go).
+	internet internetState
 
 	// exec runs commands in containers; newWithREST connects it.
 	exec           executor
@@ -231,6 +233,7 @@ func (p *Provisioner) setupNetwork(cfg Config) error {
 		smtpPort = cfg.SMTP.Port
 	}
 	p.egress = siteEgress(services, smtpPort, pods)
+	p.internet.pods = pods
 	return nil
 }
 

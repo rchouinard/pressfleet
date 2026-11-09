@@ -134,8 +134,9 @@ func (p *Provisioner) UpdateSite(ctx context.Context, cfg *provisioner.SiteConfi
 
 // applySite applies the site's rendered manifests in dir: the namespace and
 // the RoleBinding that gives the control plane its rights in it first, then
-// the copies of the image pull Secrets the pod needs, then everything else.
-// Objects that the manifests no longer have are deleted last.
+// the copies of the image pull Secrets the pod needs and the internet
+// policy (InternetPolicy), then everything else. Objects that the manifests
+// no longer have are deleted last.
 func (p *Provisioner) applySite(ctx context.Context, siteID, dir string) error {
 	objs, err := LoadDir(dir)
 	if err != nil {
@@ -157,6 +158,11 @@ func (p *Provisioner) applySite(ctx context.Context, siteID, dir string) error {
 	// These are the first calls in a namespace whose RoleBinding may be
 	// seconds old.
 	if err := p.whileForbidden(ctx, func() error { return p.syncPullSecrets(ctx, ns) }); err != nil {
+		return err
+	}
+	// Before the rendered site-egress policy, which no longer holds the
+	// internet for a site rendered before the internet policy existed.
+	if err := p.applyInternetPolicy(ctx, siteID); err != nil {
 		return err
 	}
 	if err := p.Apply(ctx, rest); err != nil {
