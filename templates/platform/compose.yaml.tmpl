@@ -256,6 +256,11 @@ services:
       - "-storageDataPath=/victoria-metrics-data"
       - "-retentionPeriod={{ .MetricsRetentionDays }}d"
       - "-httpListenAddr=:{{ .VictoriaMetricsPort }}"
+    environment:
+      # It sizes per-CPU buffers and caches by GOMAXPROCS, every CPU of the
+      # host by default, whatever its memory limit: one CPU per 64 MiB of
+      # the limit keeps them inside it (platform.VictoriaMetricsCPUs).
+      GOMAXPROCS: "{{ .VictoriaMetricsCPUs }}"
     restart: unless-stopped
     # Root, as the image runs, owns the data volume; without capabilities it
     # can do no more than write there.
