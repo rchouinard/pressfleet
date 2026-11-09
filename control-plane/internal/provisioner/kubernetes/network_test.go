@@ -70,3 +70,37 @@ func TestSiteEgress(t *testing.T) {
 		t.Errorf("egress without services: %+v", e)
 	}
 }
+
+func TestInternetExceptions(t *testing.T) {
+	pods := []netip.Prefix{netip.MustParsePrefix("10.42.0.0/16"), netip.MustParsePrefix("203.0.113.0/26")}
+	tests := []struct {
+		name   string
+		host   string
+		v4, v6 []string // the exceptions the host adds
+	}{
+		{name: "public node", host: "198.51.100.7", v4: []string{"198.51.100.7/32"}},
+		{name: "public IPv6 node", host: "2001:db8::7", v6: []string{"2001:db8::7/128"}},
+		{name: "IPv4-mapped", host: "::ffff:198.51.100.8", v4: []string{"198.51.100.8/32"}},
+		{name: "private node", host: "10.1.2.3"},
+		{name: "shared address space", host: "100.64.1.2"},
+		{name: "unique local", host: "fd00::5"},
+		{name: "in a public pod range", host: "203.0.113.9"},
+	}
+	baseV4, baseV6 := internetExceptions(pods, nil)
+	if !slices.Contains(baseV4, "203.0.113.0/26") || slices.Contains(baseV4, "10.42.0.0/16") {
+		t.Errorf("IPv4 exceptions without hosts %v", baseV4)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Twice: an address is left out once.
+			host := netip.MustParseAddr(tt.host)
+			v4, v6 := internetExceptions(pods, []netip.Addr{host, host})
+			if added := v4[len(baseV4):]; !slices.Equal(added, tt.v4) {
+				t.Errorf("IPv4 exceptions added %v, want %v", added, tt.v4)
+			}
+			if added := v6[len(baseV6):]; !slices.Equal(added, tt.v6) {
+				t.Errorf("IPv6 exceptions added %v, want %v", added, tt.v6)
+			}
+		})
+	}
+}

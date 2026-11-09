@@ -6,6 +6,11 @@
   of the cluster: other sites, the API server, the nodes, or the cloud
   metadata address. Task pods share the site's egress; nothing may
   connect to them.
+
+  The internet is not here: the driver writes it as the policy
+  site-internet (kubernetes.InternetPolicy), whose exceptions include the
+  addresses of the cluster's nodes and API server and change as nodes
+  come and go.
 */ -}}
 {{ template "header" . }}
 apiVersion: networking.k8s.io/v1
@@ -106,20 +111,4 @@ spec:
     - ports:
         - protocol: TCP
           port: {{ .Egress.SMTPPort }}
-{{- end }}
-    # The internet: everything but private, shared, and link-local ranges,
-    # which hold the cluster's pod, service, and node addresses and the
-    # metadata address, and the configured pod ranges.
-    - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
-            except:
-{{- range .Egress.ExceptV4 }}
-              - {{ q . }}
-{{- end }}
-        - ipBlock:
-            cidr: ::/0
-            except:
-{{- range .Egress.ExceptV6 }}
-              - {{ q . }}
 {{- end }}

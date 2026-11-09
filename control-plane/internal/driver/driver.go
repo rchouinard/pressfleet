@@ -81,6 +81,14 @@ type StartupHook interface {
 	Startup(ctx context.Context) error
 }
 
+// BackgroundWorker is implemented by a driver that has work to do while the
+// control plane runs: the Kubernetes driver keeps sites' internet policies
+// away from the cluster's nodes as they come and go. RunBackground runs
+// until ctx ends. Like StartupHook, it is optional.
+type BackgroundWorker interface {
+	RunBackground(ctx context.Context) error
+}
+
 // SecretReader reads the secrets sites need.
 type SecretReader interface {
 	Get(ctx context.Context, ref secrets.Ref) (redact.Secret, error)
@@ -220,6 +228,11 @@ func newCompose(opts Options) (*Runtime, error) {
 		HostProbe:      compose.HostInspector{},
 	}, nil
 }
+
+var (
+	_ StartupHook      = (*kubernetes.Provisioner)(nil)
+	_ BackgroundWorker = (*kubernetes.Provisioner)(nil)
+)
 
 // connectTimeout bounds connecting to the Kubernetes API server at startup.
 const connectTimeout = 30 * time.Second

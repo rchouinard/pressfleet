@@ -12,7 +12,10 @@ replace the Docker socket:
   doctor) binds there;
 - in the platform namespace, the Role below: repository task pods, their
   Secrets and NetworkPolicies. No exec there, and no routes: the control
-  plane serves Traefik's routes itself (#322).
+  plane serves Traefik's routes itself (#322);
+- in the default namespace, reading the one EndpointSlice where the API
+  server publishes its addresses, which sites' egress leaves out with the
+  nodes' (security review K4).
 
 It has no nodes/proxy, no cluster-wide Secrets, and no rights in other
 namespaces. workload-policy.yaml keeps the pods and Services it creates
@@ -173,6 +176,41 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: control-plane
+subjects:
+  - kind: ServiceAccount
+    name: control-plane
+    namespace: {{ .Release.Namespace | quote }}
+---
+# The API server's endpoints, which the driver leaves out of every site's
+# egress with the nodes' addresses (security review K4): the kubernetes
+# Service's traffic reaches them after its DNAT, where policy applies, and
+# they may be public. Only the EndpointSlice the API server publishes them
+# in, named after the Service, and only get. The name carries the platform
+# namespace, like the cluster-scoped names, so that installs don't clash.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ printf "pressfleet:%s:api-server-endpoints" .Release.Namespace | quote }}
+  namespace: default
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "control-plane") | nindent 4 }}
+rules:
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get]
+    resourceNames: [kubernetes]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ printf "pressfleet:%s:api-server-endpoints" .Release.Namespace | quote }}
+  namespace: default
+  labels:
+    {{- include "pressfleet.componentLabels" (dict "root" . "component" "control-plane") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ printf "pressfleet:%s:api-server-endpoints" .Release.Namespace | quote }}
 subjects:
   - kind: ServiceAccount
     name: control-plane

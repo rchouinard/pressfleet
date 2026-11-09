@@ -642,6 +642,32 @@ rules:
 
 ---
 # Source: pressfleet/templates/rbac.yaml
+# The API server's endpoints, which the driver leaves out of every site's
+# egress with the nodes' addresses (security review K4): the kubernetes
+# Service's traffic reaches them after its DNAT, where policy applies, and
+# they may be public. Only the EndpointSlice the API server publishes them
+# in, named after the Service, and only get. The name carries the platform
+# namespace, like the cluster-scoped names, so that installs don't clash.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: "pressfleet:pressfleet:api-server-endpoints"
+  namespace: default
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: control-plane
+rules:
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get]
+    resourceNames: [kubernetes]
+
+---
+# Source: pressfleet/templates/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -657,6 +683,29 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: control-plane
+subjects:
+  - kind: ServiceAccount
+    name: control-plane
+    namespace: "pressfleet"
+
+---
+# Source: pressfleet/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: "pressfleet:pressfleet:api-server-endpoints"
+  namespace: default
+  labels:
+    app.kubernetes.io/name: pressfleet
+    app.kubernetes.io/instance: "pressfleet"
+    app.kubernetes.io/version: "0.0.0-dev"
+    app.kubernetes.io/managed-by: "Helm"
+    helm.sh/chart: "pressfleet-0.0.0-dev"
+    app.kubernetes.io/component: control-plane
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: "pressfleet:pressfleet:api-server-endpoints"
 subjects:
   - kind: ServiceAccount
     name: control-plane

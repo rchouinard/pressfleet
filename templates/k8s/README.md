@@ -7,6 +7,7 @@ The Kubernetes driver (`control-plane/internal/provisioner/kubernetes`, design d
 - The data is `kubernetes.manifestData`; see its fields for what a template can use.
 - Only object kinds the driver knows can be applied (`kubernetes.kinds`). Add a kind there before a template uses it.
 - Every object must be in the site's namespace and carry the `labels` template, whose `pressfleet.io/rendered: "true"` is how the driver finds objects that a template no longer renders and deletes them (server-side apply doesn't). Rendering fails otherwise.
+- The site's internet egress isn't rendered here: the driver writes it as the NetworkPolicy `site-internet` (`internet.go`), because its exceptions include the nodes' and the API server's addresses, which change while sites run.
 - The Deployment leaves `replicas` out: starting and stopping a site scale it, and applying the manifests again must not undo that.
 - Routes aren't here: Traefik reads no Kubernetes objects (#322). `RenderSite` writes the site's routes as Traefik dynamic configuration (`traefik-routes.json`, next to the manifests) and its maintenance routes (`<data_dir>/sites/<site-id>/kubernetes-maintenance.json`), and the control plane serves them to Traefik's HTTP provider (`routing.go`, `traefikconfig.go`).
 - The files are part of the template fingerprint: a change here moves running sites to the new manifests through the templates rollout, one site at a time (§4.7, §5.5). A change to the Go code that renders them, which changes the output for an existing site, bumps the driver's `renderVersion`.

@@ -16,7 +16,8 @@ import (
 type rbacObject struct {
 	Kind     string `yaml:"kind"`
 	Metadata struct {
-		Name string `yaml:"name"`
+		Name      string `yaml:"name"`
+		Namespace string `yaml:"namespace"`
 	} `yaml:"metadata"`
 	Rules []struct {
 		APIGroups     []string `yaml:"apiGroups"`
@@ -49,16 +50,18 @@ type rbacObject struct {
 // security review (docs/security-review.md, #229) found: no wildcards, no
 // escalate or impersonate, bind on the site ClusterRole alone, a
 // cluster-wide control plane role that reads no Secrets and reaches no
-// node or pod, pods that are never changed in place, and an admission
-// policy for each cluster-wide right RBAC can't narrow. The control plane
-// is the only ServiceAccount with rights or a token: Traefik reads nothing
-// from the API (#322), so no binding names it, its pod mounts no token,
-// and no role names Traefik's resources. Nor does the control plane run
-// commands in the platform's pods.
+// node or pod, pods that are never changed in place, an admission policy
+// for each cluster-wide right RBAC can't narrow, and outside the platform
+// namespace only the read of the API server's EndpointSlice (#324). The
+// control plane is the only ServiceAccount with rights or a token: Traefik
+// reads nothing from the API (#322), so no binding names it, its pod
+// mounts no token, and no role names Traefik's resources. Nor does the
+// control plane run commands in the platform's pods.
 func TestRBACLeastPrivilege(t *testing.T) {
 	const (
 		controlPlane = "pressfleet:" + releaseNamespace + ":control-plane"
 		site         = "pressfleet:" + releaseNamespace + ":site"
+		apiServer    = "pressfleet:" + releaseNamespace + ":api-server-endpoints"
 	)
 	// What the control plane's ClusterRole may name: group/resource, and
 	// whether it may write it. Its writes are narrowed by the admission
@@ -126,6 +129,18 @@ func TestRBACLeastPrivilege(t *testing.T) {
 				}
 				name := o.Kind + "/" + o.Metadata.Name
 				roles[name] = true
+				// A Role elsewhere than the platform namespace, which the
+				// chart's Roles leave to the release, may only read where
+				// the API server publishes its addresses.
+				if o.Kind == "Role" && o.Metadata.Namespace != "" && o.Metadata.Namespace != releaseNamespace {
+					r := o.Rules
+					if o.Metadata.Name != apiServer || o.Metadata.Namespace != "default" || len(r) != 1 ||
+						!slices.Equal(r[0].APIGroups, []string{"discovery.k8s.io"}) || !slices.Equal(r[0].Resources, []string{"endpointslices"}) ||
+						!slices.Equal(r[0].Verbs, []string{"get"}) || !slices.Equal(r[0].ResourceNames, []string{"kubernetes"}) {
+						t.Errorf("Role %s/%s: rights outside the platform namespace beyond get on the EndpointSlice default/kubernetes: %+v",
+							o.Metadata.Namespace, o.Metadata.Name, r)
+					}
+				}
 				for _, r := range o.Rules {
 					for _, field := range [][]string{r.APIGroups, r.Resources, r.Verbs} {
 						if slices.Contains(field, "*") {
@@ -171,7 +186,7 @@ func TestRBACLeastPrivilege(t *testing.T) {
 					}
 				}
 			}
-			for _, want := range []string{"ClusterRole/" + controlPlane, "ClusterRole/" + site, "Role/control-plane"} {
+			for _, want := range []string{"ClusterRole/" + controlPlane, "ClusterRole/" + site, "Role/control-plane", "Role/" + apiServer} {
 				if !roles[want] {
 					t.Errorf("no %s rendered", want)
 				}
