@@ -146,11 +146,12 @@ test-k8s-e2e: ## Run the Kubernetes end-to-end tests on a kind cluster; RUN=<reg
 		docker image rm pressfleet-control-plane:k8s-e2e >/dev/null; exit $$status
 
 # doctor's NetworkPolicy check failing on a CNI that ignores NetworkPolicy
-# (#225) needs a cluster with kind's own kindnet, on which the other tests
-# would fail: a cluster of its own, under another name.
-.PHONY: test-k8s-e2e-kindnet
-test-k8s-e2e-kindnet: ## Run the NetworkPolicy check's test on a kind cluster whose CNI ignores NetworkPolicy (kindnet)
-	$(MAKE) test-k8s-e2e KIND_CNI=kindnet KIND_CLUSTER=pfk8s-kindnet RUN='^TestKubernetesNetworkPolicyIgnored$$'
+# (#225) needs a cluster with such a CNI (ptp, see scripts/kind/cluster.sh),
+# on which the other tests would fail: a cluster of its own, under another
+# name.
+.PHONY: test-k8s-e2e-ptp
+test-k8s-e2e-ptp: ## Run the NetworkPolicy check's test on a kind cluster whose CNI ignores NetworkPolicy (ptp)
+	$(MAKE) test-k8s-e2e KIND_CNI=ptp KIND_CLUSTER=pfk8s-ptp RUN='^TestKubernetesNetworkPolicyIgnored$$'
 
 # TestBackupMemory, which the regular suite skips because it writes tens of GiB.
 # TMPDIR must be on disk: the test refuses tmpfs (see docs/testing.md).

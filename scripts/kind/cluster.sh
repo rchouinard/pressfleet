@@ -9,9 +9,9 @@
 #   scripts/kind/cluster.sh down           delete the cluster and the registry
 #   scripts/kind/cluster.sh env            print the tests' environment variables
 #
-# The cluster has what design doc §4.8 asks of one: Calico (kindnet ignores
-# NetworkPolicy), a load balancer controller (cloud-provider-kind, a
-# container beside the nodes), metrics-server, a ReadWriteOnce class (kind's local-path
+# The cluster has what design doc §4.8 asks of one: Calico, a load balancer
+# controller (cloud-provider-kind, a container beside the nodes),
+# metrics-server, a ReadWriteOnce class (kind's local-path
 # "standard") and a ReadWriteMany one ("nfs": csi-driver-nfs and an NFS server
 # in the cluster), the kubelet's podPidsLimit, and Kubernetes 1.35 or later.
 # Besides, a PostgreSQL for the platforms' state databases, and a registry
@@ -25,9 +25,12 @@
 #
 # Environment (defaults in brackets):
 #   KIND_CLUSTER        cluster name [pfk8s-e2e]
-#   KIND_CNI            "calico", or "kindnet": kind's own CNI, which ignores
+#   KIND_CNI            "calico", or "ptp": the standard ptp plugin and
+#                       static routes between the nodes, which ignore
 #                       NetworkPolicy, for the test that doctor notices
-#                       (TestKubernetesNetworkPolicyIgnored, #225) [calico]
+#                       (TestKubernetesNetworkPolicyIgnored, #225). Not
+#                       kind's own kindnet: it enforces NetworkPolicy since
+#                       kind 0.24 [calico]
 #   KIND_KUBECONFIG     the cluster's kubeconfig [~/.cache/pressfleet-e2e/kubeconfig-$KIND_CLUSTER]
 #   KIND_REGISTRY       registry container, its name on the kind network [pfk8s-registry]
 #   KIND_REGISTRY_PORT  the registry's port on the host's loopback [5001]
@@ -47,11 +50,13 @@ cluster="${KIND_CLUSTER:-pfk8s-e2e}"
 registry="${KIND_REGISTRY:-pfk8s-registry}"
 registry_port="${KIND_REGISTRY_PORT:-5001}"
 cloud_provider="${KIND_CLOUD_PROVIDER:-pfk8s-cloud-provider}"
+# kind.yaml's podSubnet.
+pod_cidr="10.244.0.0/16"
 cni="${KIND_CNI:-calico}"
 case "$cni" in
-calico | kindnet) ;;
+calico | ptp) ;;
 *)
-	echo "kind: KIND_CNI must be calico or kindnet, not $cni" >&2
+	echo "kind: KIND_CNI must be calico or ptp, not $cni" >&2
 	exit 1
 	;;
 esac
@@ -121,19 +126,43 @@ create_cluster() {
 		return
 	fi
 	log "creating cluster $cluster (CNI $cni)"
-	local config="$here/kind.yaml"
-	if [[ "$cni" == kindnet ]]; then
-		# kind's default CNI, kindnet, in place of the Calico that
-		# install_calico would add.
-		config="$(mktemp)"
-		sed 's/disableDefaultCNI: true/disableDefaultCNI: false/' "$here/kind.yaml" >"$config"
-	fi
-	local status=0
-	kind create cluster --name "$cluster" --image "$node_image" --config "$config" --wait 0s || status=$?
-	if [[ "$config" != "$here/kind.yaml" ]]; then
-		rm -f "$config"
-	fi
-	return "$status"
+	kind create cluster --name "$cluster" --image "$node_image" --config "$here/kind.yaml" --wait 0s
+}
+
+# install_ptp gives the nodes a network that ignores NetworkPolicy: on each
+# node, the standard ptp and host-local plugins (in kind's node image) for
+# its pod CIDR, a route to every other node's pod CIDR through that node,
+# and masquerading of traffic that leaves the pod network. That is what
+# kindnet does, minus its NetworkPolicy controller.
+install_ptp() {
+	log "configuring the ptp CNI, which ignores NetworkPolicy"
+	local nodes node other cidr ip
+	nodes="$(kind get nodes --name "$cluster")"
+	# The controller manager gives each node its pod CIDR soon after it
+	# joins.
+	for node in $nodes; do
+		for _ in $(seq 60); do
+			[[ -z "$(kc get node "$node" -o jsonpath='{.spec.podCIDR}' 2>/dev/null)" ]] || continue 2
+			sleep 2
+		done
+		die "node $node has no pod CIDR"
+	done
+	for node in $nodes; do
+		cidr="$(kc get node "$node" -o jsonpath='{.spec.podCIDR}')"
+		printf '%s\n' '{"cniVersion": "0.4.0", "name": "pfk8s-ptp", "plugins": [' \
+			'{"type": "ptp", "ipMasq": false, "mtu": 1500, "ipam": {"type": "host-local", "dataDir": "/run/cni-ipam-state",' \
+			' "routes": [{"dst": "0.0.0.0/0"}], "ranges": [[{"subnet": "'"$cidr"'"}]]}},' \
+			'{"type": "portmap", "capabilities": {"portMappings": true}}]}' |
+			docker exec -i "$node" cp /dev/stdin /etc/cni/net.d/10-pfk8s-ptp.conflist
+		docker exec "$node" sh -c 'iptables -t nat -C POSTROUTING -s "$1" ! -d "$1" -j MASQUERADE 2>/dev/null ||
+			iptables -t nat -A POSTROUTING -s "$1" ! -d "$1" -j MASQUERADE' sh "$pod_cidr"
+		for other in $nodes; do
+			[[ "$other" != "$node" ]] || continue
+			cidr="$(kc get node "$other" -o jsonpath='{.spec.podCIDR}')"
+			ip="$(kc get node "$other" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')"
+			docker exec "$node" ip route replace "$cidr" via "$ip"
+		done
+	done
 }
 
 # start_cloud_provider runs cloud-provider-kind, which gives LoadBalancer
@@ -185,7 +214,7 @@ install_calico() {
 	# network is kind.yaml's podSubnet.
 	curl -fsSL "https://raw.githubusercontent.com/projectcalico/calico/$calico_version/manifests/calico.yaml" |
 		sed -e 's|# - name: CALICO_IPV4POOL_CIDR|- name: CALICO_IPV4POOL_CIDR|' \
-			-e 's|#   value: "192.168.0.0/16"|  value: "10.244.0.0/16"|' |
+			-e 's|#   value: "192.168.0.0/16"|  value: "'"$pod_cidr"'"|' |
 		kc apply --server-side -f - >/dev/null
 }
 
@@ -210,8 +239,6 @@ wait_ready() {
 	kc wait --for=condition=Ready node --all --timeout=5m >/dev/null
 	if [[ "$cni" == calico ]]; then
 		kc -n kube-system rollout status daemonset/calico-node --timeout=5m >/dev/null
-	else
-		kc -n kube-system rollout status daemonset/kindnet --timeout=5m >/dev/null
 	fi
 	kc -n kube-system rollout status deployment/coredns --timeout=5m >/dev/null
 	kc -n kube-system rollout status deployment/metrics-server --timeout=5m >/dev/null
@@ -240,6 +267,8 @@ up() {
 	start_cloud_provider
 	if [[ "$cni" == calico ]]; then
 		install_calico
+	else
+		install_ptp
 	fi
 	install_metrics_server
 	install_nfs

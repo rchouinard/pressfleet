@@ -50,7 +50,7 @@ const (
 	// EnvK8sImageTag is the control plane image's tag in that registry.
 	EnvK8sImageTag = "PRESSFLEET_K8S_IMAGE_TAG"
 	// EnvK8sCNI is the cluster's CNI: "calico", which enforces
-	// NetworkPolicy, or "kindnet", which ignores it
+	// NetworkPolicy, or "ptp", which ignores it
 	// (KubeOptions.IgnoredNetworkPolicy). Empty is "calico".
 	EnvK8sCNI = "PRESSFLEET_K8S_CNI"
 )
@@ -181,7 +181,7 @@ type KubeOptions struct {
 	// which the test then reaches Traefik and the SFTP gateway at.
 	LoadBalancer bool
 	// IgnoredNetworkPolicy runs the test on a cluster whose CNI ignores
-	// NetworkPolicy (EnvK8sCNI "kindnet") and skips it on any other.
+	// NetworkPolicy (EnvK8sCNI "ptp") and skips it on any other.
 	// Every other test is skipped on such a cluster: isolation (§6)
 	// depends on NetworkPolicy. The control plane's preflight checks would
 	// refuse to start it there, so it starts without them
@@ -216,9 +216,9 @@ func StartPlatform(t *testing.T) *Platform {
 func StartKubernetes(t *testing.T, opts KubeOptions) *Platform {
 	t.Helper()
 	kube := kubeFromEnv(t)
-	switch ignores := os.Getenv(EnvK8sCNI) == "kindnet"; {
+	switch ignores := os.Getenv(EnvK8sCNI) == "ptp"; {
 	case opts.IgnoredNetworkPolicy && !ignores:
-		t.Skip("needs a cluster whose CNI ignores NetworkPolicy: " + EnvK8sCNI + "=kindnet (make test-k8s-e2e-kindnet)")
+		t.Skip("needs a cluster whose CNI ignores NetworkPolicy: " + EnvK8sCNI + "=ptp (make test-k8s-e2e-ptp)")
 	case !opts.IgnoredNetworkPolicy && ignores:
 		t.Skip("the cluster's CNI ignores NetworkPolicy, which the platform needs enforced")
 	}

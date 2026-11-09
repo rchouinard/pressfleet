@@ -10,8 +10,9 @@ import (
 )
 
 // TestKubernetesNetworkPolicyIgnored checks doctor's NetworkPolicy check
-// (#225) on a cluster whose CNI ignores NetworkPolicy: kind's own kindnet,
-// on a cluster of its own (make test-k8s-e2e-kindnet); on any other
+// (#225) on a cluster whose CNI ignores NetworkPolicy: the plain ptp plugin
+// (kind's own kindnet enforces NetworkPolicy since kind 0.24), on a
+// cluster of its own (make test-k8s-e2e-ptp); on any other
 // cluster it is skipped. Isolation (§6) rests on NetworkPolicy, so the
 // check is required: `pressfleet doctor` fails it, the chart's Helm test
 // fails, and the control plane refuses to start until the operator skips
