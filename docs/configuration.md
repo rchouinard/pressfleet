@@ -554,7 +554,7 @@ Some events carry `details`, such as the SFTP gateway's sessions (see below). Ch
 
 ## Metrics storage
 
-Metrics are stored in a single-node VictoriaMetrics service of the platform project, limited to 256 MiB of memory, with its data on the `victoria-metrics-data` volume. It is reachable only on the platform network, as `http://victoria-metrics:8428`: it publishes no host port and has no Traefik route, so it isn't exposed to the internet. Data older than `metrics.retention_days` is deleted by VictoriaMetrics itself. [Connecting Grafana](#connecting-grafana) describes the optional way to query it from outside.
+Metrics are stored in a single-node VictoriaMetrics service of the platform project, limited to 256 MiB of memory, with its data on the `victoria-metrics-data` volume. It runs on one CPU per 64 MiB of that limit (`GOMAXPROCS`, 4 by default, at least 2), because it sizes its ingestion buffers and caches by the CPUs it may use: on all of a 32-CPU host's, they would fill most of the 256 MiB. It is reachable only on the platform network, as `http://victoria-metrics:8428`: it publishes no host port and has no Traefik route, so it isn't exposed to the internet. Data older than `metrics.retention_days` is deleted by VictoriaMetrics itself. [Connecting Grafana](#connecting-grafana) describes the optional way to query it from outside.
 
 ### Connecting Grafana
 
