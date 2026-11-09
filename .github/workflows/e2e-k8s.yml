@@ -154,12 +154,17 @@ jobs:
           if ! flock -n "$lock" true; then
             echo "Waiting for another run of the kind tests on this host"
           fi
-          flock "$lock" "$@"
+          # A cancelled run (re-adding the label cancels the one in
+          # progress) never reaches `cluster.sh down`; start from a
+          # fresh cluster rather than whatever it left, the ptp
+          # cluster below included.
+          flock "$lock" sh -c 'scripts/kind/cluster.sh down &&
+            KIND_CNI=ptp KIND_CLUSTER=pfk8s-ptp scripts/kind/cluster.sh down && exec "$@"' sh "$@"
       # doctor must fail a CNI that ignores NetworkPolicy (#225). That takes
       # a cluster of its own, with a plain ptp CNI in place of Calico, which
       # the step creates, tests, and deletes under the same lock once the
-      # first cluster is gone (about ten minutes). Full runs only, even
-      # when the tests above failed.
+      # first cluster is gone (about ten minutes), after the same clean-up.
+      # Full runs only, even when the tests above failed.
       - if: ${{ !cancelled() && needs.plan.outputs.tier == 'full' }}
         name: Run the NetworkPolicy check without an enforcing CNI
         env:
@@ -169,4 +174,5 @@ jobs:
           if ! flock -n "$lock" true; then
             echo "Waiting for another run of the kind tests on this host"
           fi
-          flock "$lock" make test-k8s-e2e-ptp
+          flock "$lock" sh -c 'scripts/kind/cluster.sh down &&
+            KIND_CNI=ptp KIND_CLUSTER=pfk8s-ptp scripts/kind/cluster.sh down && exec make test-k8s-e2e-ptp'

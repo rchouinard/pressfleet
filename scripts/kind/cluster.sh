@@ -121,9 +121,16 @@ start_registry() {
 
 create_cluster() {
 	if kind get clusters 2>/dev/null | grep -qx "$cluster"; then
-		log "cluster $cluster exists; reusing it"
-		kind export kubeconfig --name "$cluster" >/dev/null 2>&1
-		return
+		# A run that was cancelled or killed leaves its cluster behind,
+		# sometimes with its nodes stopped or half removed: reuse it only
+		# if its API server answers.
+		if kind export kubeconfig --name "$cluster" >/dev/null 2>&1 &&
+			kc --request-timeout=20s get --raw /readyz >/dev/null 2>&1; then
+			log "cluster $cluster exists; reusing it"
+			return
+		fi
+		log "cluster $cluster exists but doesn't answer; deleting it"
+		delete_cluster
 	fi
 	log "creating cluster $cluster (CNI $cni)"
 	kind create cluster --name "$cluster" --image "$node_image" --config "$here/kind.yaml" --wait 0s
@@ -309,7 +316,8 @@ site_images() {
 	done
 }
 
-down() {
+# delete_cluster deletes the cluster and leaves the registry.
+delete_cluster() {
 	local status=0
 	stop_cloud_provider
 	if kind get clusters 2>/dev/null | grep -qx "$cluster"; then
@@ -328,6 +336,12 @@ down() {
 			kind delete cluster --name "$cluster" || status=$?
 		fi
 	fi
+	return "$status"
+}
+
+down() {
+	local status=0
+	delete_cluster || status=$?
 	docker rm -f "$registry" >/dev/null 2>&1 || true
 	return "$status"
 }
