@@ -175,7 +175,7 @@ Release notices ([Release check](upgrading.md#release-check)) in the dashboard's
 
 ### Doctor on Kubernetes
 
-Doctor checks the cluster: the Kubernetes version, amd64 nodes, cgroup v2 (a short-lived pod on each node), the control plane's RBAC, both storage classes, metrics-server, NetworkPolicy enforcement (two pods in a temporary namespace try to reach the API server; one is denied by a policy), Traefik's address, the DNS records, and cluster memory. The table with what each means and its fix is [Kubernetes checks](installation.md#kubernetes-checks). It runs when the control plane starts (required checks must pass), in `pressfleet doctor` run in the pod (exit codes as on Compose), and in the dashboard's platform overview, where the two checks that start pods read `UNAVAILABLE`. There is no Helm test; run doctor as above after an install or a change to the cluster.
+Doctor checks the cluster: the Kubernetes version, amd64 nodes, cgroup v2 (a short-lived pod on each node), the control plane's RBAC, both storage classes, metrics-server, NetworkPolicy enforcement (two pods in a temporary namespace try to reach the API server; one is denied by a policy), that the node and API server addresses sites must not reach can be read, Traefik's address, the DNS records, and cluster memory. The table with what each means and its fix is [Kubernetes checks](installation.md#kubernetes-checks). It runs when the control plane starts (required checks must pass), in `pressfleet doctor` run in the pod (exit codes as on Compose), and in the dashboard's platform overview, where the two checks that start pods read `UNAVAILABLE`. There is no Helm test; run doctor as above after an install or a change to the cluster.
 
 The probe pods run the control plane image, so the nodes must be able to pull it, and the first start waits for that.
 
@@ -248,7 +248,7 @@ Rehearse once, as the [drill](disaster-recovery.md#rehearsing) says, before real
 - **Site images must be public** ([Images and registries](#images-and-registries)).
 - **An external MariaDB must be named by IP address** when it is in a private range.
 - **A preview site's basic auth** is a Secret next to the Traefik Middleware, in the site's namespace.
-- **Egress from sites** may not reach private, shared (100.64.0.0/10), or link-local addresses, nor the pod ranges: nothing in the cluster or on your network other than DNS, MariaDB, the object cache, and the SMTP relay's port. A site that must call an internal service needs it on a public address, or a change to the driver's policy, which isn't a setting.
+- **Egress from sites** may not reach private, shared (100.64.0.0/10), or link-local addresses, nor the pod ranges, nor any node or API server endpoint address, public ones included: nothing in the cluster or on your network other than DNS, MariaDB, the object cache, and the SMTP relay's port. A site that must call an internal service needs it on a public address, or a change to the driver's policy, which isn't a setting.
 - **Namespaces.** A site's namespace is created when it is created and deleted with it. `helm uninstall` removes the platform's objects but not the sites' namespaces, the data volume (kept by `helm.sh/resource-policy: keep`), or PersistentVolumes. Delete the sites in the dashboard first if you mean to remove everything.
 - **Don't edit** a site's objects, the platform namespace's policies, or the admission policies by hand.
 

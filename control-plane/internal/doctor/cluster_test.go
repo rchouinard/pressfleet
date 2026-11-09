@@ -156,6 +156,18 @@ func TestK8sNetworkPolicy(t *testing.T) {
 	})
 }
 
+func TestK8sClusterEgress(t *testing.T) {
+	runK8sCases(t, "k8s-cluster-egress", []k8sCase{
+		{name: "addresses known", wantStatus: doctor.StatusPass, wantMessage: "3 node and 1 API server addresses (1 outside private ranges)"},
+		{name: "can't read", setup: func(f *k8sFixture) { f.cluster.AddressesErr = errors.New("endpointslices is forbidden") },
+			wantStatus: doctor.StatusWarn, wantMessage: "endpointslices is forbidden", wantFix: "EndpointSlice kubernetes"},
+		{name: "no node addresses", setup: func(f *k8sFixture) { f.cluster.Addresses.Nodes = nil },
+			wantStatus: doctor.StatusWarn, wantMessage: "no node reports an address", wantFix: "InternalIP"},
+		{name: "no API server endpoints", setup: func(f *k8sFixture) { f.cluster.Addresses.APIServer = nil },
+			wantStatus: doctor.StatusWarn, wantMessage: "no endpoint address", wantFix: "EndpointSlice"},
+	})
+}
+
 func TestK8sTraefik(t *testing.T) {
 	runK8sCases(t, "k8s-traefik", []k8sCase{
 		{name: "load balancer", wantStatus: doctor.StatusPass, wantMessage: "198.51.100.20"},
@@ -222,7 +234,7 @@ func TestKubernetesRunsClusterChecksInPlaceOfHostChecks(t *testing.T) {
 	for _, r := range rep.Results {
 		got[r.ID] = r.Status
 	}
-	for _, id := range []string{"k8s-version", "k8s-nodes", "k8s-cgroup", "k8s-rbac", "k8s-storage-sites", "k8s-storage-data", "k8s-metrics", "k8s-networkpolicy"} {
+	for _, id := range []string{"k8s-version", "k8s-nodes", "k8s-cgroup", "k8s-rbac", "k8s-storage-sites", "k8s-storage-data", "k8s-metrics", "k8s-networkpolicy", "k8s-cluster-egress"} {
 		if got[id] != doctor.StatusPass {
 			t.Errorf("%s = %q, want pass", id, got[id])
 		}

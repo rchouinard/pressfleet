@@ -2,6 +2,7 @@ package doctortest
 
 import (
 	"context"
+	"net/netip"
 
 	"github.com/rchouinard/pressfleet/control-plane/internal/doctor"
 )
@@ -27,6 +28,9 @@ type Cluster struct {
 	TraefikErr error
 	Requests   uint64
 	RequestErr error
+	// Addresses are the nodes' and the API server's addresses.
+	Addresses    doctor.ClusterAddresses
+	AddressesErr error
 	// PodProbes counts the calls that would run pods.
 	PodProbes int
 }
@@ -52,6 +56,10 @@ func HealthyCluster() *Cluster {
 		},
 		NetPol:  doctor.NetworkPolicyResult{State: doctor.NetworkPolicyEnforced},
 		Traefik: []string{"198.51.100.20"},
+		Addresses: doctor.ClusterAddresses{
+			Nodes:     []netip.Addr{netip.MustParseAddr("10.0.0.11"), netip.MustParseAddr("203.0.113.11"), netip.MustParseAddr("10.0.0.12")},
+			APIServer: []netip.Addr{netip.MustParseAddr("10.0.0.11")},
+		},
 	}
 }
 
@@ -93,4 +101,9 @@ func (c *Cluster) TraefikAddresses(context.Context) ([]string, error) { return c
 // PlatformMemoryRequests implements doctor.ClusterProbe.
 func (c *Cluster) PlatformMemoryRequests(context.Context) (uint64, error) {
 	return c.Requests, c.RequestErr
+}
+
+// ClusterAddresses implements doctor.ClusterProbe.
+func (c *Cluster) ClusterAddresses(context.Context) (doctor.ClusterAddresses, error) {
+	return c.Addresses, c.AddressesErr
 }

@@ -472,6 +472,9 @@ func (s *server) run(ctx context.Context) error {
 
 	w.Go("job pool", s.pool.Run)
 	w.Go("scheduler", s.scheduler.Run)
+	if bw, ok := s.rt.Driver.(driver.BackgroundWorker); ok {
+		w.Go("driver", bw.RunBackground)
+	}
 	// The collectors write to VictoriaMetrics, which may still be starting
 	// or down: write failures are logged and counted, and the next run
 	// tries again.
