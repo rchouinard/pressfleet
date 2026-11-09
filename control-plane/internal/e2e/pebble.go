@@ -63,6 +63,24 @@ type Pebble struct {
 	// TraefikIP is Traefik's address on the platform network. The DNS
 	// server resolves every name to it, and it is the platform's public_ip.
 	TraefikIP string
+	// dnsAPI is the DNS server's management API (challtestsrv), from the
+	// host.
+	dnsAPI string
+}
+
+// ResolveTo makes the DNS server Pebble validates with answer A queries
+// for host with addr, in place of Traefik's address: Pebble's HTTP-01
+// validation of host then fails, as when a domain doesn't point at the
+// platform yet, and Traefik keeps serving its default certificate for it.
+func (pb *Pebble) ResolveTo(ctx context.Context, t *testing.T, host, addr string) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"host": host + ".", "addresses": []string{addr}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry(ctx, t, "adding an A record to the DNS server", func() error {
+		return pebbleCall(ctx, &http.Client{Timeout: 10 * time.Second}, http.MethodPost, pb.dnsAPI+"/add-a", body, nil)
+	})
 }
 
 // StartWithPebble is Start with a certificate authority: Traefik gets its
@@ -221,7 +239,7 @@ func (p *Platform) connectPebble(ctx context.Context, t *testing.T) {
 	if !roots.AppendCertsFromPEM(rootPEM.Bytes()) {
 		t.Fatalf("Pebble's root certificate isn't PEM: %q", rootPEM.String())
 	}
-	p.Pebble = &Pebble{Roots: roots, RootsPEM: rootPEM.Bytes(), TraefikIP: traefikIP}
+	p.Pebble = &Pebble{Roots: roots, RootsPEM: rootPEM.Bytes(), TraefikIP: traefikIP, dnsAPI: dnsAPI}
 	t.Logf("Pebble issues certificates; every name resolves to Traefik at %s", traefikIP)
 
 	p.override.dns = []string{dnsIP}

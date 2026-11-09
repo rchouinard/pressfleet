@@ -9,8 +9,9 @@
 #   scripts/kind/cluster.sh down           delete the cluster and the registry
 #   scripts/kind/cluster.sh env            print the tests' environment variables
 #
-# The cluster has what design doc §4.8 asks of one: Calico (kindnet ignores
-# NetworkPolicy), metrics-server, a ReadWriteOnce class (kind's local-path
+# The cluster has what design doc §4.8 asks of one: Calico, a load balancer
+# controller (cloud-provider-kind, a container beside the nodes),
+# metrics-server, a ReadWriteOnce class (kind's local-path
 # "standard") and a ReadWriteMany one ("nfs": csi-driver-nfs and an NFS server
 # in the cluster), the kubelet's podPidsLimit, and Kubernetes 1.35 or later.
 # Besides, a PostgreSQL for the platforms' state databases, and a registry
@@ -24,9 +25,16 @@
 #
 # Environment (defaults in brackets):
 #   KIND_CLUSTER        cluster name [pfk8s-e2e]
+#   KIND_CNI            "calico", or "ptp": the standard ptp plugin and
+#                       static routes between the nodes, which ignore
+#                       NetworkPolicy, for the test that doctor notices
+#                       (TestKubernetesNetworkPolicyIgnored, #225). Not
+#                       kind's own kindnet: it enforces NetworkPolicy since
+#                       kind 0.24 [calico]
 #   KIND_KUBECONFIG     the cluster's kubeconfig [~/.cache/pressfleet-e2e/kubeconfig-$KIND_CLUSTER]
 #   KIND_REGISTRY       registry container, its name on the kind network [pfk8s-registry]
 #   KIND_REGISTRY_PORT  the registry's port on the host's loopback [5001]
+#   KIND_CLOUD_PROVIDER cloud-provider-kind's container [pfk8s-cloud-provider]
 #   SITE_PHP            PHP branches of site-images [the two newest]
 #   KIND_SITE_IMAGES    "local": push the site images as built (make images)
 #                       rather than pulling the published ones [pull]
@@ -41,6 +49,17 @@ here="$root/scripts/kind"
 cluster="${KIND_CLUSTER:-pfk8s-e2e}"
 registry="${KIND_REGISTRY:-pfk8s-registry}"
 registry_port="${KIND_REGISTRY_PORT:-5001}"
+cloud_provider="${KIND_CLOUD_PROVIDER:-pfk8s-cloud-provider}"
+# kind.yaml's podSubnet.
+pod_cidr="10.244.0.0/16"
+cni="${KIND_CNI:-calico}"
+case "$cni" in
+calico | ptp) ;;
+*)
+	echo "kind: KIND_CNI must be calico or ptp, not $cni" >&2
+	exit 1
+	;;
+esac
 context="kind-$cluster"
 # The cluster's kubeconfig, apart from the user's own.
 export KUBECONFIG="${KIND_KUBECONFIG:-${XDG_CACHE_HOME:-$HOME/.cache}/pressfleet-e2e/kubeconfig-$cluster}"
@@ -53,6 +72,7 @@ calico_version="v3.33.0"
 metrics_server_version="v0.9.0"
 csi_nfs_version="4.13.5"
 registry_image="registry:3@sha256:38907510915c3f1604c7e83d6ab602ab3020d092f73bdaed8696773693ff768c"
+cloud_provider_image="registry.k8s.io/cloud-provider-kind/cloud-controller-manager:v0.12.0@sha256:1b97632e5dfec8f83c7e970cf18cedb9e6b707e272011d712cabf6ab59d323c9"
 
 die() {
 	echo "kind: $*" >&2
@@ -112,8 +132,75 @@ create_cluster() {
 		log "cluster $cluster exists but doesn't answer; deleting it"
 		delete_cluster
 	fi
-	log "creating cluster $cluster"
+	log "creating cluster $cluster (CNI $cni)"
 	kind create cluster --name "$cluster" --image "$node_image" --config "$here/kind.yaml" --wait 0s
+}
+
+# install_ptp gives the nodes a network that ignores NetworkPolicy: on each
+# node, the standard ptp and host-local plugins (in kind's node image) for
+# its pod CIDR, a route to every other node's pod CIDR through that node,
+# and masquerading of traffic that leaves the pod network. That is what
+# kindnet does, minus its NetworkPolicy controller.
+install_ptp() {
+	log "configuring the ptp CNI, which ignores NetworkPolicy"
+	local nodes node other cidr ip
+	nodes="$(kind get nodes --name "$cluster")"
+	# The controller manager gives each node its pod CIDR soon after it
+	# joins.
+	for node in $nodes; do
+		for _ in $(seq 60); do
+			[[ -z "$(kc get node "$node" -o jsonpath='{.spec.podCIDR}' 2>/dev/null)" ]] || continue 2
+			sleep 2
+		done
+		die "node $node has no pod CIDR"
+	done
+	for node in $nodes; do
+		cidr="$(kc get node "$node" -o jsonpath='{.spec.podCIDR}')"
+		printf '%s\n' '{"cniVersion": "0.4.0", "name": "pfk8s-ptp", "plugins": [' \
+			'{"type": "ptp", "ipMasq": false, "mtu": 1500, "ipam": {"type": "host-local", "dataDir": "/run/cni-ipam-state",' \
+			' "routes": [{"dst": "0.0.0.0/0"}], "ranges": [[{"subnet": "'"$cidr"'"}]]}},' \
+			'{"type": "portmap", "capabilities": {"portMappings": true}}]}' |
+			docker exec -i "$node" cp /dev/stdin /etc/cni/net.d/10-pfk8s-ptp.conflist
+		docker exec "$node" sh -c 'iptables -t nat -C POSTROUTING -s "$1" ! -d "$1" -j MASQUERADE 2>/dev/null ||
+			iptables -t nat -A POSTROUTING -s "$1" ! -d "$1" -j MASQUERADE' sh "$pod_cidr"
+		for other in $nodes; do
+			[[ "$other" != "$node" ]] || continue
+			cidr="$(kc get node "$other" -o jsonpath='{.spec.podCIDR}')"
+			ip="$(kc get node "$other" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')"
+			docker exec "$node" ip route replace "$cidr" via "$ip"
+		done
+	done
+}
+
+# start_cloud_provider runs cloud-provider-kind, which gives LoadBalancer
+# Services an address on the kind network (an Envoy container per Service)
+# that the host reaches, as a cloud's load balancer would. It talks to
+# Docker, so it gets the socket. It serves every kind cluster on the host,
+# and there is only ever this one.
+start_cloud_provider() {
+	if [[ "$(docker inspect -f '{{.State.Running}}' "$cloud_provider" 2>/dev/null)" == true ]]; then
+		return
+	fi
+	docker rm -f "$cloud_provider" >/dev/null 2>&1 || true
+	local socket=/var/run/docker.sock
+	if [[ "${DOCKER_HOST:-}" == unix://* ]]; then
+		socket="${DOCKER_HOST#unix://}"
+	fi
+	log "starting cloud-provider-kind as $cloud_provider"
+	docker run -d --name "$cloud_provider" --network kind -v "$socket:/var/run/docker.sock" \
+		--label pressfleet.test=kind "$cloud_provider_image" --gateway-channel disabled >/dev/null
+}
+
+# stop_cloud_provider removes cloud-provider-kind and the load balancers it
+# left behind for the cluster.
+stop_cloud_provider() {
+	docker rm -f "$cloud_provider" >/dev/null 2>&1 || true
+	local lbs
+	lbs="$(docker ps -aq --filter "label=io.x-k8s.cloud-provider-kind.cluster=$cluster")"
+	if [[ -n "$lbs" ]]; then
+		# shellcheck disable=SC2086 # one container ID per word
+		docker rm -f $lbs >/dev/null
+	fi
 }
 
 configure_registry() {
@@ -134,7 +221,7 @@ install_calico() {
 	# network is kind.yaml's podSubnet.
 	curl -fsSL "https://raw.githubusercontent.com/projectcalico/calico/$calico_version/manifests/calico.yaml" |
 		sed -e 's|# - name: CALICO_IPV4POOL_CIDR|- name: CALICO_IPV4POOL_CIDR|' \
-			-e 's|#   value: "192.168.0.0/16"|  value: "10.244.0.0/16"|' |
+			-e 's|#   value: "192.168.0.0/16"|  value: "'"$pod_cidr"'"|' |
 		kc apply --server-side -f - >/dev/null
 }
 
@@ -157,7 +244,9 @@ install_nfs() {
 wait_ready() {
 	log "waiting for the nodes and system pods"
 	kc wait --for=condition=Ready node --all --timeout=5m >/dev/null
-	kc -n kube-system rollout status daemonset/calico-node --timeout=5m >/dev/null
+	if [[ "$cni" == calico ]]; then
+		kc -n kube-system rollout status daemonset/calico-node --timeout=5m >/dev/null
+	fi
 	kc -n kube-system rollout status deployment/coredns --timeout=5m >/dev/null
 	kc -n kube-system rollout status deployment/metrics-server --timeout=5m >/dev/null
 	kc -n kube-system rollout status deployment/csi-nfs-controller --timeout=5m >/dev/null
@@ -182,7 +271,12 @@ up() {
 	start_registry
 	create_cluster
 	configure_registry
-	install_calico
+	start_cloud_provider
+	if [[ "$cni" == calico ]]; then
+		install_calico
+	else
+		install_ptp
+	fi
 	install_metrics_server
 	install_nfs
 	kc apply -f "$here/services.yaml" >/dev/null
@@ -225,6 +319,7 @@ site_images() {
 # delete_cluster deletes the cluster and leaves the registry.
 delete_cluster() {
 	local status=0
+	stop_cloud_provider
 	if kind get clusters 2>/dev/null | grep -qx "$cluster"; then
 		# A node with a hard NFS mount whose server is gone can't be
 		# killed, so the workers, which mount the data volume, go first,
@@ -258,6 +353,7 @@ env_vars() {
 	echo "PRESSFLEET_K8S_KUBECONFIG=$KUBECONFIG"
 	echo "PRESSFLEET_K8S_REGISTRY=$registry:5000"
 	echo "PRESSFLEET_K8S_PUSH_REGISTRY=127.0.0.1:$registry_port"
+	echo "PRESSFLEET_K8S_CNI=$cni"
 }
 
 case "${1:-}" in

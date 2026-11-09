@@ -31,7 +31,7 @@ Cluster:
 
 - **Kubernetes 1.35 or later.** The chart refuses older clusters (`kubeVersion`), and it uses `ValidatingAdmissionPolicy`. PressFleet supports the three newest Kubernetes minor releases when a release ships.
 - **amd64 nodes with cgroup v2.** Doctor checks both on every node.
-- **A network plugin that enforces NetworkPolicy**, such as Calico or Cilium, or k3s's own controller. Flannel on its own, and kindnet, ignore NetworkPolicy; the control plane **refuses to start** on such a cluster, because site isolation would be missing.
+- **A network plugin that enforces NetworkPolicy**, such as Calico or Cilium, or k3s's own controller. Flannel on its own ignores NetworkPolicy, as did kind's kindnet before kind 0.24; the control plane **refuses to start** on such a cluster, because site isolation would be missing.
 - **A ReadWriteOnce storage class** (usually the cluster's default) for site volumes, MariaDB, VictoriaMetrics, and Traefik's certificates.
 - **A ReadWriteMany storage class** for the control plane's data directory, from storage that accepts several PersistentVolumes on one volume: NFS, CephFS, or EFS. Block storage (EBS, Persistent Disk, Azure Disk) and `local-path` can't serve it. See [Storage](#storage).
 - **metrics-server.** Container and node CPU and memory come from `metrics.k8s.io`.
