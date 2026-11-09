@@ -2,6 +2,7 @@ package e2e_test
 
 import (
 	"encoding/base64"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -19,15 +20,49 @@ import (
 // with path and query (HSTS on the alias, a production domain, only); the
 // preview's basicAuth, with the password's hash, answers 401 with noindex;
 // maintenance mode takes the primary domain over and gives it back; and
-// none of it restarts the site's pod.
+// none of it restarts the site's pod. An alias whose certificate isn't
+// issued (its domain points elsewhere, so HTTP-01 fails) is routed all the
+// same, with Traefik's default certificate.
+//
+// Traefik has the chart's LoadBalancer Service here, as in production
+// (cloud-provider-kind gives it an address; the other tests use NodePorts):
+// everything goes through it, doctor finds its address, and SFTP works
+// through it. The dashboard domain gets its certificate from Pebble too
+// (the chart's own route, #223).
 func TestKubernetesGoLive(t *testing.T) {
-	p := e2e.StartKubernetes(t, e2e.KubeOptions{Pebble: true})
+	p := e2e.StartKubernetes(t, e2e.KubeOptions{Pebble: true, LoadBalancer: true})
 	k := p.Kube
 	ctx := t.Context()
-	site, _ := k8sSite(t, p, createGroup(t, p, "E2E Kubernetes Go-Live"), "E2E Kubernetes Live")
+	site, one := k8sSite(t, p, createGroup(t, p, "E2E Kubernetes Go-Live"), "E2E Kubernetes Live")
 	hc := p.IngressClient(t)
 	preview := site.PreviewDomain
 	const primary, alias = "live.k8s.e2e.test", "www.live.k8s.e2e.test"
+	// Resolves to Pebble's own loopback, where nothing answers HTTP-01.
+	const pending = "pending.live.k8s.e2e.test"
+
+	t.Run("dashboard certificate", func(t *testing.T) {
+		waitCertified(t, p.VerifyingIngressClient(t), "https://"+e2e.DashboardDomain+"/readyz", nil, http.StatusOK, time.Now())
+	})
+
+	t.Run("LoadBalancer", func(t *testing.T) {
+		lb, _, err := net.SplitHostPort(p.HTTPSAddr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if lb == k.NodeIP {
+			t.Fatalf("the test reaches Traefik at its node's address %s, not a load balancer's", lb)
+		}
+		resp, err := p.Client.GetPlatformDoctorWithResponse(ctx)
+		if err != nil || resp.JSON200 == nil {
+			t.Fatalf("doctor: %v %s", err, resp.Body)
+		}
+		for _, r := range resp.JSON200.Results {
+			if r.ID == "k8s-traefik" && (r.Status != "pass" || !strings.Contains(r.Message, lb)) {
+				t.Errorf("doctor's k8s-traefik: %s: %s, want pass with %s", r.Status, r.Message, lb)
+			}
+		}
+		checkK8sSFTP(t, p, site, one)
+	})
 	podUID := func() string {
 		return k.MustKubectl(t, "get", "pods", "-n", k.SiteNamespace(site.ID), "-l", "pressfleet.io/component=site",
 			"-o", "jsonpath={.items[*].metadata.uid}")
@@ -65,8 +100,9 @@ func TestKubernetesGoLive(t *testing.T) {
 
 	t.Run("go live", func(t *testing.T) {
 		skip := true
+		p.Pebble.ResolveTo(ctx, t, pending, "127.0.0.1")
 		resp, err := p.Client.GoLiveSiteWithResponse(ctx, site.ID, client.GoLiveSiteJSONRequestBody{
-			PrimaryDomain: primary, Aliases: &[]string{alias}, SkipDNSCheck: &skip,
+			PrimaryDomain: primary, Aliases: &[]string{alias, pending}, SkipDNSCheck: &skip,
 		})
 		if err != nil || resp.JSON202 == nil {
 			t.Fatalf("go-live: %v %s", err, resp.Body)
@@ -79,7 +115,7 @@ func TestKubernetesGoLive(t *testing.T) {
 		for _, tc := range []struct {
 			host string
 			hsts bool
-		}{{preview, false}, {alias, true}} {
+		}{{preview, false}, {alias, true}, {pending, true}} {
 			res, _ := waitIngress(t, hc, "https://"+tc.host+"/shop/item?id=7&x=y", nil, http.StatusMovedPermanently)
 			if res.Header.Get("Location") != "https://"+primary+"/shop/item?id=7&x=y" {
 				t.Errorf("%s: Location %q", tc.host, res.Header.Get("Location"))
@@ -87,6 +123,35 @@ func TestKubernetesGoLive(t *testing.T) {
 			if got := res.Header.Get("Strict-Transport-Security") != ""; got != tc.hsts {
 				t.Errorf("%s: Strict-Transport-Security %q", tc.host, res.Header.Get("Strict-Transport-Security"))
 			}
+		}
+	})
+
+	// The primary domain and the first alias have their certificates by
+	// now, ordered at the same time; the pending alias's validation
+	// failed. It redirects all the same (above), with Traefik's own
+	// certificate, which a browser rejects.
+	t.Run("certificate not issued", func(t *testing.T) {
+		waitCertified(t, p.VerifyingIngressClient(t), "https://"+alias+"/", nil, http.StatusMovedPermanently, time.Now())
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+pending+"/", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res, err := p.VerifyingIngressClient(t).Do(req); err == nil {
+			_ = res.Body.Close()
+			t.Errorf("GET https://%s/: a certificate that verifies, for %v", pending, res.TLS.PeerCertificates[0].DNSNames)
+		} else if !strings.Contains(err.Error(), "certificate") {
+			t.Errorf("GET https://%s/: want a certificate error, got %v", pending, err)
+		}
+		res, _ := ingressGet(t, hc, "https://"+pending+"/", nil)
+		if res.TLS == nil || len(res.TLS.PeerCertificates) == 0 {
+			t.Fatalf("GET https://%s/: no TLS", pending)
+		}
+		if leaf := res.TLS.PeerCertificates[0]; leaf.Subject.CommonName != "TRAEFIK DEFAULT CERT" {
+			t.Errorf("GET https://%s/: a certificate for %q (%v) issued by %q, want Traefik's default", pending,
+				leaf.Subject.CommonName, leaf.DNSNames, leaf.Issuer.CommonName)
+		}
+		if res.StatusCode != http.StatusMovedPermanently || res.Header.Get("Location") != "https://"+primary+"/" {
+			t.Errorf("GET https://%s/: %d to %q, want a redirect to the primary domain", pending, res.StatusCode, res.Header.Get("Location"))
 		}
 	})
 
