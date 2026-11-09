@@ -61,13 +61,16 @@ func TestKubernetesDisasterRecovery(t *testing.T) {
 	checkSite := func(t *testing.T) {
 		t.Helper()
 		waitRecovered(ctx, t, p, site.ID)
-		// Read from the database, not through WordPress: over a running
-		// install, the object cache still holds the option from before the
-		// recovery (#341).
+		// Both the database and WordPress: over a running install, the
+		// object cache held the option from before the recovery until
+		// recovery flushed it (#341).
 		got := siteWP(t, k.Site(site.ID), "eval",
 			`global $wpdb; echo $wpdb->get_var("SELECT option_value FROM {$wpdb->options} WHERE option_name = 'pf_restore_marker'");`)
 		if got != "before" {
 			t.Errorf("pf_restore_marker = %q in the database, want the backup's", got)
+		}
+		if got := siteWP(t, k.Site(site.ID), "option", "get", "pf_restore_marker"); got != "before" {
+			t.Errorf("pf_restore_marker = %q through WordPress, want the backup's (the object cache wasn't flushed?)", got)
 		}
 		_, body := waitIngress(t, p.IngressClient(t), preview, nil, http.StatusOK)
 		if !strings.Contains(body, "<title>E2E Kubernetes Recovery") {
