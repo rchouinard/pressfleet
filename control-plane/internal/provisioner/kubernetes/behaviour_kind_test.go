@@ -755,8 +755,9 @@ func testKindLeftovers(t *testing.T, f *kindFixture) {
 	if err := helper.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
-	// Killed, so Wait reports the signal; only its return matters.
-	_ = <-exited
+	if err := <-exited; err == nil {
+		t.Fatal("the helper exited cleanly after it was killed")
+	}
 	t.Logf("killed the helper with its tasks and session running:\n%s", out)
 
 	core := f.p.typed.CoreV1()
