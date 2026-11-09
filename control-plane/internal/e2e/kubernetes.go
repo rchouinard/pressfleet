@@ -586,6 +586,17 @@ func (p *Platform) ExecControlPlane(ctx context.Context, stdin io.Reader, argv .
 	return p.Project.Exec(ctx, Service, argv...)
 }
 
+// ExecVictoriaMetrics runs a command in VictoriaMetrics' container on
+// either target. It has no published port or route, and only the control
+// plane may connect to it, so tests read and write the metrics store from
+// inside: its image has BusyBox's wget.
+func (p *Platform) ExecVictoriaMetrics(ctx context.Context, argv ...string) ([]byte, error) {
+	if p.Kube != nil {
+		return p.Kube.Kubectl(ctx, nil, append([]string{"exec", "-n", p.Kube.Namespace, "statefulset/victoria-metrics", "--"}, argv...)...)
+	}
+	return p.Project.Exec(ctx, "victoria-metrics", argv...)
+}
+
 // DataFileSize returns the size of a file in the data directory (a path
 // under p.DataDir), and whether it exists, on either target.
 func (p *Platform) DataFileSize(ctx context.Context, t *testing.T, path string) (int64, bool) {

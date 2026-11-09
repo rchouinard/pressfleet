@@ -843,6 +843,7 @@ func TestDefaultRedisSettings(t *testing.T) {
 func renderedVictoriaMetrics(t *testing.T, cfg platform.Config) (svc struct {
 	Image       string
 	Command     []string
+	Environment map[string]string
 	Ports       []string
 	Labels      map[string]string
 	Volumes     []struct{ Type, Source, Target string }
@@ -883,10 +884,12 @@ func TestRenderedVictoriaMetrics(t *testing.T) {
 		days, memory  int
 		wantRetention string
 		wantMemory    string
+		wantCPUs      string
 	}{
-		{name: "defaults", wantRetention: "-retentionPeriod=90d", wantMemory: "256M"},
-		{name: "custom", days: 400, memory: 512, wantRetention: "-retentionPeriod=400d", wantMemory: "512M"},
-		{name: "one day", days: 1, wantRetention: "-retentionPeriod=1d", wantMemory: "256M"},
+		{name: "defaults", wantRetention: "-retentionPeriod=90d", wantMemory: "256M", wantCPUs: "4"},
+		{name: "custom", days: 400, memory: 512, wantRetention: "-retentionPeriod=400d", wantMemory: "512M", wantCPUs: "8"},
+		{name: "one day", days: 1, wantRetention: "-retentionPeriod=1d", wantMemory: "256M", wantCPUs: "4"},
+		{name: "smallest", memory: 64, wantRetention: "-retentionPeriod=90d", wantMemory: "64M", wantCPUs: "2"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -907,6 +910,11 @@ func TestRenderedVictoriaMetrics(t *testing.T) {
 			}
 			if svc.Deploy.Resources.Limits.Memory != tc.wantMemory {
 				t.Errorf("memory = %q, want %s", svc.Deploy.Resources.Limits.Memory, tc.wantMemory)
+			}
+			// Per-CPU buffers sized for all of the host's CPUs would
+			// outgrow the memory limit (#317).
+			if got := svc.Environment["GOMAXPROCS"]; got != tc.wantCPUs {
+				t.Errorf("GOMAXPROCS = %q, want %s", got, tc.wantCPUs)
 			}
 			// Data survives container replacement and image upgrades.
 			if len(svc.Volumes) != 1 || svc.Volumes[0].Type != "volume" ||
