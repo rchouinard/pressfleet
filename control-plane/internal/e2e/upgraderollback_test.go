@@ -708,11 +708,22 @@ func (u *upgradePlatform) brokenImage(image string, migrate bool) string {
 // with migration for the control plane image, with the e2emigration tag.
 func buildPressfleet(ctx context.Context, t *testing.T, version string, migration bool) string {
 	t.Helper()
+	return goBuildPressfleet(ctx, t, version, migration, migration)
+}
+
+// goBuildPressfleet builds this tree's pressfleet binary, reporting
+// version, into a new directory, and returns its path: for the control
+// plane image with forImage, else for the host, and with migration, with
+// the e2emigration tag.
+func goBuildPressfleet(ctx context.Context, t *testing.T, version string, forImage, migration bool) string {
+	t.Helper()
 	out := filepath.Join(t.TempDir(), "pressfleet")
 	args := []string{"build", "-trimpath", "-ldflags", "-s -w -X main.version=" + version, "-o", out}
 	env := os.Environ()
 	if migration {
 		args = append(args, "-tags", "e2emigration")
+	}
+	if forImage {
 		// As the control plane image's Dockerfile builds it.
 		env = append(env, "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
 	}

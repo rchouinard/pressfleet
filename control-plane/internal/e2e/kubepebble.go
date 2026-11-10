@@ -195,6 +195,20 @@ spec:
       port: 8053
       protocol: TCP
 ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: challtestsrv-management
+  labels:
+    app.kubernetes.io/part-of: pebble-e2e
+spec:
+  type: NodePort
+  selector:
+    app: challtestsrv
+  ports:
+    - name: management
+      port: ` + strconv.Itoa(challTestSrvMgmtPort) + `
+---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -248,6 +262,7 @@ func (k *KubePlatform) startPebble(ctx context.Context, t *testing.T, f *pebbleF
 	if !roots.AppendCertsFromPEM(rootPEM.Bytes()) {
 		t.Fatalf("Pebble's root certificate isn't PEM: %q", rootPEM.String())
 	}
+	dnsPort := k.MustKubectl(t, "get", "service", "challtestsrv-management", "-n", k.Namespace, "-o", "jsonpath={.spec.ports[0].nodePort}")
 	t.Logf("Pebble issues certificates; every name resolves to Traefik's Service at %s", traefikIP)
-	return &Pebble{Roots: roots, RootsPEM: rootPEM.Bytes(), TraefikIP: traefikIP}
+	return &Pebble{Roots: roots, RootsPEM: rootPEM.Bytes(), TraefikIP: traefikIP, dnsAPI: "http://" + net.JoinHostPort(node, dnsPort)}
 }

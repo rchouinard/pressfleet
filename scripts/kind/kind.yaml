@@ -4,8 +4,8 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 networking:
-  # Calico replaces kindnet, which ignores NetworkPolicy (§4.8 requires a
-  # CNI that enforces it).
+  # Calico (or, with cluster.sh's KIND_CNI=ptp, a CNI that ignores
+  # NetworkPolicy) replaces kindnet, as the clusters §4.8 targets would.
   disableDefaultCNI: true
   # kubernetes.pod_cidrs of the platforms the tests install.
   podSubnet: 10.244.0.0/16

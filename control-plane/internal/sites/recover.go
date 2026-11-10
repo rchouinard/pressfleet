@@ -408,6 +408,12 @@ func (s *Service) upgradeRecoveredDatabase(ctx context.Context, r *jobs.Run) err
 	if err != nil {
 		return err
 	}
+	// On a running install (recover --force, or recovery.force on
+	// Kubernetes) the object cache still holds the pre-recovery site's
+	// options, and WordPress would keep serving them (#341).
+	if err := s.caches.FlushCache(ctx, site.ID); err != nil {
+		return fmt.Errorf("flushing the object cache: %w", err)
+	}
 	if _, err := s.wpcliRestored(ctx, site.ID, "core", "update-db"); err != nil {
 		return fmt.Errorf("upgrading the restored database to WordPress %s: %w", site.WPCoreVersion, err)
 	}

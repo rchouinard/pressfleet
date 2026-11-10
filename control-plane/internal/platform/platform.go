@@ -74,7 +74,21 @@ const (
 	// dashboard queries, http://victoria-metrics:8428.
 	VictoriaMetricsService = "victoria-metrics"
 	VictoriaMetricsPort    = 8428
+	// victoriaMetricsMBPerCPU is how much of VictoriaMetrics' memory limit
+	// each CPU it uses gets: see VictoriaMetricsCPUs.
+	victoriaMetricsMBPerCPU = 64
 )
+
+// VictoriaMetricsCPUs returns the GOMAXPROCS VictoriaMetrics runs with: one
+// CPU per 64 MiB of its memory limit, at least 2 (4 at the default limit).
+// It sizes per-CPU ingestion buffers and caches by GOMAXPROCS, which is
+// otherwise every CPU of the host, whatever the memory limit: at 256 MiB on
+// a 32-CPU host it settled at 205 MiB under a light load and was
+// OOMKilled once, where with 4 CPUs it uses about 65 MiB (#317). The
+// chart computes the same.
+func VictoriaMetricsCPUs(memoryMB int) int {
+	return max(2, memoryMB/victoriaMetricsMBPerCPU)
+}
 
 // Object cache sizing. The §4.1 budget line is the cache's maxmemory; the
 // container limit adds headroom for the server itself, client buffers, and
@@ -460,6 +474,7 @@ type templateData struct {
 	TraefikGoMemLimitMB      int
 	SocketProxyMemoryMB      int
 	VictoriaMetricsMemoryMB  int
+	VictoriaMetricsCPUs      int
 	VictoriaMetricsPort      int
 	VictoriaMetricsService   string
 	MetricsRetentionDays     int
@@ -591,6 +606,7 @@ func Render(dir string, cfg Config) error {
 		TraefikGoMemLimitMB:     cfg.TraefikMemoryMB * 3 / 4,
 		SocketProxyMemoryMB:     cfg.SocketProxyMemoryMB,
 		VictoriaMetricsMemoryMB: cfg.VictoriaMetricsMemoryMB,
+		VictoriaMetricsCPUs:     VictoriaMetricsCPUs(cfg.VictoriaMetricsMemoryMB),
 		VictoriaMetricsPort:     VictoriaMetricsPort,
 		VictoriaMetricsService:  VictoriaMetricsService,
 		MetricsRetentionDays:    cfg.MetricsRetentionDays,
