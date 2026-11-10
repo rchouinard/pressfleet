@@ -121,8 +121,8 @@ jobs:
     runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     # Creating the cluster takes a few minutes, each test's install about
     # one, and the conformance suite most of the rest (go test's own limit
-    # is 150m, in the Makefile).
-    timeout-minutes: ${{ needs.plan.outputs.tier == 'smoke' && 90 || 210 }}
+    # is 150m, in the Makefile); full runs add the ptp cluster's.
+    timeout-minutes: ${{ needs.plan.outputs.tier == 'smoke' && 90 || 230 }}
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4
@@ -156,5 +156,23 @@ jobs:
           fi
           # A cancelled run (re-adding the label cancels the one in
           # progress) never reaches `cluster.sh down`; start from a
-          # fresh cluster rather than whatever it left.
-          flock "$lock" sh -c 'scripts/kind/cluster.sh down && exec "$@"' sh "$@"
+          # fresh cluster rather than whatever it left, the ptp
+          # cluster below included.
+          flock "$lock" sh -c 'scripts/kind/cluster.sh down &&
+            KIND_CNI=ptp KIND_CLUSTER=pfk8s-ptp scripts/kind/cluster.sh down && exec "$@"' sh "$@"
+      # doctor must fail a CNI that ignores NetworkPolicy (#225). That takes
+      # a cluster of its own, with a plain ptp CNI in place of Calico, which
+      # the step creates, tests, and deletes under the same lock once the
+      # first cluster is gone (about ten minutes), after the same clean-up.
+      # Full runs only, even when the tests above failed.
+      - if: ${{ !cancelled() && needs.plan.outputs.tier == 'full' }}
+        name: Run the NetworkPolicy check without an enforcing CNI
+        env:
+          KIND_SITE_IMAGES: ${{ needs.plan.outputs.build_images == 'true' && 'local' || 'pull' }}
+        run: |
+          lock=/tmp/pressfleet-k8s-e2e.lock
+          if ! flock -n "$lock" true; then
+            echo "Waiting for another run of the kind tests on this host"
+          fi
+          flock "$lock" sh -c 'scripts/kind/cluster.sh down &&
+            KIND_CNI=ptp KIND_CLUSTER=pfk8s-ptp scripts/kind/cluster.sh down && exec make test-k8s-e2e-ptp'

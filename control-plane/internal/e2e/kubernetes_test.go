@@ -534,7 +534,11 @@ func checkK8sControlPlaneRights(t *testing.T, p *e2e.Platform, site client.Site)
 // As the control plane, with server-side dry runs, it may label the second
 // as its own (how the template rollout migrates its sites) and delete it,
 // but may not change or delete the first, or bind its site ClusterRole in
-// either before it is labeled as its own.
+// either before it is labeled as its own. Nor may it touch namespaces that
+// aren't PressFleet's at all (#223), which its cluster-wide RBAC allows:
+// kube-system, the cluster's PostgreSQL, or its own platform namespace;
+// it may create doctor's probe namespaces, but none named outside its
+// prefixes.
 func checkK8sOtherInstall(t *testing.T, p *e2e.Platform, site client.Site) {
 	k := p.Kube
 	ctx := t.Context()
@@ -587,11 +591,40 @@ func checkK8sOtherInstall(t *testing.T, p *e2e.Platform, site client.Site) {
 		return err
 	}
 	siteNS := k.SiteNamespace(site.ID)
+	createNS := func(name string) error {
+		body, err := json.Marshal(map[string]any{"apiVersion": "v1", "kind": "Namespace", "metadata": map[string]any{
+			"name": name,
+			"labels": map[string]any{
+				"pressfleet.io/doctor-probe":                 "true",
+				"pressfleet.io/platform-namespace":           k.Namespace,
+				"pod-security.kubernetes.io/enforce":         "restricted",
+				"pod-security.kubernetes.io/enforce-version": "latest",
+			},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = k.Kubectl(ctx, bytes.NewReader(body), "create", "--dry-run=server", "-f", "-", as)
+		return err
+	}
+	// kube-system can't be deleted at all (NamespaceLifecycle), so the
+	// policy's refusal to delete one is checked on the PostgreSQL
+	// fixture's (scripts/kind/services.yaml).
+	const postgresNS = "pfk8s-postgres"
 	for _, c := range []struct {
 		name     string
 		admitted bool
 		err      error
 	}{
+		{"create a doctor probe namespace", true, createNS(k.Namespace + "-doctor-review")},
+		{"create a namespace outside its prefixes", false, createNS("pf-review-" + k.Namespace)},
+		{"change kube-system", false, label("kube-system", "pressfleet.io/review=true")},
+		{"label kube-system as its own", false, label("kube-system", own)},
+		{"bind its ClusterRole in kube-system", false, roleBinding("kube-system")},
+		{"bind its ClusterRole in default", false, roleBinding("default")},
+		{"bind its ClusterRole in its platform namespace", false, roleBinding(k.Namespace)},
+		{"delete another application's namespace", false, del(postgresNS)},
+		{"delete its platform namespace", false, del(k.Namespace)},
 		{"change its own site namespace", true, label(siteNS, "pressfleet.io/review=true")},
 		{"label a site namespace from before the label as its own", true, label(legacy, own)},
 		{"label another install's namespace as its own", false, label(foreign, own)},

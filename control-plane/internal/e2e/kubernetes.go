@@ -49,6 +49,10 @@ const (
 	EnvK8sRegistry = "PRESSFLEET_K8S_REGISTRY"
 	// EnvK8sImageTag is the control plane image's tag in that registry.
 	EnvK8sImageTag = "PRESSFLEET_K8S_IMAGE_TAG"
+	// EnvK8sCNI is the cluster's CNI: "calico", which enforces
+	// NetworkPolicy, or "ptp", which ignores it
+	// (KubeOptions.IgnoredNetworkPolicy). Empty is "calico".
+	EnvK8sCNI = "PRESSFLEET_K8S_CNI"
 )
 
 // Fixtures of the kind cluster (scripts/kind/services.yaml).
@@ -157,6 +161,9 @@ type KubePlatform struct {
 	// NodeIP is the address of the node Traefik runs on, which its
 	// NodePorts answer on (externalTrafficPolicy Local).
 	NodeIP string
+	// LoadBalancer is KubeOptions.LoadBalancer: the test reaches Traefik
+	// at its Service's external address rather than its NodePorts.
+	LoadBalancer bool
 }
 
 // SiteNamespace returns the namespace of a site.
@@ -168,6 +175,18 @@ type KubeOptions struct {
 	// certificates from Pebble, which validates HTTP-01 challenges against
 	// Traefik's Service.
 	Pebble bool
+	// LoadBalancer gives Traefik the chart's default LoadBalancer Service
+	// in place of NodePorts. On kind, cloud-provider-kind (started by
+	// scripts/kind/cluster.sh) gives it an address on the kind network,
+	// which the test then reaches Traefik and the SFTP gateway at.
+	LoadBalancer bool
+	// IgnoredNetworkPolicy runs the test on a cluster whose CNI ignores
+	// NetworkPolicy (EnvK8sCNI "ptp") and skips it on any other.
+	// Every other test is skipped on such a cluster: isolation (§6)
+	// depends on NetworkPolicy. The control plane's preflight checks would
+	// refuse to start it there, so it starts without them
+	// (PRESSFLEET_SKIP_PREFLIGHT).
+	IgnoredNetworkPolicy bool
 }
 
 // StartPlatform starts a platform on the target the environment selects:
@@ -189,26 +208,34 @@ func StartPlatform(t *testing.T) *Platform {
 // the control plane at the tree's site images in the cluster's registry,
 // creates the admin user with `kubectl exec`, and logs in through Traefik.
 //
-// The test reaches Traefik on its NodePorts at the node's address, and the
+// The test reaches Traefik on its NodePorts at the node's address (or at
+// its LoadBalancer address, with KubeOptions.LoadBalancer), and the
 // API through Traefik with the dashboard domain, as a browser would.
 // Everything is removed when the test ends; if it failed, the platform's
 // state and logs are written to the test log first.
 func StartKubernetes(t *testing.T, opts KubeOptions) *Platform {
 	t.Helper()
 	kube := kubeFromEnv(t)
+	switch ignores := os.Getenv(EnvK8sCNI) == "ptp"; {
+	case opts.IgnoredNetworkPolicy && !ignores:
+		t.Skip("needs a cluster whose CNI ignores NetworkPolicy: " + EnvK8sCNI + "=ptp (make test-k8s-e2e-ptp)")
+	case !opts.IgnoredNetworkPolicy && ignores:
+		t.Skip("the cluster's CNI ignores NetworkPolicy, which the platform needs enforced")
+	}
 	registry, tag := os.Getenv(EnvK8sRegistry), os.Getenv(EnvK8sImageTag)
 	if registry == "" || tag == "" {
 		t.Fatal(EnvK8sRegistry + " and " + EnvK8sImageTag + " must name the registry and the control plane image's tag (see make test-k8s-e2e)")
 	}
 	token := randomToken(8)
 	k := &KubePlatform{
-		Kube:       kube,
-		Namespace:  "pfk-" + token,
-		SitePrefix: "pfk-" + token + "-",
-		Registry:   registry,
-		Image:      registry + "/pressfleet/control-plane:" + tag,
-		ValuesDir:  t.TempDir(),
-		Database:   "pf_" + token,
+		Kube:         kube,
+		Namespace:    "pfk-" + token,
+		SitePrefix:   "pfk-" + token + "-",
+		Registry:     registry,
+		Image:        registry + "/pressfleet/control-plane:" + tag,
+		ValuesDir:    t.TempDir(),
+		Database:     "pf_" + token,
+		LoadBalancer: opts.LoadBalancer,
 	}
 	p := &Platform{Kube: k, DataDir: KubeDataDir, AdminEmail: "admin@e2e.test", AdminPassword: redact.Secret(randomToken(26))}
 	t.Cleanup(func() { p.kubeTeardown(t) })
@@ -233,7 +260,7 @@ func StartKubernetes(t *testing.T, opts KubeOptions) *Platform {
 	if _, err := k.Kubectl(ctx, nil, "apply", "-n", k.Namespace, "-f", filepath.Join(k.ValuesDir, "secrets.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	k.install(ctx, t)
+	k.install(ctx, t, opts.IgnoredNetworkPolicy)
 	if pebble != nil {
 		p.Pebble = k.startPebble(ctx, t, pebble)
 	}
@@ -403,9 +430,13 @@ func chartDir(t *testing.T) string {
 
 // testValues are the chart values the harness adds to init's: the tree's
 // control plane image, a namespace prefix of the platform's own, NodePorts
-// instead of a LoadBalancer, and small volumes.
+// instead of a LoadBalancer (unless LoadBalancer), and small volumes.
 func (k *KubePlatform) testValues() map[string]any {
 	small := func(size string) map[string]any { return map[string]any{"storage": map[string]any{"size": size}} }
+	service := "NodePort"
+	if k.LoadBalancer {
+		service = "LoadBalancer"
+	}
 	return map[string]any{
 		"images":     map[string]any{"controlPlane": k.Image},
 		"kubernetes": map[string]any{"siteNamespacePrefix": k.SitePrefix},
@@ -415,22 +446,42 @@ func (k *KubePlatform) testValues() map[string]any {
 		"mariadb":         small("2Gi"),
 		"victoriaMetrics": small("1Gi"),
 		"traefik": map[string]any{
-			"service": map[string]any{"type": "NodePort"},
+			"service": map[string]any{"type": service},
 		},
 	}
 }
 
 // install installs the chart from the tree with init's values and the
 // test's, and waits for every pod.
-func (k *KubePlatform) install(ctx context.Context, t *testing.T) {
+//
+// With skipPreflight, the control plane starts without its preflight
+// checks (PRESSFLEET_SKIP_PREFLIGHT), which refuse to start it on a
+// cluster that fails a required check. Helm can't wait for a control plane
+// that refuses to start, so it doesn't, and the harness sets the variable
+// and waits for the workloads itself.
+func (k *KubePlatform) install(ctx context.Context, t *testing.T, skipPreflight bool) {
 	t.Helper()
-	k.InstallChart(ctx, t, "install", nil)
+	if !skipPreflight {
+		k.InstallChart(ctx, t, "install", nil)
+		return
+	}
+	k.helmChart(ctx, t, "install", nil, false)
+	k.SetEnv(ctx, t, map[string]string{"PRESSFLEET_SKIP_PREFLIGHT": "1"})
+	for _, w := range strings.Fields(k.MustKubectl(t, "get", "deployments,statefulsets", "-n", k.Namespace, "-o", "name")) {
+		k.WaitRollout(ctx, t, w)
+	}
 }
 
 // InstallChart runs `helm install` or `helm upgrade` (verb) of the chart in
 // the tree with init's values, the test's, and extra, and waits until the
 // release's pods are ready.
 func (k *KubePlatform) InstallChart(ctx context.Context, t *testing.T, verb string, extra map[string]any) {
+	t.Helper()
+	k.helmChart(ctx, t, verb, extra, true)
+}
+
+// helmChart is InstallChart, waiting for the release's pods if wait.
+func (k *KubePlatform) helmChart(ctx context.Context, t *testing.T, verb string, extra map[string]any, wait bool) {
 	t.Helper()
 	values := k.testValues()
 	if extra != nil {
@@ -444,9 +495,13 @@ func (k *KubePlatform) InstallChart(ctx context.Context, t *testing.T, verb stri
 	if err := os.WriteFile(testValues, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, err := k.Helm(ctx, verb, "pressfleet", chartDir(t), "--namespace", k.Namespace,
+	args := []string{verb, "pressfleet", chartDir(t), "--namespace", k.Namespace,
 		"-f", filepath.Join(k.ValuesDir, "values.yaml"), "-f", testValues,
-		"--wait", "--timeout", strconv.Itoa(int(kubeBootTimeout.Seconds()))+"s")
+		"--timeout", strconv.Itoa(int(kubeBootTimeout.Seconds())) + "s"}
+	if wait {
+		args = append(args, "--wait")
+	}
+	out, err := k.Helm(ctx, args...)
 	if err != nil {
 		t.Fatalf("helm %s: %v\n%s", verb, err, out)
 	}
@@ -571,24 +626,29 @@ func (p *Platform) DataFileSize(ctx context.Context, t *testing.T, path string) 
 	return n, true
 }
 
-// kubeConnect finds Traefik's NodePorts and node, and waits until the
-// control plane answers ready through Traefik.
+// kubeConnect finds Traefik's NodePorts and node, or its LoadBalancer
+// address, and waits until the control plane answers ready through
+// Traefik.
 func (p *Platform) kubeConnect(ctx context.Context, t *testing.T) {
 	t.Helper()
 	k := p.Kube
 	k.NodeIP = k.MustKubectl(t, "get", "pods", "-n", k.Namespace, "-l", "app.kubernetes.io/component=traefik",
 		"-o", "jsonpath={.items[0].status.hostIP}")
+	host, field := k.NodeIP, "nodePort"
+	if k.LoadBalancer {
+		host, field = k.loadBalancerIP(ctx, t), "port"
+	}
 	ports := map[string]string{}
 	for _, name := range []string{"web", "websecure", "sftp"} {
 		ports[name] = k.MustKubectl(t, "get", "service", "traefik", "-n", k.Namespace,
-			"-o", `jsonpath={.spec.ports[?(@.name=="`+name+`")].nodePort}`)
+			"-o", `jsonpath={.spec.ports[?(@.name=="`+name+`")].`+field+`}`)
 		if ports[name] == "" {
-			t.Fatalf("Traefik's Service has no NodePort %s", name)
+			t.Fatalf("Traefik's Service has no %s %s", field, name)
 		}
 	}
-	p.HTTPAddr = net.JoinHostPort(k.NodeIP, ports["web"])
-	p.HTTPSAddr = net.JoinHostPort(k.NodeIP, ports["websecure"])
-	p.SFTPAddr = net.JoinHostPort(k.NodeIP, ports["sftp"])
+	p.HTTPAddr = net.JoinHostPort(host, ports["web"])
+	p.HTTPSAddr = net.JoinHostPort(host, ports["websecure"])
+	p.SFTPAddr = net.JoinHostPort(host, ports["sftp"])
 	p.BaseURL = "https://" + DashboardDomain
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	p.apiTransport = &http.Transport{
@@ -601,6 +661,29 @@ func (p *Platform) kubeConnect(ctx context.Context, t *testing.T) {
 	}
 	t.Logf("Traefik at %s (HTTP), %s (HTTPS), %s (SFTP)", p.HTTPAddr, p.HTTPSAddr, p.SFTPAddr)
 	p.waitReady(ctx, t)
+}
+
+// loadBalancerIP waits until Traefik's LoadBalancer Service has an external
+// address, which cloud-provider-kind gives it within seconds, and returns
+// it.
+func (k *KubePlatform) loadBalancerIP(ctx context.Context, t *testing.T) string {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Minute)
+	for {
+		ip, err := k.Kubectl(ctx, nil, "get", "service", "traefik", "-n", k.Namespace,
+			"-o", "jsonpath={.status.loadBalancer.ingress[0].ip}")
+		if err == nil && len(bytes.TrimSpace(ip)) > 0 {
+			return string(bytes.TrimSpace(ip))
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Traefik's LoadBalancer Service has no external address after 3m (is cloud-provider-kind running? scripts/kind/cluster.sh): %v", err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 // createAdminKube creates the admin user with the CLI in the control
