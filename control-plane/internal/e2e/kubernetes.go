@@ -49,6 +49,9 @@ const (
 	EnvK8sRegistry = "PRESSFLEET_K8S_REGISTRY"
 	// EnvK8sImageTag is the control plane image's tag in that registry.
 	EnvK8sImageTag = "PRESSFLEET_K8S_IMAGE_TAG"
+	// EnvK8sPushRegistry is the same registry as the host's Docker reaches
+	// it (host:port), for tests that build images of their own.
+	EnvK8sPushRegistry = "PRESSFLEET_K8S_PUSH_REGISTRY"
 	// EnvK8sCNI is the cluster's CNI: "calico", which enforces
 	// NetworkPolicy, or "ptp", which ignores it
 	// (KubeOptions.IgnoredNetworkPolicy). Empty is "calico".
@@ -175,6 +178,11 @@ type KubeOptions struct {
 	// certificates from Pebble, which validates HTTP-01 challenges against
 	// Traefik's Service.
 	Pebble bool
+	// Chart is the chart to install: a packaged chart (PackageChart), or
+	// empty for the tree's.
+	Chart string
+	// Values are chart values merged over the harness's.
+	Values map[string]any
 	// LoadBalancer gives Traefik the chart's default LoadBalancer Service
 	// in place of NodePorts. On kind, cloud-provider-kind (started by
 	// scripts/kind/cluster.sh) gives it an address on the kind network,
@@ -254,13 +262,8 @@ func StartKubernetes(t *testing.T, opts KubeOptions) *Platform {
 		t.Fatalf("the SSH host key init wrote: %v", err)
 	}
 	p.HostKey = signer.PublicKey()
-	k.MustKubectl(t, "create", "namespace", k.Namespace)
-	// The chart's pods meet Pod Security restricted (charts/pressfleet).
-	k.MustKubectl(t, "label", "namespace", k.Namespace, "pod-security.kubernetes.io/enforce=restricted")
-	if _, err := k.Kubectl(ctx, nil, "apply", "-n", k.Namespace, "-f", filepath.Join(k.ValuesDir, "secrets.yaml")); err != nil {
-		t.Fatal(err)
-	}
-	k.install(ctx, t, opts.IgnoredNetworkPolicy)
+	k.CreateNamespace(ctx, t)
+	k.install(ctx, t, opts.Chart, opts.Values, opts.IgnoredNetworkPolicy)
 	if pebble != nil {
 		p.Pebble = k.startPebble(ctx, t, pebble)
 	}
@@ -271,12 +274,93 @@ func StartKubernetes(t *testing.T, opts KubeOptions) *Platform {
 	return p
 }
 
+// CreateNamespace creates the platform namespace, enforcing Pod Security
+// restricted, and applies the Secrets init wrote, as an operator does
+// before installing the chart.
+func (k *KubePlatform) CreateNamespace(ctx context.Context, t *testing.T) {
+	t.Helper()
+	k.MustKubectl(t, "create", "namespace", k.Namespace)
+	// The chart's pods meet Pod Security restricted (charts/pressfleet).
+	k.MustKubectl(t, "label", "namespace", k.Namespace, "pod-security.kubernetes.io/enforce=restricted")
+	if _, err := k.Kubectl(ctx, nil, "apply", "-n", k.Namespace, "-f", filepath.Join(k.ValuesDir, "secrets.yaml")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // createDatabase creates the platform's state database.
 func (k *KubePlatform) createDatabase(ctx context.Context, t *testing.T) {
 	t.Helper()
-	if _, err := k.Kubectl(ctx, nil, "exec", "-n", kindPostgresNS, "deploy/postgres", "--",
-		"psql", "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-c", "CREATE DATABASE "+k.Database); err != nil {
+	if _, err := k.psql(ctx, "postgres", "CREATE DATABASE "+k.Database); err != nil {
 		t.Fatalf("creating the state database: %v", err)
+	}
+}
+
+// psql runs a statement in a database of the cluster's PostgreSQL and
+// returns its unaligned output.
+func (k *KubePlatform) psql(ctx context.Context, database, sql string) ([]byte, error) {
+	return k.Kubectl(ctx, nil, "exec", "-n", kindPostgresNS, "deploy/postgres", "--",
+		"psql", "-U", "postgres", "-d", database, "-v", "ON_ERROR_STOP=1", "-tA", "-c", sql)
+}
+
+// EmptyDatabase replaces the state database with an empty one, as an
+// operator's new PostgreSQL would have.
+func (k *KubePlatform) EmptyDatabase(ctx context.Context, t *testing.T) {
+	t.Helper()
+	if _, err := k.psql(ctx, "postgres", "DROP DATABASE IF EXISTS "+k.Database+" WITH (FORCE)"); err != nil {
+		t.Fatalf("dropping the state database: %v", err)
+	}
+	k.createDatabase(ctx, t)
+}
+
+// DumpDatabase backs up the state database with pg_dump, as an operator
+// does before an upgrade (docs/upgrading.md), and returns the archive.
+func (k *KubePlatform) DumpDatabase(ctx context.Context, t *testing.T) []byte {
+	t.Helper()
+	out, err := k.Kubectl(ctx, nil, "exec", "-n", kindPostgresNS, "deploy/postgres", "--",
+		"pg_dump", "-U", "postgres", "--format=custom", k.Database)
+	if err != nil {
+		t.Fatalf("pg_dump: %v", err)
+	}
+	return out
+}
+
+// RestoreDatabase replaces the state database with a DumpDatabase archive.
+// Nothing may use the database meanwhile.
+func (k *KubePlatform) RestoreDatabase(ctx context.Context, t *testing.T, dump []byte) {
+	t.Helper()
+	k.EmptyDatabase(ctx, t)
+	if _, err := k.Kubectl(ctx, bytes.NewReader(dump), "exec", "-i", "-n", kindPostgresNS, "deploy/postgres", "--",
+		"pg_restore", "-U", "postgres", "--exit-on-error", "-d", k.Database); err != nil {
+		t.Fatalf("pg_restore: %v", err)
+	}
+}
+
+// SchemaVersion returns the state database's schema version: the newest
+// migration applied.
+func (k *KubePlatform) SchemaVersion(ctx context.Context, t *testing.T) int {
+	t.Helper()
+	out, err := k.psql(ctx, k.Database, "SELECT MAX(version) FROM schema_migrations")
+	if err != nil {
+		t.Fatalf("reading the schema version: %v", err)
+	}
+	v, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		t.Fatalf("schema version %q: %v", out, err)
+	}
+	return v
+}
+
+// ScaleDownControlPlane scales the control plane to zero and waits until
+// its pod is gone, as docs/disaster-recovery.md and docs/upgrading.md do
+// before anything replaces the state database.
+func (k *KubePlatform) ScaleDownControlPlane(ctx context.Context, t *testing.T) {
+	t.Helper()
+	if _, err := k.Kubectl(ctx, nil, "scale", "-n", k.Namespace, "deployment/control-plane", "--replicas=0"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := k.Kubectl(ctx, nil, "wait", "-n", k.Namespace, "--for=delete", "pod",
+		"-l", "app.kubernetes.io/component=control-plane", "--timeout=5m"); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -451,21 +535,22 @@ func (k *KubePlatform) testValues() map[string]any {
 	}
 }
 
-// install installs the chart from the tree with init's values and the
-// test's, and waits for every pod.
+// install installs chart (a packaged chart, or empty for the tree's) with
+// init's values, the test's, and values, and waits for every pod.
 //
 // With skipPreflight, the control plane starts without its preflight
 // checks (PRESSFLEET_SKIP_PREFLIGHT), which refuse to start it on a
 // cluster that fails a required check. Helm can't wait for a control plane
 // that refuses to start, so it doesn't, and the harness sets the variable
 // and waits for the workloads itself.
-func (k *KubePlatform) install(ctx context.Context, t *testing.T, skipPreflight bool) {
+func (k *KubePlatform) install(ctx context.Context, t *testing.T, chart string, values map[string]any, skipPreflight bool) {
 	t.Helper()
+	if out, err := k.runChart(ctx, t, "install", chart, values, !skipPreflight); err != nil {
+		t.Fatalf("helm install: %v\n%s", err, out)
+	}
 	if !skipPreflight {
-		k.InstallChart(ctx, t, "install", nil)
 		return
 	}
-	k.helmChart(ctx, t, "install", nil, false)
 	k.SetEnv(ctx, t, map[string]string{"PRESSFLEET_SKIP_PREFLIGHT": "1"})
 	for _, w := range strings.Fields(k.MustKubectl(t, "get", "deployments,statefulsets", "-n", k.Namespace, "-o", "name")) {
 		k.WaitRollout(ctx, t, w)
@@ -477,12 +562,27 @@ func (k *KubePlatform) install(ctx context.Context, t *testing.T, skipPreflight 
 // release's pods are ready.
 func (k *KubePlatform) InstallChart(ctx context.Context, t *testing.T, verb string, extra map[string]any) {
 	t.Helper()
-	k.helmChart(ctx, t, verb, extra, true)
+	if out, err := k.RunChart(ctx, t, verb, "", extra); err != nil {
+		t.Fatalf("helm %s: %v\n%s", verb, err, out)
+	}
 }
 
-// helmChart is InstallChart, waiting for the release's pods if wait.
-func (k *KubePlatform) helmChart(ctx context.Context, t *testing.T, verb string, extra map[string]any, wait bool) {
+// RunChart runs `helm install` or `helm upgrade` (verb) of chart (a
+// packaged chart, or empty for the tree's) with init's values, the test's,
+// and extra, waits until the release's pods are ready, and returns helm's
+// output. An upgrade runs the chart's hooks, so a refused upgrade is an
+// error.
+func (k *KubePlatform) RunChart(ctx context.Context, t *testing.T, verb, chart string, extra map[string]any) ([]byte, error) {
 	t.Helper()
+	return k.runChart(ctx, t, verb, chart, extra, true)
+}
+
+// runChart is RunChart, waiting for the release's pods only if wait.
+func (k *KubePlatform) runChart(ctx context.Context, t *testing.T, verb, chart string, extra map[string]any, wait bool) ([]byte, error) {
+	t.Helper()
+	if chart == "" {
+		chart = chartDir(t)
+	}
 	values := k.testValues()
 	if extra != nil {
 		mergeSettings(values, extra)
@@ -495,16 +595,27 @@ func (k *KubePlatform) helmChart(ctx context.Context, t *testing.T, verb string,
 	if err := os.WriteFile(testValues, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{verb, "pressfleet", chartDir(t), "--namespace", k.Namespace,
+	args := []string{verb, "pressfleet", chart, "--namespace", k.Namespace,
 		"-f", filepath.Join(k.ValuesDir, "values.yaml"), "-f", testValues,
 		"--timeout", strconv.Itoa(int(kubeBootTimeout.Seconds())) + "s"}
 	if wait {
 		args = append(args, "--wait")
 	}
-	out, err := k.Helm(ctx, args...)
-	if err != nil {
-		t.Fatalf("helm %s: %v\n%s", verb, err, out)
+	return k.Helm(ctx, args...)
+}
+
+// PackageChart packages the tree's chart stamped with version as both its
+// version and its appVersion, as the release pipeline does (#227), and
+// returns the archive's path.
+func PackageChart(t *testing.T, version string) string {
+	t.Helper()
+	dir := t.TempDir()
+	cmd := exec.CommandContext(t.Context(), "helm", "package", chartDir(t), //nolint:gosec // G204: helm, with the test's arguments
+		"--version", version, "--app-version", version, "--destination", dir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("helm package --version %s: %v\n%s", version, err, out)
 	}
+	return filepath.Join(dir, "pressfleet-"+version+".tgz")
 }
 
 // useTreeImages points the control plane at the site images in the
@@ -514,11 +625,19 @@ func (k *KubePlatform) helmChart(ctx context.Context, t *testing.T, verb string,
 func (k *KubePlatform) useTreeImages(ctx context.Context, t *testing.T) {
 	t.Helper()
 	manifest := kubeManifest(t, k.Registry+"/pressfleet")
-	const path = KubeDataDir + "/e2e/manifest.json"
+	path := KubeTreeImagesEnv()["PRESSFLEET_IMAGE_MANIFEST_FILE"]
 	if _, err := k.ExecControlPlane(ctx, bytes.NewReader(manifest), "sh", "-c", `mkdir -p "$(dirname "$1")" && cat > "$1"`, "sh", path); err != nil {
 		t.Fatalf("writing the image manifest: %v", err)
 	}
-	k.SetEnv(ctx, t, map[string]string{"PRESSFLEET_IMAGE_MANIFEST_FILE": path})
+	k.SetEnv(ctx, t, KubeTreeImagesEnv())
+}
+
+// KubeTreeImagesEnv returns what StartKubernetes sets on the control plane's
+// Deployment to point it at the tree's site images: a manifest in the
+// data directory's e2e directory. A test that installs the chart afresh
+// over a data volume that kept that directory sets it again with SetEnv.
+func KubeTreeImagesEnv() map[string]string {
+	return map[string]string{"PRESSFLEET_IMAGE_MANIFEST_FILE": KubeDataDir + "/e2e/manifest.json"}
 }
 
 // kubeManifest returns images/manifest.json with another registry.

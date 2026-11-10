@@ -401,9 +401,14 @@ func Adopt(t *testing.T, project compose.Project, dataDir string) *Platform {
 }
 
 // Connect finds the published ports of the control plane and Traefik (see
-// WriteOverride) and waits until the control plane reports ready.
+// WriteOverride) and waits until the control plane reports ready. On
+// Kubernetes, it finds Traefik's NodePorts and waits the same way.
 func (p *Platform) Connect(ctx context.Context, t *testing.T) {
 	t.Helper()
+	if p.Kube != nil {
+		p.kubeConnect(ctx, t)
+		return
+	}
 	for _, port := range []struct {
 		service string
 		port    int
