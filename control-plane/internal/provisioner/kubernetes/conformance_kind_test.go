@@ -38,6 +38,40 @@ func TestConformance(t *testing.T) {
 	if os.Getenv("PRESSFLEET_K8S_CONFORMANCE") != "1" {
 		t.Skip("set PRESSFLEET_K8S_CONFORMANCE=1, in a pod of the cluster, to run the conformance suite (see make test-k8s-e2e)")
 	}
+	e := kindEnvironment(t)
+	conformance.Run(t, conformance.Env{
+		Images:        e.images,
+		PHPVersion:    e.php,
+		AltPHPVersion: e.altPHP,
+		WPCoreVersion: e.wp,
+		Database:      e.db,
+		ObjectCache:   &e.cache,
+		New: func(t *testing.T, s conformance.Setup) conformance.Instance {
+			return kindInstance(e.driver(t, s.Secrets, s.Images, nil))
+		},
+	})
+}
+
+// kindEnv is the platform that the tests running in the cluster run
+// against, as the PRESSFLEET_TEST_* variables describe it.
+type kindEnv struct {
+	images          map[string]catalog.Images
+	php, altPHP, wp string
+	db              sitedb.Credentials
+	cache           objectcache.Credentials
+	// dataDir is where the data volume is mounted.
+	dataDir   string
+	k         config.KubernetesConfig
+	mariaDB   string
+	redis     string
+	taskImage string
+}
+
+// kindEnvironment reads the PRESSFLEET_TEST_* variables, which the
+// Kubernetes end-to-end tests set (TestKubernetesConformance and
+// TestKubernetesDriverBehaviour in package e2e).
+func kindEnvironment(t *testing.T) kindEnv {
+	t.Helper()
 	env := func(name string) string {
 		v := os.Getenv("PRESSFLEET_TEST_" + name)
 		if v == "" {
@@ -45,52 +79,52 @@ func TestConformance(t *testing.T) {
 		}
 		return v
 	}
-	php, altPHP := env("PHP_VERSION"), env("ALT_PHP_VERSION")
-	images := map[string]catalog.Images{
-		php:    {PHP: env("SITE_PHP_IMAGE"), Nginx: env("SITE_NGINX_IMAGE")},
-		altPHP: {PHP: env("SITE_ALT_PHP_IMAGE"), Nginx: env("SITE_NGINX_IMAGE")},
+	e := kindEnv{php: env("PHP_VERSION"), altPHP: env("ALT_PHP_VERSION"), wp: env("WP_VERSION")}
+	e.images = map[string]catalog.Images{
+		e.php:    {PHP: env("SITE_PHP_IMAGE"), Nginx: env("SITE_NGINX_IMAGE")},
+		e.altPHP: {PHP: env("SITE_ALT_PHP_IMAGE"), Nginx: env("SITE_NGINX_IMAGE")},
 	}
-	k := config.DefaultKubernetes()
-	k.PlatformNamespace = env("NAMESPACE")
-	k.SiteNamespacePrefix = env("SITE_PREFIX")
-	k.PodCIDRs = strings.Split(env("POD_CIDRS"), ",")
-	k.InsecureRegistries = strings.Split(env("INSECURE_REGISTRIES"), ",")
-	k.SiteVolumeSize = "1Gi"
-	dataDir := env("DATA_DIR")
-	cache := objectcache.Credentials{Username: env("CACHE_USER"), Password: redact.Secret(env("CACHE_PASSWORD")), Database: 1}
+	e.k = config.DefaultKubernetes()
+	e.k.PlatformNamespace = env("NAMESPACE")
+	e.k.SiteNamespacePrefix = env("SITE_PREFIX")
+	e.k.PodCIDRs = strings.Split(env("POD_CIDRS"), ",")
+	e.k.InsecureRegistries = strings.Split(env("INSECURE_REGISTRIES"), ",")
+	e.k.SiteVolumeSize = "1Gi"
+	e.dataDir = env("DATA_DIR")
+	e.db = sitedb.Credentials{Database: env("DB_NAME"), Username: env("DB_USER"), Password: redact.Secret(env("DB_PASSWORD"))}
+	e.cache = objectcache.Credentials{Username: env("CACHE_USER"), Password: redact.Secret(env("CACHE_PASSWORD")), Database: 1}
+	e.mariaDB, e.redis = env("MARIADB_ADDRESS"), env("REDIS_ADDRESS")
+	e.taskImage = env("TASK_IMAGE")
+	return e
+}
 
-	conformance.Run(t, conformance.Env{
-		Images:        images,
-		PHPVersion:    php,
-		AltPHPVersion: altPHP,
-		WPCoreVersion: env("WP_VERSION"),
-		Database: sitedb.Credentials{
-			Database: env("DB_NAME"), Username: env("DB_USER"), Password: redact.Secret(env("DB_PASSWORD")),
-		},
-		ObjectCache: &cache,
-		New: func(t *testing.T, s conformance.Setup) conformance.Instance {
-			p, err := New(Config{
-				// The data volume's root, which task mounts are relative
-				// to; the suite's own directories (Setup.Layout) are below
-				// it, as TMPDIR is.
-				Layout:         config.Layout{Root: dataDir},
-				Kubernetes:     k,
-				Secrets:        s.Secrets,
-				Images:         s.Images,
-				MariaDBAddress: env("MARIADB_ADDRESS"),
-				RedisAddress:   env("REDIS_ADDRESS"),
-				WaitTimeout:    3 * time.Minute,
-				Tasks:          TaskConfig{Image: env("TASK_IMAGE")},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := p.Connect(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			return kindInstance(p)
-		},
-	})
+// driver builds and connects a driver for the platform, with the
+// configuration that mutate, if set, changes.
+func (e kindEnv) driver(t *testing.T, secrets SecretReader, images ImageResolver, mutate func(*Config)) *Provisioner {
+	t.Helper()
+	cfg := Config{
+		// The data volume's root, which task mounts are relative to; the
+		// tests' own directories are below it, as TMPDIR is.
+		Layout:         config.Layout{Root: e.dataDir},
+		Kubernetes:     e.k,
+		Secrets:        secrets,
+		Images:         images,
+		MariaDBAddress: e.mariaDB,
+		RedisAddress:   e.redis,
+		WaitTimeout:    3 * time.Minute,
+		Tasks:          TaskConfig{Image: e.taskImage},
+	}
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Connect(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
 
 // kindInstance is the driver with the ways of looking inside its sites

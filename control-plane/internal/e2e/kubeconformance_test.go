@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -61,22 +62,40 @@ spec:
 // against the Kubernetes driver: it builds the kubernetes package's test
 // binary, and runs its TestConformance in a pod of a platform the chart
 // installed, with the control plane's ServiceAccount and data volume, so
-// that the suite works under the chart's RBAC and admission policies. The
-// control plane is scaled to zero meanwhile: its Startup would remove the
-// suite's task pods.
+// that the suite works under the chart's RBAC and admission policies.
 //
 // PRESSFLEET_K8S_CONFORMANCE_RUN narrows the suite (-test.run), e.g.
 // 'TestConformance/Tasks'.
 func TestKubernetesConformance(t *testing.T) {
 	p := e2e.StartKubernetes(t, e2e.KubeOptions{})
-	k := p.Kube
-	ctx := t.Context()
+	r := startDriverTests(t, p.Kube)
+	run := os.Getenv("PRESSFLEET_K8S_CONFORMANCE_RUN")
+	if run == "" {
+		run = "TestConformance"
+	}
+	r.run(t, run, "70m", nil)
+}
 
+// driverTests runs the kubernetes package's tests in the cluster
+// (TestConformance, TestKindBehaviour), in the conformance runner pod.
+type driverTests struct {
+	k    *e2e.KubePlatform
+	vars map[string]string
+}
+
+// startDriverTests builds the kubernetes package's test binary and copies
+// it into the conformance runner pod, with what the tests need of the
+// platform: a database and user that every site shares, as on Compose, and
+// the platform's admin user of the object cache. The control plane is
+// scaled to zero meanwhile: its Startup would remove the tests' task pods.
+func startDriverTests(t *testing.T, k *e2e.KubePlatform) *driverTests {
+	t.Helper()
+	ctx := t.Context()
 	bin := filepath.Join(t.TempDir(), "kubernetes.test")
 	build := exec.CommandContext(ctx, "go", "test", "-c", "-o", bin, "github.com/rchouinard/pressfleet/control-plane/internal/provisioner/kubernetes")
 	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
 	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("building the conformance test binary: %v\n%s", err, out)
+		t.Fatalf("building the kubernetes package's test binary: %v\n%s", err, out)
 	}
 
 	if _, err := k.Kubectl(ctx, nil, "scale", "-n", k.Namespace, "deployment/control-plane", "--replicas=0"); err != nil {
@@ -86,17 +105,15 @@ func TestKubernetesConformance(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		// The control plane's Startup cleans up after a suite that was
+		// The control plane's Startup cleans up after tests that were
 		// stopped; the teardown removes the rest.
 		_, _ = k.Kubectl(context.Background(), nil, "delete", "pod", "conformance", "-n", k.Namespace, "--wait=false")
 	})
 
-	// A database and user that every site of the suite shares, as on
-	// Compose; the platform's admin user of the object cache.
 	const dbPassword = "pf-conformance-db-pw"
 	if out, err := k.Kubectl(ctx, nil, "exec", "-n", k.Namespace, "mariadb-0", "--", "sh", "-c",
 		`mariadb -uroot -p"$(cat /run/secrets/mariadb_root_password)" -e "CREATE DATABASE wordpress; CREATE USER 'wordpress'@'%' IDENTIFIED BY '`+dbPassword+`'; GRANT ALL ON wordpress.* TO 'wordpress'@'%'"`); err != nil {
-		t.Fatalf("creating the suite's database: %v %s", err, out)
+		t.Fatalf("creating the tests' database: %v %s", err, out)
 	}
 	cachePassword := k.InitSecret(t, "pressfleet-platform", "redis-admin-password")
 
@@ -131,11 +148,7 @@ func TestKubernetesConformance(t *testing.T) {
 	}
 	wp := cat.LatestWordPress().Version
 	image := func(name string) string { return k.Registry + "/pressfleet/" + name }
-	run := os.Getenv("PRESSFLEET_K8S_CONFORMANCE_RUN")
-	if run == "" {
-		run = "TestConformance"
-	}
-	vars := map[string]string{
+	return &driverTests{k: k, vars: map[string]string{
 		"PRESSFLEET_K8S_CONFORMANCE":          "1",
 		"TMPDIR":                              "/var/lib/pressfleet/tmp/conformance",
 		"HOME":                                "/tmp",
@@ -158,24 +171,32 @@ func TestKubernetesConformance(t *testing.T) {
 		"PRESSFLEET_TEST_SITE_ALT_PHP_IMAGE":  image("site-php:php" + alt + "-wp" + wp),
 		"PRESSFLEET_TEST_SITE_NGINX_IMAGE":    image("site-nginx:wp" + wp),
 		"PRESSFLEET_TEST_TASK_IMAGE":          k.Image,
-	}
-	args := []string{"exec", "-n", k.Namespace, "conformance", "--", "env"}
+	}}
+}
+
+// run runs the tests that pattern selects (-test.run) in the runner pod,
+// with the platform's variables and extra, and fails t if they fail.
+func (d *driverTests) run(t *testing.T, pattern, timeout string, extra map[string]string) {
+	t.Helper()
+	vars := maps.Clone(d.vars)
+	maps.Copy(vars, extra)
+	args := []string{"exec", "-n", d.k.Namespace, "conformance", "--", "env"}
 	for name, v := range vars {
 		args = append(args, name+"="+v)
 	}
-	args = append(args, "/tmp/kubernetes.test", "-test.v", "-test.timeout", "70m", "-test.run", run)
+	args = append(args, "/tmp/kubernetes.test", "-test.v", "-test.timeout", timeout, "-test.run", pattern)
 	start := time.Now()
 	var out bytes.Buffer
-	cmd := exec.CommandContext(ctx, "kubectl", append(kubectlGlobal(k), args...)...)
+	cmd := exec.CommandContext(t.Context(), "kubectl", append(kubectlGlobal(d.k), args...)...)
 	cmd.Stdout = io.MultiWriter(&out, t.Output())
 	cmd.Stderr = t.Output()
-	err = cmd.Run()
-	t.Logf("the suite ran for %s", time.Since(start).Round(time.Second))
+	err := cmd.Run()
+	t.Logf("%s ran for %s", pattern, time.Since(start).Round(time.Second))
 	if err != nil {
-		t.Errorf("the conformance suite failed: %v", err)
+		t.Errorf("%s failed: %v", pattern, err)
 	}
 	if !strings.Contains(out.String(), "\nPASS") && err == nil {
-		t.Error("the conformance suite didn't report PASS")
+		t.Errorf("%s didn't report PASS", pattern)
 	}
 }
 
