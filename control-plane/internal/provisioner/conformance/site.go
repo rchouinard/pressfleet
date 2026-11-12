@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -370,6 +371,11 @@ func testExecWPCLI(t *testing.T, env Env) {
 		return ""
 	})
 
+	// WP-CLI and everything it starts end with the call, whether the
+	// deadline passes or the caller cancels, children that ignore SIGTERM
+	// included (#344, #346).
+	testWPCLIStops(ctx, t, f, cfg)
+
 	// A stopped site can't run WP-CLI.
 	if err := f.d.StopSite(ctx, cfg.ID); err != nil {
 		t.Fatal(err)
@@ -378,6 +384,95 @@ func testExecWPCLI(t *testing.T, env Env) {
 	wantErr(t, "ExecWPCLI on a stopped site", err, provisioner.ErrSiteNotRunning)
 	if errors.Is(err, provisioner.ErrSiteNotFound) {
 		t.Error("a stopped site is not a missing one")
+	}
+}
+
+// stopBound is how long after a call ends, at the latest, nothing of it
+// may run in the container: the grace period WP-CLI's children get after
+// SIGTERM, and time for the commands that signal them.
+const stopBound = provisioner.WPCLIKillGrace + 30*time.Second
+
+// testWPCLIStops checks that a WP-CLI call leaves no process in the php
+// container, under both ways it can end early: the deadline passes, and the
+// caller cancels. WP-CLI waits for a child, which is one that ends on
+// SIGTERM or one that ignores it: after SIGTERM alone it would live on,
+// reparented to PHP-FPM, until the pod is replaced.
+func testWPCLIStops(ctx context.Context, t *testing.T, f *fixture, cfg *provisioner.SiteConfig) {
+	t.Helper()
+	// What a call runs is found by the length of its sleep, which no
+	// other process in the container has.
+	processes := func() string {
+		return f.exec(ctx, t, cfg, provisioner.ComponentPHP, "sh", "-c",
+			`for f in /proc/[0-9]*/cmdline; do tr '\0' ' ' < "$f" 2>/dev/null; echo; done`)
+	}
+	running := func(marker string) {
+		t.Helper()
+		eventually(t, time.Minute, "the call's child starting", func() string {
+			procs := processes()
+			for l := range strings.Lines(procs) {
+				if strings.TrimSpace(l) == "sleep "+marker {
+					return ""
+				}
+			}
+			return "not running yet: " + procs
+		})
+	}
+	gone := func(marker string) {
+		t.Helper()
+		eventually(t, stopBound, "the call's processes ending", func() string {
+			if procs := processes(); strings.Contains(procs, "sleep "+marker) {
+				return "still running in the container: " + procs
+			}
+			return ""
+		})
+	}
+	// WP-CLI runs a shell that starts the child and waits for it; the
+	// stubborn child ignores SIGTERM, as a program with a handler for it
+	// might.
+	command := func(marker string, stubborn bool) []string {
+		child := "sleep " + marker
+		if stubborn {
+			child = `sh -c "trap \"\" TERM; exec sleep ` + marker + `"`
+		}
+		return []string{"eval", "--skip-wordpress", `system('` + child + `');`}
+	}
+
+	for i, stubborn := range []bool{false, true} {
+		name := map[bool]string{false: "child", true: "child ignoring SIGTERM"}[stubborn]
+
+		// The deadline.
+		marker := strconv.Itoa(4710 + i*2)
+		deadline, cancel := context.WithTimeout(ctx, 10*time.Second)
+		start := time.Now()
+		_, err := f.d.ExecWPCLI(deadline, cfg.ID, command(marker, stubborn))
+		cancel()
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("ExecWPCLI with a %s past its deadline: %v, want context.DeadlineExceeded", name, err)
+		}
+		if took := time.Since(start); took > stopBound {
+			t.Errorf("ExecWPCLI with a %s returned %s after its start, with a 10 second deadline", name, took)
+		}
+		gone(marker)
+
+		// Cancellation, once the child runs.
+		marker = strconv.Itoa(4711 + i*2)
+		runCtx, cancelRun := context.WithCancel(ctx)
+		done := make(chan error, 1)
+		go func() {
+			_, err := f.d.ExecWPCLI(runCtx, cfg.ID, command(marker, stubborn))
+			done <- err
+		}()
+		running(marker)
+		cancelRun()
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Errorf("canceled ExecWPCLI with a %s: %v, want context.Canceled", name, err)
+			}
+		case <-time.After(stopBound):
+			t.Fatalf("a canceled ExecWPCLI with a %s didn't return within %s", name, stopBound)
+		}
+		gone(marker)
 	}
 }
 

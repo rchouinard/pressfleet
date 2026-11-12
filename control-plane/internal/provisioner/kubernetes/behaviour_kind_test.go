@@ -241,25 +241,25 @@ func (f *kindFixture) processes(ctx context.Context, t *testing.T, siteID string
 	return f.exec(ctx, t, siteID, provisioner.ComponentPHP, "sh", "-c", `for f in /proc/[0-9]*/cmdline; do tr '\0' ' ' < "$f" 2>/dev/null; echo; done`)
 }
 
-// testKindWPCLIStops checks (#218) that WP-CLI ends in the container,
-// where closing the exec stream doesn't end it: WP-CLI and the child it
-// waits for, at the deadline, through timeout(1), which signals its whole
-// process group; and after the caller cancels, by the driver's WP-CLI
-// timeout at the latest, since cancellation alone doesn't end them (#346).
-// (A child that ignores SIGTERM outlives the deadline: timeout(1) only
-// kills what is left after killAfter while WP-CLI itself still runs:
-// #344.)
+// testKindWPCLIStops checks (#218, #344, #346) that WP-CLI and what it
+// starts end in the container with the call, where closing the exec stream
+// doesn't end them: at the deadline and on cancellation, for a child that
+// ends on SIGTERM and for one that ignores it. The driver's WP-CLI timeout
+// is its default, ten minutes, so nothing here ends by that.
 func testKindWPCLIStops(t *testing.T, f *kindFixture) {
 	ctx := kindContext(t, 15*time.Minute)
 	cfg := f.create(ctx, t)
 
 	// WP-CLI starts a child that sleeps for a time that marks it, and
-	// waits for it.
-	stubborn := func(marker string) []string {
-		return []string{"eval", "--skip-wordpress", `system('sleep ` + marker + `');`}
+	// waits for it. The sleep's own command line is just that; WP-CLI's
+	// and the shells' hold it too, and must end as well.
+	child := func(marker string, stubborn bool) []string {
+		sleep := "sleep " + marker
+		if stubborn {
+			sleep = `sh -c "trap \"\" TERM; exec ` + sleep + `"`
+		}
+		return []string{"eval", "--skip-wordpress", `system('` + sleep + `');`}
 	}
-	// The sleep's own command line is just that; WP-CLI's, timeout's,
-	// and the shells' hold it too.
 	running := func(marker string) {
 		t.Helper()
 		eventually(t, time.Minute, "WP-CLI's child starting", func() string {
@@ -272,59 +272,71 @@ func testKindWPCLIStops(t *testing.T, f *kindFixture) {
 			return "not running yet: " + procs
 		})
 	}
-	gone := func(marker string, within time.Duration) time.Duration {
+	// The call stops the processes before it returns, so little time is
+	// allowed here.
+	gone := func(marker string) {
 		t.Helper()
-		return eventually(t, within, "WP-CLI and its child ending", func() string {
-			if procs := f.processes(ctx, t, cfg.ID); strings.Contains(procs, "sleep "+marker) {
+		eventually(t, 10*time.Second, "the call's processes ending", func() string {
+			procs := f.processes(ctx, t, cfg.ID)
+			if strings.Contains(procs, "sleep "+marker) {
 				return "still running in the container: " + procs
+			}
+			if files := f.exec(ctx, t, cfg.ID, provisioner.ComponentPHP, "sh", "-c", "ls -A /tmp | grep pressfleet-wpcli || true"); files != "" {
+				return "pid file left behind: " + files
 			}
 			return ""
 		})
 	}
 
-	// The deadline: timeout(1) ends WP-CLI and its child within killAfter.
-	const deadlineMarker = "4321"
-	short, cancelShort := context.WithTimeout(ctx, 20*time.Second)
-	defer cancelShort()
-	done := make(chan error, 1)
-	go func() {
-		_, err := f.p.ExecWPCLI(short, cfg.ID, stubborn(deadlineMarker))
-		done <- err
-	}()
-	running(deadlineMarker)
-	if err := <-done; !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("ExecWPCLI past its deadline: %v, want context.DeadlineExceeded", err)
-	}
-	took := gone(deadlineMarker, killAfter+30*time.Second)
-	t.Logf("WP-CLI and its child ended %s after the deadline", took.Round(time.Second))
-
-	// Cancellation: the call returns at once. The processes run on until
-	// the driver's own WP-CLI timeout (#346), which bounds them; a driver
-	// with a short one shows that bound.
-	const cancelMarker = "4322"
-	const wpcliTimeout = 30 * time.Second
-	p := f.driver(t, func(c *Config) { c.WPCLITimeout = wpcliTimeout })
-	runCtx, cancel := context.WithCancel(ctx)
-	go func() {
-		_, err := p.ExecWPCLI(runCtx, cfg.ID, stubborn(cancelMarker))
-		done <- err
-	}()
-	running(cancelMarker)
-	start := time.Now()
-	cancel()
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Errorf("canceled ExecWPCLI: %v, want context.Canceled", err)
+	const deadline = 15 * time.Second
+	for i, tc := range []struct {
+		name     string
+		stubborn bool
+		cancel   bool
+		within   time.Duration // The call returns this long after its end at the latest.
+	}{
+		{"deadline", false, false, 15 * time.Second},
+		{"deadline, child ignoring SIGTERM", true, false, killAfter + 20*time.Second},
+		{"cancel", false, true, 15 * time.Second},
+		{"cancel, child ignoring SIGTERM", true, true, killAfter + 20*time.Second},
+	} {
+		marker := strconv.Itoa(4330 + i)
+		var callCtx context.Context
+		var cancel context.CancelFunc
+		if tc.cancel {
+			callCtx, cancel = context.WithCancel(ctx)
+		} else {
+			callCtx, cancel = context.WithTimeout(ctx, deadline)
 		}
-	case <-time.After(30 * time.Second):
-		t.Fatal("a canceled ExecWPCLI didn't return within 30 seconds")
+		done := make(chan error, 1)
+		go func() {
+			_, err := f.p.ExecWPCLI(callCtx, cfg.ID, child(marker, tc.stubborn))
+			done <- err
+		}()
+		running(marker)
+		want := context.DeadlineExceeded
+		var end time.Time
+		if tc.cancel {
+			want, end = context.Canceled, time.Now()
+			cancel()
+		} else {
+			end, _ = callCtx.Deadline()
+		}
+		select {
+		case err := <-done:
+			if !errors.Is(err, want) {
+				t.Errorf("%s: ExecWPCLI: %v, want %v", tc.name, err, want)
+			}
+			if late := time.Since(end); late > tc.within {
+				t.Errorf("%s: ExecWPCLI returned %s after its end", tc.name, late.Round(time.Second))
+			}
+		case <-time.After(time.Until(end) + tc.within + 15*time.Second):
+			t.Fatalf("%s: ExecWPCLI didn't return", tc.name)
+		}
+		cancel()
+		gone(marker)
+		t.Logf("%s: the call returned %s after its end, and nothing was left", tc.name, time.Since(end).Round(time.Second))
 	}
-	if returned := time.Since(start); returned > 15*time.Second {
-		t.Errorf("a canceled ExecWPCLI returned after %s", returned)
-	}
-	took = gone(cancelMarker, wpcliTimeout+killAfter+30*time.Second)
-	t.Logf("WP-CLI and its child ended %s after the cancellation (WP-CLI timeout %s)", took.Round(time.Second), wpcliTimeout)
 }
 
 // spdyOnlyProxy stands for a proxy between the driver and the API server

@@ -61,17 +61,21 @@ func TestExecWPCLIPassesArgsVerbatim(t *testing.T) {
 	if out != "output\n" {
 		t.Errorf("output = %q", out)
 	}
-	// The site's UID, a "--" ending the options, and timeout(1) running wp;
-	// the arguments follow as separate, unchanged argv elements.
+	// The site's UID, a "--" ending the options, and the run script
+	// starting wp; the arguments follow as separate, unchanged argv
+	// elements, and the script itself holds none of them.
 	got := f.docker.execArgs
-	prefix := []string{"exec", "--no-TTY", "--user", "20042:20042", "--", "php", "timeout", "--kill-after=10s"}
-	if len(got) < len(prefix)+2+len(args) || !slices.Equal(got[:len(prefix)], prefix) {
+	prefix := []string{"exec", "--no-TTY", "--user", "20042:20042", "--", "php", "sh", "-c"}
+	if len(got) < len(prefix)+6+len(args) || !slices.Equal(got[:len(prefix)], prefix) {
 		t.Fatalf("exec argv = %q", got)
 	}
-	if got[len(prefix)+1] != "/usr/local/bin/wp" {
-		t.Errorf("command = %q, want /usr/local/bin/wp", got[len(prefix)+1])
+	if script := got[len(prefix)]; strings.Contains(script, "eval-file") || strings.Contains(script, "rm -rf") {
+		t.Errorf("the script holds arguments: %q", script)
 	}
-	if tail := got[len(prefix)+2:]; !slices.Equal(tail, args) {
+	if got[len(prefix)+1] != "pressfleet-wpcli" || got[len(prefix)+5] != "/usr/local/bin/wp" {
+		t.Errorf("run script arguments = %q, want the script's name, the call, deadline, grace, and /usr/local/bin/wp", got[len(prefix)+1:len(prefix)+6])
+	}
+	if tail := got[len(prefix)+6:]; !slices.Equal(tail, args) {
 		t.Errorf("wp argv = %q, want %q", tail, args)
 	}
 }
@@ -106,18 +110,53 @@ func TestExecWPCLITimeout(t *testing.T) {
 	}
 	// The in-container limit outlasts the caller's deadline, so the caller
 	// sees its own context error rather than timeout(1)'s exit status.
-	got := f.docker.execArgs[8]
-	secs, err := strconv.Atoi(strings.TrimSuffix(got, "s"))
+	// Arguments 8 to 12 are the script, its name, the call, and seconds.
+	got := f.docker.execArgs[11]
+	secs, err := strconv.Atoi(got)
 	if err != nil || secs < 30 || secs > 31 {
-		t.Errorf("in-container timeout = %q, want 30s or 31s", got)
+		t.Errorf("in-container timeout = %q, want 30 or 31", got)
 	}
 
 	// Without a deadline, the configured WP-CLI timeout applies.
 	if _, err := f.prov.ExecWPCLI(context.Background(), testSiteID, []string{"option", "get", "home"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.docker.execArgs[8]; got != "601s" {
-		t.Errorf("default in-container timeout = %q, want 601s", got)
+	if got := f.docker.execArgs[11]; got != "601" {
+		t.Errorf("default in-container timeout = %q, want 601", got)
+	}
+}
+
+func TestExecWPCLIStopsOnCancel(t *testing.T) {
+	f := runningFixture(t)
+	f.docker.blockWPCLI = true
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(20*time.Millisecond, cancel)
+	_, err := f.prov.ExecWPCLI(ctx, testSiteID, []string{"cron", "event", "run", "--due-now"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	// A second exec stops the call's process group, named by the call's id,
+	// and it ran although ctx had ended.
+	calls := f.docker.execCalls
+	if len(calls) != 2 {
+		t.Fatalf("%d exec calls, want the run and the stop: %q", len(calls), calls)
+	}
+	run, stop := calls[0], calls[1]
+	prefix := []string{"exec", "--no-TTY", "--user", "20042:20042", "--", "php", "sh", "-c"}
+	if !slices.Equal(stop[:len(prefix)], prefix) || stop[len(prefix)+1] != "pressfleet-wpcli-stop" {
+		t.Fatalf("stop argv = %q", stop)
+	}
+	if runID, stopID := run[len(prefix)+2], stop[len(prefix)+2]; runID == "" || runID != stopID {
+		t.Errorf("run call %q, stop call %q: want the same", runID, stopID)
+	}
+
+	// A call that ends by itself is not stopped.
+	f.docker.blockWPCLI, f.docker.execCalls = false, nil
+	if _, err := f.prov.ExecWPCLI(context.Background(), testSiteID, []string{"option", "get", "home"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(f.docker.execCalls); n != 1 {
+		t.Errorf("%d exec calls for a finished call, want 1", n)
 	}
 }
 

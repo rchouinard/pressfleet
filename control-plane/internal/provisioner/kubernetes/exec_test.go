@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -149,12 +150,22 @@ func TestExecWPCLI(t *testing.T) {
 	if c.Target != want {
 		t.Errorf("target = %+v, want %+v", c.Target, want)
 	}
-	// timeout(1) first, then WP-CLI with the arguments verbatim.
-	if len(c.Command) < 5 || c.Command[0] != "timeout" || !strings.HasPrefix(c.Command[1], "--kill-after=") || !strings.HasSuffix(c.Command[2], "s") {
+	// The run script first (which holds no argument), then its call id,
+	// deadline, and grace period, then WP-CLI with the arguments verbatim.
+	if len(c.Command) < 8 || c.Command[0] != "sh" || c.Command[1] != "-c" || c.Command[3] != "pressfleet-wpcli" {
 		t.Fatalf("command = %q", c.Command)
 	}
-	if got := strings.Join(c.Command[3:], " "); got != "/usr/local/bin/wp option get -- home" {
-		t.Errorf("command after timeout = %q", got)
+	if strings.Contains(c.Command[2], "option") || strings.Contains(c.Command[2], "home") {
+		t.Errorf("the script holds arguments: %q", c.Command[2])
+	}
+	if got := strings.Join(c.Command[7:], " "); got != "/usr/local/bin/wp option get -- home" {
+		t.Errorf("command after the script's arguments = %q", got)
+	}
+	if secs, err := strconv.Atoi(c.Command[5]); err != nil || secs < 1 {
+		t.Errorf("deadline = %q", c.Command[5])
+	}
+	if c.Command[6] != "10" {
+		t.Errorf("grace period = %q, want 10", c.Command[6])
 	}
 }
 
@@ -251,9 +262,32 @@ func TestExecWPCLIStderrTail(t *testing.T) {
 }
 
 func TestExecWPCLITimeoutAndCancel(t *testing.T) {
-	block := func(ctx context.Context, _ fakeCall, _, _ io.Writer) error {
+	// The run lasts until its context ends; the stop command, which
+	// doesn't, answers at once.
+	block := func(ctx context.Context, c fakeCall, _, _ io.Writer) error {
+		if c.Command[3] != "pressfleet-wpcli" {
+			return nil
+		}
 		<-ctx.Done()
 		return errors.New("stream closed") // What the stream makes of it.
+	}
+	// stopCall returns the stop command among ex's calls.
+	stopCall := func(t *testing.T, ex *fakeExec) fakeCall {
+		t.Helper()
+		ex.mu.Lock()
+		defer ex.mu.Unlock()
+		if len(ex.calls) != 2 {
+			t.Fatalf("%d commands run, want the WP-CLI run and the stop: %+v", len(ex.calls), ex.calls)
+		}
+		run, stop := ex.calls[0], ex.calls[1]
+		if stop.Command[3] != "pressfleet-wpcli-stop" || stop.Target != run.Target {
+			t.Fatalf("second command = %q on %+v", stop.Command, stop.Target)
+		}
+		// The stop names the call that the run's script recorded.
+		if runID, stopID := run.Command[4], stop.Command[4]; runID == "" || runID != stopID {
+			t.Errorf("run call %q, stop call %q: want the same", runID, stopID)
+		}
+		return stop
 	}
 	t.Run("configured timeout", func(t *testing.T) {
 		ex := &fakeExec{do: block}
@@ -263,18 +297,46 @@ func TestExecWPCLITimeoutAndCancel(t *testing.T) {
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("error = %v, want DeadlineExceeded", err)
 		}
+		stopCall(t, ex)
 		// The in-container limit sits just past the deadline.
-		if c := ex.last(t); c.Command[0] != "timeout" || c.Command[2] != "2s" {
+		if c := ex.calls[0]; c.Command[5] != "2" {
 			t.Errorf("command = %q", c.Command)
 		}
 	})
 	t.Run("cancellation", func(t *testing.T) {
-		p := execCluster(t, &fakeExec{do: block}, runningSite()...)
+		ex := &fakeExec{do: block}
+		p := execCluster(t, ex, runningSite()...)
 		ctx, cancel := context.WithCancel(t.Context())
 		time.AfterFunc(20*time.Millisecond, cancel)
 		_, err := p.ExecWPCLI(ctx, testSiteID, []string{"slow"})
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("error = %v, want Canceled", err)
+		}
+		stopCall(t, ex)
+	})
+	t.Run("a failed stop doesn't change the error", func(t *testing.T) {
+		ex := &fakeExec{do: func(ctx context.Context, c fakeCall, _, _ io.Writer) error {
+			if c.Command[3] == "pressfleet-wpcli-stop" {
+				return errors.New("connection refused")
+			}
+			return block(ctx, c, nil, nil)
+		}}
+		p := execCluster(t, ex, runningSite()...)
+		ctx, cancel := context.WithCancel(t.Context())
+		time.AfterFunc(20*time.Millisecond, cancel)
+		_, err := p.ExecWPCLI(ctx, testSiteID, []string{"slow"})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v, want Canceled", err)
+		}
+	})
+	t.Run("a finished call is not stopped", func(t *testing.T) {
+		ex := answering("ok", nil)
+		p := execCluster(t, ex, runningSite()...)
+		if _, err := p.ExecWPCLI(t.Context(), testSiteID, []string{"fast"}); err != nil {
+			t.Fatal(err)
+		}
+		if n := ex.count(); n != 1 {
+			t.Errorf("%d commands run, want 1", n)
 		}
 	})
 }

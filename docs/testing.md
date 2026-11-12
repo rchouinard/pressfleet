@@ -30,7 +30,7 @@ What the suite covers, as subtests of `Run`:
 | --- | --- |
 | `Lifecycle` | WordPress installed with its admin password on standard input (`ExecWPCLIInput`); create, update, get, start, stop, and delete, each idempotent (converging an unchanged site recreates nothing; wp-config.php changes recreate PHP only); data survives restarts; delete leaves nothing behind; every method reports a missing site as `ErrSiteNotFound` |
 | `Maintenance` | `SetMaintenance` on a running and a stopped site, surviving an update (`SiteConfig.Maintenance`), WP-CLI working meanwhile |
-| `ExecWPCLI` | The site's UID, hostile arguments verbatim, standard input (`ExecWPCLIInput`) whole and none without it, `*ExecError`, a deadline that ends the process, `ErrSiteNotRunning` |
+| `ExecWPCLI` | The site's UID, hostile arguments verbatim, standard input (`ExecWPCLIInput`) whole and none without it, `*ExecError`, a deadline and a cancellation that end the process and what it started, including children that ignore SIGTERM, `ErrSiteNotRunning` |
 | `PurgeCache`, `ReloadCode`, `ProbeHTTP` | The page cache of a running and a stopped site; PHP running changed code after a reload without a restart; the probe's status, HTTPS, no redirects, and its errors |
 | `Environment` | `Environment` and `DisableMail` reach the site as `WP_ENVIRONMENT_TYPE` and `PRESSFLEET_DISABLE_MAIL` on a new site and through `UpdateSite`; `provisioner.HasMailSwitch` answers through `ExecWPCLI` |
 | `ObjectCache`, `PinImage` | A site uses the Valkey it is given; pinned images run |
@@ -429,7 +429,7 @@ When a test ends, the harness uninstalls the release, deletes the platform's and
 
 | Subtest | Checks |
 | --- | --- |
-| `WPCLIStops` | WP-CLI and the child it waits for end in the container at the deadline (`timeout(1)` signals the process group); after a cancellation they end by the driver's WP-CLI timeout at the latest, which a short one shows (cancellation alone doesn't end them, #346; a child that ignores SIGTERM outlives the deadline, #344) |
+| `WPCLIStops` | WP-CLI and the child it waits for end in the container with the call, with the default 10 minute WP-CLI timeout: at the deadline and on cancellation, for a child that ends on SIGTERM and for one that ignores it (#344, #346), with no pid file left behind |
 | `SPDYFallback` | Exec (output, standard input, exit codes) and attach (a task, a session) through a proxy in the test that refuses WebSocket upgrades, so the driver falls back to SPDY |
 | `DataClones` | Clones of the data volume mounted side by side on one node, with the runner's own mount of it: a task that keeps using its clone goes on while another task's clone is unmounted and a deleted site's clone is removed |
 | `StreamedOutput` | 1 GiB of a task's standard output streamed through the attachment, whole (SHA-256), without the test's heap growing |

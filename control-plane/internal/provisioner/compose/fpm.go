@@ -50,10 +50,7 @@ func (p *Provisioner) FPMStatus(ctx context.Context, siteID string) (*provisione
 }
 
 // fpmArgv is the `docker compose` argv, after the project flags, that runs
-// provisioner.FPMScript as user, killed after timeout like WP-CLI (wpCLIArgv).
+// provisioner.FPMScript as user, killed after timeout (timedArgv).
 func fpmArgv(user string, timeout time.Duration) []string {
-	argv := wpCLIArgv(user, timeout, nil)
-	// wpCLIArgv ends with the WP-CLI path; run the shell instead.
-	argv = argv[:len(argv)-1]
-	return append(argv, "sh", "-c", provisioner.FPMScript)
+	return timedArgv(user, timeout, "sh", "-c", provisioner.FPMScript)
 }
