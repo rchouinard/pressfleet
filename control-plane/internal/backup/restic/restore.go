@@ -200,9 +200,17 @@ func (e *Engine) findSnapshot(ctx context.Context, groupID, siteID string, snap 
 }
 
 // restoreDumpCommand extracts the snapshot's database dump into the
-// transfer directory.
+// transfer directory. restic gives the file the mode it has in the
+// snapshot, and the task, not the control plane, owns it. A dump that was
+// 0600 there (a snapshot taken on Compose, by another site's task, or
+// imported) would be unreadable to a control plane that isn't root, as on
+// Kubernetes, so the task opens it to the transfer directory's group, the
+// control plane's (#348). The dump may be missing from the snapshot, which
+// the caller reports.
 func restoreDumpCommand(snap backup.SnapshotID) []string {
+	dump := provisioner.TaskTransferPath + "/" + DatabaseDumpName
 	return []string{
+		"sh", "-c", `"$@" && { [ ! -e ` + dump + ` ] || chmod g+rw ` + dump + `; }`, "sh",
 		"restic", "restore", "--json", "--quiet", "--retry-lock", LockWait.String(),
 		string(snap) + ":" + provisioner.TaskTransferPath,
 		"--target", provisioner.TaskTransferPath,
