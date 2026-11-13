@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/rchouinard/pressfleet/control-plane/internal/secrets"
 	"github.com/rchouinard/pressfleet/control-plane/internal/sitedb"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store"
 	"github.com/rchouinard/pressfleet/control-plane/internal/store/storetest"
@@ -404,5 +406,30 @@ func TestOptionValue(t *testing.T) {
 		if got != tt.want || ok != tt.ok {
 			t.Errorf("optionValue(%q) = %q, %v; want %q, %v", tt.in, got, ok, tt.want, tt.ok)
 		}
+	}
+}
+
+func TestNewSweepsStaleOptionFiles(t *testing.T) {
+	dir := t.TempDir()
+	stale := filepath.Join(dir, "pressfleet-mariadb-123.cnf")
+	other := filepath.Join(dir, "keep.txt")
+	for _, name := range []string{stale, other} {
+		if err := os.WriteFile(name, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m, err := New(Config{Addr: "db:3306", User: "root", PasswordFile: "/nonexistent", TempDir: dir},
+		nil, secrets.Store{}, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.tempDir != dir {
+		t.Errorf("tempDir = %q, want %q", m.tempDir, dir)
+	}
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("stale option file survived: %v", err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("unrelated file removed: %v", err)
 	}
 }

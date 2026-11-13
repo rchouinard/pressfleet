@@ -62,6 +62,7 @@ func (a *app) siteRuntime(ctx context.Context, cat *catalog.Catalog, secretStore
 		Addr:         a.cfg.MariaDB.Address,
 		User:         a.cfg.MariaDB.AdminUser,
 		PasswordFile: a.cfg.MariaDB.AdminPasswordFile,
+		TempDir:      a.cfg.Layout().TmpDir(),
 	}, db, secretStore, a.log.With("component", "sitedb"))
 	if err != nil {
 		return nil, nil, err
