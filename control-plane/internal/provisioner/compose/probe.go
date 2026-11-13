@@ -82,10 +82,7 @@ func (p *Provisioner) ProbeHTTP(ctx context.Context, siteID string, req provisio
 }
 
 // probeArgv is the `docker compose` argv, after the project flags, that
-// runs the probe as user, killed after timeout like WP-CLI (wpCLIArgv).
+// runs the probe as user, killed after timeout (timedArgv).
 func probeArgv(user string, timeout time.Duration, req provisioner.ProbeRequest) []string {
-	argv := wpCLIArgv(user, timeout, nil)
-	// wpCLIArgv ends with the WP-CLI path; run the PHP CLI instead.
-	argv = argv[:len(argv)-1]
-	return append(argv, "php", "-r", probeScript, "--", req.Host, req.Path)
+	return timedArgv(user, timeout, "php", "-r", probeScript, "--", req.Host, req.Path)
 }

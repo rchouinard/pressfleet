@@ -39,8 +39,11 @@ const (
 // the driver keeps them out of its own errors and logs all the same.
 //
 // The run is bounded by ctx and the configured WP-CLI timeout. Closing an
-// exec stream doesn't stop the process, so WP-CLI runs under timeout(1)
-// with a limit just past the deadline, as under Compose. Standard output
+// exec stream doesn't stop the process, so WP-CLI runs in a process group
+// of its own under a small script (provisioner.WPCLIRunArgv), as under
+// Compose: the group is signalled, TERM then KILL, when the deadline
+// passes, when ctx ends (by a second exec, which delays the return by the
+// grace period at most), and when WP-CLI exits. Standard output
 // beyond the configured maximum is dropped and reported with
 // ErrOutputTruncated. A non-zero exit yields a *provisioner.ExecError
 // carrying the exit code and the end of standard error.
@@ -64,14 +67,32 @@ func (p *Provisioner) ExecWPCLIInput(ctx context.Context, siteID string, args []
 	if err != nil {
 		return "", fmt.Errorf("exec wp-cli: %w", err)
 	}
-	res, err := p.runInput(ctx, t, timed(ctx, append([]string{wpcliPath}, args...)...), stdin, p.wpcliMaxOutput)
+	callID := provisioner.NewWPCLICallID()
+	deadline, _ := ctx.Deadline()
+	cmd := provisioner.WPCLIRunArgv(callID, time.Until(deadline), append([]string{wpcliPath}, args...)...)
+	res, err := p.runInput(ctx, t, cmd, stdin, p.wpcliMaxOutput)
 	if err != nil {
+		if ctx.Err() != nil {
+			p.stopWPCLI(ctx, t, callID)
+		}
 		return "", fmt.Errorf("exec wp-cli on site %s: %w", siteID, err)
 	}
 	if res.Truncated {
 		return string(res.Stdout), fmt.Errorf("exec wp-cli on site %s: %w to the first %d bytes", siteID, ErrOutputTruncated, p.wpcliMaxOutput)
 	}
 	return string(res.Stdout), nil
+}
+
+// stopWPCLI stops the WP-CLI call whose context has ended, with a second
+// exec in its container: closing the first call's stream doesn't signal the
+// process (provisioner.WPCLIRunArgv). It outlives ctx, and bounds itself. If
+// it fails, the run script's own timer ends the call at its deadline.
+func (p *Provisioner) stopWPCLI(ctx context.Context, t execTarget, callID string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), provisioner.WPCLIStopTimeout)
+	defer cancel()
+	if _, err := p.run(ctx, t, provisioner.WPCLIStopArgv(callID), execMaxOutput); err != nil {
+		p.log.WarnContext(ctx, "stopping WP-CLI after its call ended failed", "pod", t.Pod, "error", err)
+	}
 }
 
 // PurgeCache empties the FastCGI cache that nginx keeps in the pod's cache

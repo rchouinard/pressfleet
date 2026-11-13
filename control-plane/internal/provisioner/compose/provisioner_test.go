@@ -84,6 +84,10 @@ type fakeDocker struct {
 	execOut  []byte
 	execErr  error
 	execArgs []string
+	// execCalls records the arguments of every exec; blockWPCLI makes a
+	// WP-CLI run wait for its context to end.
+	execCalls  [][]string
+	blockWPCLI bool
 	// execStdin is the standard input of the last docker call, nil if none.
 	execStdin *string
 }
@@ -99,7 +103,7 @@ func newFakeDocker(t *testing.T) *fakeDocker {
 
 var errNoSuchContainer = &compose.CommandError{Stderr: "Error response from daemon: No such container: x", Err: errors.New("exit status 1")}
 
-func (f *fakeDocker) exec(_ context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+func (f *fakeDocker) exec(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
 	f.execStdin = nil
 	if stdin != nil {
 		b, err := io.ReadAll(stdin)
@@ -115,6 +119,13 @@ func (f *fakeDocker) exec(_ context.Context, stdin io.Reader, args ...string) ([
 	}
 	rec := strings.Join(call, " ")
 	f.calls = append(f.calls, rec)
+	if f.blockWPCLI && call[0] == "compose" && slices.Contains(call, "pressfleet-wpcli") {
+		// A WP-CLI run that lasts until its context ends, as the killed
+		// docker CLI's would.
+		f.execCalls = append(f.execCalls, call[1:])
+		<-ctx.Done()
+		return nil, &compose.CommandError{Err: errors.New("signal: killed")}
+	}
 	for prefix, err := range f.fail {
 		if strings.HasPrefix(rec, prefix) {
 			return nil, err
@@ -172,6 +183,7 @@ func (f *fakeDocker) compose(args []string) ([]byte, error) {
 		set("exited", "")
 	case "exec":
 		f.execArgs = args
+		f.execCalls = append(f.execCalls, args)
 		return f.execOut, f.execErr
 	case "run", "kill":
 		return nil, nil

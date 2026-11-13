@@ -25,8 +25,8 @@ const (
 	// wpcliMaxStderr bounds the stderr kept for ExecError. The end is kept:
 	// WP-CLI prints its "Error:" line last, after any PHP notices.
 	wpcliMaxStderr = 64 << 10
-	// wpcliKillAfter is how long WP-CLI gets to exit after timeout(1) sends
-	// SIGTERM before it is killed.
+	// wpcliKillAfter is how long a command run by timedArgv gets to exit
+	// after timeout(1) sends SIGTERM before it is killed.
 	wpcliKillAfter = 10 * time.Second
 	// wpcliWaitDelay bounds the wait for the docker CLI's output pipes after
 	// ctx kills it; see DockerExecLimited.
@@ -92,12 +92,16 @@ func (p *Provisioner) ExecWPCLIInput(ctx context.Context, siteID string, args []
 	deadline, _ := ctx.Deadline()
 	proj := p.project(siteID)
 	proj.Docker = p.wpcliDocker
-	out, err := proj.run(ctx, stdin, wpCLIArgv(user, time.Until(deadline), args)...)
+	callID := provisioner.NewWPCLICallID()
+	out, err := proj.run(ctx, stdin, wpCLIArgv(user, callID, time.Until(deadline), args)...)
 	truncated := len(out) > p.wpcliMaxOutput
 	if truncated {
 		out = out[:p.wpcliMaxOutput]
 	}
 	if err != nil {
+		if ctx.Err() != nil {
+			p.stopWPCLI(ctx, proj, user, callID)
+		}
 		return "", wpcliError(ctx, siteID, string(out), err)
 	}
 	if truncated {
@@ -107,16 +111,39 @@ func (p *Provisioner) ExecWPCLIInput(ctx context.Context, siteID string, args []
 }
 
 // wpCLIArgv is the `docker compose` argv, after the project flags, that runs
-// WP-CLI with args as user, killed after timeout (rounded up, plus a second,
-// so the caller's context expires first).
-func wpCLIArgv(user string, timeout time.Duration, args []string) []string {
+// WP-CLI with args as user, in a process group of its own that is stopped
+// just after timeout, or by stopWPCLI with the same callID
+// (provisioner.WPCLIRunArgv).
+func wpCLIArgv(user, callID string, timeout time.Duration, args []string) []string {
+	argv := []string{"exec", "--no-TTY", "--user", user, "--", string(provisioner.ComponentPHP)}
+	return append(argv, provisioner.WPCLIRunArgv(callID, timeout, append([]string{wpcliPath}, args...)...)...)
+}
+
+// timedArgv is the `docker compose` argv, after the project flags, that runs
+// command as user under timeout(1), killed after timeout (rounded up, plus
+// a second, so the caller's context expires first). It serves the short
+// commands that run no children, unlike WP-CLI.
+func timedArgv(user string, timeout time.Duration, command ...string) []string {
 	secs := int(math.Ceil(max(timeout, 0).Seconds())) + 1
 	argv := []string{
 		"exec", "--no-TTY", "--user", user, "--", string(provisioner.ComponentPHP),
 		"timeout", "--kill-after=" + strconv.Itoa(int(wpcliKillAfter.Seconds())) + "s", strconv.Itoa(secs) + "s",
-		wpcliPath,
 	}
-	return append(argv, args...)
+	return append(argv, command...)
+}
+
+// stopWPCLI stops the WP-CLI call whose context has ended, with a second
+// exec in the container: killing the docker CLI doesn't signal the process
+// it started. It outlives ctx, and bounds itself. If it fails, the run
+// script's own timer ends the call at its deadline.
+func (p *Provisioner) stopWPCLI(ctx context.Context, proj Project, user, callID string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), provisioner.WPCLIStopTimeout)
+	defer cancel()
+	argv := append([]string{"exec", "--no-TTY", "--user", user, "--", string(provisioner.ComponentPHP)},
+		provisioner.WPCLIStopArgv(callID)...)
+	if _, err := proj.run(ctx, nil, argv...); err != nil {
+		p.log.WarnContext(ctx, "stopping WP-CLI after its call ended failed", "project", proj.Name, "error", err)
+	}
 }
 
 // phpUser returns the user ("uid:gid") the site's running php container
