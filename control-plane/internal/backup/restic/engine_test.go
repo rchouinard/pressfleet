@@ -137,10 +137,20 @@ func (f *fixture) runTaskDirect(t *testing.T, siteID string, task provisioner.Ta
 		}
 		return &provisioner.TaskResult{}, nil
 	}
-	if task.Command[0] != "restic" {
+	var cmd *exec.Cmd
+	switch {
+	case len(task.Command) > 4 && task.Command[0] == "sh" && task.Command[1] == "-c" && task.Command[3] == "sh" && task.Command[4] == "restic":
+		// restic wrapped in a shell script that follows it (the restore of
+		// the dump): the script runs for real, with restic standing for
+		// the one on the host.
+		cmd = exec.Command("sh", "-c", task.Command[2], "sh", f.local.Restic)
+		cmd.Args = append(cmd.Args, task.Command[5:]...)
+	case task.Command[0] == "restic":
+		cmd = exec.Command(f.local.Restic, task.Command[1:]...)
+	default:
 		t.Errorf("task command = %q", task.Command)
+		return &provisioner.TaskResult{}, nil
 	}
-	cmd := exec.Command(f.local.Restic, task.Command[1:]...)
 	for i, a := range cmd.Args {
 		// A restore's <snapshot>:<path> names a path in the snapshot,
 		// which holds the host paths of the backup's task.
@@ -186,6 +196,11 @@ func (f *fixture) runTaskDirect(t *testing.T, siteID string, task provisioner.Ta
 	}
 	return &provisioner.TaskResult{Stdout: stdout.String(), Stderr: stderr.String()}, nil
 }
+
+// dumpShell wraps the restore of the database dump: the task opens the
+// restored file to the transfer directory's group, since it owns the file
+// and the control plane, which isn't root on Kubernetes, must read it (#348).
+var dumpShell = []string{"sh", "-c", `"$@" && { [ ! -e /transfer/database.sql ] || chmod g+rw /transfer/database.sql; }`, "sh"}
 
 // snapPaths are the host paths a snapshot's task backed up, standing for
 // /site/wp-content and /transfer.
@@ -613,7 +628,7 @@ func TestRestore(t *testing.T) {
 		}
 		repoDir, _ := f.layout.BackupRepositoryDir(groupID)
 		lock := []string{"restic", "restore", "--json", "--quiet", "--retry-lock", "30m0s"}
-		wantDump := append(slices.Clone(lock), string(snap.ID)+":/transfer", "--target", "/transfer", "--include", "/database.sql")
+		wantDump := append(slices.Clone(dumpShell), append(slices.Clone(lock), string(snap.ID)+":/transfer", "--target", "/transfer", "--include", "/database.sql")...)
 		wantFiles := append(slices.Clone(lock), string(snap.ID)+":/site/wp-content", "--target", "/site/wp-content", "--delete")
 		if d := tasks[0]; !slices.Equal(d.Command, wantDump) || d.WPContent != provisioner.MountNone ||
 			filepath.Dir(d.TransferDir) != f.layout.TmpDir() || d.RepositoryDir != repoDir || d.SecretFiles[repository.PasswordFile] == "" {

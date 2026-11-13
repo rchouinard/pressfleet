@@ -131,8 +131,10 @@ func (m *Manager) runIO(ctx context.Context, rec Repository, password redact.Sec
 		// What init creates belongs to the task's user, and only its owner
 		// or root may change its mode. On Kubernetes the control plane
 		// isn't root, so shareLocal can't give the files to the group
-		// afterwards (#228): the task does, as shareLocal would.
-		task.Command = slices.Concat([]string{"sh", "-c", `"$@" && chmod -R g=u ` + provisioner.TaskRepositoryPath, "sh"}, task.Command)
+		// afterwards (#228): the task does, as shareLocal would. Not the
+		// directory itself, which the control plane owns (prepareLocalDir
+		// gave it the mode it needs) and the task may not chmod (#347).
+		task.Command = slices.Concat([]string{"sh", "-c", `"$@" && find ` + provisioner.TaskRepositoryPath + ` -mindepth 1 -exec chmod g=u {} +`, "sh"}, task.Command)
 	}
 	if stdin != nil {
 		dir, err := m.stageStdin(stdin)

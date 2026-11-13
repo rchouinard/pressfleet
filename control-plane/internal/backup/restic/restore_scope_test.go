@@ -75,7 +75,7 @@ func TestRestoreScopes(t *testing.T) {
 			}
 			lock := []string{"restic", "restore", "--json", "--quiet", "--retry-lock", "30m0s"}
 			for i, want := range [][]string{
-				append(slices.Clone(lock), string(snap.ID)+":/transfer", "--target", "/transfer", "--include", "/database.sql"),
+				append(slices.Clone(dumpShell), append(slices.Clone(lock), string(snap.ID)+":/transfer", "--target", "/transfer", "--include", "/database.sql")...),
 				append(slices.Clone(lock), string(snap.ID)+":/site/wp-content/plugins", "--target", "/site/wp-content/plugins", "--delete"),
 				append(slices.Clone(lock), string(snap.ID)+":/site/wp-content/themes", "--target", "/site/wp-content/themes", "--delete"),
 				{"rm", "-rf", "--", "/site/wp-content/mu-plugins"},

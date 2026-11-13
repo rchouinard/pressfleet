@@ -964,26 +964,13 @@ func testKindRestoreDump(t *testing.T, f *kindFixture) {
 	}
 	// Package repository's init command, exactly.
 	group := strings.ToLower(from.ClientGroupID)
-	_, err := f.p.RunRepositoryTask(ctx, group, provisioner.Task{
+	// The directory belongs to the control plane, which the task, as
+	// another user, can't chmod (#347).
+	if _, err := f.p.RunRepositoryTask(ctx, group, provisioner.Task{
 		Image:   f.env.taskImage,
-		Command: []string{"sh", "-c", `"$@" && chmod -R g=u ` + provisioner.TaskRepositoryPath, "sh", "restic", "--no-cache", "init"},
+		Command: []string{"sh", "-c", `"$@" && find ` + provisioner.TaskRepositoryPath + ` -mindepth 1 -exec chmod g=u {} +`, "sh", "restic", "--no-cache", "init"},
 		Env:     env, RepositoryDir: repo, Timeout: 3 * time.Minute,
-	})
-	var ee *provisioner.ExecError
-	switch {
-	case errors.As(err, &ee) && strings.Contains(ee.Stderr, "changing permissions of '"+provisioner.TaskRepositoryPath+"': Operation not permitted"):
-		// The task can't chmod the repository's own directory, which the
-		// control plane owns (#347). Open the rest, as the
-		// command meant to, so the restore can be checked.
-		t.Logf("package repository's init command failed: %v", err)
-		if _, err := f.p.RunRepositoryTask(ctx, group, provisioner.Task{
-			Image:         f.env.taskImage,
-			Command:       []string{"sh", "-c", `chmod -R g=u ` + provisioner.TaskRepositoryPath + `/*`},
-			RepositoryDir: repo, Timeout: 3 * time.Minute,
-		}); err != nil {
-			t.Fatalf("opening the repository to its group: %v", err)
-		}
-	case err != nil:
+	}); err != nil {
 		t.Fatalf("initializing the repository: %v", err)
 	}
 
@@ -1008,7 +995,8 @@ restic ls --long latest /transfer/database.sql`, "sh", dump},
 	restore := f.transferDir(t)
 	if _, err := f.p.RunTask(ctx, to.ID, provisioner.Task{
 		Image: f.env.taskImage,
-		Command: []string{"restic", "restore", "--json", "--quiet", "latest:" + provisioner.TaskTransferPath,
+		Command: []string{"sh", "-c", `"$@" && { [ ! -e /transfer/database.sql ] || chmod g+rw /transfer/database.sql; }`, "sh",
+			"restic", "restore", "--json", "--quiet", "latest:" + provisioner.TaskTransferPath,
 			"--target", provisioner.TaskTransferPath, "--include", "/database.sql"},
 		Env: env, RepositoryDir: repo, TransferDir: restore, Timeout: 3 * time.Minute,
 	}); err != nil {
@@ -1021,10 +1009,6 @@ restic ls --long latest /transfer/database.sql`, "sh", dump},
 	}
 	t.Logf("the restored dump: mode %s, owner %d; the control plane is %d", fi.Mode(), fileOwner(fi), os.Geteuid())
 	got, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrPermission) {
-		// The gap is real; this check holds once #348 is fixed.
-		t.Skipf("known bug #348: the control plane can't read a restored dump that is 0600 in the snapshot: %v", err)
-	}
 	if err != nil || string(got) != dump {
 		t.Errorf("the control plane reads the restored dump as %q, %v", got, err)
 	}
