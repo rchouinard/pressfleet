@@ -157,7 +157,9 @@ func TestWPCLIStopScript(t *testing.T) {
 		t.Fatalf("stop: %v: %s", err, out)
 	}
 	select {
-	case <-done:
+	case err := <-done:
+		// The stop kills the command, so a non-nil error is expected.
+		t.Logf("command ended: %v", err)
 	case <-time.After(20 * time.Second):
 		t.Fatal("the command still runs after the stop command")
 	}
