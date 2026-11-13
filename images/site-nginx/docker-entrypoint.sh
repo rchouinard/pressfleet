@@ -98,7 +98,11 @@ echo "deny all;" >>"$run/status-allow.conf"
 
 case "$NGINX_XMLRPC" in
 allow | on | 1)
+	# Same limit as wp-login.php: system.multicall and wp.getUsersBlogs
+	# check passwords too, and an unknown user costs an Argon2id hash
+	# (64 MiB of native memory) like a wrong one does (#362).
 	cat >"$run/xmlrpc.conf" <<-EOF
+		include $run/login-limit.conf;
 		include $conf/snippets/fastcgi-php.conf;
 		include $conf/php.d/*.conf;
 		fastcgi_pass php;
