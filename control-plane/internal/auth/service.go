@@ -613,6 +613,7 @@ func (s *Service) UpdateUser(ctx context.Context, userID string, c UserChanges) 
 
 	now := s.now()
 	var user store.User
+	endedSessions := 0
 	err := s.db.InTx(ctx, func(q store.Querier) error {
 		users := store.NewUsers(q)
 		// A role or disabled change may remove an admin: lock the admins
@@ -631,6 +632,7 @@ func (s *Service) UpdateUser(ctx context.Context, userID string, c UserChanges) 
 		}
 		wasAdmin := user.Role == store.RoleAdmin && !user.Disabled()
 		revoke := false
+		oldRole, wasDisabled := user.Role, user.Disabled()
 		if c.Email != nil {
 			user.Email = email
 		}
@@ -657,6 +659,16 @@ func (s *Service) UpdateUser(ctx context.Context, userID string, c UserChanges) 
 		if err := users.Update(ctx, &user, now); err != nil {
 			return err
 		}
+		// Temporary database sessions are granted by role, so a role change
+		// or disabling ends them; the dbsession sweep then drops their
+		// MariaDB users and the gateway closes their open tunnels.
+		if user.Role != oldRole || (user.Disabled() && !wasDisabled) {
+			n, err := store.NewDatabaseSessions(q).EndAllForUser(ctx, user.ID, "access_revoked", now)
+			if err != nil {
+				return err
+			}
+			endedSessions = n
+		}
 		if revoke {
 			return revokeAccess(ctx, q, user.ID, "", now)
 		}
@@ -672,7 +684,7 @@ func (s *Service) UpdateUser(ctx context.Context, userID string, c UserChanges) 
 	case err != nil:
 		return store.User{}, fmt.Errorf("update user: %w", err)
 	}
-	s.log.Info("user updated", "user_id", user.ID)
+	s.log.Info("user updated", "user_id", user.ID, "database_sessions_ended", endedSessions)
 	return user, nil
 }
 
