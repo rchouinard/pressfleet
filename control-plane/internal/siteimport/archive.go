@@ -32,6 +32,26 @@ const (
 // would point WordPress elsewhere, so an import leaves them out.
 var HostDropIns = []string{"object-cache.php", "advanced-cache.php", "db.php"}
 
+// Limits on what an import unpacks, against archives and dumps that expand
+// to fill the control plane's disk (the same defence as deploy.MaxEntries
+// and deploy.MaxUnpackedBytes, sized for a whole wp-content, whose uploads
+// are far larger than a theme or plugin package). Uploads only bound the
+// compressed size.
+const (
+	// MaxEntries is the most entries (files, directories, and links) an
+	// archive may hold.
+	MaxEntries = 1_000_000
+	// MaxUnpackedBytes is the most an archive's files or a SQL dump may
+	// hold, unpacked.
+	MaxUnpackedBytes int64 = 50 << 30
+)
+
+// Variables so tests can lower the limits.
+var (
+	maxEntries       = MaxEntries
+	maxUnpackedBytes = MaxUnpackedBytes
+)
+
 // maxReported bounds the skipped entries ArchiveInfo lists.
 const maxReported = 20
 
@@ -99,13 +119,14 @@ func openArchive(f *os.File) (*archive, error) {
 	}
 	switch {
 	case bytes.HasPrefix(head, []byte("PK\x03\x04")), bytes.HasPrefix(head, []byte("PK\x05\x06")):
-		return zipArchive(f, fi.Size())
+		a, err := zipArchive(f, fi.Size())
+		return limited(a), err
 	case bytes.HasPrefix(head, []byte{0x1f, 0x8b}):
-		return tarArchive(f, FormatTarGzip, func(r io.Reader) (io.Reader, error) { return gzip.NewReader(r) }), nil
+		return limited(tarArchive(f, FormatTarGzip, func(r io.Reader) (io.Reader, error) { return gzip.NewReader(r) })), nil
 	case bytes.HasPrefix(head, []byte("BZh")):
-		return tarArchive(f, FormatTarBzip2, func(r io.Reader) (io.Reader, error) { return bzip2.NewReader(r), nil }), nil
+		return limited(tarArchive(f, FormatTarBzip2, func(r io.Reader) (io.Reader, error) { return bzip2.NewReader(r), nil })), nil
 	case isTar(head):
-		return tarArchive(f, FormatTar, func(r io.Reader) (io.Reader, error) { return r, nil }), nil
+		return limited(tarArchive(f, FormatTar, func(r io.Reader) (io.Reader, error) { return r, nil })), nil
 	case bytes.HasPrefix(head, []byte{0xfd, '7', 'z', 'X', 'Z', 0}), bytes.HasPrefix(head, []byte("7z\xbc\xaf")),
 		bytes.HasPrefix(head, []byte("Rar!")), bytes.HasPrefix(head, []byte{0x28, 0xb5, 0x2f, 0xfd}):
 		return nil, invalidArchive("its format isn't supported; send a .tar.gz, .tar, or .zip file")
@@ -116,6 +137,55 @@ func openArchive(f *os.File) (*archive, error) {
 // isTar reports whether a block is a POSIX or GNU tar header.
 func isTar(block []byte) bool {
 	return len(block) >= 263 && bytes.Equal(block[257:262], []byte("ustar"))
+}
+
+// limited makes every walk of a enforce the entry and size limits: the
+// declared sizes bound what a tar's reader decompresses even for entries
+// nobody reads, and the readers handed out are bounded too, since a zip's
+// declared sizes can lie.
+func limited(a *archive) *archive {
+	if a == nil {
+		return nil
+	}
+	inner := a.walk
+	a.walk = func(fn func(entry, io.Reader) error) error {
+		var entries int
+		var declared, read int64
+		return inner(func(e entry, body io.Reader) error {
+			entries++
+			if entries > maxEntries {
+				return invalidArchive("it holds more than %d entries", maxEntries)
+			}
+			if e.size < 0 || e.size > maxUnpackedBytes-declared {
+				return invalidArchive("it unpacks to more than %d MiB", maxUnpackedBytes>>20)
+			}
+			declared += e.size
+			if body != nil {
+				body = &budgetReader{r: body, read: &read}
+			}
+			return fn(e, body)
+		})
+	}
+	return a
+}
+
+// budgetReader fails once the archive's files have yielded more than
+// maxUnpackedBytes in all.
+type budgetReader struct {
+	r    io.Reader
+	read *int64
+}
+
+func (b *budgetReader) Read(p []byte) (int, error) {
+	if room := maxUnpackedBytes - *b.read; int64(len(p)) > room+1 {
+		p = p[:room+1]
+	}
+	n, err := b.r.Read(p)
+	*b.read += int64(n)
+	if *b.read > maxUnpackedBytes {
+		return n, invalidArchive("it unpacks to more than %d MiB", maxUnpackedBytes>>20)
+	}
+	return n, err
 }
 
 func tarArchive(f *os.File, format string, decompress func(io.Reader) (io.Reader, error)) *archive {
@@ -186,7 +256,7 @@ func zipArchive(f *os.File, size int64) (*archive, error) {
 				continue
 			}
 			mode := zf.Mode()
-			e := entry{name: name, size: int64(zf.UncompressedSize64), modTime: zf.Modified} //nolint:gosec // G115: sizes fit int64
+			e := entry{name: name, size: int64(min(zf.UncompressedSize64, 1<<62)), modTime: zf.Modified}
 			switch {
 			case mode.IsDir() || strings.HasSuffix(zf.Name, "/"):
 				e.typ = entryDir

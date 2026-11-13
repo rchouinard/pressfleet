@@ -66,12 +66,31 @@ func openDump(r io.Reader) (*bufio.Reader, bool, error) {
 		if err != nil {
 			return nil, true, invalidDump("it can't be decompressed: %v", err)
 		}
-		return bufio.NewReaderSize(zr, maxLineHead), true, nil
+		return bufio.NewReaderSize(&dumpBudget{r: zr}, maxLineHead), true, nil
 	case bytes.HasPrefix(head, []byte("PK\x03\x04")), bytes.HasPrefix(head, []byte("BZh")),
 		bytes.HasPrefix(head, []byte{0xfd, '7', 'z', 'X'}), bytes.HasPrefix(head, []byte{0x28, 0xb5, 0x2f, 0xfd}):
 		return nil, false, invalidDump("it is a compressed file of a kind that isn't supported; send a .sql or .sql.gz file")
 	}
-	return br, false, nil
+	return bufio.NewReaderSize(&dumpBudget{r: br}, maxLineHead), false, nil
+}
+
+// dumpBudget fails once a dump's text, decompressed, passes
+// maxUnpackedBytes, so a small gzip bomb can't fill the disk.
+type dumpBudget struct {
+	r    io.Reader
+	read int64
+}
+
+func (d *dumpBudget) Read(p []byte) (int, error) {
+	if room := maxUnpackedBytes - d.read; int64(len(p)) > room+1 {
+		p = p[:room+1]
+	}
+	n, err := d.r.Read(p)
+	d.read += int64(n)
+	if d.read > maxUnpackedBytes {
+		return n, invalidDump("it is larger than %d MiB unpacked", maxUnpackedBytes>>20)
+	}
+	return n, err
 }
 
 // lines calls fn with each chunk of the dump's text: whole lines, or
