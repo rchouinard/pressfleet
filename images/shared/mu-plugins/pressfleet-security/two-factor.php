@@ -12,7 +12,8 @@
  *   and its Deactivate link is replaced by a note.
  * - An administrator without a second factor is enrolled at their next login.
  *   Logging in lands on their profile, every other admin screen sends them
- *   back there, and a notice says why, until they set one up. The platform's
+ *   back there, and a notice says why, until they set one up. AJAX and the
+ *   REST API refuse everything but what that screen needs. The platform's
  *   initial admin password is shown once, to the person creating the site,
  *   so that first login is theirs.
  * - A session started by a one-click login from the dashboard (design doc
@@ -109,15 +110,29 @@ add_filter(
 	3
 );
 
-// Every other admin screen sends them back there. AJAX and the REST API are
-// left alone: setting up a second factor uses them.
+// Every other admin screen sends them back there. AJAX and the REST API get
+// an allowlist instead of a redirect: setting up a second factor needs a few
+// of their endpoints, but a password-only session must not use the rest
+// (install plugins, change options) to skip enrollment.
 add_action(
 	'admin_init',
 	static function () {
-		if ( wp_doing_ajax() || ( defined( 'WP_CLI' ) && WP_CLI ) ) {
+		if ( defined( 'WP_CLI' ) && WP_CLI ) {
 			return;
 		}
 		if ( ! pressfleet_two_factor_enrollment_required( wp_get_current_user() ) ) {
+			return;
+		}
+		if ( wp_doing_ajax() ) {
+			// heartbeat runs on every admin screen, and generate-password is
+			// the profile's "Set New Password" button; neither changes anything.
+			$action = isset( $_REQUEST['action'] ) && is_string( $_REQUEST['action'] ) ? wp_unslash( $_REQUEST['action'] ) : '';
+			if ( ! in_array( $action, array( 'heartbeat', 'generate-password' ), true ) ) {
+				wp_send_json_error(
+					array( 'message' => esc_html__( 'Set up two-factor authentication first.' ) ),
+					403
+				);
+			}
 			return;
 		}
 		global $pagenow;
@@ -128,6 +143,30 @@ add_action(
 		exit;
 	},
 	1
+);
+
+// The REST API: only the Two Factor plugin's own routes (its authenticator
+// app and backup code setup), which check the user's capabilities themselves.
+add_filter(
+	'rest_pre_dispatch',
+	static function ( $result, $server, $request ) {
+		if ( null !== $result || ( defined( 'WP_CLI' ) && WP_CLI ) ) {
+			return $result;
+		}
+		if ( ! pressfleet_two_factor_enrollment_required( wp_get_current_user() ) ) {
+			return $result;
+		}
+		if ( str_starts_with( $request->get_route(), '/two-factor/1.0/' ) ) {
+			return $result;
+		}
+		return new WP_Error(
+			'pressfleet_two_factor_required',
+			esc_html__( 'Set up two-factor authentication first.' ),
+			array( 'status' => 403 )
+		);
+	},
+	1,
+	3
 );
 
 add_action(
