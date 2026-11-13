@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -20,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/remotecommand"
@@ -681,6 +683,56 @@ func TestRepositoryTaskPolicy(t *testing.T) {
 	}
 }
 
+// TestRepositoryTaskPolicyS3Service checks that the S3 rule names the
+// Service's pods and target port, not the whole namespace.
+func TestRepositoryTaskPolicyS3Service(t *testing.T) {
+	svc := func(sel map[string]string, ports ...corev1.ServicePort) *corev1.Service {
+		return &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "storage", Name: "minio"},
+			Spec:       corev1.ServiceSpec{Selector: sel, Ports: ports},
+		}
+	}
+	sel := map[string]string{"app": "minio"}
+	tests := []struct {
+		name     string
+		objs     []runtime.Object
+		wantSel  map[string]string
+		wantPort intstr.IntOrString
+	}{
+		{"target port differs", []runtime.Object{svc(sel, corev1.ServicePort{Port: 9000, TargetPort: intstr.FromInt32(9001)})},
+			sel, intstr.FromInt32(9001)},
+		{"named target port", []runtime.Object{svc(sel, corev1.ServicePort{Port: 9000, TargetPort: intstr.FromString("s3")})},
+			sel, intstr.FromString("s3")},
+		{"no target port", []runtime.Object{svc(sel, corev1.ServicePort{Port: 9000})}, sel, intstr.FromInt32(9000)},
+		{"other port first", []runtime.Object{svc(sel,
+			corev1.ServicePort{Port: 9090, TargetPort: intstr.FromInt32(1)},
+			corev1.ServicePort{Port: 9000, TargetPort: intstr.FromInt32(9002)})}, sel, intstr.FromInt32(9002)},
+		{"no Service: whole namespace", nil, nil, intstr.FromInt32(9000)},
+		{"no selector: whole namespace", []runtime.Object{svc(nil, corev1.ServicePort{Port: 9000})}, nil, intstr.FromInt32(9000)},
+		{"no matching port: whole namespace", []runtime.Object{svc(sel, corev1.ServicePort{Port: 80})}, nil, intstr.FromInt32(9000)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := newTaskCluster(t, tt.objs...)
+			pol := tc.repositoryTaskPolicy(t.Context(), true)
+			rule := pol.Spec.Egress[1]
+			peer := rule.To[0]
+			if peer.NamespaceSelector == nil || peer.NamespaceSelector.MatchLabels[corev1.LabelMetadataName] != "storage" {
+				t.Fatalf("peer = %+v", peer)
+			}
+			switch {
+			case tt.wantSel == nil && peer.PodSelector != nil:
+				t.Errorf("PodSelector = %+v, want none", peer.PodSelector)
+			case tt.wantSel != nil && (peer.PodSelector == nil || !maps.Equal(peer.PodSelector.MatchLabels, tt.wantSel)):
+				t.Errorf("PodSelector = %+v, want %v", peer.PodSelector, tt.wantSel)
+			}
+			if got := *rule.Ports[0].Port; got != tt.wantPort {
+				t.Errorf("port = %v, want %v", got, tt.wantPort)
+			}
+		})
+	}
+}
+
 func TestResolveS3Peer(t *testing.T) {
 	tests := []struct {
 		endpoint string
@@ -688,8 +740,8 @@ func TestResolveS3Peer(t *testing.T) {
 	}{
 		{"https://s3.eu-west-1.amazonaws.com", nil},
 		{"https://203.0.113.10", nil},
-		{"http://minio:9000", &s3Peer{Namespace: "pressfleet", Port: 9000}},
-		{"http://minio.storage.svc.cluster.local", &s3Peer{Namespace: "storage", Port: 80}},
+		{"http://minio:9000", &s3Peer{Namespace: "pressfleet", Service: "minio", Port: 9000}},
+		{"http://minio.storage.svc.cluster.local", &s3Peer{Namespace: "storage", Service: "minio", Port: 80}},
 		{"https://10.0.5.4:9443", &s3Peer{CIDR: "10.0.5.4/32", Port: 9443}},
 		{"https://[fd00::4]", &s3Peer{CIDR: "fd00::4/128", Port: 443}},
 		{"", nil},

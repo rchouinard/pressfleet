@@ -146,8 +146,10 @@ func newTaskSettings(cfg Config) taskSettings {
 // s3Peer is an S3 service that a repository task's NetworkPolicy allows
 // by address or namespace, because the internet rule leaves it out.
 type s3Peer struct {
-	// Namespace is set for a Service of the cluster, CIDR for an address.
+	// Namespace and Service are set for a Service of the cluster, CIDR for
+	// an address. Port is the one in the URL: the Service's, not the pods'.
 	Namespace string
+	Service   string
 	CIDR      string
 	Port      int
 }
@@ -179,9 +181,9 @@ func resolveS3Peer(endpoint, platformNamespace string) *s3Peer {
 	switch {
 	case len(labels) == 1:
 		// A bare Service name, as the control plane resolves it.
-		return &s3Peer{Namespace: platformNamespace, Port: port}
+		return &s3Peer{Namespace: platformNamespace, Service: labels[0], Port: port}
 	case len(labels) >= 3 && labels[2] == "svc":
-		return &s3Peer{Namespace: labels[1], Port: port}
+		return &s3Peer{Namespace: labels[1], Service: labels[0], Port: port}
 	}
 	return nil
 }
@@ -326,7 +328,7 @@ func (p *Provisioner) RunRepositoryTask(ctx context.Context, repository string, 
 		spec.dataClaim = p.tasks.dataClaim
 	}
 	spec.labels = map[string]string{repositoryLabel: repository}
-	spec.policy = p.repositoryTaskPolicy(task.BackupNetwork)
+	spec.policy = p.repositoryTaskPolicy(ctx, task.BackupNetwork)
 	return p.runTaskPod(ctx, target, spec, task)
 }
 
@@ -836,7 +838,7 @@ func (p *Provisioner) taskPod(spec taskSpec, task provisioner.Task) *corev1.Pod 
 // its name and pod selector: no traffic at all, or with backupNetwork,
 // egress to DNS, the S3 endpoint, and the internet. Nothing may connect to
 // the task.
-func (p *Provisioner) repositoryTaskPolicy(backupNetwork bool) *networkingv1.NetworkPolicy {
+func (p *Provisioner) repositoryTaskPolicy(ctx context.Context, backupNetwork bool) *networkingv1.NetworkPolicy {
 	pol := &networkingv1.NetworkPolicy{Spec: networkingv1.NetworkPolicySpec{
 		PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
 	}}
@@ -848,16 +850,29 @@ func (p *Provisioner) repositoryTaskPolicy(backupNetwork bool) *networkingv1.Net
 		v := intstr.FromInt32(int32(n)) //nolint:gosec // G115: ports are below 65536
 		return networkingv1.NetworkPolicyPort{Protocol: proto, Port: &v}
 	}
+	s3Port := func(n int, target intstr.IntOrString) networkingv1.NetworkPolicyPort {
+		if target == (intstr.IntOrString{}) {
+			return port(&tcp, n)
+		}
+		return networkingv1.NetworkPolicyPort{Protocol: &tcp, Port: &target}
+	}
 	egress := []networkingv1.NetworkPolicyEgressRule{{Ports: []networkingv1.NetworkPolicyPort{port(&udp, 53), port(&tcp, 53)}}}
 	if s3 := p.tasks.s3; s3 != nil {
 		peer := networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: s3.CIDR}}
+		var target intstr.IntOrString
 		if s3.Namespace != "" {
 			peer = networkingv1.NetworkPolicyPeer{NamespaceSelector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{corev1.LabelMetadataName: s3.Namespace},
 			}}
+			// Policies apply after the Service's address is translated,
+			// so the rule names the Service's pods and their port.
+			if sel, tp, ok := p.s3ServiceTarget(ctx, s3); ok {
+				peer.PodSelector = &metav1.LabelSelector{MatchLabels: sel}
+				target = tp
+			}
 		}
 		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
-			To: []networkingv1.NetworkPolicyPeer{peer}, Ports: []networkingv1.NetworkPolicyPort{port(&tcp, s3.Port)},
+			To: []networkingv1.NetworkPolicyPeer{peer}, Ports: []networkingv1.NetworkPolicyPort{s3Port(s3.Port, target)},
 		})
 	}
 	egress = append(egress, networkingv1.NetworkPolicyEgressRule{To: []networkingv1.NetworkPolicyPeer{
@@ -866,6 +881,41 @@ func (p *Provisioner) repositoryTaskPolicy(backupNetwork bool) *networkingv1.Net
 	}})
 	pol.Spec.Egress = egress
 	return pol
+}
+
+// s3ServiceTarget looks up the S3 Service for its pod selector and the
+// target port (a number, or a container port name) behind the URL's port.
+// ok is false when it can't: the Service isn't there, the control plane
+// may not read Services outside the platform namespace, it has no selector
+// (ExternalName), or none of its ports is the URL's. The rule then allows
+// the URL's port on every pod of the namespace, which is wider than needed
+// but never blocks a working endpoint, so a task isn't refused over it.
+func (p *Provisioner) s3ServiceTarget(ctx context.Context, s3 *s3Peer) (selector map[string]string, target intstr.IntOrString, ok bool) {
+	warn := func(reason string, err error) {
+		p.log.WarnContext(ctx, "scoping the S3 egress rule to the whole namespace: the Service can't be used",
+			"namespace", s3.Namespace, "service", s3.Service, "reason", reason, "error", err)
+	}
+	svc, err := p.typed.CoreV1().Services(s3.Namespace).Get(ctx, s3.Service, metav1.GetOptions{})
+	if err != nil {
+		warn("lookup failed", err)
+		return nil, intstr.IntOrString{}, false
+	}
+	if len(svc.Spec.Selector) == 0 {
+		warn("no pod selector", nil)
+		return nil, intstr.IntOrString{}, false
+	}
+	for _, sp := range svc.Spec.Ports {
+		if int(sp.Port) != s3.Port {
+			continue
+		}
+		target = sp.TargetPort
+		if target == (intstr.IntOrString{}) {
+			target = intstr.FromInt32(sp.Port)
+		}
+		return maps.Clone(svc.Spec.Selector), target, true
+	}
+	warn("no port matches the endpoint", nil)
+	return nil, intstr.IntOrString{}, false
 }
 
 // Startup deletes the task pods, Secrets, and NetworkPolicies that a
