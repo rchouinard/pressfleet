@@ -661,8 +661,10 @@ test_stack() {
 	check_contains "2fa: the profile says why" "requires two-factor authentication for administrators" \
 		"$(curl -s -H "$tfa_ip" -H "Cookie: $tfa_cookies" "$base/wp-admin/profile.php")"
 	# AJAX and REST allow only what enrollment needs (#363).
+	# The REST nonce is the one in wpApiSettings; other nonces on the page
+	# make every REST call answer 403, which would pass the refusals below.
 	local tfa_nonce
-	tfa_nonce="$(curl -s -H "$tfa_ip" -H "Cookie: $tfa_cookies" "$base/wp-admin/profile.php" | grep -o '"nonce":"[a-f0-9]*"' | head -n1 | cut -d'"' -f4)"
+	tfa_nonce="$(curl -s -H "$tfa_ip" -H "Cookie: $tfa_cookies" "$base/wp-admin/profile.php" | grep -o 'wpApiSettings = {[^}]*' | grep -o '"nonce":"[a-f0-9]*"' | cut -d'"' -f4)"
 	check "2fa: the profile page carries a REST nonce" test -n "$tfa_nonce"
 	check_eq "2fa: unenrolled admin-ajax refuses other actions" "403" \
 		"$(curl -s -o /dev/null -w '%{http_code}' -H "$tfa_ip" -H "Cookie: $tfa_cookies" -d 'action=install-plugin&slug=hello-dolly' "$base/wp-admin/admin-ajax.php")"
@@ -670,8 +672,12 @@ test_stack() {
 		"$(curl -s -o /dev/null -w '%{http_code}' -H "$tfa_ip" -H "Cookie: $tfa_cookies" -d 'action=generate-password' "$base/wp-admin/admin-ajax.php")"
 	check_eq "2fa: unenrolled REST refuses other routes" "403" \
 		"$(curl -s -o /dev/null -w '%{http_code}' -H "$tfa_ip" -H "Cookie: $tfa_cookies" -H "X-WP-Nonce: $tfa_nonce" "$base/wp-json/wp/v2/settings")"
+	# The route's permission callback needs a user_id, so without one it
+	# answers 403 whatever the enrollment filter does.
+	local tfa_admin_id
+	tfa_admin_id="$("${cexec[@]}" wp user get admin --field=ID)"
 	check_not "2fa: unenrolled REST reaches the Two Factor routes" \
-		test "$(curl -s -o /dev/null -w '%{http_code}' -H "$tfa_ip" -H "Cookie: $tfa_cookies" -H "X-WP-Nonce: $tfa_nonce" -X POST "$base/wp-json/two-factor/1.0/generate-backup-codes")" = 403
+		test "$(curl -s -o /dev/null -w '%{http_code}' -H "$tfa_ip" -H "Cookie: $tfa_cookies" -H "X-WP-Nonce: $tfa_nonce" -d "user_id=$tfa_admin_id" "$base/wp-json/two-factor/1.0/generate-backup-codes")" = 403
 	# One-click login (#127): exempt from the enrollment redirect and notice.
 	check_eq "2fa: a dashboard login is not redirected to enrollment" "$login_ok" "$(login_request "$(mint_token admin "$login_site" -1 59)")"
 	check_eq "2fa: a dashboard login reaches the dashboard" "200" \
