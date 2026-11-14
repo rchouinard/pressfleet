@@ -178,6 +178,8 @@ Other services:
 Everything the platform does in the background is a job (`site.create`, `site.backup`, `site.restore`, `site.go_live`, `backup.prune`, ...). A failed step is retried (up to 5 attempts for most jobs) and then the job fails. Permanently failed jobs roll back what they created.
 
 - **A job is queued and never runs.** At most `jobs.concurrency` (4) run at once, and jobs on the same site run one at a time. Look at what is running on the Jobs page. A prune or check on a client group's repository blocks that group's backups (for up to 30 minutes, then they retry).
+- **A site is `failed` after an update, restore, or similar job ended `rollback_failed`.** The rollback gave up before it could put the site's settings and containers back, so they may not match. The site's status message has the job's error. Restore it from a backup (**Backups**), or fix the cause and change a setting to retry. The control plane marks such a site `failed` when the job ends, and every 5 minutes checks for sites left `updating` with no job working on them, such as after a state database outage, or from before this check existed.
+- **A site stuck in `provisioning` after its create, clone, or import job ended `rollback_failed`** isn't repaired this way: its rollback is what removes its secrets. Delete the site; there is nothing to preserve.
 - **A failed job's log** is on its page and in the control plane's log (`job_id` in each line).
 
 ## Backups

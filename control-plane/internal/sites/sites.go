@@ -800,7 +800,7 @@ func (s *Service) Handlers() []jobs.Handler {
 	if s.imports() {
 		handlers = append(handlers, s.importHandler())
 	}
-	return append(handlers, s.rollouts.handlers()...)
+	return s.withStatusRepair(append(handlers, s.rollouts.handlers()...))
 }
 
 // SharedServiceAttacher reconnects the platform services to a site's
