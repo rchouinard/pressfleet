@@ -30,7 +30,16 @@ fi
 found=0
 for f in "$dir"/*; do
 	[ -f "$f" ] || continue
-	export "${f##*/}_FILE=$f"
+	name=${f##*/}
+	# A file name that isn't a shell identifier can't be exported, and the failed
+	# export would abort the shell and stop Traefik from starting.
+	case $name in
+	'' | [0-9]* | *[!A-Za-z0-9_]*)
+		echo "pressfleet: skipping DNS provider credential file with an invalid variable name: $name" >&2
+		continue
+		;;
+	esac
+	export "${name}_FILE=$f"
 	found=$((found + 1))
 done
 echo "pressfleet: starting Traefik with $found DNS provider credential(s)" >&2
