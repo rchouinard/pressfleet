@@ -199,6 +199,19 @@ func (r Sites) Create(ctx context.Context, s *Site) error {
 	}
 	created.CreatedAt = now()
 	created.UpdatedAt = created.CreatedAt
+	// Serialize with the deletion of the group's backup repository, which
+	// must not lose the repository of a site created meanwhile (#351).
+	groups := NewClientGroups(r.q)
+	if err := groups.Lock(ctx, created.ClientGroupID); errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("create site: %w: client group %s", ErrReference, created.ClientGroupID)
+	} else if err != nil {
+		return fmt.Errorf("create site: %w", err)
+	}
+	if deleting, err := groups.RepositoryDeleting(ctx, created.ClientGroupID); err != nil {
+		return fmt.Errorf("create site: %w", err)
+	} else if deleting {
+		return fmt.Errorf("create site: %w", ErrRepositoryDeleting)
+	}
 	_, err := r.q.ExecContext(ctx, "INSERT INTO sites ("+siteColumns+") VALUES "+
 		"("+placeholders(siteColumnCount)+")",
 		created.ID, created.ClientGroupID, nullString(created.ParentSiteID), created.Name, created.Slug, string(created.Status), created.StatusMessage,

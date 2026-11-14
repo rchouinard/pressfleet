@@ -141,7 +141,7 @@ When a client leaves, you can hand over their backups and delete everything. Onl
      restic -r repository --password-file password.txt snapshots
      restic -r repository --password-file password.txt restore latest --tag site:<site-id> --target restored
      ```
-3. **Delete the repository**, typing the group's name to confirm: on the client group's page, or tick "Also permanently delete the backup repository" when deleting the group. In the container: `pressfleet repository delete <client-group-id> --yes`. This removes the files (or S3 objects) and the stored password.
+3. **Delete the repository**, typing the group's name to confirm: on the client group's page, or tick "Also permanently delete the backup repository" when deleting the group. In the container: `pressfleet repository delete <client-group-id> --yes`. This removes the files (or S3 objects) and the stored password. While it runs, creating a site in the group is refused with a conflict, so a new site can't lose its repository; if the delete fails, the group accepts sites again and you can run the delete again.
 
 Each step is in the audit log. Don't export while the repository is being pruned.
 

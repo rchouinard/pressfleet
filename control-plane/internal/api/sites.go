@@ -629,7 +629,7 @@ func siteError(err error) error {
 		}
 	}
 	// The wrapping says what the site is doing.
-	if errors.Is(err, sites.ErrBusy) || errors.Is(err, sites.ErrHasStagingSites) {
+	if errors.Is(err, sites.ErrBusy) || errors.Is(err, sites.ErrHasStagingSites) || errors.Is(err, store.ErrRepositoryDeleting) {
 		return fmt.Errorf("%w: %w", ErrConflict, err)
 	}
 	return err

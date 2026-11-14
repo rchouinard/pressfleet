@@ -176,6 +176,14 @@ func (a *app) buildServer(ctx context.Context) (_ *server, err error) {
 	if s.repos, err = a.backupRepositories(db, s.secretStore, keys, s.rt.Driver); err != nil {
 		return nil, err
 	}
+	// A repository deletion that a crash interrupted must not keep
+	// refusing new sites in its group (#351).
+	if n, err := s.repos.ClearDeleting(ctx); err != nil {
+		// Not fatal: running the delete again clears the mark too.
+		a.log.Warn("clearing the deletion marks of backup repositories failed", "error", err)
+	} else if n > 0 {
+		a.log.Warn("cleared the deletion marks of backup repositories left by an interrupted delete; run the delete again", "repositories", n)
+	}
 	// Before any task runs: a crash can leave the secret files of a task
 	// that was running.
 	if h, ok := s.rt.Driver.(driver.StartupHook); ok {

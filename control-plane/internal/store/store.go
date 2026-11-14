@@ -41,6 +41,9 @@ var (
 	// refers to something that doesn't exist, or something still refers to
 	// the row being deleted.
 	ErrReference = errors.New("invalid reference")
+	// ErrRepositoryDeleting means the client group's backup repository is
+	// being deleted, so no site can be created in the group (#351).
+	ErrRepositoryDeleting = errors.New("the client group's backup repository is being deleted")
 	// ErrSchemaTooNew means the database was migrated by a newer pressfleet.
 	ErrSchemaTooNew = errors.New("database schema is newer than this pressfleet binary supports")
 	// ErrInUse means another process has the SQLite database open.
