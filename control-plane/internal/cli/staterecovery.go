@@ -43,7 +43,7 @@ func (a *app) stateRepository(keys *secrets.Keyring) (*repository.Manager, error
 	}
 	return repository.New(repository.Options{
 		Layout: a.cfg.Layout(), Backend: a.cfg.Backup.Backend, S3: s3,
-		Tasks: tasks, TaskImage: a.cfg.TaskImage, MaxTasks: a.cfg.Jobs.Concurrency,
+		Tasks: tasks, TaskImage: a.cfg.TaskImage, MaxTasks: a.cfg.Jobs.Concurrency, TaskMemoryMB: a.cfg.Backup.TaskMemoryMB,
 		StatePassword: keys.StateBackupPassword(), Logger: a.log.With("component", "state-backup"),
 	})
 }

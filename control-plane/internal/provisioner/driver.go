@@ -232,7 +232,9 @@ type Task struct {
 	// top. Zero means the driver's default (backup.task_memory_mb, 512). A
 	// task that exceeds it is killed by the kernel and fails; limits keep
 	// restic, whose memory grows with the repository, from taking the
-	// memory sites and platform services need.
+	// memory sites and platform services need. A restic task that sets its
+	// own limit must also set GOMEMLIMIT, to 75% of it: the repository
+	// package derives that from backup.task_memory_mb alone (#281).
 	MemoryLimitMB int
 	// Timeout bounds the task's run time; zero means no limit beyond ctx.
 	Timeout time.Duration
