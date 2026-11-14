@@ -12,6 +12,7 @@ export function useSession() {
   const csrf = useCsrfToken()
   const loading = useState('session-loading', () => false)
   const api = useApi()
+  const reauthentication = useReauthentication()
 
   function apply(current: CurrentUser | null) {
     user.value = current
@@ -84,6 +85,8 @@ export function useSession() {
       if (toApiError(e).status !== 401) throw e
     }
     apply(null)
+    // A dialog still open would sit over the login page.
+    reauthentication.finish(false)
     await navigateTo('/login', { replace: true })
   }
 

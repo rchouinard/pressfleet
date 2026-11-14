@@ -43,6 +43,8 @@ export function useApi(): ApiClient {
       const wasSignedIn = !!user.value
       user.value = null
       csrf.value = undefined
+      // Whatever the dialog was asking is moot now; the login page must not sit under it.
+      reauthentication.finish(false)
       void router.replace(loginLocation(route.fullPath, { expired: wasSignedIn }))
     },
     onReauthenticationRequired: error => reauthentication.ask(error),

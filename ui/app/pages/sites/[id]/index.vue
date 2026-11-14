@@ -72,21 +72,8 @@ useBreadcrumbs(() => [
   { label: name.value },
 ])
 
-// A production site's staging sites (all pages: the delete dialog names them).
-// A page of results is enough to show; more than 100 is not expected.
-const { data: stagingLoaded, refresh: refreshStaging } = await useAsyncData(
-  () => `site-staging-${id.value}`,
-  async () => {
-    if (!site.value || isStaging(site.value)) return { items: [] as Site[], error: null as ApiError | null }
-    try {
-      const { data } = await api.GET('/api/v1/sites', { params: { query: { parent_site_id: id.value, limit: 100 } } })
-      return { items: data?.items ?? [], error: null as ApiError | null }
-    } catch (e) {
-      return { items: [] as Site[], error: toApiError(e) }
-    }
-  },
-  { watch: [id] },
-)
+// A production site's staging sites (see useSiteStaging).
+const { data: stagingLoaded, refresh: refreshStaging } = await useSiteStaging(id, site)
 const stagingSites = computed(() => stagingLoaded.value?.items ?? [])
 const blockers = computed(() => deleteBlockers(stagingSites.value))
 

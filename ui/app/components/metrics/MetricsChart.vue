@@ -29,7 +29,6 @@ const rangeSeconds = computed(() => props.range.end - props.range.start)
 const host = ref<HTMLElement>()
 const hoverIdx = ref<number | null>(null)
 let plot: uPlot | undefined
-let observer: ResizeObserver | undefined
 let building = 0
 
 const hover = computed(() => {
@@ -95,19 +94,25 @@ async function build() {
   }, [data.value.times, ...data.value.series.map(s => s.values)] as uPlot.AlignedData, el)
 }
 
-onMounted(() => {
-  void build()
-  observer = new ResizeObserver(() => {
+// The host only exists while there is data, so a card that starts empty gets
+// its host later: the watchers run after the DOM update (`flush: 'post'`)
+// and the resize observer follows the host rather than the mount.
+let resize: ResizeObserver | undefined
+watch(host, (el, previous) => {
+  if (previous) resize?.unobserve(previous)
+  if (!el) return
+  resize ??= new ResizeObserver(() => {
     if (plot && host.value) plot.setSize({ width: Math.max(host.value.clientWidth, 200), height: 180 })
   })
-  if (host.value) observer.observe(host.value)
-})
+  resize.observe(el)
+}, { flush: 'post', immediate: true })
+onMounted(() => { void build() })
 onBeforeUnmount(() => {
   building++
-  observer?.disconnect()
+  resize?.disconnect()
   destroy()
 })
-watch([data, dark], () => { void build() })
+watch([data, dark], () => { void build() }, { flush: 'post' })
 </script>
 
 <template>

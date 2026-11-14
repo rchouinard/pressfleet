@@ -15,6 +15,10 @@ import { createSseParser } from './sse'
  * keeps the lines per step and hands `onJob` whole `Job`s with `log` filled
  * in, as `GET /api/v1/jobs/{id}` returns them, once per chunk received.
  *
+ * Each step keeps its newest `MAX_STEP_LOG_LINES` lines; the log then starts
+ * with a warning saying how many earlier ones were left out. A step's copy is
+ * reused until its snapshot or lines change.
+ *
  * Behaviour:
  * - Ends (`done`) when the server closes the stream after a terminal job.
  * - Reconnects when the connection drops, stalls (no keep-alive for
@@ -52,7 +56,17 @@ export interface JobStreamOptions {
   maxMs?: number
   stallMs?: number
   fallbackAfter?: number
+  /** Lines kept per step (default `MAX_STEP_LOG_LINES`); older ones are dropped and the log says so. */
+  maxLogLines?: number
 }
+
+/**
+ * A step logs a few dozen lines normally; a runaway one (a retry loop, a
+ * verbose tool) must not grow the page's memory, or the copy made on every
+ * emit, without limit. The cap is generous enough that no healthy step
+ * reaches it.
+ */
+export const MAX_STEP_LOG_LINES = 1000
 
 /** What `useJob` needs from a way of following a job: this stream, or the poller. */
 export interface JobSource {
@@ -71,6 +85,21 @@ function isSnapshot(v: unknown): v is JobSnapshot {
   if (typeof v !== 'object' || v === null) return false
   const j = v as Record<string, unknown>
   return typeof j.id === 'string' && typeof j.state === 'string' && Array.isArray(j.steps)
+}
+
+/** The lines kept for one step, and how many older ones were dropped. */
+interface StepLog {
+  lines: JobLogEntry[]
+  dropped: number
+  /** Bumped on every change, so a cached copy knows when it is stale. */
+  version: number
+}
+
+interface StepCopy {
+  /** The step's snapshot, serialized, when the copy was made. */
+  key: string
+  version: number
+  step: Job['steps'][number]
 }
 
 interface LogLine extends JobLogEntry {
@@ -116,10 +145,12 @@ export function createJobStream(options: JobStreamOptions): JobSource {
   const maxMs = options.maxMs ?? 30000
   const stallMs = options.stallMs ?? 45000
   const fallbackAfter = options.fallbackAfter ?? 2
+  const maxLogLines = Math.max(1, options.maxLogLines ?? MAX_STEP_LOG_LINES)
 
   let status: PollerStatus = 'idle'
   let snapshot: JobSnapshot | undefined
-  const logs = new Map<string, JobLogEntry[]>()
+  const logs = new Map<string, StepLog>()
+  const copies = new Map<string, StepCopy>()
   let lastEventId = ''
   let failures = 0
   /** Connections in a row that failed before any event. */
@@ -153,7 +184,25 @@ export function createJobStream(options: JobStreamOptions): JobSource {
 
   function emit() {
     if (!snapshot) return
-    options.onJob({ ...snapshot, steps: snapshot.steps.map(s => ({ ...s, log: [...(logs.get(s.name) ?? [])] })) })
+    // Consumers keep what they were given, so each step is a copy of its own;
+    // but only a step whose snapshot or log changed gets a new one, so a long
+    // job's quiet steps cost nothing per emit.
+    const steps = snapshot.steps.map((s) => {
+      const stepLog = logs.get(s.name)
+      const key = JSON.stringify(s)
+      const version = stepLog?.version ?? 0
+      const cached = copies.get(s.name)
+      if (cached && cached.key === key && cached.version === version) return cached.step
+      const log = stepLog ? [...stepLog.lines] : []
+      if (stepLog && stepLog.dropped > 0 && log[0]) {
+        const noun = stepLog.dropped === 1 ? 'line' : 'lines'
+        log.unshift({ time: log[0].time, level: 'warn', message: `${stepLog.dropped} earlier ${noun} omitted` })
+      }
+      const step = { ...s, log }
+      copies.set(s.name, { key, version, step })
+      return step
+    })
+    options.onJob({ ...snapshot, steps })
   }
 
   function fallback() {
@@ -224,9 +273,15 @@ export function createJobStream(options: JobStreamOptions): JobSource {
           if (!isLogLine(parsed)) return
           heard = true
           const { step, ...entry } = parsed
-          const lines = logs.get(step)
-          if (lines) lines.push(entry)
-          else logs.set(step, [entry])
+          let stepLog = logs.get(step)
+          if (!stepLog) logs.set(step, stepLog = { lines: [], dropped: 0, version: 0 })
+          stepLog.lines.push(entry)
+          if (stepLog.lines.length > maxLogLines) {
+            const over = stepLog.lines.length - maxLogLines
+            stepLog.lines.splice(0, over)
+            stepLog.dropped += over
+          }
+          stepLog.version++
           if (ev.id) lastEventId = ev.id
           dirty = true
         } else if (ev.event === 'error') {
