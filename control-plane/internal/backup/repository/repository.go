@@ -108,6 +108,11 @@ type Options struct {
 	// group can't be chosen: repositories are shared with site tasks
 	// through a dedicated group, never through GID 0.
 	RepositoryGID int
+	// TaskMemoryMB is the memory limit, in MiB, of the tasks that run restic
+	// (backup.task_memory_mb); zero means config.DefaultBackupTaskMemoryMB,
+	// as it does for the drivers. The Go runtime's soft limit, GOMEMLIMIT, is
+	// set from it in every restic task's environment (see taskEnv).
+	TaskMemoryMB int
 	// HTTPClient talks to S3 for export and delete; nil means a default
 	// client.
 	HTTPClient *http.Client
@@ -135,6 +140,9 @@ type Manager struct {
 	s3      S3Config
 	tasks   provisioner.RepositoryTaskRunner
 	image   string
+	// taskMemoryMB is the memory limit of restic tasks, with the default
+	// applied.
+	taskMemoryMB int
 	// slots holds a token for each running repository task.
 	slots   chan struct{}
 	gid     int
@@ -165,7 +173,7 @@ func New(opts Options) (*Manager, error) {
 	m := &Manager{
 		db: opts.DB, secrets: opts.Secrets, layout: opts.Layout, backend: opts.Backend, s3: opts.S3,
 		tasks: opts.Tasks, image: opts.TaskImage, gid: opts.RepositoryGID, http: opts.HTTPClient, created: opts.Created, deleted: opts.Deleted, log: opts.Logger,
-		statePassword: opts.StatePassword,
+		statePassword: opts.StatePassword, taskMemoryMB: cmp.Or(opts.TaskMemoryMB, config.DefaultBackupTaskMemoryMB),
 	}
 	if m.gid == 0 {
 		m.gid = provisioner.RepositoryGID
@@ -701,7 +709,7 @@ func (m *Manager) TaskAccess(ctx context.Context, clientGroupID string) (TaskAcc
 // taskAccess returns what a task needs to run restic against rec.
 func (m *Manager) taskAccess(rec Repository, password redact.Secret) (TaskAccess, error) {
 	a := TaskAccess{
-		Env:         map[string]string{"RESTIC_PASSWORD_FILE": provisioner.TaskSecretPath(PasswordFile)},
+		Env:         m.taskEnv(map[string]string{"RESTIC_PASSWORD_FILE": provisioner.TaskSecretPath(PasswordFile)}),
 		SecretFiles: map[string]redact.Secret{PasswordFile: password},
 	}
 	switch rec.Backend {
@@ -729,6 +737,18 @@ func (m *Manager) taskAccess(rec Repository, password redact.Secret) (TaskAccess
 		return TaskAccess{}, fmt.Errorf("unknown backend %q", rec.Backend)
 	}
 	return a, nil
+}
+
+// taskEnv adds GOMEMLIMIT to env, the environment of a restic task, and
+// returns it. restic is a Go program: without the variable its runtime
+// doesn't know the container's memory limit, and on a host with many CPUs
+// its heap can grow past it before the garbage collector runs hard enough
+// (#281). 75% leaves room for what the limit covers besides the Go heap, the
+// ratio the platform uses for Traefik. A task that sets its own
+// provisioner.Task.MemoryLimitMB must set GOMEMLIMIT to match.
+func (m *Manager) taskEnv(env map[string]string) map[string]string {
+	env["GOMEMLIMIT"] = fmt.Sprintf("%dMiB", m.taskMemoryMB*3/4)
+	return env
 }
 
 // Names of TaskAccess.SecretFiles.

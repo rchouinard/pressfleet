@@ -63,6 +63,8 @@ func (a *app) backupRepositories(db *store.DB, secretStore secrets.Store, keys *
 		Tasks:     tasks,
 		TaskImage: a.cfg.TaskImage,
 		MaxTasks:  a.cfg.Jobs.Concurrency,
+		// restic's GOMEMLIMIT follows the limit the driver applies.
+		TaskMemoryMB: a.cfg.Backup.TaskMemoryMB,
 		// The state repository's password comes from the master key, as a
 		// new host has nothing else to open it with.
 		StatePassword: keys.StateBackupPassword(),

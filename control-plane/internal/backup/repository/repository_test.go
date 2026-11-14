@@ -519,7 +519,7 @@ func TestExportRestoresWithPlainRestic(t *testing.T) {
 		}
 		wantDir, _ := f.layout.BackupRepositoryDir(groupID)
 		if access.RepositoryDir != wantDir || access.Env["RESTIC_REPOSITORY"] != provisioner.TaskRepositoryPath ||
-			len(access.Env) != 2 || access.Env["RESTIC_PASSWORD_FILE"] != provisioner.TaskSecretPath(repository.PasswordFile) ||
+			len(access.Env) != 3 || access.Env["GOMEMLIMIT"] != "384MiB" || access.Env["RESTIC_PASSWORD_FILE"] != provisioner.TaskSecretPath(repository.PasswordFile) ||
 			len(access.SecretFiles) != 1 || access.SecretFiles[repository.PasswordFile] == "" {
 			t.Fatalf("TaskAccess = %+v", access)
 		}
