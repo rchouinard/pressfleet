@@ -1379,7 +1379,11 @@ spec:
             - -c
             - |
               set -eu
-              hash=$(printf %s "$(cat /run/secrets/redis_admin_password)" | sha256sum | cut -d' ' -f1)
+              # The control plane trims \r and \n from the secret, so the hash
+              # must too: a secret made from a file with CRLF line endings
+              # would otherwise hash "<password>\r" and every admin
+              # command would fail with WRONGPASS.
+              hash=$(tr -d '\r\n' < /run/secrets/redis_admin_password | sha256sum | cut -d' ' -f1)
               sed "s/@REDIS_ADMIN_PASSWORD_HASH@/$hash/" /etc/valkey-template/valkey.conf > /etc/valkey/valkey.conf
           volumeMounts:
             - name: template

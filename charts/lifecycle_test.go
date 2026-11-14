@@ -36,7 +36,11 @@ type lifecycleObject struct {
 // lifecyclePod is the part of a pod spec the lifecycle tests read.
 type lifecyclePod struct {
 	ServiceAccountName string `yaml:"serviceAccountName"`
-	Containers         []struct {
+	InitContainers     []struct {
+		Name    string   `yaml:"name"`
+		Command []string `yaml:"command"`
+	} `yaml:"initContainers"`
+	Containers []struct {
 		Image   string   `yaml:"image"`
 		Command []string `yaml:"command"`
 		Args    []string `yaml:"args"`
