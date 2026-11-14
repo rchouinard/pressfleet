@@ -169,6 +169,40 @@ func (r ClientGroups) SetBackupRepository(ctx context.Context, groupID, location
 	return nil
 }
 
+// Lock takes the group's row lock for the rest of the transaction, so
+// transactions that decide something about the group and its sites (a
+// site's creation, the deletion of the backup repository) run one after
+// the other on PostgreSQL, where a site's foreign key alone doesn't
+// conflict with a delete's read of the site count. SQLite's transactions
+// already are serial. It returns ErrNotFound if the group doesn't exist.
+func (r ClientGroups) Lock(ctx context.Context, groupID string) error {
+	res, err := r.q.ExecContext(ctx, "UPDATE client_groups SET updated_at = updated_at WHERE id = ?", groupID)
+	if err != nil {
+		return fmt.Errorf("lock client group %s: %w", groupID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("lock client group %s: %w", groupID, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("lock client group %s: %w", groupID, ErrNotFound)
+	}
+	return nil
+}
+
+// RepositoryDeleting reports whether the group's backup repository is
+// being deleted (backup_repositories.deleting_at is set). Call it after
+// Lock in the same transaction.
+func (r ClientGroups) RepositoryDeleting(ctx context.Context, groupID string) (bool, error) {
+	var n int
+	err := r.q.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM backup_repositories WHERE client_group_id = ? AND deleting_at IS NOT NULL", groupID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("check backup repository of client group %s: %w", groupID, err)
+	}
+	return n > 0, nil
+}
+
 // Delete removes a client group. It returns ErrNotFound if it doesn't exist
 // and ErrReference if it still has sites.
 func (r ClientGroups) Delete(ctx context.Context, groupID string) error {

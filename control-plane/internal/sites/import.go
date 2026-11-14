@@ -449,7 +449,7 @@ func (s *Service) allocateImport(ctx context.Context, r *jobs.Run) error {
 		if errors.Is(err, store.ErrConflict) && attempt < createAttempts {
 			continue
 		}
-		if errors.Is(err, errNoClientGroup) {
+		if errors.Is(err, errNoClientGroup) || errors.Is(err, store.ErrRepositoryDeleting) {
 			return jobs.Permanent(err)
 		}
 		if err != nil {

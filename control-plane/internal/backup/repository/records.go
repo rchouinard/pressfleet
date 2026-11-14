@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -82,6 +83,61 @@ func deleteRecord(ctx context.Context, q store.Querier, groupID string) error {
 		return fmt.Errorf("deleting backup repository record: %w", err)
 	}
 	return nil
+}
+
+// markDeleting records that the group's repository is being deleted, in
+// one transaction with the check that the group has no sites, so a site
+// can't be created in between: store.Sites.Create takes the same group
+// lock and refuses a group whose repository is marked (#351). It returns
+// ErrGroupHasSites if the group has sites. A group that no longer exists
+// has no sites.
+func markDeleting(ctx context.Context, db *store.DB, groupID string, at time.Time) error {
+	return db.InTx(ctx, func(q store.Querier) error {
+		groups := store.NewClientGroups(q)
+		switch err := groups.Lock(ctx, groupID); {
+		case errors.Is(err, store.ErrNotFound):
+		case err != nil:
+			return err
+		default:
+			g, err := groups.Get(ctx, groupID)
+			if err != nil {
+				return err
+			}
+			if g.SiteCount > 0 {
+				return fmt.Errorf("%w (%d)", ErrGroupHasSites, g.SiteCount)
+			}
+		}
+		if _, err := q.ExecContext(ctx, "UPDATE backup_repositories SET deleting_at = ? WHERE client_group_id = ?", at, groupID); err != nil {
+			return fmt.Errorf("marking backup repository as being deleted: %w", err)
+		}
+		return nil
+	})
+}
+
+// clearDeleting lets sites be created in the group again after a failed
+// deletion.
+func clearDeleting(ctx context.Context, q store.Querier, groupID string) error {
+	if _, err := q.ExecContext(ctx, "UPDATE backup_repositories SET deleting_at = NULL WHERE client_group_id = ?", groupID); err != nil {
+		return fmt.Errorf("clearing the deletion mark of the backup repository: %w", err)
+	}
+	return nil
+}
+
+// ClearDeleting clears every deletion mark and returns how many it
+// cleared. A deletion that was running when the control plane stopped
+// leaves its mark behind, which would refuse new sites in the group until
+// the deletion is retried; the control plane calls it at startup, before
+// it serves requests. The deletion can simply be run again.
+func (m *Manager) ClearDeleting(ctx context.Context) (int, error) {
+	res, err := m.db.ExecContext(ctx, "UPDATE backup_repositories SET deleting_at = NULL WHERE deleting_at IS NOT NULL")
+	if err != nil {
+		return 0, fmt.Errorf("clearing the deletion marks of backup repositories: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("clearing the deletion marks of backup repositories: %w", err)
+	}
+	return int(n), nil
 }
 
 // ClientGroupIDs returns the IDs of the client groups that have a

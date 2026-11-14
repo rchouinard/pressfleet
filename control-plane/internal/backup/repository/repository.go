@@ -549,14 +549,18 @@ func (m *Manager) Delete(ctx context.Context, clientGroupID string) error {
 	if err != nil {
 		return err
 	}
-	g, err := store.NewClientGroups(m.db).Get(ctx, clientGroupID)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
+	// Check for sites and mark the repository in one transaction, before
+	// the data goes: a site created after the check is refused instead of
+	// losing its repository (#351).
+	if err := markDeleting(ctx, m.db, clientGroupID, time.Now()); err != nil {
 		return fmt.Errorf("delete backup repository of client group %s: %w", clientGroupID, err)
 	}
-	if g.SiteCount > 0 {
-		return fmt.Errorf("delete backup repository of client group %s: %w (%d)", clientGroupID, ErrGroupHasSites, g.SiteCount)
-	}
 	if err := m.removeData(ctx, rec); err != nil {
+		// Don't leave the group refusing sites; the delete can be retried.
+		// The caller's context may be what failed.
+		if cerr := clearDeleting(context.WithoutCancel(ctx), m.db, clientGroupID); cerr != nil {
+			err = errors.Join(err, cerr)
+		}
 		return fmt.Errorf("delete backup repository of client group %s: %w", clientGroupID, err)
 	}
 	err = m.db.InTx(ctx, func(q store.Querier) error {
@@ -582,6 +586,10 @@ func (m *Manager) Delete(ctx context.Context, clientGroupID string) error {
 		return err
 	})
 	if err != nil {
+		// The transaction rolled back, so the mark is still set.
+		if cerr := clearDeleting(context.WithoutCancel(ctx), m.db, clientGroupID); cerr != nil {
+			err = errors.Join(err, cerr)
+		}
 		return fmt.Errorf("delete backup repository of client group %s: deleting record: %w", clientGroupID, err)
 	}
 	m.log.Info("backup repository deleted", "client_group_id", clientGroupID, "location", rec.Location)
