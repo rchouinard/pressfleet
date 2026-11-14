@@ -150,6 +150,12 @@ func TestVersion(t *testing.T) {
 	}
 }
 
+// readyTimeout bounds how long a test waits for serve to come up. The waits
+// return as soon as the condition holds, so a generous bound costs nothing
+// when the machine is idle; startup (migrations under -race) takes tens of
+// seconds when it is saturated.
+const readyTimeout = 90 * time.Second
+
 func TestServeStartsAndStops(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "data")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -163,7 +169,7 @@ func TestServeStartsAndStops(t *testing.T) {
 	// Wait for the server to log the address it bound.
 	addrRE := regexp.MustCompile(`"msg":"http server listening","addr":"([^"]+)"`)
 	var addr string
-	for deadline := time.Now().Add(5 * time.Second); ; {
+	for deadline := time.Now().Add(readyTimeout); ; {
 		if m := addrRE.FindStringSubmatch(stderr.String()); m != nil {
 			addr = m[1]
 			break

@@ -492,7 +492,7 @@ func TestLeaseLost(t *testing.T) {
 		}
 		select {
 		case <-canceled:
-		case <-time.After(5 * time.Second):
+		case <-time.After(60 * time.Second):
 			t.Fatal("step not canceled after the lease was lost")
 		}
 		<-done
