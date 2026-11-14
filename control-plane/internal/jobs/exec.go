@@ -71,6 +71,21 @@ func (p *Pool) execute(parent context.Context, stopping <-chan struct{}, job sto
 }
 
 func (e *execution) process() {
+	if e.job.Attempts > e.job.MaxAttempts && e.job.State == store.JobRunning {
+		// A worker can die after committing the last step but before
+		// finishing the job. The work is done, so rolling it back would
+		// undo a completed restore or update.
+		steps, ok := e.steps()
+		if !ok {
+			return
+		}
+		if e.allSucceeded(steps) {
+			if e.finish(store.JobSucceeded, "") {
+				e.logger.Info("job succeeded; a previous worker finished every step before it died")
+			}
+			return
+		}
+	}
 	if e.job.Attempts > e.job.MaxAttempts {
 		// Only reachable when workers keep dying mid-attempt (e.g. a step
 		// that crashes the process): step errors are counted before retrying.
@@ -88,6 +103,21 @@ func (e *execution) process() {
 		return
 	}
 	e.forward()
+}
+
+// allSucceeded reports whether steps are exactly the handler's steps, all
+// succeeded. Steps that don't match the handler don't count, so the rollback
+// path sees them.
+func (e *execution) allSucceeded(steps []store.JobStep) bool {
+	if len(steps) == 0 || len(steps) != len(e.h.Steps) {
+		return false
+	}
+	for i, st := range steps {
+		if st.State != store.StepSucceeded || st.Name != e.h.Steps[i].Name {
+			return false
+		}
+	}
+	return true
 }
 
 // forward runs the steps that haven't succeeded, in order.
