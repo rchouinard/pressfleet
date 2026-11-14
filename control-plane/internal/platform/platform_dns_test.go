@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -131,7 +132,7 @@ func TestPreviewCertResolver(t *testing.T) {
 		for _, want := range []string{
 			"dir=" + ingress.DNSCredentialsDir + "\n",
 			`"$dir/` + ingress.DNSCredentialsReady + `"`,
-			`export "${f##*/}_FILE=$f"`,
+			`export "${name}_FILE=$f"`,
 			"exec traefik --configFile=/etc/traefik/traefik.yaml\n",
 		} {
 			if !strings.Contains(string(sh), want) {
@@ -167,6 +168,65 @@ func TestPreviewCertResolver(t *testing.T) {
 
 // TestRenderedComposeDNS checks how the credentials reach Traefik: through
 // a memory-only volume the control plane writes and Traefik only reads.
+// TestEntrypointSkipsInvalidNames runs the rendered entrypoint against a
+// credentials directory holding file names that aren't shell identifiers. The
+// failed export would abort the script under set -eu and crash-loop Traefik.
+func TestEntrypointSkipsInvalidNames(t *testing.T) {
+	sh, err := os.ReadFile(filepath.Join(render(t, dnsConfig()), platform.TraefikEntrypointFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds, bin := t.TempDir(), t.TempDir()
+	script := strings.Replace(string(sh), "dir="+ingress.DNSCredentialsDir+"\n", "dir="+creds+"\n", 1)
+	if script == string(sh) {
+		t.Fatalf("entrypoint does not set dir=%s:\n%s", ingress.DNSCredentialsDir, sh)
+	}
+	// .ready and .keep are dot files, which the glob skips; the others reach
+	// the name check.
+	for name, content := range map[string]string{
+		ingress.DNSCredentialsReady: "",
+		".keep":                     "",
+		"cf-api-token":              "a",
+		"1ST":                       "b",
+		"CF_DNS_API_TOKEN":          "c",
+	} {
+		if err := os.WriteFile(filepath.Join(creds, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The stand-in for Traefik reports the *_FILE variables it was given.
+	fake := "#!/bin/sh\nenv | grep '_FILE=' | sort\n"
+	if err := os.WriteFile(filepath.Join(bin, "traefik"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "entrypoint.sh")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command("sh", path)
+	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("entrypoint failed: %v\n%s", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "CF_DNS_API_TOKEN_FILE="+filepath.Join(creds, "CF_DNS_API_TOKEN")) {
+		t.Errorf("valid name not exported:\n%s", stdout.String())
+	}
+	for _, bad := range []string{"cf-api-token", "1ST"} {
+		if strings.Contains(stdout.String(), bad+"_FILE") {
+			t.Errorf("%q exported:\n%s", bad, stdout.String())
+		}
+		if !strings.Contains(stderr.String(), "invalid variable name: "+bad) {
+			t.Errorf("skip of %q not logged:\n%s", bad, stderr.String())
+		}
+	}
+	if !strings.Contains(stderr.String(), "with 1 DNS provider credential(s)") {
+		t.Errorf("credential count wrong:\n%s", stderr.String())
+	}
+}
+
 func TestRenderedComposeDNS(t *testing.T) {
 	type mount struct {
 		Type, Source, Target string
