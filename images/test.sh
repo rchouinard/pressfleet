@@ -246,6 +246,30 @@ test_stack() {
 	check_not "mu-plugins are not writable" "${cexec[@]}" touch /opt/pressfleet/mu-plugins/new.php
 	check "wp-content is writable" "${cexec[@]}" sh -c 'touch wp-content/.w && rm wp-content/.w'
 	check "wp-content was seeded" "${cexec[@]}" test -f wp-content/themes/index.php
+	# --- wp-content seeding (#356) ---------------------------------------------
+	# A volume holding only lost+found, as a freshly formatted ext4 volume does,
+	# is seeded; one with real content is left alone.
+	local seed_only="$p-seed-lf" seed_real="$p-seed-real" v
+	for v in "$seed_only" "$seed_real"; do
+		docker volume create --label "$label" "$v" >/dev/null
+	done
+	seed_run() { # VOLUME COMMAND...
+		local vol="$1"
+		shift
+		docker run --rm --label "$label" --user "$user" "${hardening[@]}" \
+			-v "$vol:/var/www/wordpress/wp-content" "$php_image" "$@"
+	}
+	# Seeding is off while the volumes are prepared, so lost+found is there first.
+	seed_prepare() { # VOLUME SCRIPT
+		docker run --rm --label "$label" --user "$user" "${hardening[@]}" -e PRESSFLEET_SEED_WP_CONTENT=0 \
+			-v "$1:/var/www/wordpress/wp-content" "$php_image" sh -c "$2"
+	}
+	seed_prepare "$seed_only" 'mkdir wp-content/lost+found'
+	seed_prepare "$seed_real" 'mkdir wp-content/lost+found && echo mine > wp-content/mine.txt'
+	check "wp-content holding only lost+found is seeded" seed_run "$seed_only" test -f wp-content/themes/index.php
+	check_eq "wp-content with content is not seeded" "lost+found
+mine.txt" "$(seed_run "$seed_real" ls -A wp-content)"
+
 	check "cache volume is writable by php" "${cexec[@]}" sh -c 'touch /var/cache/pressfleet/fastcgi/.w && rm /var/cache/pressfleet/fastcgi/.w'
 	check_not "wp-content is read-only in nginx" docker exec "$nginx" touch /var/www/wordpress/wp-content/new
 
