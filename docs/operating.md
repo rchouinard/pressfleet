@@ -113,7 +113,7 @@ Rules do nothing visible until a **channel** receives them. **Alerts** > **Chann
 - **Email.** To one or more addresses. Without its own server it sends through the platform's SMTP relay (the `smtp.*` settings from `init`, which are for site email too); give a host to use a different server.
 - **Webhook.** A JSON POST. Format `generic` (PressFleet's payload; Slack incoming webhooks accept it), `slack`, or `teams`. A signing secret adds an `X-PressFleet-Signature` header that your receiver can verify.
 
-A channel can be limited to a minimum severity, one rule, or one client group. Use **Test** on a new channel before you rely on it. Failed deliveries are retried for up to 8 attempts with backoff, and the history is in **Alerts** (`GET /api/v1/alert-deliveries`). Webhook URLs are secrets, stored encrypted and never shown again. Webhooks to loopback and cloud metadata addresses are refused unless `alerts.webhook_allow_local_targets` is on.
+A channel can be limited to a minimum severity, one rule, or one client group. Use **Test** on a new channel before you rely on it. Failed deliveries are retried for up to 8 attempts with backoff, and the history is in **Alerts** (`GET /api/v1/alert-deliveries`). Webhook URLs are secrets, stored encrypted and never shown again. Webhooks to loopback, private, and cloud metadata addresses are refused unless `alerts.webhook_allow_local_targets` is on.
 
 A sensible minimum: one email channel to a shared mailbox for every severity, and one chat webhook for `critical` only. If you have set up nothing else, add a channel before you add client sites.
 

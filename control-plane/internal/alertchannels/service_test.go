@@ -710,7 +710,8 @@ func TestSSRFProtection(t *testing.T) {
 		svc := newService(t, db, func(o *alertchannels.Options) { o.AllowLocalTargets = false })
 
 		// Obviously bad addresses are refused when the channel is saved.
-		for _, u := range []string{"http://127.0.0.1:9/x", "http://[::1]/x", "http://169.254.169.254/latest/meta-data", "http://0.0.0.0/x"} {
+		for _, u := range []string{"http://127.0.0.1:9/x", "http://[::1]/x", "http://169.254.169.254/latest/meta-data", "http://0.0.0.0/x",
+			"http://10.0.0.5:8428/api/v1/write", "http://192.168.1.10/x", "http://[fd00:ec2::254]/x", "http://100.100.100.200/latest/meta-data", "http://[64:ff9b::a00:1]/x"} {
 			_, err := svc.Create(ctx, webhookInput("bad", u))
 			var ve *alertchannels.ValidationError
 			if !errors.As(err, &ve) || ve.Fields[0].Field != "/webhook/url" || strings.Contains(ve.Error(), "meta-data") {

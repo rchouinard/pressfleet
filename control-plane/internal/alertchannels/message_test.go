@@ -1,10 +1,13 @@
 package alertchannels
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/netip"
 	"strings"
 	"testing"
@@ -150,12 +153,39 @@ func TestBlockedAddresses(t *testing.T) {
 		"::":                   true,
 		"224.0.0.1":            true,
 		"ff02::1":              true,
-		"10.0.0.5":             false,
-		"192.168.1.10":         false,
-		"172.16.0.1":           false,
+		"10.0.0.5":             true,
+		"10.255.255.255":       true,
+		"192.168.1.10":         true,
+		"172.16.0.1":           true,
+		"172.31.255.255":       true,
+		"::ffff:10.0.0.5":      true,
+		"fd12:3456::1":         true,
+		"100.64.0.1":           true,
+		"100.100.100.200":      true,
+		"100.127.255.255":      true,
+		"198.18.0.1":           true,
+		"198.19.255.255":       true,
+		"192.0.0.1":            true,
+		"192.0.2.1":            true,
+		"198.51.100.1":         true,
+		"203.0.113.1":          true,
+		"240.0.0.1":            true,
+		"255.255.255.255":      true,
+		"0.1.2.3":              true,
+		"64:ff9b::a00:1":       true,
+		"64:ff9b::808:808":     true,
+		"2001:db8::1":          true,
 		"8.8.8.8":              false,
+		"1.1.1.1":              false,
+		"172.15.255.255":       false,
+		"172.32.0.1":           false,
+		"100.63.255.255":       false,
+		"100.128.0.1":          false,
+		"198.17.255.255":       false,
+		"198.20.0.1":           false,
+		"223.255.255.255":      false,
+		"::ffff:8.8.8.8":       false,
 		"2606:4700:4700::1111": false,
-		"fd12:3456::1":         false,
 	} {
 		if got := blockedAddr(netip.MustParseAddr(addr)); got != blocked {
 			t.Errorf("blockedAddr(%s) = %v, want %v", addr, got, blocked)
@@ -195,4 +225,38 @@ func TestRedactURL(t *testing.T) {
 			t.Errorf("RedactURL(%q) = %q, want %q", in, got, want)
 		}
 	}
+}
+
+// TestGuardedDialer checks the connection-time rule, which is what stops a
+// name that resolves to a private address: the URL check only sees literals.
+func TestGuardedDialer(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("no loopback listener: %v", err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+
+	for _, addr := range []string{ln.Addr().String(), "10.0.0.5:8428", "100.100.100.200:80", "[::ffff:192.168.1.1]:80", "[64:ff9b::a00:1]:80"} {
+		c, err := guardedDialer(time.Second, false).DialContext(context.Background(), "tcp", addr)
+		if err == nil {
+			c.Close()
+		}
+		if !errors.Is(err, ErrBlockedTarget) {
+			t.Errorf("dial %s = %v, want ErrBlockedTarget", addr, err)
+		}
+	}
+	c, err := guardedDialer(time.Second, true).DialContext(context.Background(), "tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial with local targets allowed = %v", err)
+	}
+	c.Close()
 }
