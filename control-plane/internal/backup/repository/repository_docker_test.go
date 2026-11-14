@@ -50,6 +50,7 @@ func dockerFixture(t *testing.T, db *store.DB) (f fixture, prov *compose.Provisi
 	if image == "" {
 		t.Skip("set PRESSFLEET_TEST_CONTROL_PLANE_IMAGE to a locally built control plane image (make image)")
 	}
+	skipUnlessOwnershipWorks(t)
 	layout := config.Layout{Root: t.TempDir()}
 	if err := layout.Ensure(); err != nil {
 		t.Fatal(err)
@@ -75,6 +76,28 @@ func dockerFixture(t *testing.T, db *store.DB) (f fixture, prov *compose.Provisi
 		Layout: layout, Tasks: prov, TaskImage: image, StatePassword: "pf-docker-state-password",
 	})
 	return f, prov, image
+}
+
+// skipUnlessOwnershipWorks skips the test when it can't prepare a local
+// repository the way the control plane does. Production runs as root and
+// gives the repository to group 60000 before a task, running as 60000, fills
+// it; a Manager in this process can do neither as an ordinary user, and
+// restic then fails with "permission denied". Docker Desktop doesn't enforce
+// bind mount ownership, so the test passes there as any user.
+func skipUnlessOwnershipWorks(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	out, err := compose.DockerExec(ctx, nil, "info", "--format", "{{.OperatingSystem}}")
+	if err == nil && strings.Contains(string(out), "Docker Desktop") {
+		return
+	}
+	t.Skip("the Manager must run as root to give repositories to the repository group on an engine that enforces " +
+		"bind mount ownership (not Docker Desktop); run as root: sudo -E env \"PATH=$PATH\" " +
+		"PRESSFLEET_DOCKER_TESTS=1 PRESSFLEET_TEST_CONTROL_PLANE_IMAGE=... go test -run TestRepositoryTasksDocker ./control-plane/internal/backup/repository/")
 }
 
 func owner(t *testing.T, p string) (gid int, mode fs.FileMode) {
