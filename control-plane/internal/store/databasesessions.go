@@ -206,6 +206,23 @@ func (r DatabaseSessions) End(ctx context.Context, sessionID string, status Data
 		string(status), reason, nullString(byUserID), utc(t), sessionID, string(DatabaseSessionActive))
 }
 
+// EndAllForUser ends every active session of the user, across sites, at t,
+// with status ended and a reason, and returns how many it ended. Their
+// MariaDB users stay until the sweep drops them as ended sessions.
+func (r DatabaseSessions) EndAllForUser(ctx context.Context, userID, reason string, t time.Time) (int, error) {
+	res, err := r.q.ExecContext(ctx,
+		"UPDATE database_sessions SET status = ?, end_reason = ?, ended_at = ? WHERE user_id = ? AND status = ?",
+		string(DatabaseSessionEnded), reason, utc(t), userID, string(DatabaseSessionActive))
+	if err != nil {
+		return 0, fmt.Errorf("end database sessions of user %s: %w", userID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("end database sessions of user %s: %w", userID, err)
+	}
+	return int(n), nil
+}
+
 // MarkDropped records that the session's MariaDB user was dropped at t.
 // Only an ended session changes; it reports whether this one did.
 func (r DatabaseSessions) MarkDropped(ctx context.Context, sessionID string, t time.Time) (bool, error) {

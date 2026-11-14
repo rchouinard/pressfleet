@@ -25,7 +25,10 @@
 // ForwardingPolicy. The default refuses everything. Temporary database
 // sessions (package dbsession) plug in a policy that dials the site's database for a
 // user with an active session on it; the gateway relays the connection,
-// counts its bytes, and ends it with the SSH connection.
+// counts its bytes, and ends it with the SSH connection. A policy that
+// implements ForwardRechecker also has its open forwards closed when the user
+// loses them. Each connection may have maxSFTPChannels SFTP sessions and
+// maxForwardChannels forwards open at once.
 //
 // # Ending sessions
 //
@@ -34,7 +37,15 @@
 // the user loses access: every RecheckInterval the gateway checks that the
 // key is still registered, its user still enabled, and their role still
 // allows SFTP, so removing a key, disabling a user, or demoting them to
-// Viewer ends their open sessions within seconds.
+// Viewer ends their open sessions within seconds. The same check closes
+// open port forwards whose ForwardingPolicy (a ForwardRechecker) no longer
+// allows them, without ending the connection's SFTP sessions.
+//
+// # Limits
+//
+// Connections still authenticating come from their own pool, with a
+// per-address share, so idle sockets can't lock signed-in users out. Each
+// connection may have a few SFTP sessions and port forwards open at once.
 package sftpgw
 
 import (
@@ -73,8 +84,16 @@ const (
 const (
 	// handshakeTimeout bounds key exchange and authentication.
 	handshakeTimeout = 30 * time.Second
-	// maxConnections bounds concurrent connections, authenticated or not.
+	// maxConnections bounds concurrent authenticated connections.
 	maxConnections = 256
+	// maxPreAuth bounds connections still shaking hands, in a pool apart
+	// from maxConnections so idle sockets can't starve signed-in users;
+	// maxPreAuthPerIP bounds one address's share of it.
+	maxPreAuth      = 64
+	maxPreAuthPerIP = 8
+	// maxForwardChannels bounds the port forwards one connection may have
+	// open at once; each dials the database.
+	maxForwardChannels = 16
 	// maxSFTPChannels bounds the SFTP sessions (workers) one connection
 	// may run at once. Clients use one; some open a second for transfers.
 	maxSFTPChannels = 4
@@ -142,6 +161,16 @@ type DenyForwarding struct{}
 // DialForward refuses.
 func (DenyForwarding) DialForward(context.Context, Identity, string, uint32) (net.Conn, error) {
 	return nil, ErrForwardingDenied
+}
+
+// ForwardRechecker is an optional extension of a ForwardingPolicy. Every
+// RecheckInterval the gateway asks it whether the connection's open forwards
+// may continue, and closes them (not the SFTP sessions) if it says no, so a
+// user who loses the role a tunnel needs doesn't keep it until it expires.
+type ForwardRechecker interface {
+	// ForwardsAllowed reports whether id may keep its forwards. An error
+	// keeps them: the next check tries again.
+	ForwardsAllowed(ctx context.Context, id Identity) (bool, error)
 }
 
 // Options configures a Server.
@@ -318,6 +347,7 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	var (
 		wg    sync.WaitGroup
 		slots = make(chan struct{}, maxConnections)
+		pre   = newPreAuth()
 		err   error
 	)
 	for {
@@ -328,16 +358,14 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 			}
 			break
 		}
-		select {
-		case slots <- struct{}{}:
-		default:
-			s.log.Warn("SFTP connection refused: too many connections", "source_ip", hostOf(nc.RemoteAddr()))
+		ip := hostOf(nc.RemoteAddr())
+		if !pre.acquire(ip) {
+			s.log.Warn("SFTP connection refused: too many connections still authenticating", "source_ip", ip)
 			_ = nc.Close()
 			continue
 		}
 		wg.Go(func() {
-			defer func() { <-slots }()
-			s.handle(ctx, nc)
+			s.handle(ctx, nc, pre, slots)
 		})
 	}
 	_ = ln.Close()
@@ -346,13 +374,55 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	return err
 }
 
-// handle runs one connection.
-func (s *Server) handle(ctx context.Context, nc net.Conn) {
+// preAuth limits connections that haven't finished authenticating: in
+// total, and per source address.
+type preAuth struct {
+	mu    sync.Mutex
+	total int
+	byIP  map[string]int
+}
+
+func newPreAuth() *preAuth { return &preAuth{byIP: map[string]int{}} }
+
+// acquire takes a slot for ip, reporting whether there was room.
+func (p *preAuth) acquire(ip string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.total >= maxPreAuth || p.byIP[ip] >= maxPreAuthPerIP {
+		return false
+	}
+	p.total++
+	p.byIP[ip]++
+	return true
+}
+
+func (p *preAuth) release(ip string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.total--
+	if p.byIP[ip]--; p.byIP[ip] <= 0 {
+		delete(p.byIP, ip)
+	}
+}
+
+// handle runs one connection. It holds a pre-authentication slot of pre
+// until the handshake ends, then one of slots for the rest.
+func (s *Server) handle(ctx context.Context, nc net.Conn, pre *preAuth, slots chan struct{}) {
 	defer func() { _ = nc.Close() }()
+	ip := hostOf(nc.RemoteAddr())
 	_ = nc.SetDeadline(time.Now().Add(handshakeTimeout))
 	sc, chans, reqs, err := ssh.NewServerConn(nc, s.config)
+	pre.release(ip)
 	if err != nil {
-		s.log.Debug("SSH handshake failed", "source_ip", hostOf(nc.RemoteAddr()), "error", err)
+		s.log.Debug("SSH handshake failed", "source_ip", ip, "error", err)
+		return
+	}
+	select {
+	case slots <- struct{}{}:
+		defer func() { <-slots }()
+	default:
+		s.log.Warn("SFTP connection refused: too many connections", "source_ip", ip)
+		_ = sc.Close()
 		return
 	}
 	_ = nc.SetDeadline(time.Time{})
@@ -405,6 +475,12 @@ type conn struct {
 	bytesIn, bytesOut atomic.Int64
 	lastActive        atomic.Int64 // unix nanoseconds
 	sftpChannels      atomic.Int32
+	forwardChannels   atomic.Int32
+
+	// closers close the open forwards; see closeForwards.
+	forwardMu  sync.Mutex
+	forwardSeq int
+	closers    map[int]func()
 
 	reasonOnce sync.Once
 	reason     string
@@ -451,7 +527,15 @@ func (c *conn) run(chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request) {
 				c.session(nch)
 			})
 		case "direct-tcpip":
-			wg.Go(func() { c.forward(nch) })
+			if c.forwardChannels.Add(1) > maxForwardChannels {
+				c.forwardChannels.Add(-1)
+				_ = nch.Reject(ssh.ResourceShortage, "too many forwards on this connection")
+				continue
+			}
+			wg.Go(func() {
+				defer c.forwardChannels.Add(-1)
+				c.forward(nch)
+			})
 		default:
 			_ = nch.Reject(ssh.UnknownChannelType, "only SFTP is offered")
 		}
@@ -499,7 +583,58 @@ func (c *conn) watchdog(done <-chan struct{}) {
 				c.end(ReasonRevoked)
 				return
 			}
+			c.recheckForwards()
 		}
+	}
+}
+
+// recheckForwards closes the open forwards if the ForwardingPolicy says the
+// user may no longer have them. Errors keep them open, as in stillAllowed.
+func (c *conn) recheckForwards() {
+	rc, ok := c.srv.opts.Forwarding.(ForwardRechecker)
+	if !ok || c.forwardChannels.Load() == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.ctx, callbackTimeout)
+	defer cancel()
+	allowed, err := rc.ForwardsAllowed(ctx, c.id)
+	switch {
+	case err != nil:
+		c.srv.log.Warn("rechecking port forwarding failed", "session_id", c.id.SessionID, "error", err)
+	case !allowed:
+		c.srv.log.Info("port forwards closed: access revoked", "session_id", c.id.SessionID, "user_id", c.id.UserID)
+		c.closeForwards()
+	}
+}
+
+// closeForwards closes every open forward.
+func (c *conn) closeForwards() {
+	c.forwardMu.Lock()
+	fns := make([]func(), 0, len(c.closers))
+	for _, fn := range c.closers {
+		fns = append(fns, fn)
+	}
+	c.forwardMu.Unlock()
+	for _, fn := range fns {
+		fn()
+	}
+}
+
+// trackForward registers a closer for an open forward and returns the
+// function that unregisters it.
+func (c *conn) trackForward(closer func()) func() {
+	c.forwardMu.Lock()
+	defer c.forwardMu.Unlock()
+	if c.closers == nil {
+		c.closers = map[int]func(){}
+	}
+	c.forwardSeq++
+	n := c.forwardSeq
+	c.closers[n] = closer
+	return func() {
+		c.forwardMu.Lock()
+		delete(c.closers, n)
+		c.forwardMu.Unlock()
 	}
 }
 
@@ -612,8 +747,10 @@ func (c *conn) forward(nch ssh.NewChannel) {
 	}
 	defer func() { _ = ch.Close() }()
 	go ssh.DiscardRequests(reqs)
-	stop := context.AfterFunc(c.ctx, func() { _ = target.Close(); _ = ch.Close() })
+	closeBoth := func() { _ = target.Close(); _ = ch.Close() }
+	stop := context.AfterFunc(c.ctx, closeBoth)
 	defer stop()
+	defer c.trackForward(closeBoth)()
 	var wg sync.WaitGroup
 	wg.Go(func() {
 		_, _ = copyCounted(target, ch, &c.bytesIn, c.touch)

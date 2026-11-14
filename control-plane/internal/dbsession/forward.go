@@ -102,6 +102,44 @@ func (f forwarding) DialForward(ctx context.Context, conn sftpgw.Identity, host 
 	return c, nil
 }
 
+// ForwardsAllowed implements sftpgw.ForwardRechecker: whether the user still
+// has an active database session on the site that their current role
+// allows. Sessions the role no longer allows are revoked on the way, which
+// drops their MariaDB users.
+func (f forwarding) ForwardsAllowed(ctx context.Context, conn sftpgw.Identity) (bool, error) {
+	s := f.s
+	sessions, err := store.NewDatabaseSessions(s.db).ListActiveForUser(ctx, conn.SiteID, conn.UserID, s.now())
+	if err != nil {
+		return false, err
+	}
+	if len(sessions) == 0 {
+		return false, nil
+	}
+	p, err := f.keys.RecheckSSHKey(ctx, conn.SSHKeyID)
+	if errors.Is(err, auth.ErrUnauthenticated) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	target, err := authz.NewResolver(s.db).Resolve(ctx, authz.Site(conn.SiteID))
+	if err != nil {
+		return false, err
+	}
+	allowed := false
+	for _, d := range sessions {
+		action := authz.TunnelDatabase
+		if d.Access == string(sitedb.AccessReadWrite) {
+			action = authz.TunnelDatabaseReadWrite
+		}
+		if err := authz.Check(p, action, target); err != nil {
+			s.revoke(ctx, d, err)
+			continue
+		}
+		allowed = true
+	}
+	return allowed, nil
+}
+
 // revoke ends a session its user's role no longer allows, and records it
 // in the audit log.
 func (s *Service) revoke(ctx context.Context, d store.DatabaseSession, why error) {
