@@ -393,6 +393,51 @@ func TestResumeAfterWorkerDeath(t *testing.T) {
 	})
 }
 
+// TestCompletedJobNotRolledBack: a worker that dies after the last step
+// succeeded but before finishing the job, on the job's final attempt, must
+// not cause the finished work to be undone.
+func TestCompletedJobNotRolledBack(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		var rec recorder
+		h := jobs.Handler{Type: "t", Steps: []jobs.Step{rec.step("one"), rec.step("two")}}
+		f := newFixture(t, db, jobs.Options{LeaseDuration: time.Minute}, h)
+		j, err := jobs.Enqueue(ctx, db, jobs.Spec{
+			Type: "t", TargetType: store.JobTargetSite, TargetID: id.New(), LockKey: "site:1", MaxAttempts: 1,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		sj := store.NewJobs(db)
+		now := f.clock.Now()
+		dead, err := sj.Lease(ctx, []string{"t"}, "dead-worker", now, now.Add(time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		must(t, sj.InitSteps(ctx, j.ID, dead.LeaseOwner, []string{"one", "two"}))
+		for i := range 2 {
+			must(t, sj.StartStep(ctx, j.ID, dead.LeaseOwner, i, now))
+			must(t, sj.FinishStep(ctx, j.ID, dead.LeaseOwner, i, store.StepSucceeded, "", now))
+		}
+
+		f.clock.Advance(2 * time.Minute)
+		if !f.runNext(t) {
+			t.Fatal("expired job not taken over")
+		}
+		d := f.detail(t, j.ID)
+		if d.Job.State != store.JobSucceeded || d.Job.Attempts != 2 || d.Job.Error != "" {
+			t.Fatalf("job = %s attempts %d error %q", d.Job.State, d.Job.Attempts, d.Job.Error)
+		}
+		if got := rec.get(); len(got) != 0 {
+			t.Errorf("calls = %v, want none (no Undo, no re-run)", got)
+		}
+		if got := stepStates(d); got != "[one=succeeded/1 two=succeeded/1]" {
+			t.Errorf("steps = %s", got)
+		}
+	})
+}
+
 // TestCrashLoopGivesUp: a job whose workers keep dying uses up its attempts
 // and rolls back.
 func TestCrashLoopGivesUp(t *testing.T) {
