@@ -406,7 +406,10 @@ func (p *ClusterProbe) runProbes(ctx context.Context, probes []probe, policies [
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: nsName},
 			Type:       src.Type, Data: src.Data,
 		}
-		if _, err := p.c.typed.CoreV1().Secrets(nsName).Create(ctx, cp, metav1.CreateOptions{}); err != nil {
+		if err := p.c.whileForbidden(ctx, func() error {
+			_, err := p.c.typed.CoreV1().Secrets(nsName).Create(ctx, cp, metav1.CreateOptions{})
+			return err
+		}); err != nil {
 			return nil, fmt.Errorf("copying image pull secret %s: %w", name, err)
 		}
 		pullSecrets = append(pullSecrets, corev1.LocalObjectReference{Name: name})
