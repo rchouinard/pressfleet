@@ -421,6 +421,35 @@ func TestProbeCopiesImagePullSecrets(t *testing.T) {
 	}
 }
 
+// Copying a pull secret into the probe namespace is retried while the
+// authorizer still refuses it, like the creations after it (#353).
+func TestProbeRetriesPullSecretCopyWhileForbidden(t *testing.T) {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "registry", Namespace: "pressfleet"},
+		Type:       corev1.SecretTypeDockerConfigJson,
+		Data:       map[string][]byte{".dockerconfigjson": []byte("{}")},
+	}
+	p, cs := testProbe(t, "img", secret)
+	p.c.poll = time.Millisecond
+	p.cfg.Kubernetes.ImagePullSecrets = []string{"registry"}
+	podResults(cs, map[string]corev1.PodPhase{"allowed": corev1.PodSucceeded, "denied": corev1.PodSucceeded})
+	refusals := 2
+	cs.PrependReactor("create", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if refusals > 0 {
+			refusals--
+			return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: "secrets"}, "registry", errors.New("not yet"))
+		}
+		return false, nil, nil
+	})
+	created := recordCreated(cs)
+	if _, err := p.NetworkPolicy(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if refusals != 0 || !slices.Contains(*created, "secrets/registry") {
+		t.Errorf("created %q, %d refusals left", *created, refusals)
+	}
+}
+
 func TestProbeCgroupV2(t *testing.T) {
 	p, cs := testProbe(t, "img")
 	var onNodes []string
