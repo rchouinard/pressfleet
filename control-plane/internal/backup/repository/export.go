@@ -119,10 +119,10 @@ func (m *Manager) checkExport(ctx context.Context, clientGroupID string, e Expor
 	task := provisioner.Task{
 		Image:   m.image,
 		Command: []string{"restic", "--no-cache", "check"},
-		Env: map[string]string{
+		Env: m.taskEnv(map[string]string{
 			"RESTIC_REPOSITORY":    provisioner.TaskRepositoryPath,
 			"RESTIC_PASSWORD_FILE": path.Join(provisioner.TaskTransferPath, ExportPasswordFile),
-		},
+		}),
 		// The copy is the repository, and with its password file the
 		// transfer directory: the check opens it with nothing else.
 		RepositoryDir: e.RepositoryDir,
