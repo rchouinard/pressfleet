@@ -163,7 +163,7 @@ func TestPinImageErrors(t *testing.T) {
 	}))
 	defer basic.Close()
 	_, err := p.PinImage(t.Context(), strings.TrimPrefix(basic.URL, "http://")+"/private/site:1")
-	if !errors.Is(err, ErrRegistry) || !strings.Contains(err.Error(), "anonymous") {
+	if !errors.Is(err, ErrRegistry) || !strings.Contains(err.Error(), "wants credentials") {
 		t.Errorf("PinImage from a registry that wants credentials = %v", err)
 	}
 }
