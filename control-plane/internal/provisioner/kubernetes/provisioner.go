@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"regexp"
+	"strconv"
 	"sync"
 	"time"
 
@@ -233,11 +235,15 @@ func (p *Provisioner) setupNetwork(cfg Config) error {
 		p.redis = r
 		services = append(services, r)
 	}
-	smtpPort := 0
-	if cfg.SMTP != nil && cfg.SMTP.Host != "" {
-		smtpPort = cfg.SMTP.Port
+	var smtp *platformAddress
+	if cfg.SMTP != nil && cfg.SMTP.Host != "" && cfg.SMTP.Port > 0 {
+		a, err := resolvePlatformAddress(net.JoinHostPort(cfg.SMTP.Host, strconv.Itoa(cfg.SMTP.Port)), p.platformNamespace)
+		if err != nil {
+			return fmt.Errorf("smtp: %w", err)
+		}
+		smtp = &a
 	}
-	p.egress = siteEgress(services, smtpPort, pods)
+	p.egress = siteEgress(services, smtp, pods)
 	p.internet.pods = pods
 	return nil
 }

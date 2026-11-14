@@ -1,6 +1,7 @@
 package kubernetes
 
 import (
+	"net"
 	"net/netip"
 	"slices"
 	"testing"
@@ -48,15 +49,15 @@ func TestSiteEgress(t *testing.T) {
 		services = append(services, a)
 	}
 	pods := []netip.Prefix{netip.MustParsePrefix("10.244.0.0/16"), netip.MustParsePrefix("203.0.113.0/24"), netip.MustParsePrefix("2001:db8:42::/56")}
-	e := siteEgress(services, 25, pods)
+	e := siteEgress(services, nil, pods)
 	if !slices.Equal(e.PlatformPorts, []int{3306, 6379}) {
 		t.Errorf("platform ports %v", e.PlatformPorts)
 	}
 	if len(e.Hosts) != 1 || e.Hosts[0] != (egressHost{CIDR: "10.1.2.3/32", Port: 3307}) {
 		t.Errorf("hosts %v: want the external MariaDB by address only", e.Hosts)
 	}
-	if e.SMTPPort != 25 {
-		t.Errorf("SMTP port %d", e.SMTPPort)
+	if e.SMTPPort != 0 || e.SMTPNamespace != "" {
+		t.Errorf("SMTP rule %q:%d without a relay", e.SMTPNamespace, e.SMTPPort)
 	}
 	// The private pod range is covered already; the public ones are left
 	// out explicitly. The metadata address is in 169.254.0.0/16.
@@ -66,8 +67,44 @@ func TestSiteEgress(t *testing.T) {
 	if !slices.Contains(e.ExceptV6, "fc00::/7") || !slices.Contains(e.ExceptV6, "2001:db8:42::/56") {
 		t.Errorf("IPv6 exceptions %v", e.ExceptV6)
 	}
-	if e := siteEgress(nil, 0, nil); e.SMTPPort != 0 || e.PlatformPorts != nil || len(e.ExceptV4) == 0 {
+	if e := siteEgress(nil, nil, nil); e.SMTPPort != 0 || e.PlatformPorts != nil || len(e.ExceptV4) == 0 {
 		t.Errorf("egress without services: %+v", e)
+	}
+}
+
+// The SMTP relay's port is open only to the relay when it can be named, and
+// otherwise to what the internet policy allows, never to every address.
+func TestSiteEgressSMTP(t *testing.T) {
+	tests := []struct {
+		host      string
+		wantNS    string
+		wantHosts []egressHost
+	}{
+		{host: "192.0.2.25", wantHosts: []egressHost{{CIDR: "192.0.2.25/32", Port: 587}}},
+		{host: "10.0.0.7", wantHosts: []egressHost{{CIDR: "10.0.0.7/32", Port: 587}}},
+		{host: "2001:db8::25", wantHosts: []egressHost{{CIDR: "2001:db8::25/128", Port: 587}}},
+		{host: "mailpit", wantNS: "pressfleet"},
+		{host: "mailpit.pressfleet.svc", wantNS: "pressfleet"},
+		{host: "mailpit.mail.svc", wantNS: "mail"},
+		{host: "mailpit.mail.svc.cluster.local", wantNS: "mail"},
+		{host: "mailpit.mail.svc.cluster.local.", wantNS: "mail"},
+		{host: "smtp.example.com"},
+		{host: "mail.svc.example.com"}, // a public name that only looks like one
+	}
+	for _, tt := range tests {
+		a, err := resolvePlatformAddress(net.JoinHostPort(tt.host, "587"), "pressfleet")
+		if err != nil {
+			t.Fatal(err)
+		}
+		e := siteEgress(nil, &a, nil)
+		wantPort := 0
+		if tt.wantNS != "" {
+			wantPort = 587
+		}
+		if e.SMTPNamespace != tt.wantNS || e.SMTPPort != wantPort || !slices.Equal(e.Hosts, tt.wantHosts) {
+			t.Errorf("siteEgress for relay %s = namespace %q port %d hosts %v, want %q %d %v",
+				tt.host, e.SMTPNamespace, e.SMTPPort, e.Hosts, tt.wantNS, wantPort, tt.wantHosts)
+		}
 	}
 }
 

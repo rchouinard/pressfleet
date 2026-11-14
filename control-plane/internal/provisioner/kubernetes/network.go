@@ -18,8 +18,13 @@ type egress struct {
 	PlatformPorts []int
 	// Hosts are platform services outside the cluster, by address.
 	Hosts []egressHost
-	// SMTPPort is the SMTP relay's port, 0 without a relay.
-	SMTPPort int
+	// SMTPNamespace and SMTPPort are an SMTP relay that is a Service in the
+	// cluster: any pod of that namespace on that port, as a NetworkPolicy
+	// can't select a Service. Both are zero for a relay given by IP (that is
+	// in Hosts), by an external name (the internet rule covers its public
+	// addresses), or without a relay.
+	SMTPNamespace string
+	SMTPPort      int
 	// ExceptV4 and ExceptV6 are what a repository task's internet rule
 	// leaves out: the non-internet ranges and the pod ranges.
 	ExceptV4, ExceptV6 []string
@@ -93,6 +98,10 @@ type platformAddress struct {
 	InCluster bool
 	// IP is set for an address given as an IP.
 	IP netip.Addr
+	// ServiceNamespace is the namespace of an address that names a Service
+	// (a bare name, or name.namespace.svc with any cluster domain), which
+	// may not be the platform namespace. Empty otherwise.
+	ServiceNamespace string
 }
 
 // resolvePlatformAddress parses addr (host:port) for sites.
@@ -112,17 +121,24 @@ func resolvePlatformAddress(addr, platformNamespace string) (platformAddress, er
 	case !strings.Contains(host, "."):
 		a.Host = host + "." + platformNamespace + ".svc"
 		a.InCluster = true
+		a.ServiceNamespace = platformNamespace
 	case strings.HasSuffix(host, "."+platformNamespace+".svc") ||
 		strings.Contains(host, "."+platformNamespace+".svc."):
 		a.InCluster = true
+	}
+	if a.ServiceNamespace == "" && !a.IP.IsValid() {
+		// name.namespace.svc, with or without the cluster domain.
+		if labels := strings.Split(strings.TrimSuffix(host, "."), "."); len(labels) >= 3 && labels[2] == "svc" {
+			a.ServiceNamespace = labels[1]
+		}
 	}
 	a.HostPort = net.JoinHostPort(a.Host, strconv.Itoa(port))
 	return a, nil
 }
 
 // siteEgress builds the egress a site needs to reach the platform's
-// services and SMTP relay (smtpPort, 0 for none).
-func siteEgress(services []platformAddress, smtpPort int, pods []netip.Prefix) egress {
+// services and SMTP relay (nil for none).
+func siteEgress(services []platformAddress, smtp *platformAddress, pods []netip.Prefix) egress {
 	var e egress
 	for _, s := range services {
 		switch {
@@ -137,7 +153,18 @@ func siteEgress(services []platformAddress, smtpPort int, pods []netip.Prefix) e
 		// rule: a NetworkPolicy can't name a host.
 	}
 	slices.Sort(e.PlatformPorts)
-	e.SMTPPort = smtpPort
+	if smtp != nil {
+		switch {
+		case smtp.IP.IsValid():
+			e.Hosts = append(e.Hosts, egressHost{CIDR: netip.PrefixFrom(smtp.IP, smtp.IP.BitLen()).String(), Port: smtp.Port})
+		case smtp.ServiceNamespace != "":
+			e.SMTPNamespace, e.SMTPPort = smtp.ServiceNamespace, smtp.Port
+		}
+		// A relay named by an external host name is reached through the
+		// internet rule, like an external MariaDB: a NetworkPolicy can't
+		// name a host. One that resolves to a private address isn't
+		// reachable by name; give its IP address instead.
+	}
 	e.ExceptV4, e.ExceptV6 = internetExceptions(pods, nil)
 	return e
 }

@@ -419,3 +419,34 @@ func TestResources(t *testing.T) {
 		}
 	}
 }
+
+// The SMTP relay's egress rule is scoped to the relay when it is an IP
+// address or a Service, and absent for an external name (the internet policy
+// covers it), never open to every address. The external name is the default
+// golden file above.
+func TestRenderSiteSMTPEgress(t *testing.T) {
+	for name, host := range map[string]string{
+		"network-policies-smtp-ip.yaml":      "10.20.30.40",
+		"network-policies-smtp-service.yaml": "mailpit.mail.svc.cluster.local",
+	} {
+		t.Run(host, func(t *testing.T) {
+			cfg := testConfig(t)
+			cfg.SMTP.Host = host
+			c, _ := fakeClient(t)
+			p := newWithClient(cfg, c)
+			dir, err := p.RenderSite(t.Context(), testSite())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(filepath.Join(dir, "network-policies.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			golden(t, name, got)
+			// No rule may list only ports: that is every address.
+			if strings.Contains(string(got), "    - ports:\n        - protocol: TCP\n          port: 587") {
+				t.Errorf("the relay's port is open to every address:\n%s", got)
+			}
+		})
+	}
+}
