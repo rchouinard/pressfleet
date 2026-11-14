@@ -6,9 +6,10 @@ wp_content=/var/www/wordpress/wp-content
 
 # Seed an empty wp-content volume with the release's bundled content (default
 # themes etc.) so a new site can be installed. A volume with any content, such
-# as an existing or restored site, is never touched.
+# as an existing or restored site, is never touched. A freshly formatted ext4
+# volume holds a lost+found directory, which doesn't count as content.
 if [ "${PRESSFLEET_SEED_WP_CONTENT:-1}" = "1" ] && [ -w "$wp_content" ] \
-	&& [ -z "$(ls -A "$wp_content")" ]; then
+	&& [ -z "$(ls -A "$wp_content" | grep -v '^lost+found$')" ]; then
 	echo "pressfleet: seeding empty wp-content from WordPress $(sed -n "s/^\$wp_version = '\(.*\)';/\1/p" /var/www/wordpress/wp-includes/version.php)" >&2
 	cp -R /opt/pressfleet/wp-content-skel/. "$wp_content/"
 fi
