@@ -39,7 +39,7 @@ func serveUntil(t *testing.T, dataDir string, env map[string]string, src release
 		done <- runOptions(t, ctx, []string{"serve", "--data-dir", dataDir, "--listen", "127.0.0.1:0"}, env,
 			cli.Options{Stderr: &stderr, ReleaseSource: src})
 	}()
-	for deadline := time.Now().Add(10 * time.Second); !ready(stderr.String()); time.Sleep(10 * time.Millisecond) {
+	for deadline := time.Now().Add(readyTimeout); !ready(stderr.String()); time.Sleep(10 * time.Millisecond) {
 		if time.Now().After(deadline) {
 			cancel()
 			t.Fatalf("serve didn't get there; result: %+v", <-done)
