@@ -143,7 +143,7 @@ func NewService(db *store.DB, opts Options) *Service {
 		idle:     opts.SessionIdleTimeout,
 		maxAge:   opts.SessionMaxAge,
 		factors:  map[FactorMethod]FactorVerifier{},
-		pending:  newChallengeStore[pendingLogin](now),
+		pending:  newOwnedChallengeStore(now, func(p pendingLogin) string { return p.userID }),
 
 		twoFactor: opts.TwoFactor,
 
@@ -268,7 +268,7 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (LoginResult, err
 		// The account's failures aren't reset until the second step
 		// passes: otherwise entering a known password again would reset
 		// the count of guesses at the second factor.
-		return LoginResult{}, s.startPendingLogin(ctx, user, email)
+		return LoginResult{}, s.startPendingLogin(ctx, user, email, req.ClientIP)
 	}
 	s.throttle.reset(accountKey(email))
 	return s.finishLogin(ctx, user, req.ClientIP, req.UserAgent, "")

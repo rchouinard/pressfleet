@@ -133,8 +133,16 @@ type SecondFactorRequest struct {
 }
 
 // startPendingLogin begins the second step for a user whose password was
-// right and returns it as a *SecondFactorRequiredError.
-func (s *Service) startPendingLogin(ctx context.Context, user store.User, email string) error {
+// right and returns it as a *SecondFactorRequiredError. A right password
+// never counts as a login failure, so starts are counted per user and per
+// address instead: each one stores a pending login and may start a
+// challenge, and a loop of them must not cost other users theirs.
+func (s *Service) startPendingLogin(ctx context.Context, user store.User, email, clientIP string) error {
+	keys := pendingKeys(user.ID, clientIP)
+	if err := s.throttle.check(keys...); err != nil {
+		return err
+	}
+	s.throttle.fail(keys...)
 	methods, challenges, err := s.factorMethods(ctx, user)
 	if err != nil {
 		return fmt.Errorf("login: %w", err)
