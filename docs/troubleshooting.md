@@ -270,7 +270,7 @@ The guide is [PressFleet on Kubernetes](kubernetes.md). Read the control plane's
 | The dashboard certificate isn't issued | Port 80 isn't reaching Traefik, or the name doesn't resolve to its Service address ([Certificates and ACME](#certificates-and-acme)). `kubectl -n pressfleet logs deploy/traefik` has the ACME messages. With k3s, check that its own Traefik is disabled: two Traefiks can't both publish ports 80 and 443 |
 | A new site stays in provisioning, its pod `Pending` | Not enough memory on the nodes, or the site's volume is on another node. `kubectl -n pf-<site-id> describe pod` |
 | A site can't reach a database or API on your network | Sites may only reach public addresses, DNS, MariaDB, the object cache, and the SMTP relay ([Behavior that differs from Compose](kubernetes.md#behavior-that-differs-from-compose)) |
-| A site's image pin fails with `unauthorized` | The site images must be public in this release ([Images and registries](kubernetes.md#images-and-registries)) |
+| A site's image pin fails with `unauthorized` | No pull secret in `kubernetes.image_pull_secrets` has username and password credentials for the image's registry, or the registry refused them ([Images and registries](kubernetes.md#images-and-registries)); or pin the image by digest |
 | The disk fills and no alert fires | The **Disk nearly full** rule has no data on Kubernetes. Watch disks with your cluster's monitoring |
 | Rollback after a failed upgrade | There is no automatic rollback: scale the control plane to zero, restore your PostgreSQL backup, and `helm rollback` ([Upgrading](upgrading.md#kubernetes)) |
 

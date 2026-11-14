@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -153,30 +152,35 @@ func registryURL(host, path string, insecure []string) string {
 }
 
 // manifestDigest asks the registry for the digest of the manifest the
-// tag names, with an anonymous token if the registry wants one (GHCR and
-// Docker Hub want one even for public images).
+// tag names. It asks anonymously first, with an anonymous token if the
+// registry wants one (GHCR and Docker Hub want one even for public images),
+// and only when the registry demands credentials does it look for some in
+// the image pull secrets (pin_auth.go).
 func (p *Provisioner) manifestDigest(ctx context.Context, ref imageRef) (string, error) {
 	u := registryURL(ref.host, "/v2/"+ref.repository+"/manifests/"+url.PathEscape(ref.tag), p.insecureRegistries)
-	token := ""
+	authz, creds := "", false
 	for attempt := 0; ; attempt++ {
-		resp, err := p.registryRequest(ctx, http.MethodHead, u, token)
+		resp, err := p.registryRequest(ctx, http.MethodHead, u, authz, creds)
 		if err != nil {
 			return "", err
 		}
 		_ = resp.Body.Close()
 		switch {
 		case resp.StatusCode == http.StatusUnauthorized && attempt == 0:
-			if token, err = p.registryToken(ctx, resp.Header.Get("WWW-Authenticate"), ref); err != nil {
+			c := p.pullCredentials(ctx, ref.host)
+			if authz, creds, err = p.registryAuth(ctx, resp.Header.Get("WWW-Authenticate"), ref, c); err != nil {
 				return "", err
 			}
 			continue
+		case resp.StatusCode == http.StatusUnauthorized:
+			return "", fmt.Errorf("%w: %s refused the credentials it was given for %s", ErrRegistry, ref.host, ref.repository)
 		case resp.StatusCode == http.StatusOK:
 			if d := resp.Header.Get("Docker-Content-Digest"); digestRE.MatchString(d) {
 				return d, nil
 			}
 			// Not every registry names the digest; it is the hash of the
 			// manifest.
-			return p.hashManifest(ctx, u, token)
+			return p.hashManifest(ctx, u, authz, creds)
 		default:
 			return "", fmt.Errorf("%w: %s answered %s", ErrRegistry, ref.host, resp.Status)
 		}
@@ -184,8 +188,8 @@ func (p *Provisioner) manifestDigest(ctx context.Context, ref imageRef) (string,
 }
 
 // hashManifest fetches the manifest and returns its digest.
-func (p *Provisioner) hashManifest(ctx context.Context, u, token string) (string, error) {
-	resp, err := p.registryRequest(ctx, http.MethodGet, u, token)
+func (p *Provisioner) hashManifest(ctx context.Context, u, authz string, creds bool) (string, error) {
+	resp, err := p.registryRequest(ctx, http.MethodGet, u, authz, creds)
 	if err != nil {
 		return "", err
 	}
@@ -204,67 +208,23 @@ func (p *Provisioner) hashManifest(ctx context.Context, u, token string) (string
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-func (p *Provisioner) registryRequest(ctx context.Context, method, u, token string) (*http.Response, error) {
+// registryRequest sends one request with the Authorization header value
+// authz, if any. When authz carries pull-secret credentials (creds), the
+// request doesn't follow a redirect to another host.
+func (p *Provisioner) registryRequest(ctx context.Context, method, u, authz string, creds bool) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrRegistry, err)
 	}
 	req.Header.Set("Accept", manifestTypes)
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	if authz != "" {
+		req.Header.Set("Authorization", authz)
 	}
-	resp, err := p.registry.Do(req)
+	resp, err := p.registryClient(creds).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrRegistry, err)
 	}
 	return resp, nil
-}
-
-// registryToken gets an anonymous pull token from the token service a
-// registry's challenge names (the Docker registry token protocol).
-func (p *Provisioner) registryToken(ctx context.Context, challenge string, ref imageRef) (string, error) {
-	scheme, params, ok := strings.Cut(challenge, " ")
-	if !ok || !strings.EqualFold(scheme, "Bearer") {
-		return "", fmt.Errorf("%w: %s wants credentials (%q), and only anonymous pulls are supported", ErrRegistry, ref.host, challenge)
-	}
-	ch := parseChallenge(params)
-	realm, err := url.Parse(ch["realm"])
-	if err != nil || (realm.Scheme != "https" && realm.Scheme != "http") || realm.Host == "" {
-		return "", fmt.Errorf("%w: %s names no usable token service (%q)", ErrRegistry, ref.host, challenge)
-	}
-	q := realm.Query()
-	if s := ch["service"]; s != "" {
-		q.Set("service", s)
-	}
-	scope := ch["scope"]
-	if scope == "" {
-		scope = "repository:" + ref.repository + ":pull"
-	}
-	q.Set("scope", scope)
-	realm.RawQuery = q.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, realm.String(), nil)
-	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrRegistry, err)
-	}
-	resp, err := p.registry.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("%w: getting a token: %w", ErrRegistry, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("%w: getting a token: %s", ErrRegistry, resp.Status)
-	}
-	var tok struct {
-		Token       string `json:"token"`
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxTokenBytes)).Decode(&tok); err != nil {
-		return "", fmt.Errorf("%w: reading the token: %w", ErrRegistry, err)
-	}
-	if t := firstNonEmpty(tok.Token, tok.AccessToken); t != "" {
-		return t, nil
-	}
-	return "", fmt.Errorf("%w: the token service sent no token", ErrRegistry)
 }
 
 // parseChallenge reads the key="value" pairs of a WWW-Authenticate
