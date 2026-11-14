@@ -47,6 +47,14 @@ type Step struct {
 type Handler struct {
 	Type  string
 	Steps []Step
+	// OnRollbackFailed, if set, runs after a job of this type has finished
+	// as rollback_failed, with the job as finished. A rollback that gave up
+	// may have skipped Undo steps that put things back in a usable state,
+	// so this is the place to do that outside the rollback chain. It is
+	// best effort: the job stays rollback_failed if it fails or the
+	// process dies first, so whatever it does needs a periodic repair to
+	// fall back on.
+	OnRollbackFailed func(ctx context.Context, job store.Job) error
 }
 
 func (h Handler) validate() error {

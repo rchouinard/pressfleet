@@ -339,9 +339,30 @@ func (e *execution) release() {
 }
 
 func (e *execution) finish(state store.JobState, msg string) bool {
-	return e.write(func(ctx context.Context) error {
+	ok := e.write(func(ctx context.Context) error {
 		return e.jobs.Finish(ctx, e.job.ID, e.owner, state, msg, e.p.now())
 	})
+	if ok && state == store.JobRollbackFailed && e.h.OnRollbackFailed != nil {
+		e.afterRollbackFailed(msg)
+	}
+	return ok
+}
+
+// afterRollbackFailed runs the handler's OnRollbackFailed hook. Its failure
+// is only logged: the job is finished either way.
+func (e *execution) afterRollbackFailed(msg string) {
+	ctx, cancel := e.writeContext()
+	defer cancel()
+	job := e.job
+	job.State, job.Error = store.JobRollbackFailed, msg
+	defer func() {
+		if r := recover(); r != nil {
+			e.logger.Error("job rollback_failed hook panicked", "panic", r, "stack", string(debug.Stack()))
+		}
+	}()
+	if err := e.h.OnRollbackFailed(ctx, job); err != nil {
+		e.logger.Error("job rollback_failed hook failed", "error", err)
+	}
 }
 
 func (e *execution) writeContext() (context.Context, context.CancelFunc) {

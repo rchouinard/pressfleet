@@ -340,6 +340,52 @@ func TestRollbackFailures(t *testing.T) {
 	})
 }
 
+// TestOnRollbackFailed: the hook runs only for jobs that finish as
+// rollback_failed, with the job as finished, and a failing or panicking hook
+// leaves the job's state alone.
+func TestOnRollbackFailed(t *testing.T) {
+	for name, hook := range map[string]func() error{
+		"ok":       func() error { return nil },
+		"error":    func() error { return errors.New("db down") },
+		"panicked": func() error { panic("oops") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			db := storetest.Open(t, store.SQLite)
+			var got []store.Job
+			fail := jobs.Permanent(errors.New("bad input"))
+			undoErr := jobs.Permanent(errors.New("docker unavailable"))
+			steps := func(undo error) []jobs.Step {
+				return []jobs.Step{
+					{Name: "a", Do: func(context.Context, *jobs.Run) error { return nil },
+						Undo: func(context.Context, *jobs.Run) error { return undo }},
+					{Name: "b", Do: func(context.Context, *jobs.Run) error { return fail }},
+				}
+			}
+			record := func(_ context.Context, j store.Job) error {
+				got = append(got, j)
+				return hook()
+			}
+			f := newFixture(t, db, jobs.Options{},
+				jobs.Handler{Type: "bad", Steps: steps(undoErr), OnRollbackFailed: record},
+				jobs.Handler{Type: "good", Steps: steps(nil), OnRollbackFailed: record})
+			good := f.enqueue(t, "good", "", nil)
+			f.runNext(t)
+			if d := f.detail(t, good.ID); d.Job.State != store.JobFailed || len(got) != 0 {
+				t.Fatalf("rolled back job: %s, hook calls %d", d.Job.State, len(got))
+			}
+			bad := f.enqueue(t, "bad", "", nil)
+			f.runNext(t)
+			d := f.detail(t, bad.ID)
+			if d.Job.State != store.JobRollbackFailed || len(got) != 1 {
+				t.Fatalf("job %s, hook calls %d", d.Job.State, len(got))
+			}
+			if got[0].ID != bad.ID || got[0].State != store.JobRollbackFailed || got[0].Error != d.Job.Error {
+				t.Errorf("hook saw %s %s %q, job has %q", got[0].ID, got[0].State, got[0].Error, d.Job.Error)
+			}
+		})
+	}
+}
+
 func TestPanicFailsPermanently(t *testing.T) {
 	db := storetest.Open(t, store.SQLite)
 	h := jobs.Handler{Type: "t", Steps: []jobs.Step{{Name: "p", Do: func(context.Context, *jobs.Run) error { panic("oops") }}}}
