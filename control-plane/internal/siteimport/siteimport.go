@@ -5,7 +5,10 @@
 // wp-content and a dump that imports as the site's own database user.
 //
 // Uploads only guarantee a file's size and checksum, so everything here
-// treats both files as untrusted input.
+// treats both files as untrusted input. An archive may hold at most
+// [MaxEntries] entries and unpack to [MaxUnpackedBytes], and a dump may
+// decompress to at most [MaxUnpackedBytes]; a bomb is refused while it is
+// read, before it can fill the disk.
 //
 // # The archive
 //

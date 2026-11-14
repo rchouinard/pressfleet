@@ -1933,7 +1933,7 @@ spec:
       - apiGroups: [""]
         apiVersions: [v1]
         operations: [CREATE, UPDATE]
-        resources: [pods, services]
+        resources: [pods, pods/ephemeralcontainers, services]
   matchConditions:
     - name: control-plane
       expression: "request.userInfo.username == 'system:serviceaccount:pressfleet:control-plane'"
@@ -1955,9 +1955,25 @@ spec:
         (!has(object.spec.hostIPC) || !object.spec.hostIPC) &&
         (!has(object.spec.volumes) || object.spec.volumes.all(v, !has(v.hostPath))) &&
         object.spec.containers.all(c, !has(c.securityContext) || !has(c.securityContext.privileged) || !c.securityContext.privileged) &&
-        (!has(object.spec.initContainers) || object.spec.initContainers.all(c, !has(c.securityContext) || !has(c.securityContext.privileged) || !c.securityContext.privileged)))
+        (!has(object.spec.initContainers) || object.spec.initContainers.all(c, !has(c.securityContext) || !has(c.securityContext.privileged) || !c.securityContext.privileged)) &&
+        (!has(object.spec.ephemeralContainers) || object.spec.ephemeralContainers.all(c, !has(c.securityContext) || !has(c.securityContext.privileged) || !c.securityContext.privileged)))
       messageExpression: >-
         'a pod the PressFleet control plane creates must not share a namespace of the node, mount a hostPath, or run privileged: ' + object.metadata.name
+    - expression: >-
+        !variables.isPod ||
+        (has(object.spec.securityContext) &&
+        has(object.spec.securityContext.runAsNonRoot) && object.spec.securityContext.runAsNonRoot &&
+        (!has(object.spec.securityContext.runAsUser) || object.spec.securityContext.runAsUser != 0) &&
+        (!has(object.spec.containers) || object.spec.containers.all(c, has(c.securityContext) && has(c.securityContext.allowPrivilegeEscalation) && c.securityContext.allowPrivilegeEscalation == false && has(c.securityContext.capabilities) && has(c.securityContext.capabilities.drop) && c.securityContext.capabilities.drop.exists(d, d == 'ALL') && (!has(c.securityContext.capabilities.add) || size(c.securityContext.capabilities.add) == 0) && (!has(c.securityContext.runAsUser) || c.securityContext.runAsUser != 0) && (!has(c.securityContext.runAsNonRoot) || c.securityContext.runAsNonRoot))) &&
+        (!has(object.spec.initContainers) || object.spec.initContainers.all(c, has(c.securityContext) && has(c.securityContext.allowPrivilegeEscalation) && c.securityContext.allowPrivilegeEscalation == false && has(c.securityContext.capabilities) && has(c.securityContext.capabilities.drop) && c.securityContext.capabilities.drop.exists(d, d == 'ALL') && (!has(c.securityContext.capabilities.add) || size(c.securityContext.capabilities.add) == 0) && (!has(c.securityContext.runAsUser) || c.securityContext.runAsUser != 0) && (!has(c.securityContext.runAsNonRoot) || c.securityContext.runAsNonRoot))) &&
+        (!has(object.spec.ephemeralContainers) || object.spec.ephemeralContainers.all(c, has(c.securityContext) && has(c.securityContext.allowPrivilegeEscalation) && c.securityContext.allowPrivilegeEscalation == false && has(c.securityContext.capabilities) && has(c.securityContext.capabilities.drop) && c.securityContext.capabilities.drop.exists(d, d == 'ALL') && (!has(c.securityContext.capabilities.add) || size(c.securityContext.capabilities.add) == 0) && (!has(c.securityContext.runAsUser) || c.securityContext.runAsUser != 0) && (!has(c.securityContext.runAsNonRoot) || c.securityContext.runAsNonRoot))))
+      messageExpression: >-
+        'every container of a pod the PressFleet control plane creates must run as non-root, forbid privilege escalation, and drop all capabilities: ' + object.metadata.name
+    - expression: >-
+        !variables.isPod ||
+        !has(object.metadata.labels) || !('app.kubernetes.io/component' in object.metadata.labels)
+      messageExpression: >-
+        'a pod the PressFleet control plane creates must not carry the app.kubernetes.io/component label of a chart component: ' + object.metadata.name
     - expression: >-
         variables.isPod ||
         ((!has(object.spec.type) || object.spec.type == 'ClusterIP') &&

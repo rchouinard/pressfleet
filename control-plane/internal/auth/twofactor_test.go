@@ -3,6 +3,7 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"sync"
@@ -359,6 +360,61 @@ func TestRecoveryCodes(t *testing.T) {
 		}
 		if _, err := secondStep(svc, pending.Token, auth.FactorRecoveryCode, fresh[0].Reveal()); err != nil {
 			t.Errorf("new code: %v", err)
+		}
+	})
+}
+
+// TestPendingLoginFloodKeepsOtherLogins is #360 (S5): a user who starts
+// many pending logins with a right password must not evict another user's.
+func TestPendingLoginFloodKeepsOtherLogins(t *testing.T) {
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		svc, _ := newTwoFactorService(t, db)
+		svc.LimitPendingLogins(8)
+		victim := mustCreate(t, svc, "victim@example.com", store.RoleViewer)
+		attacker := mustCreate(t, svc, "attacker@example.com", store.RoleViewer)
+		enroll(t, db, victim.ID)
+		enroll(t, db, attacker.ID)
+
+		pending := startLogin(t, svc, "victim@example.com")
+		// More starts than the whole store holds, from within the throttle.
+		for range 15 {
+			_ = startLogin(t, svc, "attacker@example.com")
+		}
+		if _, err := secondStep(svc, pending.Token, auth.FactorWebAuthn, "good"); err != nil {
+			t.Errorf("victim's second step after a flood = %v, want success", err)
+		}
+	})
+}
+
+// TestPendingLoginStartsAreThrottled checks that right-password logins are
+// counted per user, and that the count doesn't lock out other users.
+func TestPendingLoginStartsAreThrottled(t *testing.T) {
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		svc, clk := newTwoFactorService(t, db)
+		a := mustCreate(t, svc, "a@example.com", store.RoleViewer)
+		b := mustCreate(t, svc, "b@example.com", store.RoleViewer)
+		enroll(t, db, a.ID)
+		enroll(t, db, b.ID)
+
+		// Different addresses, so only the per-user count can trip.
+		start := func(email, ip string) error {
+			_, err := svc.Login(context.Background(), auth.LoginRequest{Email: email, Password: pw, ClientIP: ip})
+			return err
+		}
+		for i := range 20 {
+			if err := start("a@example.com", fmt.Sprintf("198.51.100.%d", i)); !errors.Is(err, auth.ErrSecondFactorRequired) {
+				t.Fatalf("start %d = %v, want a pending login", i, err)
+			}
+		}
+		if err := start("a@example.com", "203.0.113.1"); !errors.Is(err, auth.ErrThrottled) {
+			t.Errorf("21st start = %v, want ErrThrottled", err)
+		}
+		if err := start("b@example.com", "203.0.113.2"); !errors.Is(err, auth.ErrSecondFactorRequired) {
+			t.Errorf("other user's start = %v, want a pending login", err)
+		}
+		clk.Add(16 * time.Minute)
+		if err := start("a@example.com", "203.0.113.1"); !errors.Is(err, auth.ErrSecondFactorRequired) {
+			t.Errorf("start after the window = %v, want a pending login", err)
 		}
 	})
 }

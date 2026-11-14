@@ -24,6 +24,9 @@ const (
 	// in.
 	maxOptionsPerUser    = 20
 	maxOptionsPerAddress = 60
+	// Pending second-factor logins are counted the same way.
+	maxPendingPerUser    = 20
+	maxPendingPerAddress = 60
 	// maxThrottleEntries bounds memory if a client invents many emails or
 	// addresses.
 	maxThrottleEntries = 100_000
@@ -193,5 +196,15 @@ func optionsKeys(userID, ip string) []throttleKey {
 	return []throttleKey{
 		{key: "reauth-options-user:" + userID, limit: maxOptionsPerUser},
 		{key: "reauth-options-" + a.key, limit: maxOptionsPerAddress},
+	}
+}
+
+// pendingKeys are the counters of pending second-factor logins started for
+// a user and from a client address.
+func pendingKeys(userID, ip string) []throttleKey {
+	a := addressKey(ip)
+	return []throttleKey{
+		{key: "pending-login-user:" + userID, limit: maxPendingPerUser},
+		{key: "pending-login-" + a.key, limit: maxPendingPerAddress},
 	}
 }
