@@ -509,6 +509,79 @@ func TestCrashLoopGivesUp(t *testing.T) {
 	}
 }
 
+// failStepSuccess makes the database refuse to record a step as succeeded
+// until the returned function is called, standing in for a transient
+// database error during a progress write.
+func failStepSuccess(t *testing.T, db *store.DB) (restore func()) {
+	t.Helper()
+	ctx := context.Background()
+	var create, drop []string
+	switch db.Dialect() {
+	case store.SQLite:
+		create = []string{`CREATE TRIGGER fail_step_success BEFORE UPDATE ON job_steps WHEN NEW.state = 'succeeded'
+			BEGIN SELECT RAISE(ABORT, 'injected write failure'); END`}
+		drop = []string{`DROP TRIGGER fail_step_success`}
+	default:
+		create = []string{
+			`CREATE FUNCTION fail_step_success() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'injected write failure'; END $$ LANGUAGE plpgsql`,
+			`CREATE TRIGGER fail_step_success BEFORE UPDATE ON job_steps FOR EACH ROW WHEN (NEW.state = 'succeeded') EXECUTE FUNCTION fail_step_success()`,
+		}
+		drop = []string{`DROP TRIGGER fail_step_success ON job_steps`, `DROP FUNCTION fail_step_success()`}
+	}
+	exec := func(stmts []string) {
+		t.Helper()
+		if err := db.InTx(ctx, func(q store.Querier) error {
+			for _, s := range stmts {
+				if _, err := q.ExecContext(ctx, s); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(create)
+	return func() { exec(drop) }
+}
+
+// TestWriteFailureReleasesLease: when recording progress fails, the job is
+// retried after a few seconds, not when its lease (a minute) expires, and
+// the failed attempt counts.
+func TestWriteFailureReleasesLease(t *testing.T) {
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		var rec recorder
+		f := newFixture(t, db, jobs.Options{}, jobs.Handler{Type: "t", Steps: []jobs.Step{rec.step("one"), rec.step("two")}})
+		j := f.enqueue(t, "t", "site:x", nil)
+		peer := f.enqueue(t, "t", "site:x", nil) // same lock key: waits for j
+
+		restore := failStepSuccess(t, db)
+		f.runNext(t)
+		d := f.detail(t, j.ID)
+		if d.Job.State != store.JobRunning || d.Job.LeaseOwner != "" || d.Job.Attempts != 1 {
+			t.Fatalf("after the failed write: %s owner %q attempts %d, want running, released, 1", d.Job.State, d.Job.LeaseOwner, d.Job.Attempts)
+		}
+		restore()
+
+		// Not yet: the job waits a few seconds so a database that is still
+		// down isn't hit in a loop.
+		if f.runNext(t) {
+			t.Fatal("the job ran again at once")
+		}
+		f.clock.Advance(10 * time.Second) // well within the 1-minute lease
+		for f.runNext(t) {
+		}
+		for _, id := range []string{j.ID, peer.ID} {
+			if d := f.detail(t, id); d.Job.State != store.JobSucceeded {
+				t.Errorf("job %s = %s %q, want succeeded", id, d.Job.State, d.Job.Error)
+			}
+		}
+		if d := f.detail(t, j.ID); d.Job.Attempts != 2 {
+			t.Errorf("attempts = %d, want 2: the failed attempt counts", d.Job.Attempts)
+		}
+	})
+}
+
 // TestLeaseLost: when another worker takes a job over, the old worker's step
 // is canceled and it writes nothing more.
 func TestLeaseLost(t *testing.T) {

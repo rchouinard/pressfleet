@@ -765,6 +765,15 @@ func (r Jobs) Release(ctx context.Context, jobID, owner string, now time.Time) e
 		"lease_owner = NULL, lease_expires_at = NULL, attempts = attempts - 1, run_after = ?, updated_at = ?", now, now)
 }
 
+// Abandon gives up the lease after a failed bookkeeping write, keeping the
+// attempt (unlike Release) so a write that keeps failing can't loop: the job
+// gives up after MaxAttempts like one whose worker keeps dying. The job can
+// be leased again at runAfter instead of when the lease expires.
+func (r Jobs) Abandon(ctx context.Context, jobID, owner string, runAfter, now time.Time) error {
+	return r.leased(ctx, "abandon", jobID, owner,
+		"lease_owner = NULL, lease_expires_at = NULL, run_after = ?, updated_at = ?", runAfter, now)
+}
+
 // BeginRollback moves a running job to rolling_back, recording the error
 // that failed it. Attempts restarts at 1 for the lease the caller holds, so
 // the rollback gets its own MaxAttempts.

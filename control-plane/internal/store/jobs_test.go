@@ -186,6 +186,35 @@ func TestJobsLeaseExpiry(t *testing.T) {
 	})
 }
 
+// Abandon gives up the lease like Release but keeps the attempt, and waits
+// until runAfter.
+func TestJobsAbandon(t *testing.T) {
+	ctx := context.Background()
+	storetest.Run(t, func(t *testing.T, db *store.DB) {
+		jobs := store.NewJobs(db)
+		j := enqueue(t, db, "test.a", "site:x")
+		now := time.Now().Add(time.Second)
+		first, _ := lease(t, db, now)
+		if err := jobs.Abandon(ctx, j.ID, "someone-else", now.Add(5*time.Second), now); !errors.Is(err, store.ErrLeaseLost) {
+			t.Fatalf("Abandon by a non-owner = %v, want ErrLeaseLost", err)
+		}
+		if err := jobs.Abandon(ctx, j.ID, first.LeaseOwner, now.Add(5*time.Second), now); err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := lease(t, db, now.Add(2*time.Second)); ok {
+			t.Fatalf("leased %s before runAfter", got.ID)
+		}
+		// Well before the lease would have expired, and the attempt counts.
+		second, ok := lease(t, db, now.Add(6*time.Second))
+		if !ok || second.ID != j.ID || second.Attempts != 2 || second.State != store.JobRunning {
+			t.Fatalf("after abandon leased %+v, %v; want the same job, attempt 2", second, ok)
+		}
+		if err := jobs.Abandon(ctx, j.ID, first.LeaseOwner, now, now); !errors.Is(err, store.ErrLeaseLost) {
+			t.Errorf("old owner's Abandon = %v, want ErrLeaseLost", err)
+		}
+	})
+}
+
 func TestJobsSteps(t *testing.T) {
 	ctx := context.Background()
 	storetest.Run(t, func(t *testing.T, db *store.DB) {
