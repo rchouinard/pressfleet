@@ -1,9 +1,11 @@
 package auth
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/netip"
+	"slices"
 	"sync"
 	"time"
 )
@@ -28,7 +30,8 @@ const (
 	maxPendingPerUser    = 20
 	maxPendingPerAddress = 60
 	// maxThrottleEntries bounds memory if a client invents many emails or
-	// addresses.
+	// addresses. It applies to each kind of counter separately (see
+	// throttleKind), so filling one can't push out another.
 	maxThrottleEntries = 100_000
 	// ipv6ThrottlePrefix groups IPv6 clients: one client usually holds a
 	// whole /64 and can pick any address in it.
@@ -51,24 +54,44 @@ func (e *ThrottledError) Error() string {
 // Is makes errors.Is(err, ErrThrottled) true.
 func (e *ThrottledError) Is(target error) bool { return target == ErrThrottled }
 
+// throttleKind groups counters that are bounded and evicted separately. A
+// client controls how many counters of some kinds exist (it can invent
+// emails for the account kind, or hop between addresses for the address
+// kind), so if they shared a table, filling it with one kind would evict
+// the other and reset its limits.
+type throttleKind int
+
+const (
+	// kindAccount counts failed logins per email address.
+	kindAccount throttleKind = iota
+	// kindAddress counts failed logins per client address.
+	kindAddress
+	// kindAction counts reauthentication option requests and pending
+	// second-factor logins, per user and per address.
+	kindAction
+	throttleKinds
+)
+
 // throttle counts recent failures per key in memory.
 type throttle struct {
-	mu      sync.Mutex
-	now     func() time.Time
+	mu  sync.Mutex
+	now func() time.Time
+	// max bounds each kind's table.
 	max     int
-	entries map[string]*throttleEntry
+	entries [throttleKinds]map[string]*throttleEntry
 }
 
 type throttleEntry struct {
 	failures int
 	start    time.Time
-	// account marks a per-account counter, which pruning keeps longest:
-	// it is what stops guessing one user's password.
-	account bool
 }
 
 func newThrottle(now func() time.Time) *throttle {
-	return &throttle{now: now, max: maxThrottleEntries, entries: map[string]*throttleEntry{}}
+	t := &throttle{now: now, max: maxThrottleEntries}
+	for i := range t.entries {
+		t.entries[i] = map[string]*throttleEntry{}
+	}
+	return t
 }
 
 // check returns a *ThrottledError if any key has reached its limit.
@@ -78,7 +101,7 @@ func (t *throttle) check(keys ...throttleKey) error {
 	now := t.now()
 	var wait time.Duration
 	for _, k := range keys {
-		e := t.live(k.key, now)
+		e := t.live(k, now)
 		if e != nil && e.failures >= k.limit {
 			wait = max(wait, e.start.Add(throttleWindow).Sub(now))
 		}
@@ -95,13 +118,13 @@ func (t *throttle) fail(keys ...throttleKey) {
 	defer t.mu.Unlock()
 	now := t.now()
 	for _, k := range keys {
-		e := t.live(k.key, now)
+		e := t.live(k, now)
 		if e == nil {
-			if len(t.entries) >= t.max {
-				t.prune(now)
+			if len(t.entries[k.kind]) >= t.max {
+				t.prune(k.kind, now)
 			}
-			e = &throttleEntry{start: now, account: k.account}
-			t.entries[k.key] = e
+			e = &throttleEntry{start: now}
+			t.entries[k.kind][k.key] = e
 		}
 		e.failures++
 	}
@@ -111,66 +134,66 @@ func (t *throttle) fail(keys ...throttleKey) {
 func (t *throttle) reset(k throttleKey) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	delete(t.entries, k.key)
+	delete(t.entries[k.kind], k.key)
 }
 
 // live returns the entry for key if its window hasn't ended.
-func (t *throttle) live(key string, now time.Time) *throttleEntry {
-	e, ok := t.entries[key]
+func (t *throttle) live(k throttleKey, now time.Time) *throttleEntry {
+	e, ok := t.entries[k.kind][k.key]
 	if !ok {
 		return nil
 	}
 	if !now.Before(e.start.Add(throttleWindow)) {
-		delete(t.entries, key)
+		delete(t.entries[k.kind], k.key)
 		return nil
 	}
 	return e
 }
 
-// prune makes room for a new entry. It drops ended windows, then, if the
-// table is still full, every per-address counter, and only then the one
-// account counter with the fewest failures (the newest of those). Account
-// counters are never dropped wholesale, and the ones closest to their
-// limit go last: a client that fills the table with invented emails from
-// many addresses must not reset the count of a password it is guessing.
-func (t *throttle) prune(now time.Time) {
-	for k, e := range t.entries {
+// prune makes room in one kind's table, and never touches another's. It
+// drops ended windows, then, if the table is still full, evicts the
+// counters furthest from their limit: the fewest failures first, the newest
+// first among those. A client that fills the table with invented keys
+// therefore evicts its own one-failure entries, not the counter of an
+// account it is guessing. Evicting 1% at a time (at least one) keeps a
+// full table from costing a scan on every new key.
+func (t *throttle) prune(kind throttleKind, now time.Time) {
+	table := t.entries[kind]
+	for k, e := range table {
 		if !now.Before(e.start.Add(throttleWindow)) {
-			delete(t.entries, k)
+			delete(table, k)
 		}
 	}
-	if len(t.entries) < t.max {
+	if len(table) < t.max {
 		return
 	}
-	for k, e := range t.entries {
-		if !e.account {
-			delete(t.entries, k)
+	type candidate struct {
+		key string
+		e   *throttleEntry
+	}
+	all := make([]candidate, 0, len(table))
+	for k, e := range table {
+		all = append(all, candidate{k, e})
+	}
+	slices.SortFunc(all, func(a, b candidate) int {
+		if c := cmp.Compare(a.e.failures, b.e.failures); c != 0 {
+			return c
 		}
+		return b.e.start.Compare(a.e.start)
+	})
+	for _, c := range all[:max(1, t.max/100)] {
+		delete(table, c.key)
 	}
-	if len(t.entries) < t.max {
-		return
-	}
-	var (
-		victim string
-		least  *throttleEntry
-	)
-	for k, e := range t.entries {
-		if least == nil || e.failures < least.failures ||
-			(e.failures == least.failures && e.start.After(least.start)) {
-			victim, least = k, e
-		}
-	}
-	delete(t.entries, victim)
 }
 
 type throttleKey struct {
-	key     string
-	limit   int
-	account bool
+	key   string
+	limit int
+	kind  throttleKind
 }
 
 func accountKey(email string) throttleKey {
-	return throttleKey{key: "account:" + email, limit: maxFailuresPerAccount, account: true}
+	return throttleKey{key: "account:" + email, limit: maxFailuresPerAccount, kind: kindAccount}
 }
 
 // addressKey counts an IPv4 client by its address and an IPv6 client by
@@ -186,7 +209,7 @@ func addressKey(ip string) throttleKey {
 			ip = a.String()
 		}
 	}
-	return throttleKey{key: "address:" + ip, limit: maxFailuresPerAddress}
+	return throttleKey{key: "address:" + ip, limit: maxFailuresPerAddress, kind: kindAddress}
 }
 
 // optionsKeys are the counters of reauthentication option requests for a
@@ -194,8 +217,8 @@ func addressKey(ip string) throttleKey {
 func optionsKeys(userID, ip string) []throttleKey {
 	a := addressKey(ip)
 	return []throttleKey{
-		{key: "reauth-options-user:" + userID, limit: maxOptionsPerUser},
-		{key: "reauth-options-" + a.key, limit: maxOptionsPerAddress},
+		{key: "reauth-options-user:" + userID, limit: maxOptionsPerUser, kind: kindAction},
+		{key: "reauth-options-" + a.key, limit: maxOptionsPerAddress, kind: kindAction},
 	}
 }
 
@@ -204,7 +227,7 @@ func optionsKeys(userID, ip string) []throttleKey {
 func pendingKeys(userID, ip string) []throttleKey {
 	a := addressKey(ip)
 	return []throttleKey{
-		{key: "pending-login-user:" + userID, limit: maxPendingPerUser},
-		{key: "pending-login-" + a.key, limit: maxPendingPerAddress},
+		{key: "pending-login-user:" + userID, limit: maxPendingPerUser, kind: kindAction},
+		{key: "pending-login-" + a.key, limit: maxPendingPerAddress, kind: kindAction},
 	}
 }
