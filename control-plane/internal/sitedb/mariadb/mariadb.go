@@ -48,6 +48,11 @@ type Config struct {
 	// PATH. Empty means DefaultDumpProgram and DefaultClientProgram.
 	DumpProgram   string
 	ClientProgram string
+	// TempDir is where Dump and Import write client option files, which
+	// hold a plaintext password. Use a private directory of the data
+	// directory (config.Layout.TmpDir): New removes option files a killed
+	// process left there. Empty means os.TempDir, and no sweep.
+	TempDir string
 }
 
 // Manager implements sitedb.Manager on the shared MariaDB server.
@@ -119,6 +124,10 @@ func New(cfg Config, state *store.DB, secretStore secrets.Store, log *slog.Logge
 	}
 	if cfg.ClientProgram != "" {
 		m.clientProgram = cfg.ClientProgram
+	}
+	if cfg.TempDir != "" {
+		m.tempDir = cfg.TempDir
+		sweepOptionFiles(cfg.TempDir, log)
 	}
 	return m, nil
 }

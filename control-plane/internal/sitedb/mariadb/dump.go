@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -401,6 +402,22 @@ func stripDefiners(w io.Writer, r io.Reader) error {
 			return nil
 		default:
 			return err
+		}
+	}
+}
+
+// sweepOptionFiles removes the option files a killed process left in dir.
+// They hold plaintext passwords, and nothing else clears them. The control
+// plane is the only user of its TmpDir's option files, and one process runs
+// per data directory, so none is in use at startup.
+func sweepOptionFiles(dir string, log *slog.Logger) {
+	matches, err := filepath.Glob(filepath.Join(dir, "pressfleet-mariadb-*.cnf"))
+	if err != nil {
+		return
+	}
+	for _, name := range matches {
+		if err := os.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Warn("removing a stale client option file failed", "error", err)
 		}
 	}
 }
