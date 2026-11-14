@@ -36,7 +36,7 @@ Cluster:
 - **A ReadWriteMany storage class** for the control plane's data directory, from storage that accepts several PersistentVolumes on one volume: NFS, CephFS, or EFS. Block storage (EBS, Persistent Disk, Azure Disk) and `local-path` can't serve it. See [Storage](#storage).
 - **metrics-server.** Container and node CPU and memory come from `metrics.k8s.io`.
 - **LoadBalancer Services, or NodePorts** with something in front of them, to carry ports 80, 443, and the SFTP port (2222).
-- **Nodes that can pull images** from `ghcr.io`. Site images must be public ([Images](#images-and-registries)).
+- **Nodes that can pull images** from `ghcr.io`. Site images may be private if a pull secret has credentials for their registry ([Images](#images-and-registries)).
 
 Things you provide:
 
@@ -114,7 +114,7 @@ Traefik's Service (`traefik` in the platform namespace) carries three ports: 80,
 
 The chart pins the platform images by digest, from the same list as Compose. `images.*` values replace them, for a registry mirror. A private registry for the control plane and platform images needs `kubernetes.imagePullSecrets` (Secrets in the platform namespace), which the chart's pods use and the control plane copies into every site namespace.
 
-Site images are the exception: the control plane asks the registry for their digests **anonymously**, so in this release **site images must be public**, even though nodes pull them with the pull secrets. Mirror them to a public registry or a registry that allows anonymous reads. A registry that only answers plain HTTP, such as a development one in the cluster, is named in `kubernetes.insecure_registries` in the config file.
+The control plane also asks the registry for each site image's digest. It asks anonymously first; if the registry answers `401`, it reads the pull secrets (`kubernetes.image_pull_secrets`, type `kubernetes.io/dockerconfigjson`, in the platform namespace) and answers with the entry that names that registry, by Basic credentials or a Bearer token. So a private site image works with the same Secret that nodes pull with. Entries with only an `identitytoken` (some cloud registries) aren't used; pin such images by digest (`repository@sha256:...`), which needs no lookup. Credentials are sent only to the registry's host (or an HTTPS token service it names) and never follow a redirect to another host. A registry that only answers plain HTTP, such as a development one in the cluster, is named in `kubernetes.insecure_registries` in the config file.
 
 ### Chart values
 
@@ -245,7 +245,7 @@ Rehearse once, as the [drill](disaster-recovery.md#rehearsing) says, before real
 
 - **Stopped sites have no logs**, because the pod is gone. Compose can read a stopped container.
 - **CPU usage totals** are kept in the control plane's memory and restart after it restarts.
-- **Site images must be public** ([Images and registries](#images-and-registries)).
+- **Private site images** need a pull secret with username and password credentials for their registry ([Images and registries](#images-and-registries)).
 - **An external MariaDB must be named by IP address** when it is in a private range.
 - **Routes aren't objects of the cluster.** Traefik has no access to the Kubernetes API and no ServiceAccount token. Its own routes (dashboard, SFTP, the maintenance page) are in its ConfigMap; the control plane serves the sites' routes to Traefik's HTTP provider from a port of its own (8081, `kubernetes.traefik_provider_listen`), which only Traefik may reach, and Traefik polls it every 2 seconds, so a new site, domain, or maintenance mode routes within a couple of seconds of its job. IngressRoutes anyone creates in the cluster are ignored. While the control plane is down, Traefik keeps routing what it last read; a Traefik that starts meanwhile routes no site until the control plane is back.
 - **A preview site's basic auth** is served to Traefik with the username and the password's bcrypt hash; there is no Secret for it. The provider endpoint is unauthenticated, so those hashes are protected only by the NetworkPolicy that admits Traefik's pod alone to port 8081: keep a CNI that enforces NetworkPolicy (doctor checks it).
