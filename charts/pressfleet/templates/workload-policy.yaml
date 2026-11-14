@@ -10,7 +10,16 @@ cluster. So, whatever its namespace, a pod the control plane writes must:
 - mount no ServiceAccount token, and run as the namespace's default
   ServiceAccount;
 - share no host namespace, mount no hostPath, and run no privileged
-  container.
+  container;
+- run as non-root, with every container (init and ephemeral ones too)
+  forbidding privilege escalation and dropping all capabilities, so that
+  the platform namespace is held to Pod Security's restricted profile
+  even when the operator hasn't labelled it;
+- carry no app.kubernetes.io/component label: the chart's Services and
+  NetworkPolicy peers select Traefik and the control plane by it, so a
+  pod with it would take their traffic, or reach the control plane's
+  unauthenticated route endpoint (security review K1). The driver labels
+  its pods with pressfleet.io/component instead.
 
 Every pod the driver starts (tasks, sessions, doctor's probes) already
 does. A Service it writes must be a ClusterIP Service without external
@@ -18,6 +27,16 @@ IPs: a NodePort or LoadBalancer would expose a site's pod past Traefik, and
 externalIPs would let it take over traffic to any address in the cluster
 (CVE-2020-8554).
 */ -}}
+{{- /* One container's share of the hardening rule: (dict "list" "containers"). */ -}}
+{{- define "pressfleet.workloadPolicy.hardened" -}}
+(!has(object.spec.{{ .list }}) || object.spec.{{ .list }}.all(c,
+  has(c.securityContext) &&
+  has(c.securityContext.allowPrivilegeEscalation) && c.securityContext.allowPrivilegeEscalation == false &&
+  has(c.securityContext.capabilities) && has(c.securityContext.capabilities.drop) && c.securityContext.capabilities.drop.exists(d, d == 'ALL') &&
+  (!has(c.securityContext.capabilities.add) || size(c.securityContext.capabilities.add) == 0) &&
+  (!has(c.securityContext.runAsUser) || c.securityContext.runAsUser != 0) &&
+  (!has(c.securityContext.runAsNonRoot) || c.securityContext.runAsNonRoot)))
+{{- end }}
 {{- $user := printf "request.userInfo.username == '%s'" (include "pressfleet.controlPlaneUser" .) }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -32,7 +51,7 @@ spec:
       - apiGroups: [""]
         apiVersions: [v1]
         operations: [CREATE, UPDATE]
-        resources: [pods, services]
+        resources: [pods, pods/ephemeralcontainers, services]
   matchConditions:
     - name: control-plane
       expression: {{ $user | quote }}
@@ -54,9 +73,25 @@ spec:
         (!has(object.spec.hostIPC) || !object.spec.hostIPC) &&
         (!has(object.spec.volumes) || object.spec.volumes.all(v, !has(v.hostPath))) &&
         object.spec.containers.all(c, !has(c.securityContext) || !has(c.securityContext.privileged) || !c.securityContext.privileged) &&
-        (!has(object.spec.initContainers) || object.spec.initContainers.all(c, !has(c.securityContext) || !has(c.securityContext.privileged) || !c.securityContext.privileged)))
+        (!has(object.spec.initContainers) || object.spec.initContainers.all(c, !has(c.securityContext) || !has(c.securityContext.privileged) || !c.securityContext.privileged)) &&
+        (!has(object.spec.ephemeralContainers) || object.spec.ephemeralContainers.all(c, !has(c.securityContext) || !has(c.securityContext.privileged) || !c.securityContext.privileged)))
       messageExpression: >-
         'a pod the PressFleet control plane creates must not share a namespace of the node, mount a hostPath, or run privileged: ' + object.metadata.name
+    - expression: >-
+        !variables.isPod ||
+        (has(object.spec.securityContext) &&
+        has(object.spec.securityContext.runAsNonRoot) && object.spec.securityContext.runAsNonRoot &&
+        (!has(object.spec.securityContext.runAsUser) || object.spec.securityContext.runAsUser != 0) &&
+        {{ regexReplaceAll "\\s+" (include "pressfleet.workloadPolicy.hardened" (dict "list" "containers")) " " }} &&
+        {{ regexReplaceAll "\\s+" (include "pressfleet.workloadPolicy.hardened" (dict "list" "initContainers")) " " }} &&
+        {{ regexReplaceAll "\\s+" (include "pressfleet.workloadPolicy.hardened" (dict "list" "ephemeralContainers")) " " }})
+      messageExpression: >-
+        'every container of a pod the PressFleet control plane creates must run as non-root, forbid privilege escalation, and drop all capabilities: ' + object.metadata.name
+    - expression: >-
+        !variables.isPod ||
+        !has(object.metadata.labels) || !('app.kubernetes.io/component' in object.metadata.labels)
+      messageExpression: >-
+        'a pod the PressFleet control plane creates must not carry the app.kubernetes.io/component label of a chart component: ' + object.metadata.name
     - expression: >-
         variables.isPod ||
         ((!has(object.spec.type) || object.spec.type == 'ClusterIP') &&
