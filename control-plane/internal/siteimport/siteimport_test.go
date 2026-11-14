@@ -393,3 +393,41 @@ func TestSanitizeDump(t *testing.T) {
 		t.Errorf("sanitized dump: %v", err)
 	}
 }
+
+func TestSanitizeDumpComments(t *testing.T) {
+	const keep = "INSERT INTO `t` VALUES (1);\nCREATE TABLE `t2` (x int);\n"
+	for _, tt := range []struct {
+		name, drop string
+	}{
+		{"line comment", "USE `db`; -- note\n"},
+		{"line comment no space after semicolon", "USE `db`;-- note\n"},
+		{"hash comment", "USE `db`; # note\n"},
+		{"block comment", "SET @@GLOBAL.GTID_PURGED=''; /* x */\n"},
+		{"several comments", "USE `db`; /* a */ -- b\n"},
+		{"unterminated block comment", "USE `db`; /* open\n"},
+		{"semicolon in line comment", "USE `db` -- a; b\nCREATE TABLE `gone` (x int);\n"},
+		{"create schema", "CREATE SCHEMA `db`;\n"},
+		{"create schema with comment", "CREATE SCHEMA IF NOT EXISTS `db`; -- c\n"},
+		{"comment marker in string", "SET @@GLOBAL.GTID_PURGED='a -- b'; -- c\n"},
+		{"block marker in string", "SET @@GLOBAL.GTID_PURGED='a /* b'; /* c */\n"},
+		{"multi-line string", "SET @@GLOBAL.GTID_PURGED='aaa:1-5,\nbbb:1-3'; -- c\n"},
+		{"multi-line string with marker", "SET @@GLOBAL.GTID_PURGED='aaa:1-5, -- x\nbbb:1-3';\n"},
+		{"escaped quote", "SET @@GLOBAL.GTID_PURGED='it\\'s -- x'; -- c\n"},
+		{"doubled quote", "SET @@GLOBAL.GTID_PURGED='it''s -- x'; -- c\n"},
+		{"spans lines", "SET @@GLOBAL.GTID_PURGED=\n'a' -- first\n; -- last\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			stats, err := siteimport.SanitizeDump(&out, strings.NewReader(tt.drop+keep))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.String() != keep {
+				t.Errorf("output = %q, want %q", out.String(), keep)
+			}
+			if stats.Statements != 1 {
+				t.Errorf("Statements = %d, want 1", stats.Statements)
+			}
+		})
+	}
+}
