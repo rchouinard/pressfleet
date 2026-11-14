@@ -54,7 +54,7 @@ const succeeded = job({
   steps: [step({ name: 'create_database', state: 'succeeded', attempts: 1 }), step({ name: 'install_wordpress', state: 'succeeded', attempts: 1 })],
 })
 
-function setup(script: Script[], extra: { hidden?: () => boolean } = {}) {
+function setup(script: Script[], extra: { hidden?: () => boolean, maxLogLines?: number } = {}) {
   const attempts: Attempt[] = []
   const jobs: Job[] = []
   const errors: { error: ApiError, fatal: boolean, failures: number }[] = []
@@ -67,6 +67,7 @@ function setup(script: Script[], extra: { hidden?: () => boolean } = {}) {
     onFallback: () => fallbacks++,
     onStatus: s => statuses.push(s),
     isHidden: extra.hidden,
+    maxLogLines: extra.maxLogLines,
     random: () => 1,
     fetch: async (_url, init) => {
       const a: Attempt = { headers: init.headers as Record<string, string>, signal: init.signal as AbortSignal }
@@ -106,6 +107,56 @@ describe('job stream', () => {
     expect(t.stream.status).toBe('done')
     expect(t.errors).toEqual([])
     expect(t.attempts).toHaveLength(1)
+  })
+
+  it('keeps the newest lines of a long step log and says how many were left out', async () => {
+    const lines = [1, 2, 3, 4, 5].map(n => logEvent(n, 'create_database', `line ${n}`)).join('')
+    const t = setup([a => streamResponse([jobEvent(running), lines, logEvent(6, 'create_database', 'line 6')], { signal: a.signal })], { maxLogLines: 3 })
+    t.stream.start()
+    await vi.advanceTimersByTimeAsync(0)
+
+    const log = t.jobs.at(-1)!.steps[0]!.log!
+    expect(log.map(l => l.message)).toEqual(['3 earlier lines omitted', 'line 4', 'line 5', 'line 6'])
+    expect(log[0]!.level).toBe('warn')
+    // A step under the cap shows no notice.
+    expect(t.jobs.at(-1)!.steps[1]!.log).toEqual([])
+    t.stream.stop()
+  })
+
+  it('bounds a step log by default', async () => {
+    const lines = Array.from({ length: 1200 }, (_, i) => logEvent(i + 1, 'create_database', `line ${i + 1}`)).join('')
+    const t = setup([a => streamResponse([jobEvent(running), lines], { signal: a.signal })])
+    t.stream.start()
+    await vi.advanceTimersByTimeAsync(0)
+    const log = t.jobs.at(-1)!.steps[0]!.log!
+    expect(log.length).toBeLessThan(1200)
+    expect(log.at(-1)!.message).toBe('line 1200')
+    expect(log[0]!.message).toMatch(/earlier lines omitted/)
+    t.stream.stop()
+  })
+
+  it('copies only the steps that changed between emits', async () => {
+    const t = setup([a => streamResponse([
+      jobEvent(running),
+      logEvent(1, 'create_database', 'one'),
+      logEvent(2, 'create_database', 'two'),
+      jobEvent(running),
+    ], { signal: a.signal })])
+    t.stream.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(t.jobs).toHaveLength(4)
+    const stepAt = (i: number, n: number) => t.jobs[i]!.steps[n]!
+    // The step without lines is the same object each time, even across a new snapshot.
+    expect(stepAt(1, 1)).toBe(stepAt(0, 1))
+    expect(stepAt(3, 1)).toBe(stepAt(0, 1))
+    // The step that got a line is a new object with its own log array; earlier emits are left as they were.
+    expect(stepAt(1, 0)).not.toBe(stepAt(0, 0))
+    expect(stepAt(2, 0)).not.toBe(stepAt(1, 0))
+    expect(stepAt(1, 0).log).toHaveLength(1)
+    expect(stepAt(2, 0).log).toHaveLength(2)
+    // An unchanged snapshot of the step that has lines keeps its copy.
+    expect(stepAt(3, 0)).toBe(stepAt(2, 0))
+    t.stream.stop()
   })
 
   it('shows a finished job once its snapshot follows its log', async () => {
