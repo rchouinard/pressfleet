@@ -472,6 +472,9 @@ func (s *server) run(ctx context.Context) error {
 
 	w.Go("job pool", s.pool.Run)
 	w.Go("scheduler", s.scheduler.Run)
+	// Fails a site that a job left in updating when its rollback gave up,
+	// so it can be restored (#282).
+	w.Go("site status repair", s.siteSvc.RunStatusRepair)
 	if bw, ok := s.rt.Driver.(driver.BackgroundWorker); ok {
 		w.Go("driver", bw.RunBackground)
 	}
