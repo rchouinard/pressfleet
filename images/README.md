@@ -131,7 +131,7 @@ The Compose smoke test (`test.sh`) is unchanged. [`test-restricted.sh`](test-res
 
 **wp-content permissions.** Docker gives a new, empty named volume the mode of the image's mount point, so a fresh `wp-content` or `cache` volume is `1777` and writable by whatever UID the stack runs as. The control plane may instead `chown <uid>:<gid>` and `chmod 0755` the volume root before first start; the images work either way.
 
-**wp-content seeding.** When the php container starts and `wp-content` is completely empty, the entrypoint copies `/opt/pressfleet/wp-content-skel` into it so `wp core install` has a theme. A volume with any content (an existing or restored site) is never modified. Set `PRESSFLEET_SEED_WP_CONTENT=0` to disable.
+**wp-content seeding.** When the php container starts and `wp-content` is empty (a `lost+found` directory, which a freshly formatted ext4 volume holds, doesn't count), the entrypoint copies `/opt/pressfleet/wp-content-skel` into it so `wp core install` has a theme. A volume with any content (an existing or restored site) is never modified. Set `PRESSFLEET_SEED_WP_CONTENT=0` to disable.
 
 **wp-config.php updates.** A single-file bind mount pins the file's inode. If the control plane rewrites `wp-config.php` by writing a new file and renaming it over the old one, the running container keeps seeing the old content; either write it in place or recreate the php container after a change.
 
