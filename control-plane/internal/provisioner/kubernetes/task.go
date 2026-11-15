@@ -892,6 +892,11 @@ func (p *Provisioner) repositoryTaskPolicy(ctx context.Context, backupNetwork bo
 // but never blocks a working endpoint, so a task isn't refused over it.
 func (p *Provisioner) s3ServiceTarget(ctx context.Context, s3 *s3Peer) (selector map[string]string, target intstr.IntOrString, ok bool) {
 	warn := func(reason string, err error) {
+		// Once per endpoint and reason: the same task runs often, and the
+		// cause changes only when the operator changes something.
+		if _, seen := p.s3Warned.LoadOrStore(s3.Namespace+"/"+s3.Service+": "+reason, true); seen {
+			return
+		}
 		p.log.WarnContext(ctx, "scoping the S3 egress rule to the whole namespace: the Service can't be used",
 			"namespace", s3.Namespace, "service", s3.Service, "reason", reason, "error", err)
 	}
