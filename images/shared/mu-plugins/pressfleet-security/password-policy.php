@@ -117,17 +117,28 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
 	);
 	add_action(
 		'wp_set_password',
-		static function ( $password ) {
-			// wp_update_user() fires this before saving. wp_insert_user()
-			// (new users, checked above) and wp_set_password() fire it after
-			// saving, where the error comes too late to stop the change but
-			// still fails the command.
-			if ( is_string( $password ) && '' !== $password ) {
-				$violation = pressfleet_password_policy_violation( $password );
-				if ( '' !== $violation ) {
-					WP_CLI::error( $violation );
-				}
+		static function ( $password, $user_id = 0, $old_user_data = null ) {
+			// wp_update_user() fires this before saving. wp_set_password()
+			// (also what `wp user reset-password` ends in) fires it after
+			// the hash is written, so a violation is too late to stop the
+			// write: put the previous hash back, then fail the command, so
+			// that "rejected" means the password did not change. New users
+			// (wp_insert_user(), checked above) have no previous hash.
+			if ( ! is_string( $password ) || '' === $password ) {
+				return;
 			}
-		}
+			$violation = pressfleet_password_policy_violation( $password );
+			if ( '' === $violation ) {
+				return;
+			}
+			if ( $user_id && is_object( $old_user_data ) && ! empty( $old_user_data->user_pass ) ) {
+				global $wpdb;
+				$wpdb->update( $wpdb->users, array( 'user_pass' => $old_user_data->user_pass ), array( 'ID' => (int) $user_id ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- restoring what wp_set_password() just wrote
+				clean_user_cache( (int) $user_id );
+			}
+			WP_CLI::error( $violation );
+		},
+		10,
+		3
 	);
 }

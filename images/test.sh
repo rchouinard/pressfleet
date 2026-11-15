@@ -550,6 +550,10 @@ mine.txt" "$(seed_run "$seed_real" ls -A wp-content)"
 		"$("${cexec[@]}" wp user update hasher --user_pass="$weak_pw" 2>&1 || true)"
 	check_eq "on: rejected update kept the old password" "ok" \
 		"$("${cexec[@]}" wp eval "\$u = get_user_by( 'login', 'hasher' ); echo wp_check_password( '$strong_pw', \$u->user_pass, \$u->ID ) ? 'ok' : 'changed';")"
+	check_contains "on: common password rejected (wp_set_password)" "most commonly used" \
+		"$("${cexec[@]}" wp eval "wp_set_password( '$weak_pw', get_user_by( 'login', 'hasher' )->ID );" 2>&1 || true)"
+	check_eq "on: rejected wp_set_password kept the old password" "ok" \
+		"$("${cexec[@]}" wp eval "\$u = get_user_by( 'login', 'hasher' ); echo wp_check_password( '$strong_pw', \$u->user_pass, \$u->ID ) && ! wp_check_password( '$weak_pw', \$u->user_pass, \$u->ID ) ? 'ok' : 'changed';")"
 	check_contains "on: common password rejected (profile save)" "most commonly used" \
 		"$("${cexec[@]}" wp eval --user=admin "require_once ABSPATH . 'wp-admin/includes/user.php'; \$_POST = array( 'email' => 'admin@example.com', 'nickname' => 'admin', 'pass1' => '$weak_pw', 'pass2' => '$weak_pw' ); \$r = edit_user( get_current_user_id() ); echo is_wp_error( \$r ) ? \$r->get_error_message() : 'saved';")"
 	check_eq "on: common password rejected (REST)" "400" \
