@@ -126,6 +126,9 @@ func TestDashboard(t *testing.T) {
 	defaults := map[string]string{
 		"PRESSFLEET_METRICS_INTERVAL_SECONDS":           "5",
 		"PRESSFLEET_ALERTS_EVALUATION_INTERVAL_SECONDS": "5",
+		// The harness's webhook receiver listens on the Docker bridge's
+		// gateway, a private address, which alert channels refuse by default.
+		"PRESSFLEET_ALERTS_WEBHOOK_ALLOW_LOCAL_TARGETS": "true",
 	}
 	p.Restart(t, defaults)
 
