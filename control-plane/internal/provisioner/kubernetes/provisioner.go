@@ -136,8 +136,11 @@ type Provisioner struct {
 	// insecureRegistries are asked over plain HTTP (registryURL).
 	insecureRegistries []string
 	observe            observers
-	pinsMu             sync.Mutex
-	pins               map[string]string // tag reference -> pinned reference
+	// s3Warned holds the S3 endpoint problems already logged, so a task
+	// doesn't repeat them (s3ServiceTarget).
+	s3Warned sync.Map
+	pinsMu   sync.Mutex
+	pins     map[string]string // tag reference -> pinned reference
 
 	// tasks is how tasks run (task.go); attach, if set, replaces
 	// Client.attachPod in tests.

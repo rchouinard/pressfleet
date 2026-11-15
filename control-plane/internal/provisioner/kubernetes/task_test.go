@@ -1,10 +1,12 @@
 package kubernetes
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -730,6 +732,19 @@ func TestRepositoryTaskPolicyS3Service(t *testing.T) {
 				t.Errorf("port = %v, want %v", got, tt.wantPort)
 			}
 		})
+	}
+}
+
+// The fallback is logged once per endpoint and reason, not on every task.
+func TestS3ServiceTargetWarnsOnce(t *testing.T) {
+	var buf bytes.Buffer
+	tc := newTaskCluster(t)
+	tc.log = slog.New(slog.NewTextHandler(&buf, nil))
+	for range 3 {
+		tc.repositoryTaskPolicy(t.Context(), true)
+	}
+	if n := strings.Count(buf.String(), "scoping the S3 egress rule"); n != 1 {
+		t.Errorf("warned %d times for three tasks, want 1:\n%s", n, buf.String())
 	}
 }
 
