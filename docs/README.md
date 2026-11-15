@@ -2,6 +2,10 @@
 
 PressFleet is a self-hostable WordPress application platform for agencies. These pages install it and run it. If you are new, read the **Set up** pages in order; they take a bare Linux server to a running platform with a client site on its own domain.
 
+## Quick starts
+
+In a hurry? These condense the install into one page each: [Docker Compose quick start](quickstart-compose.md) and [Kubernetes quick start](quickstart-kubernetes.md) (including notes on kind and minikube).
+
 ## Set up
 
 1. [Preparing the host](host-preparation.md): Docker, cgroup v2, address pools, log rotation, sizing, firewall, and DNS.
