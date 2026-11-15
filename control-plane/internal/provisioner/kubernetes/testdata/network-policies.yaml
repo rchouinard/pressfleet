@@ -90,9 +90,3 @@ spec:
           port: 3306
         - protocol: TCP
           port: 6379
-    # The SMTP relay's port, at any address: the relay is named by host
-    # name, which a NetworkPolicy can't select, and may be in a private
-    # range.
-    - ports:
-        - protocol: TCP
-          port: 587

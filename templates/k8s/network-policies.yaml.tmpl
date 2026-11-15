@@ -104,11 +104,16 @@ spec:
         - protocol: TCP
           port: {{ .Port }}
 {{- end }}
-{{- if .Egress.SMTPPort }}
-    # The SMTP relay's port, at any address: the relay is named by host
-    # name, which a NetworkPolicy can't select, and may be in a private
-    # range.
-    - ports:
+{{- if .Egress.SMTPNamespace }}
+    # The SMTP relay, a Service in the cluster: its port in its namespace,
+    # as a NetworkPolicy can't select a Service. A relay by IP address is
+    # in the hosts above, and one by an external name is reached through
+    # the internet policy.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ q .Egress.SMTPNamespace }}
+      ports:
         - protocol: TCP
           port: {{ .Egress.SMTPPort }}
 {{- end }}
