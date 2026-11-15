@@ -369,10 +369,17 @@ func (e *execution) writeContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(e.ctx), writeTimeout)
 }
 
+// writeFailureDelay is how long a job waits to be leased again after a
+// failed bookkeeping write, so a database that is still down isn't hit by a
+// tight loop of attempts.
+const writeFailureDelay = 5 * time.Second
+
 // write runs a bookkeeping write and reports whether it worked. On failure
 // the attempt is abandoned: with a lost lease the job belongs to another
-// worker, and after a database error the lease expires and the job is
-// retried from its recorded progress.
+// worker, and after a database error the lease is given up (best effort, it
+// may fail too, and then it expires) so the job and the jobs that share its
+// lock key don't wait out the whole lease. The retry resumes from the
+// recorded progress and counts as an attempt.
 func (e *execution) write(fn func(ctx context.Context) error) bool {
 	ctx, cancel := e.writeContext()
 	defer cancel()
@@ -384,9 +391,26 @@ func (e *execution) write(fn func(ctx context.Context) error) bool {
 	case errors.Is(err, store.ErrLeaseLost):
 		e.logger.Warn("job lease lost; another worker has taken over")
 	default:
-		e.logger.Error("recording job progress failed; the job will be retried when its lease expires", "error", err)
+		e.logger.Error("recording job progress failed; the job will be retried", "error", err)
+		e.abandon()
 	}
 	return false
+}
+
+// abandon gives up the lease after a failed write, without using the write
+// path, which would abandon again on failure.
+func (e *execution) abandon() {
+	ctx, cancel := e.writeContext()
+	defer cancel()
+	now := e.p.now()
+	switch err := e.jobs.Abandon(ctx, e.job.ID, e.owner, now.Add(writeFailureDelay), now); {
+	case err == nil:
+		e.p.opts.Changes.Notify(e.job.ID)
+	case errors.Is(err, store.ErrLeaseLost):
+		// Another worker has the job; leave it alone.
+	default:
+		e.logger.Warn("giving up the job lease failed; it will expire", "error", err)
+	}
 }
 
 // writeLog stores a log line and mirrors it to the control plane log.
