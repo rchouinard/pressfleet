@@ -81,6 +81,9 @@ func TestKubernetesMonitoring(t *testing.T) {
 		"SSL_CERT_FILE":                                 roots,
 		"PRESSFLEET_METRICS_INTERVAL_SECONDS":           strconv.Itoa(int(m4Interval.Seconds())),
 		"PRESSFLEET_ALERTS_EVALUATION_INTERVAL_SECONDS": strconv.Itoa(int(m4Interval.Seconds())),
+		// checkAlerts' channel is the metrics store's Service, a private
+		// address, which alert channels refuse by default.
+		"PRESSFLEET_ALERTS_WEBHOOK_ALLOW_LOCAL_TARGETS": "true",
 	})
 
 	t.Run("every metric of the design is collected", func(t *testing.T) {
