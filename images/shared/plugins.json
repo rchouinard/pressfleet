@@ -7,8 +7,8 @@
     },
     {
       "slug": "redis-cache",
-      "version": "3.0.0",
-      "sha256": "7a03342d3defbe94cac8d0470b42dc1a1c34331b19c47205df20ceccd3c8f54a"
+      "version": "3.0.1",
+      "sha256": "8de85553394c4462dd43d38a403b805e8fb404d7dc34e02ecd313ea37002196b"
     },
     {
       "slug": "two-factor",
